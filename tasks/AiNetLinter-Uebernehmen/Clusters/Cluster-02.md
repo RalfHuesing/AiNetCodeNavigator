@@ -14,6 +14,8 @@
   - [x] `ProjectLease` & Nebenläufigkeits-Schutz
   - [x] Staleness-Erkennung bei geänderten Quelldateien
   - [x] FastTests und IntegrationTests für residenten Solution-Lebenszyklus
+  - [ ] Refresh every Roslyn document that shares a changed on-disk source path, including linked files in multiple projects.
+  - [ ] Prevent in-flight creation from publishing a resident entry after registry disposal and verify lease/disposal concurrency.
   - [ ] Review/Audit zu 2.2 durchführen; Findings ergänzen und umsetzen.
 - [ ] 2.3 Staleness und Ladefehler über echte Solutions absichern:
   - [ ] Änderungen an vorhandenen Dateien, neu hinzugefügte/entfernte Dateien sowie geänderte Projekt- und Referenzstruktur in nachfolgenden Navigationsaufrufen korrekt abbilden; Snapshot-/Reload-Verhalten festlegen und testen.
