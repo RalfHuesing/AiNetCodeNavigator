@@ -7,7 +7,7 @@ siehe Landkarte [CodeMap-AiNetLinter.md](CodeMap-AiNetLinter.md)
 Review der bisherigen Umsetzung und Belege für ergänzte Aufgaben: [Review-2026-09-30.md](Review-2026-09-30.md).
 
 
-Inklusive automatisierter Tests für jeden öffentlichen Tool-Vertrag und dessen wichtige Fehlerfälle; die konkrete Abnahme steht in Cluster 10.
+Inklusive automatisierter Tests für jeden öffentlichen Tool-Vertrag und dessen wichtige Fehlerfälle; die konkrete Abnahme steht in Cluster 11.
 
 AiNetlinter ist erprobt und getestet - wir sollen sehr viel davon übernehmen.
 
@@ -23,7 +23,7 @@ Bei echten, nicht aus Referenz und Regeln lösbaren Produkt- oder Architekturent
 
 AiNetCodeNavigator soll als eigenständiger, ausschließlich lesender MCP-Server die C#-Navigationswerkzeuge von AiNetLinter für Solutions und verwaltete Assemblies anbieten. Ein Agent muss von einem gefundenen Symbol über die ausgegebene `h:...`-ID zu Body, Struktur, Referenzen, Aufrufern, Implementierungen und Kontext navigieren können. Die ID darf bei gleichem Namen in verschiedenen Projekten nicht auf das falsche Symbol zeigen; ungültige oder veraltete IDs sollen eine verständliche, wiederherstellbare Fehlermeldung liefern.
 
-Zur Abnahme gehören 20 Navigationswerkzeuge und zwei Wartungswerkzeuge (`get_server_health`, `reload_config`) über den realen MCP-Stdio-Transport, begrenzte und fortsetzbare Antworten, sichere Fehlerfälle sowie Tests für jeden öffentlichen Tool-Vertrag und dessen wichtige Fehlerfälle. Navigation verändert weder den analysierten Code noch den Benutzer-Workspace. Linting, Qualitätsmetriken, Diagnose- und Refactoring-Werkzeuge bleiben außerhalb des Produkts. Die `[x]`-Markierung eines Core-Bausteins belegt noch keinen funktionsfähigen MCP-Aufruf; die Ende-zu-Ende-Abnahme erfolgt in Cluster 10.
+Zur Abnahme gehören 20 Navigationswerkzeuge und zwei Wartungswerkzeuge (`get_server_health`, `reload_config`) über den realen MCP-Stdio-Transport, begrenzte und fortsetzbare Antworten, sichere Fehlerfälle sowie Tests für jeden öffentlichen Tool-Vertrag und dessen wichtige Fehlerfälle. Navigation verändert weder den analysierten Code noch den Benutzer-Workspace. Linting, Qualitätsmetriken, Diagnose- und Refactoring-Werkzeuge bleiben außerhalb des Produkts. Alle von diesem Repository verfassten Inhalte und alle Produkt-Ausgaben sollen auf Englisch sein; die Kommunikation mit dem Nutzer bleibt gemäß `.agents/rules/01-language-and-scope.mdc` auf Deutsch. Die `[x]`-Markierung eines Core-Bausteins belegt noch keinen funktionsfähigen MCP-Aufruf; die Ende-zu-Ende-Abnahme erfolgt in Cluster 11.
 
 ## Ausführungsauftrag an den Orchestrator
 
@@ -31,15 +31,15 @@ Wenn der Auftrag lautet, dieses Konzept umzusetzen, führe die Arbeit selbststä
 
 ### Rollen und Reihenfolge
 
-1. Du bist der Orchestrator. Lies vor Beginn die Repository-Regeln, dieses Konzept, die Code-Map und den aktuellen Git-Stand. Plane die Cluster 1 bis 10 in Roadmap-Reihenfolge. Bereits gesetzte `[x]` sind Vorarbeiten, keine Review-Freigabe. Beginne beim ersten Cluster; für einen Cluster ohne offene Implementierungspunkte folgt direkt der Cluster-Review. Vermeide erneute Implementierung bereits belegter Funktionen.
+1. Du bist der Orchestrator. Lies vor Beginn die Repository-Regeln, dieses Konzept, die Code-Map und den aktuellen Git-Stand. Plane die Cluster 1 bis 11 in Roadmap-Reihenfolge. Bereits gesetzte `[x]` sind Vorarbeiten, keine Review-Freigabe. Beginne beim ersten Cluster; für einen Cluster ohne offene Implementierungspunkte folgt direkt der Cluster-Review. Vermeide erneute Implementierung bereits belegter Funktionen.
 2. Beauftrage für Implementierungsarbeit je aktivem Cluster einen **Implementierer-Subagenten mit `gpt-6-luna` und Reasoning Effort `high`**. Gib ihm das konkrete Cluster, die offenen Punkte, relevante Findings aus früheren Reviews, Repository-Regeln und die Abnahmekriterien. Er soll AiNetLinter nur lesend als Referenz prüfen, passende Tests ergänzen, die offiziellen PowerShell-Gates ausführen, betroffene `docs/`-Seiten bei geänderter Implementierung aktualisieren und abgeschlossene, verifizierte Slices gemäß Git-Regeln committen. Er soll innerhalb des Clusters zuerst unabhängige, wertvolle Funktionen fertigstellen und lokale Probleme samt Belegen melden.
 3. **Nach jedem Cluster** beauftrage einen unabhängigen **Review-Subagenten mit `gpt-6-sol` und Reasoning Effort `medium`**. Das gilt auch für bereits abgehakte Cluster. Der Reviewer prüft den aktuellen Code und die Tests gegen dieses Konzept, die AiNetLinter-Referenz und die öffentlichen Tool-Verträge. Er prüft besonders Ausführbarkeit, Fehlerfälle, Handoff-Folgeaufrufe, Testaussagekraft und Produktgrenzen. Er ändert keinen Code und liefert priorisierte Findings mit Datei/Zeile, Reproduktion oder begründeter Evidenz sowie einer konkreten Abnahmebedingung. Ein Testlauf ist nur dann als bestanden zu melden, wenn er tatsächlich ausgeführt wurde.
 4. Übergib behebbare Review-Findings an den Implementierer. **Maximal drei Fixrunden je Cluster**: Eine Fixrunde ist ein Implementierungsdurchlauf für die priorisierten Findings, gefolgt von einem erneuten unabhängigen Review. Die erste Implementierung und der erste Review zählen noch nicht als Fixrunde. Nach einem Review ohne offene relevante Findings oder nach der dritten Fixrunde schließe die Cluster-Schleife und gehe weiter. Verlängere die Schleife nicht stillschweigend.
-5. Arbeite die Cluster 1 bis 10 durch. Führe am Ende die vorgesehenen Gesamt-Gates und die End-to-End-Abnahme aus, soweit technisch möglich. Gib einen Abschlussbericht mit implementierten Funktionen, bestanden/nicht bestandenen Gates, verbliebenen Findings, Tech-Debt und nicht umgesetzten Roadmap-Punkten. Melde keinen vollständigen Produktabschluss, solange öffentliche MCP-Verträge oder erforderliche Gates offen sind.
+5. Arbeite die Cluster 1 bis 11 durch. Führe am Ende die vorgesehenen Gesamt-Gates und die End-to-End-Abnahme aus, soweit technisch möglich. Gib einen Abschlussbericht mit implementierten Funktionen, bestanden/nicht bestandenen Gates, verbliebenen Findings, Tech-Debt und nicht umgesetzten Roadmap-Punkten. Melde keinen vollständigen Produktabschluss, solange öffentliche MCP-Verträge oder erforderliche Gates offen sind.
 
 ### Umgang mit Findings und Blockern
 
-- Halte pro Cluster den Implementierungsstand und jede Review-/Fixrunde unter `tasks/AiNetLinter-Uebernehmen/Reviews/Cluster-XX.md` fest: geprüfter Commit, Reviewer-Modell, Findings mit Priorität, zugehörige Fixes, ausgeführte Gates und verbleibende Risiken. Nutze `tasks/AiNetLinter-Uebernehmen/Findings.md` als clusterübergreifendes Register für offene Findings und Tech-Debt; verlinke auf die Detailstelle statt Befunde mehrfach auszuschreiben.
+- Halte pro Cluster den Implementierungsstand und jede Review-/Fixrunde unter `tasks/AiNetLinter-Uebernehmen/Reviews/Cluster-XX.md` fest: geprüfter Commit, Reviewer-Modell, Findings mit Priorität, zugehörige Fixes, ausgeführte Gates und verbleibende Risiken. Nutze `tasks/AiNetLinter-Uebernehmen/Findings.md` als clusterübergreifendes Register für offene Findings und Tech-Debt; verlinke auf die Detailstelle statt Befunde mehrfach auszuschreiben. Wenn Cluster 10 deutschsprachige Datei- oder Verzeichnisnamen ändert, aktualisiere diese Pfade und alle Verweise darauf.
 - Ein **lokaler Blocker** betrifft eine einzelne Funktion oder einen klar isolierten Slice. Halte ihn mit Ursache, Auswirkung, versuchten Lösungswegen und nächstem Schritt fest, lasse dessen Checkbox offen und fahre mit unabhängiger Arbeit fort. Dasselbe gilt für nicht kritische Review-Findings nach ausgeschöpften Fixrunden.
 - Ein **globaler Blocker** liegt nur vor, wenn ohne Nutzerentscheidung, fehlende externe Voraussetzung oder grundlegende technische Reparatur keine sinnvolle unabhängige Implementierung mehr möglich ist. Frage bei echten Produkt-/Architekturentscheidungen oder widersprüchlichen Quellen den Nutzer; blockiere bis zur Antwort nur die davon abhängigen Arbeiten. Nutze die Zeit für unabhängige Clusterpunkte.
 - Behandle fehlgeschlagene Builds, relevante Tests, Protokollfehler, Schreibzugriffe auf analysierte Workspaces und unzulässige Linter-Funktionen nicht als erledigt. Trenne lokal betroffene Slices sauber ab. Committe Code nur nach den vorgeschriebenen Verifikations-Gates; dokumentiere unvollständige Arbeiten und bearbeite andere Slices weiter.
@@ -198,14 +198,20 @@ grundlagen schaffen:
   - [ ] Test der Tool-Registrierungen, Argumentfilter und MCP-Handshakes
 - [ ] 9.4 Realen Host-Lebenszyklus verifizieren: Stdio-Handshake, parallele Anfragen, Cancellation, Neustart, Logging nur auf `stderr`/Datei und sauberes Herunterfahren; der bisherige Typ-Existenztest genügt dafür nicht.
 
-### Cluster 10: End-to-End Verifikation, Dokumentation & Abnahme
-- [ ] 10.1 E2E-Integrationstests:
+### Cluster 10: Repository und Produkt-Ausgaben vollständig auf Englisch umstellen
+- [ ] 10.1 Alle versionierten, selbst verfassten Inhalte inventarisieren: `rg --files` und beispielsweise `rg -n '[ÄÖÜäöüß]|\b(Fehler|Keine|Bitte|ungültig|gefunden|Zeilen|Vollständigkeit|Starte|Bestanden)\b'` für typische deutsche Wörter und Meldungen einsetzen; auch ASCII-only-Texte manuell prüfen. `src/`, `tests/`, `scripts/`, `docs/`, `tasks/`, `.agents/`, Konfigurationsdateien und README-/AGENTS-Dateien einbeziehen. Generierte, ignorierte oder externe Dateien nicht als zu bearbeitenden Repository-Inhalt zählen.
+- [ ] 10.2 Sämtliche deutschsprachigen Kommentare, XML-Dokumentation, Fehlermeldungen, Hinweise, MCP-Tool-Antworten, CLI-/Log-Ausgaben, PowerShell-Skriptausgaben, Testnamen/-Assertions/-Fixtures, Regeln und Dokumentation ins Englische übertragen. Auch bestehende Aufgabenbeschreibungen einschließlich dieses Konzepts und der Review-Dateien übersetzen. `.agents/rules/01-language-and-scope.mdc` danach auf Englisch als verbindliche Repository-Sprache für künftige Inhalte festlegen. Die Kommunikation des Agenten mit dem Nutzer bleibt Deutsch.
+- [ ] 10.3 Deutschsprachige selbst verfasste Bezeichner, Datei- und Verzeichnisnamen auf Englisch bringen und alle Verweise/Links nachziehen. Etablierte MCP-Toolnamen, JSON-Feldnamen, Fehlercodes, Handoff-Formate und andere Maschinenverträge nur bei fachlich nötiger, getesteter Vertragsänderung ändern; Übersetzungen dürfen Navigationssemantik und read-only-Verhalten nicht verschlechtern.
+- [ ] 10.4 Betroffene Tests auf englische Ausgaben aktualisieren und reale MCP-Aufrufe für Erfolg, Fehler und Retry prüfen. Nach der Migration die offiziellen Build-, Fast-, Integrations- und Gesamttest-Skripte ausführen. Die gezielte `rg`-Suche wiederholen und jeden verbleibenden Treffer prüfen; für selbst verfasste deutsche Texte dürfen keine offenen Treffer bleiben.
+
+### Cluster 11: End-to-End Verifikation, Dokumentation & Abnahme
+- [ ] 11.1 E2E-Integrationstests:
   - [ ] Stdio-Kommunikation gegen echte Solution und echte Assemblies
   - [ ] Verifikation aller 20 Navigations- und zwei Wartungswerkzeuge
-- [ ] 10.2 Dokumentation & Tool-Katalog:
+- [ ] 11.2 Dokumentation & Tool-Katalog:
   - [ ] `docs/tools/`: Vollständiger Tool-Katalog mit Schemas und Parametern
   - [ ] `docs/setup/`: Konfiguration für Claude Desktop, Cursor, Antigravity
-- [ ] 10.3 Finale Abnahme:
+- [ ] 11.3 Finale Abnahme:
   - [ ] `pwsh -File ./scripts/build.ps1` (0 Warnungen, 0 Fehler)
   - [ ] `pwsh -File ./scripts/test.ps1` (100% bestandene Tests)
-- [ ] 10.4 Abnahmematrix aus AiNetLinter-Verhalten und Navigator-Vertrag erstellen: für jedes der 22 Werkzeuge mindestens Erfolg, relevante Filter, Handoff/Folgeaufruf, Pagination/Budget und Fehlerszenarien nachweisen; ausdrücklich ausgeschlossene Linter-, Metrik- und Schreibwerkzeuge dürfen nicht registriert sein.
+- [ ] 11.4 Abnahmematrix aus AiNetLinter-Verhalten und Navigator-Vertrag erstellen: für jedes der 22 Werkzeuge mindestens Erfolg, relevante Filter, Handoff/Folgeaufruf, Pagination/Budget und Fehlerszenarien nachweisen; ausdrücklich ausgeschlossene Linter-, Metrik- und Schreibwerkzeuge dürfen nicht registriert sein.
