@@ -32,5 +32,26 @@ Two earlier standalone FastTests runs failed in the unrelated `HandoffHandleRegi
 - **P3 — Error-path assertions are narrower than the new validation.** `tests/AiNetCodeNavigator.TestKit/Builders/TestWorkspaceBuilder.cs:134-186` adds rejection for null specs, malformed document names/content, null metadata references, duplicate and unknown project references. `tests/AiNetCodeNavigator.FastTests/TestKit/TestKitInfrastructureTests.cs:107-125` checks only duplicate project names and an unknown reference. Add focused tests for the other public input failure cases, including the fluent entry points, to substantiate the claimed validation.
 - Acceptance: fix both P2 findings and add the stated failure-path tests; rerun the affected official gates before marking the point's audit checkbox complete. No product code was changed by this audit.
 - Gate evidence: the implementation review above records build, integration, full suite and final fast suite as passed on the implementation turn, with two earlier transient failures in `HandoffHandleRegistryTests.ConcurrentRequests_AreThreadSafeAndDeduplicated`. This auditor did not run a build or tests and does not independently certify those results. The transient failure is outside point 1.1 and remains a separate observation for the orchestrator.
-- The Cluster 1 checklist's audit checkbox remains open while these findings are pending.
+- The Cluster 1 checklist's audit checkbox remains open for the auditor's follow-up.
 - No 1.2 or 1.3 implementation work was included in this slice.
+
+### Audit 1 Finding Fixes
+
+- Fix base: `c4ae03c5a175605d6d0ef83385204f24fbee9638`.
+- **P2, handoff alphabet:** `NavigationAssertions.AssertValidHandoffId` now calls the Core `HandoffCounterAlphabet.IsValidHandle` validator. Tests accept only alphanumeric counters and reject hyphens, underscores, malformed prefixes, empty values, and null.
+- **P2, workspace consistency:** after building the immutable solution, `TestWorkspaceBuilder` applies it through `AdhocWorkspace.TryApplyChanges` and returns `Workspace.CurrentSolution`. Tests compare solution IDs, project IDs, document IDs, and project references between both views.
+- **P3, validation error paths:** tests now cover null project arrays and entries, blank project names, null document lists/content, empty and directory-only document paths, null metadata references, null/blank/duplicate project-reference names, and invalid fluent builder inputs.
+- Updated current-state TestKit documentation to describe the workspace consistency and product-alphabet behavior.
+
+#### Fix Verification
+
+| Gate | Result |
+|---|---|
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| Focused TestKit tests (`dotnet test ... --filter FullyQualifiedName~TestKitInfrastructureTests`) | Passed, 31/31 |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 202/202 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 4/4 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 206/206 across both test projects |
+
+- The independent audit checkbox remains open for the auditor's follow-up; this implementation record does not mark the audit complete.
+- No 1.2 or 1.3 implementation work was included in this fix slice.

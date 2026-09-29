@@ -28,6 +28,8 @@ public sealed class TestKitInfrastructureTests
         var syntaxTree = await document.GetSyntaxTreeAsync();
         var compilation = await project.GetCompilationAsync();
 
+        Assert.Equal(solutionHandle.Solution.Id, solutionHandle.Workspace.CurrentSolution.Id);
+        Assert.Equal(solutionHandle.Solution.ProjectIds, solutionHandle.Workspace.CurrentSolution.ProjectIds);
         Assert.Equal("DemoProj", project.Name);
         Assert.Equal("Demo.cs", document.Name);
         Assert.NotNull(syntaxTree);
@@ -53,6 +55,10 @@ public sealed class TestKitInfrastructureTests
         var compilation = await consumer.GetCompilationAsync();
 
         Assert.Equal(provider.Id, Assert.Single(consumer.ProjectReferences).ProjectId);
+        var workspaceConsumer = solutionHandle.Workspace.CurrentSolution.GetProject(consumer.Id);
+        Assert.NotNull(workspaceConsumer);
+        Assert.Equal(consumer.DocumentIds, workspaceConsumer.DocumentIds);
+        Assert.Equal(consumer.ProjectReferences, workspaceConsumer.ProjectReferences);
         Assert.NotNull(compilation);
         NavigationAssertions.AssertSymbolName(compilation.GetTypeByMetadataName("Widgets.Gadget"), "Gadget");
         Assert.Empty(compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
@@ -126,6 +132,87 @@ public sealed class TestKitInfrastructureTests
     }
 
     [Fact]
+    public void TestWorkspaceBuilder_RejectsNullProjectArrayAndEntries()
+    {
+        Assert.Throws<ArgumentNullException>(() => TestWorkspaceBuilder.CreateSolution((ProjectSpec[])null!));
+        Assert.Throws<ArgumentNullException>(() => TestWorkspaceBuilder.CreateSolution([null!]));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public void TestWorkspaceBuilder_RejectsBlankProjectNames(string projectName)
+    {
+        Assert.Throws<ArgumentException>(() =>
+            TestWorkspaceBuilder.CreateSolution(new ProjectSpec(projectName, [])));
+    }
+
+    [Fact]
+    public void TestWorkspaceBuilder_RejectsNullDocumentList()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            TestWorkspaceBuilder.CreateSolution(new ProjectSpec("Project", null!)));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("Nested/")]
+    public void TestWorkspaceBuilder_RejectsInvalidDocumentFileNames(string fileName)
+    {
+        Assert.Throws<ArgumentException>(() =>
+            TestWorkspaceBuilder.CreateSolution(new ProjectSpec("Project", [(fileName, "public class Probe {}")])));
+    }
+
+    [Fact]
+    public void TestWorkspaceBuilder_RejectsNullDocumentContent()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            TestWorkspaceBuilder.CreateSolution(new ProjectSpec("Project", [("Probe.cs", null!)])));
+    }
+
+    [Fact]
+    public void TestWorkspaceBuilder_RejectsNullAdditionalMetadataReference()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            TestWorkspaceBuilder.CreateSolution(new ProjectSpec(
+                "Project",
+                [("Probe.cs", "public class Probe {}")],
+                AdditionalReferences: [null!])));
+    }
+
+    [Fact]
+    public void TestWorkspaceBuilder_RejectsDuplicateProjectReferences()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            TestWorkspaceBuilder.CreateSolution(
+                new ProjectSpec("Provider", []),
+                new ProjectSpec("Consumer", [], ProjectReferences: ["Provider", "Provider"])));
+    }
+
+    [Fact]
+    public void TestWorkspaceBuilder_RejectsNullOrBlankProjectReferenceNames()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            TestWorkspaceBuilder.CreateSolution(
+                new ProjectSpec("Provider", []),
+                new ProjectSpec("Consumer", [], ProjectReferences: [null!])));
+        Assert.Throws<ArgumentException>(() =>
+            TestWorkspaceBuilder.CreateSolution(
+                new ProjectSpec("Provider", []),
+                new ProjectSpec("Consumer", [], ProjectReferences: [" "])));
+    }
+
+    [Fact]
+    public void TestWorkspaceBuilder_FluentMethodsValidateInputs()
+    {
+        Assert.Throws<ArgumentException>(() => TestWorkspaceBuilder.Create().WithVirtualSolutionPath(" "));
+        Assert.Throws<ArgumentNullException>(() => TestWorkspaceBuilder.Create().WithProject((ProjectSpec)null!).Build());
+        Assert.Throws<ArgumentException>(() => TestWorkspaceBuilder.Create().WithProject("", ("Probe.cs", "class Probe {}")).Build());
+        Assert.Throws<ArgumentException>(() => TestWorkspaceBuilder.Create().WithProject("Project", ("", "class Probe {}")).Build());
+    }
+
+    [Fact]
     public void TestWorkspaceBuilder_VirtualPathsAreNormalizedWithoutCreatingFiles()
     {
         var solutionPath = Path.Combine(Path.GetTempPath(), $"navigator-{Guid.NewGuid():N}", "Sample.slnx");
@@ -178,8 +265,8 @@ public sealed class TestKitInfrastructureTests
 
     [Theory]
     [InlineData("h:gwtQ")]
-    [InlineData("h:abc-123")]
-    [InlineData("h:foo_bar")]
+    [InlineData("h:ABC123")]
+    [InlineData("h:abc123XYZ")]
     public void NavigationAssertions_ValidHandoffPasses(string handoffId)
     {
         NavigationAssertions.AssertValidHandoffId(handoffId);
@@ -190,9 +277,11 @@ public sealed class TestKitInfrastructureTests
     [InlineData("")]
     [InlineData("h:")]
     [InlineData("x:123")]
+    [InlineData("h:foo-bar")]
+    [InlineData("h:foo_bar")]
     public void NavigationAssertions_InvalidHandoffFails(string invalidHandoff)
     {
-        Assert.Throws<Xunit.Sdk.MatchesException>(() => NavigationAssertions.AssertValidHandoffId(invalidHandoff));
+        Assert.Throws<Xunit.Sdk.TrueException>(() => NavigationAssertions.AssertValidHandoffId(invalidHandoff));
     }
 
     [Fact]
@@ -200,6 +289,12 @@ public sealed class TestKitInfrastructureTests
     {
         NavigationAssertions.AssertValidLineRange(3, 6, minimumLines: 4);
         NavigationAssertions.AssertContainsPattern(["class Greeter", "class Caller"], "Caller");
+    }
+
+    [Fact]
+    public void NavigationAssertions_RejectsNullHandoff()
+    {
+        Assert.Throws<Xunit.Sdk.TrueException>(() => NavigationAssertions.AssertValidHandoffId(null));
     }
 
     private static MetadataReference FindCoreReference(Solution solution, string assemblyPath)

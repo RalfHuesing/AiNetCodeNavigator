@@ -5,29 +5,25 @@ namespace AiNetCodeNavigator.TestKit.Assertions;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
+using AiNetCodeNavigator.Core.Symbols;
 using Xunit;
 
 /// <summary>
-/// Semantische Assertions für Navigationsergebnisse, Symbole und MCP-Daten.
+/// Semantic assertions for navigation results, symbols, and MCP data.
 /// </summary>
-public static partial class NavigationAssertions
+public static class NavigationAssertions
 {
-    [GeneratedRegex(@"^h:[a-zA-Z0-9_-]+$", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex HandoffRegex();
-
     /// <summary>
-    /// Prüft, ob ein Handoff-Token syntaktisch valide ist (z.B. "h:gwtQ").
+    /// Checks whether a handoff identifier follows the product's handle alphabet (for example, "h:gwtQ").
     /// </summary>
     public static void AssertValidHandoffId(string? handoffId)
     {
-        Assert.NotNull(handoffId);
-        Assert.Matches(HandoffRegex(), handoffId);
+        Assert.True(HandoffCounterAlphabet.IsValidHandle(handoffId), $"'{handoffId}' is not a valid handoff ID.");
     }
 
     /// <summary>
-    /// Prüft, ob ein Symbol existiert und den erwarteten Namen trägt.
+    /// Checks that a symbol exists and has the expected name.
     /// </summary>
     public static void AssertSymbolName(ISymbol? symbol, string expectedName)
     {
@@ -36,7 +32,7 @@ public static partial class NavigationAssertions
     }
 
     /// <summary>
-    /// Prüft, ob ein Zeilenbereich plausibel ist.
+    /// Checks that a line range is valid and has at least the requested number of lines.
     /// </summary>
     public static void AssertValidLineRange(int startLine, int endLine, int minimumLines = 1)
     {
@@ -47,7 +43,7 @@ public static partial class NavigationAssertions
     }
 
     /// <summary>
-    /// Prüft, ob eine Liste von Strings ein bestimmtes Teilmuster enthält.
+    /// Checks that a sequence of strings contains the requested substring.
     /// </summary>
     public static void AssertContainsPattern(IEnumerable<string> items, string substring)
     {

@@ -47,6 +47,7 @@ public sealed class TestWorkspaceBuilder
 
     public TestWorkspaceBuilder WithVirtualSolutionPath(string path)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
         _virtualSolutionFilePath = path;
         return this;
     }
@@ -122,7 +123,12 @@ public sealed class TestWorkspaceBuilder
                 solution = WireProjectReferences(solution, spec, projectIdsByName);
             }
 
-            return new TestSolutionHandle(solution, workspace);
+            if (!workspace.TryApplyChanges(solution))
+            {
+                throw new InvalidOperationException("The in-memory workspace rejected the constructed solution.");
+            }
+
+            return new TestSolutionHandle(workspace.CurrentSolution, workspace);
         }
         catch
         {
