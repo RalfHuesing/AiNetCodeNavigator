@@ -20,7 +20,7 @@ public sealed record CachedTreeEntry(DateTime LastWriteTimeUtc, string? ContentH
 /// <summary>
 /// Cache-Eintrag für eine Roslyn-Kompilation.
 /// </summary>
-public sealed record CachedCompilationEntry(DateTime LatestSourceMTimeUtc, Compilation Compilation);
+public sealed record CachedCompilationEntry(DateTime LatestSourceMTimeUtc, Compilation Compilation, string? SourceHash = null);
 
 /// <summary>
 /// Thread-sicherer In-Memory- und Zeitstempel-basierter Cache für Roslyn-Syntaxbäume und Kompilationen.
@@ -48,12 +48,16 @@ public sealed class CompilationCacheManager
 
     /// <summary>
     /// Versucht, einen gecachten SyntaxTree anhand des Dateipfads und Zeitstempels abzurufen.
+    /// Wenn ein Hash angegeben wird, muss auch dieser mit dem gespeicherten Inhaltshash übereinstimmen.
     /// </summary>
-    public bool TryGetTree(string filePath, DateTime lastWriteTimeUtc, out SyntaxTree? tree)
+    public bool TryGetTree(string filePath, DateTime lastWriteTimeUtc, out SyntaxTree? tree, string? contentHash = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        ValidateUtcTimestamp(lastWriteTimeUtc, nameof(lastWriteTimeUtc));
 
-        if (_treeCache.TryGetValue(filePath, out var entry) && entry.LastWriteTimeUtc == lastWriteTimeUtc)
+        if (_treeCache.TryGetValue(filePath, out var entry)
+            && entry.LastWriteTimeUtc == lastWriteTimeUtc
+            && (contentHash is null || string.Equals(entry.ContentHash, contentHash, StringComparison.Ordinal)))
         {
             Interlocked.Increment(ref _hits);
             tree = entry.Tree;
@@ -71,6 +75,7 @@ public sealed class CompilationCacheManager
     public void StoreTree(string filePath, DateTime lastWriteTimeUtc, string? contentHash, SyntaxTree tree)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        ValidateUtcTimestamp(lastWriteTimeUtc, nameof(lastWriteTimeUtc));
         ArgumentNullException.ThrowIfNull(tree);
 
         _treeCache[filePath] = new CachedTreeEntry(lastWriteTimeUtc, contentHash, tree);
@@ -78,12 +83,20 @@ public sealed class CompilationCacheManager
 
     /// <summary>
     /// Versucht, eine gecachte Kompilation anhand des Projektpfads und Zeitstempels der jüngsten Datei abzurufen.
+    /// Wenn ein Quellenhash angegeben wird, muss auch dieser mit dem gespeicherten Hash übereinstimmen.
     /// </summary>
-    public bool TryGetCompilation(string projectPath, DateTime latestSourceMTimeUtc, out Compilation? compilation)
+    public bool TryGetCompilation(
+        string projectPath,
+        DateTime latestSourceMTimeUtc,
+        out Compilation? compilation,
+        string? sourceHash = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectPath);
+        ValidateUtcTimestamp(latestSourceMTimeUtc, nameof(latestSourceMTimeUtc));
 
-        if (_compilationCache.TryGetValue(projectPath, out var entry) && entry.LatestSourceMTimeUtc == latestSourceMTimeUtc)
+        if (_compilationCache.TryGetValue(projectPath, out var entry)
+            && entry.LatestSourceMTimeUtc == latestSourceMTimeUtc
+            && (sourceHash is null || string.Equals(entry.SourceHash, sourceHash, StringComparison.Ordinal)))
         {
             Interlocked.Increment(ref _hits);
             compilation = entry.Compilation;
@@ -98,12 +111,17 @@ public sealed class CompilationCacheManager
     /// <summary>
     /// Speichert eine Kompilation im Cache.
     /// </summary>
-    public void StoreCompilation(string projectPath, DateTime latestSourceMTimeUtc, Compilation compilation)
+    public void StoreCompilation(
+        string projectPath,
+        DateTime latestSourceMTimeUtc,
+        Compilation compilation,
+        string? sourceHash = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectPath);
+        ValidateUtcTimestamp(latestSourceMTimeUtc, nameof(latestSourceMTimeUtc));
         ArgumentNullException.ThrowIfNull(compilation);
 
-        _compilationCache[projectPath] = new CachedCompilationEntry(latestSourceMTimeUtc, compilation);
+        _compilationCache[projectPath] = new CachedCompilationEntry(latestSourceMTimeUtc, compilation, sourceHash);
     }
 
     /// <summary>
@@ -141,5 +159,13 @@ public sealed class CompilationCacheManager
         _compilationCache.Clear();
         Interlocked.Exchange(ref _hits, 0);
         Interlocked.Exchange(ref _misses, 0);
+    }
+
+    private static void ValidateUtcTimestamp(DateTime timestamp, string parameterName)
+    {
+        if (timestamp.Kind != DateTimeKind.Utc)
+        {
+            throw new ArgumentException("Cache timestamps must use UTC.", parameterName);
+        }
     }
 }

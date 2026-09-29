@@ -23,6 +23,10 @@ Core, Host, and TestKit expose internal members to the test assemblies via `Inte
 
 `SampleCodeFixtures` contains compilable examples for callers, interfaces and implementations, inheritance, records, record structs, and extension methods. `NavigationAssertions` checks symbol names, handoff identifiers using the core product alphabet, line ranges, and result text patterns. Fast tests verify these helpers against real Roslyn syntax trees, compilations, and symbols.
 
+## Compilation Cache
+
+`CompilationCacheManager` keeps syntax trees by file path and compilations by project path in thread-safe, case-insensitive in-memory dictionaries. Callers must pass UTC timestamps; entries are reusable only when their last-write timestamp matches. Callers may also provide the stored content hash or source hash to reject same-timestamp content changes. File and project invalidation remove entries from their respective caches, and `Clear` removes both caches and resets hit/miss counters. The AiNetLinter reference cache validates analysis entries by content checksum; this cache applies the same checksum safeguard alongside its in-memory MTime key.
+
 ## Host Logging
 
 The host entry point initializes Serilog and flushes it before exit. By default, logs are written beneath `AppContext.BaseDirectory/logs` in daily rolling files, with an additional 10 MiB size limit and 30 retained files. Error and fatal events are also written to `stderr`; the logger has no `stdout` sink so it cannot corrupt MCP protocol output. The host integration test launches the built executable and checks its streams and log location.

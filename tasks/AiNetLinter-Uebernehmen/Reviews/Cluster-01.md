@@ -95,3 +95,28 @@ All official gates were executed after the final code and documentation changes:
 - **Gate evidence:** the implementer's record above reports build (0 warnings/errors), FastTests (202/202), IntegrationTests (5/5), and full suite (207/207) passed. I inspected the current `temp/build.log`, `temp/test-fast.log`, `temp/test-integration.log`, and `temp/test.log` tails; they show these results. This auditor did not run build or tests.
 - The Cluster 1 checklist's point 1.2 audit checkbox is complete; no follow-up point audit is needed.
 - No 1.1 or 1.3 implementation work was included in this slice.
+
+## Point 1.3: Compilation Cache
+
+- Implementation base: `c2c98848d96bb8293e77386797ddb76281dc5ca4` (working tree was clean).
+- Implementer comparison: AiNetLinter's `AnalysisCacheManager` and its cache tests were inspected read-only through the navigation MCP. The reference manager validates cached analysis entries against a content checksum and tests mismatched checksums, concurrency, and case-insensitive path lookup. Its cache is persistent and keyed by solution/configuration; it is not a direct implementation of this in-memory Roslyn compilation cache.
+- Existing `CompilationCacheManager` already provided separate thread-safe, case-insensitive path dictionaries for syntax trees and compilations, UTC MTime lookup, statistics, and per-file/per-project invalidation. However, `CachedTreeEntry.ContentHash` was stored but ignored on lookup; same-timestamp content changes could return a stale tree. The compilation cache had no matching source-hash safeguard, UTC `DateTime.Kind` was not enforced, and tests did not establish case-insensitive key or invalidation behavior.
+- Changes: optional content/source hash checks now supplement MTime lookup for trees and compilations while existing MTime-only calls remain supported. All lookup and store methods reject non-UTC timestamps. Tests cover same-MTime hash mismatches and matches, UTC validation, case-insensitive keys and invalidation, and the independent file/project invalidation scopes. Updated `docs/development/build-and-tests.md` with the cache contract and its checksum comparison to AiNetLinter.
+- Scope remains the in-memory cache. It is not connected to workspace/compilation consumers yet; callers must supply hashes when they need protection from same-timestamp source changes. The cache stays ephemeral, while AiNetLinter's reference cache persists analysis results to disk.
+
+### Verification
+
+All official gates were executed after the final implementation and documentation changes:
+
+| Gate | Result |
+|---|---|
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 206/206 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 5/5 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 211/211 across both test projects |
+| `git diff --check` | Passed |
+
+### Independent audit
+
+- Audit count: 0 of 3. The 1.3 audit has not yet been performed; the Cluster 1 checklist audit checkbox remains open.
+- No other Cluster 1 point was changed in this slice.
