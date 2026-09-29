@@ -12,13 +12,13 @@ namespace AiNetCodeNavigator.Core.Assemblies;
 // Wire DTOs (shared between session internals and tool layer)
 // ---------------------------------------------------------------------------
 
-internal sealed record AssemblyIdentityDto(
+public sealed record AssemblyIdentityDto(
     string Name,
     string Version,
     string Culture,
     string PublicKeyToken);
 
-internal sealed record AssemblyReferenceDto(
+public sealed record AssemblyReferenceDto(
     string Name,
     string Version,
     string Culture,
@@ -33,7 +33,7 @@ internal sealed record AssemblyReferenceDto(
 // Session status
 // ---------------------------------------------------------------------------
 
-internal enum AssemblySessionStatus
+public enum AssemblySessionStatus
 {
     Loading,
     Complete,
@@ -42,7 +42,7 @@ internal enum AssemblySessionStatus
     Failed,
 }
 
-internal static class AssemblySessionStatusExtensions
+public static class AssemblySessionStatusExtensions
 {
     internal static AssemblySessionStatus ResolveEffectiveStatus(
         this AssemblySessionStatus status,
@@ -184,7 +184,7 @@ internal sealed record DecompiledDocument(
 /// The source root is the deepest common directory of all generated C# documents,
 /// so it is safe to pass directly to <c>rg</c> or <c>get_file_tree</c>.
 /// </summary>
-internal sealed record DecompiledProjectPaths(
+public sealed record DecompiledProjectPaths(
     string DecompiledProjectDirectory,
     string DecompiledProjectPath,
     string DecompiledSourceRoot)
@@ -314,7 +314,7 @@ internal sealed record CachedDecompilationGeneration(
 // Roslyn snapshot
 // ---------------------------------------------------------------------------
 
-internal sealed record AssemblyOrigin(
+public sealed record AssemblyOrigin(
     string OriginKind,
     string CanonicalPath,
     string ContentHash,
@@ -323,7 +323,7 @@ internal sealed record AssemblyOrigin(
     string BodyAvailability = "available",
     string ContentMode = "decompiled")
 {
-    internal bool IsDecompiled => string.Equals(OriginKind, "decompiled", StringComparison.Ordinal);
+    public bool IsDecompiled => string.Equals(OriginKind, "decompiled", StringComparison.Ordinal);
 }
 
 internal sealed record AssemblyRoslynSnapshot(
@@ -389,3 +389,68 @@ internal sealed record AssemblyDecompilationManifest
     internal required AssemblyManifestDiagnostics Diagnostics { get; init; }
     internal required AssemblyManifestStatus Status { get; init; }
 }
+
+// ---------------------------------------------------------------------------
+// Analysis Session & Generation models
+// ---------------------------------------------------------------------------
+
+internal sealed record AssemblySessionGeneration(
+    long Number,
+    AssemblyFingerprint Fingerprint,
+    AssemblyDecompilationCacheKey CacheKey,
+    AssemblyIdentityDto Identity,
+    AssemblySessionStatus Status,
+    AssemblyRoslynSnapshot Snapshot,
+    IReadOnlyList<AssemblyReferenceDto> References,
+    IReadOnlyList<AssemblySessionDiagnostic> Diagnostics,
+    AssemblyOrigin Origin,
+    DecompiledProjectPaths? DecompiledProjectPaths = null)
+{
+    internal int ActiveLeaseCount { get; set; }
+}
+
+internal sealed record AssemblySessionState(
+    AssemblySessionStatus Status,
+    long? CurrentGeneration,
+    long? LastGoodGeneration,
+    AssemblyFingerprint? Fingerprint,
+    IReadOnlyList<AssemblySessionDiagnostic> Diagnostics,
+    DateTime UpdatedUtc);
+
+internal sealed record AssemblySessionRefreshResult(
+    AssemblySessionStatus Status,
+    long? Generation,
+    bool Reused,
+    IReadOnlyList<AssemblySessionDiagnostic> Diagnostics,
+    AssemblySessionFailure? Failure = null);
+
+internal sealed record AssemblySessionFailure(
+    AssemblySessionFailureKind Kind,
+    AssemblySessionDiagnostic Diagnostic);
+
+internal enum AssemblySessionFailureKind
+{
+    InvalidPath,
+    MetadataUnavailable,
+    DecompilationFailed,
+    WorkspaceFailed,
+    CacheError,
+    Disposed,
+}
+
+internal sealed record AssemblyAnalysisSessionOptions(
+    string AssemblyPath,
+    AssemblyDecompilationOptions? Decompilation = null,
+    string? CacheRoot = null,
+    long GenerationStart = 0);
+
+public sealed record AssemblyContext(
+    IAssemblySymbol Assembly,
+    AssemblyIdentityDto? Identity,
+    IReadOnlyList<AssemblyReferenceDto> References,
+    IReadOnlyList<string> Diagnostics,
+    Compilation Compilation,
+    AssemblyOrigin Origin,
+    long Generation,
+    AssemblySessionStatus Status,
+    DecompiledProjectPaths? DecompiledProjectPaths = null);

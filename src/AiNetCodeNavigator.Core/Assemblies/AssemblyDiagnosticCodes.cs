@@ -37,6 +37,11 @@ internal static class AssemblyDiagnosticCodes
         [Key(nameof(AssemblyRoslynWorkspaceFactory), nameof(AssemblySessionStatus.Failed))] = "assembly-workspace-failed",
         [Key(nameof(AssemblyRoslynWorkspaceFactory), nameof(AssemblyRoslynSnapshot.Compilation))] = "assembly-workspace-compilation-failed",
         [Key(nameof(AssemblyRoslynWorkspaceFactory), nameof(AssemblyRoslynSnapshot.Solution))] = "assembly-compilation-partial",
+        [Key(nameof(AssemblyAnalysisSession), nameof(AssemblyAnalysisSession.RefreshAsync))] = "assembly-refresh-cancelled",
+        [Key(nameof(AssemblyAnalysisSession), nameof(AssemblyAnalysisSession.Dispose))] = "assembly-session-disposed",
+        [Key(nameof(AssemblyAnalysisSession), nameof(DecompilationResult.Documents))] = "assembly-decompilation-empty",
+        [Key(nameof(AssemblyAnalysisSession), nameof(AssemblySessionRefreshResult.Diagnostics))] = "assembly-refresh-failed",
+        [Key(nameof(AssemblyAnalysisSessionOptions), nameof(AssemblyAnalysisSessionOptions.CacheRoot))] = "assembly-options-invalid",
     }.ToImmutableDictionary(StringComparer.Ordinal);
 
     internal static string For(string owner, string member) => Values[Key(owner, member)];

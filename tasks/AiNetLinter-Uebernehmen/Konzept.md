@@ -126,7 +126,7 @@ grundlagen schaffen:
   - [x] `AssemblyRoslynWorkspaceFactory`: Erzeugung eines virtuellen Roslyn-Workspaces aus Dekompilaten
   - [x] FastTests für Dekompilierung und virtuellen Workspace
 - [ ] 7.2 Assembly-Navigations-Backends:
-  - [ ] `inspect_assembly`: Öffentliche API und Typdefinitionen extrahieren
+  - [x] `inspect_assembly`: Öffentliche API und Typdefinitionen extrahieren
   - [ ] `get_assembly_context`: Zusammenfassung von Assemblies
   - [ ] `search_assembly`: Text-, Aufruf- und Datenzugriffssuche im Dekompilat
   - [ ] `find_assembly_extensions`: Auffinden von Extension Methods in Binaries
