@@ -17,6 +17,6 @@
 - [x] 1.3 Caching-Infrastruktur (`AiNetCodeNavigator.Core.Caching`):
   - [x] `CompilationCacheManager`: In-Memory- und MTime-basierter Cache für SyntaxTrees & Compilations
   - [x] FastTests für Cache-Hit/Miss und Invalidierung
-  - [ ] Gespeicherte Hashes dürfen nicht durch hashlose Lookups umgangen werden; beide Cache-Arten testen.
-  - [ ] Compilations bei jeder semantisch relevanten Eingabeänderung invalidieren oder mit vollständigem Fingerprint prüfen.
-  - [ ] Review/Audit zu 1.3 durchführen; Findings ergänzen und umsetzen.
+  - [x] Gespeicherte Hashes dürfen nicht durch hashlose Lookups umgangen werden; beide Cache-Arten testen.
+  - [x] Compilations bei jeder semantisch relevanten Eingabeänderung invalidieren oder mit vollständigem Fingerprint prüfen.
+  - [x] Review/Audit zu 1.3 durchführen; Findings ergänzen und umsetzen.
