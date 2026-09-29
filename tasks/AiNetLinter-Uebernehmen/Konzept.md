@@ -7,7 +7,7 @@ siehe Landkarte [CodeMap-AiNetLinter.md](CodeMap-AiNetLinter.md)
 Review der bisherigen Umsetzung und Belege für ergänzte Aufgaben: [Review-2026-09-30.md](Review-2026-09-30.md).
 
 
-Inklusive voller test abdeckung.
+Inklusive automatisierter Tests für jeden öffentlichen Tool-Vertrag und dessen wichtige Fehlerfälle; die konkrete Abnahme steht in Cluster 10.
 
 AiNetlinter ist erprobt und getestet - wir sollen sehr viel davon übernehmen.
 
@@ -17,13 +17,33 @@ AiNetCodeNavigator ist ausschließlich ein MCP Server für agentische navigation
 
 bei unklarheiten immer in AiNetLinter nachschauen und nach AiNetCodeNavigator adaptieren
 
-bei entscheidungsfragen -> blocken und nutzer fragen!
+Bei echten, nicht aus Referenz und Regeln lösbaren Produkt- oder Architekturentscheidungen nur die abhängige Arbeit blockieren und den Nutzer fragen; unabhängige Arbeit fortsetzen.
 
 ## Zielbild und Abnahme
 
 AiNetCodeNavigator soll als eigenständiger, ausschließlich lesender MCP-Server die C#-Navigationswerkzeuge von AiNetLinter für Solutions und verwaltete Assemblies anbieten. Ein Agent muss von einem gefundenen Symbol über die ausgegebene `h:...`-ID zu Body, Struktur, Referenzen, Aufrufern, Implementierungen und Kontext navigieren können. Die ID darf bei gleichem Namen in verschiedenen Projekten nicht auf das falsche Symbol zeigen; ungültige oder veraltete IDs sollen eine verständliche, wiederherstellbare Fehlermeldung liefern.
 
 Zur Abnahme gehören 20 Navigationswerkzeuge und zwei Wartungswerkzeuge (`get_server_health`, `reload_config`) über den realen MCP-Stdio-Transport, begrenzte und fortsetzbare Antworten, sichere Fehlerfälle sowie Tests für jeden öffentlichen Tool-Vertrag und dessen wichtige Fehlerfälle. Navigation verändert weder den analysierten Code noch den Benutzer-Workspace. Linting, Qualitätsmetriken, Diagnose- und Refactoring-Werkzeuge bleiben außerhalb des Produkts. Die `[x]`-Markierung eines Core-Bausteins belegt noch keinen funktionsfähigen MCP-Aufruf; die Ende-zu-Ende-Abnahme erfolgt in Cluster 10.
+
+## Ausführungsauftrag an den Orchestrator
+
+Wenn der Auftrag lautet, dieses Konzept umzusetzen, führe die Arbeit selbstständig bis zum bestmöglichen implementierten Stand aus. Das oberste Arbeitsziel ist, möglichst viel **funktionsfähigen, getesteten Produktcode** aus der Roadmap zu liefern. Bleibe nicht wegen eines lokal begrenzten Problems stehen: dokumentiere es und bearbeite alle davon unabhängigen Aufgaben weiter. Halte die Produktgrenzen und verbindlichen Repository-Regeln ein; hake keine Aufgabe allein aufgrund vorhandener Dateien oder grüner, aber unpassender Tests ab.
+
+### Rollen und Reihenfolge
+
+1. Du bist der Orchestrator. Lies vor Beginn die Repository-Regeln, dieses Konzept, die Code-Map und den aktuellen Git-Stand. Plane die Cluster 1 bis 10 in Roadmap-Reihenfolge. Bereits gesetzte `[x]` sind Vorarbeiten, keine Review-Freigabe. Beginne beim ersten Cluster; für einen Cluster ohne offene Implementierungspunkte folgt direkt der Cluster-Review. Vermeide erneute Implementierung bereits belegter Funktionen.
+2. Beauftrage für Implementierungsarbeit je aktivem Cluster einen **Implementierer-Subagenten mit `gpt-6-luna` und Reasoning Effort `high`**. Gib ihm das konkrete Cluster, die offenen Punkte, relevante Findings aus früheren Reviews, Repository-Regeln und die Abnahmekriterien. Er soll AiNetLinter nur lesend als Referenz prüfen, passende Tests ergänzen, die offiziellen PowerShell-Gates ausführen, betroffene `docs/`-Seiten bei geänderter Implementierung aktualisieren und abgeschlossene, verifizierte Slices gemäß Git-Regeln committen. Er soll innerhalb des Clusters zuerst unabhängige, wertvolle Funktionen fertigstellen und lokale Probleme samt Belegen melden.
+3. **Nach jedem Cluster** beauftrage einen unabhängigen **Review-Subagenten mit `gpt-6-sol` und Reasoning Effort `medium`**. Das gilt auch für bereits abgehakte Cluster. Der Reviewer prüft den aktuellen Code und die Tests gegen dieses Konzept, die AiNetLinter-Referenz und die öffentlichen Tool-Verträge. Er prüft besonders Ausführbarkeit, Fehlerfälle, Handoff-Folgeaufrufe, Testaussagekraft und Produktgrenzen. Er ändert keinen Code und liefert priorisierte Findings mit Datei/Zeile, Reproduktion oder begründeter Evidenz sowie einer konkreten Abnahmebedingung. Ein Testlauf ist nur dann als bestanden zu melden, wenn er tatsächlich ausgeführt wurde.
+4. Übergib behebbare Review-Findings an den Implementierer. **Maximal drei Fixrunden je Cluster**: Eine Fixrunde ist ein Implementierungsdurchlauf für die priorisierten Findings, gefolgt von einem erneuten unabhängigen Review. Die erste Implementierung und der erste Review zählen noch nicht als Fixrunde. Nach einem Review ohne offene relevante Findings oder nach der dritten Fixrunde schließe die Cluster-Schleife und gehe weiter. Verlängere die Schleife nicht stillschweigend.
+5. Arbeite die Cluster 1 bis 10 durch. Führe am Ende die vorgesehenen Gesamt-Gates und die End-to-End-Abnahme aus, soweit technisch möglich. Gib einen Abschlussbericht mit implementierten Funktionen, bestanden/nicht bestandenen Gates, verbliebenen Findings, Tech-Debt und nicht umgesetzten Roadmap-Punkten. Melde keinen vollständigen Produktabschluss, solange öffentliche MCP-Verträge oder erforderliche Gates offen sind.
+
+### Umgang mit Findings und Blockern
+
+- Halte pro Cluster den Implementierungsstand und jede Review-/Fixrunde unter `tasks/AiNetLinter-Uebernehmen/Reviews/Cluster-XX.md` fest: geprüfter Commit, Reviewer-Modell, Findings mit Priorität, zugehörige Fixes, ausgeführte Gates und verbleibende Risiken. Nutze `tasks/AiNetLinter-Uebernehmen/Findings.md` als clusterübergreifendes Register für offene Findings und Tech-Debt; verlinke auf die Detailstelle statt Befunde mehrfach auszuschreiben.
+- Ein **lokaler Blocker** betrifft eine einzelne Funktion oder einen klar isolierten Slice. Halte ihn mit Ursache, Auswirkung, versuchten Lösungswegen und nächstem Schritt fest, lasse dessen Checkbox offen und fahre mit unabhängiger Arbeit fort. Dasselbe gilt für nicht kritische Review-Findings nach ausgeschöpften Fixrunden.
+- Ein **globaler Blocker** liegt nur vor, wenn ohne Nutzerentscheidung, fehlende externe Voraussetzung oder grundlegende technische Reparatur keine sinnvolle unabhängige Implementierung mehr möglich ist. Frage bei echten Produkt-/Architekturentscheidungen oder widersprüchlichen Quellen den Nutzer; blockiere bis zur Antwort nur die davon abhängigen Arbeiten. Nutze die Zeit für unabhängige Clusterpunkte.
+- Behandle fehlgeschlagene Builds, relevante Tests, Protokollfehler, Schreibzugriffe auf analysierte Workspaces und unzulässige Linter-Funktionen nicht als erledigt. Trenne lokal betroffene Slices sauber ab. Committe Code nur nach den vorgeschriebenen Verifikations-Gates; dokumentiere unvollständige Arbeiten und bearbeite andere Slices weiter.
+- Priorisiere zuerst fehlende nutzbare Navigationsfunktionen und ihre Integration, dann Defekte, die Folgeaufrufe oder mehrere Tools betreffen, danach eng begrenzte Qualitätsverbesserungen. Bei gleicher Priorität bevorzuge einen vollständigen vertikalen Pfad vom MCP-Aufruf bis zum getesteten Ergebnis gegenüber zusätzlicher interner Infrastruktur.
 
 
 roadmap:
