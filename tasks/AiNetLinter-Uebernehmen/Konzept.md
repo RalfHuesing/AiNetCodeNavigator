@@ -32,16 +32,16 @@ grundlagen schaffen:
 ## Detaillierte Umsetzungs-Roadmap (Von "unten" nach "oben")
 
 ### Cluster 1: Fundamentale Basis- & Test-Infrastruktur
-- [ ] 1.1 TestKit-Basisinfrastruktur aufbauen:
-  - [ ] `TestWorkspaceBuilder`: Dynamischer `AdhocWorkspace` für In-Memory-Projekte, SyntaxTrees und Compilations
-  - [ ] `SampleCodeFixtures`: Realistische C#-Codevorlagen (Klassen, Interfaces, Vererbung, Records, Extensions)
-  - [ ] Semantische Assertions & Result-Prüfhilfen in TestKit
-- [ ] 1.2 Logging-Setup in Host (`AiNetCodeNavigator.Logging`):
-  - [ ] Serilog-Konfiguration mit täglicher Rotation und Dateiausgabe unter Host-Pfad
-  - [ ] `stderr`-Fehlerkanal, striktes Verbot von Ausgaben auf `stdout`
-- [ ] 1.3 Caching-Infrastruktur (`AiNetCodeNavigator.Core.Caching`):
-  - [ ] `CompilationCacheManager`: In-Memory- und MTime-basierter Cache für SyntaxTrees & Compilations
-  - [ ] FastTests für Cache-Hit/Miss und Invalidierung
+- [x] 1.1 TestKit-Basisinfrastruktur aufbauen:
+  - [x] `TestWorkspaceBuilder`: Dynamischer `AdhocWorkspace` für In-Memory-Projekte, SyntaxTrees und Compilations
+  - [x] `SampleCodeFixtures`: Realistische C#-Codevorlagen (Klassen, Interfaces, Vererbung, Records, Extensions)
+  - [x] Semantische Assertions & Result-Prüfhilfen in TestKit
+- [x] 1.2 Logging-Setup in Host (`AiNetCodeNavigator.Logging`):
+  - [x] Serilog-Konfiguration mit täglicher Rotation und Dateiausgabe unter Host-Pfad
+  - [x] `stderr`-Fehlerkanal, striktes Verbot von Ausgaben auf `stdout`
+- [x] 1.3 Caching-Infrastruktur (`AiNetCodeNavigator.Core.Caching`):
+  - [x] `CompilationCacheManager`: In-Memory- und MTime-basierter Cache für SyntaxTrees & Compilations
+  - [x] FastTests für Cache-Hit/Miss und Invalidierung
 
 ### Cluster 2: Workspace- & Resident-Solution-Engine
 - [ ] 2.1 Target-Erkennung & Validierung (`AiNetCodeNavigator.Core.Workspace`):

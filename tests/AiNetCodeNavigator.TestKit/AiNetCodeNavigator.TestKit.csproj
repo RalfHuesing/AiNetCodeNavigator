@@ -5,6 +5,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="xunit.v3.assert" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="AiNetCodeNavigator.FastTests" />
     <InternalsVisibleTo Include="AiNetCodeNavigator.IntegrationTests" />
   </ItemGroup>
