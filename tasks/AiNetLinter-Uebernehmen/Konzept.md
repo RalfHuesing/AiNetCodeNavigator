@@ -120,11 +120,11 @@ grundlagen schaffen:
   - [x] FastTests für Index-Scope
 
 ### Cluster 7: Assembly-Dekompilierung & Binary-Navigation (Core)
-- [ ] 7.1 Decompiler & virtueller Roslyn-Workspace:
-  - [ ] `ICSharpCode.Decompiler`-Adapter (`AssemblyDecompilationAdapter`)
-  - [ ] `AssemblyDecompilationCache`: On-the-Fly-Dekompilierung und Caching
-  - [ ] `AssemblyRoslynWorkspaceFactory`: Erzeugung eines virtuellen Roslyn-Workspaces aus Dekompilaten
-  - [ ] FastTests für Dekompilierung und virtuellen Workspace
+- [x] 7.1 Decompiler & virtueller Roslyn-Workspace:
+  - [x] `ICSharpCode.Decompiler`-Adapter (`AssemblyDecompilationAdapter`)
+  - [x] `AssemblyDecompilationCache`: On-the-Fly-Dekompilierung und Caching
+  - [x] `AssemblyRoslynWorkspaceFactory`: Erzeugung eines virtuellen Roslyn-Workspaces aus Dekompilaten
+  - [x] FastTests für Dekompilierung und virtuellen Workspace
 - [ ] 7.2 Assembly-Navigations-Backends:
   - [ ] `inspect_assembly`: Öffentliche API und Typdefinitionen extrahieren
   - [ ] `get_assembly_context`: Zusammenfassung von Assemblies
