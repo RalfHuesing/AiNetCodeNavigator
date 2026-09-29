@@ -4,6 +4,8 @@ Ich will alle Features von AiNetLinter die für Code-Navigation zuständig sind 
 
 siehe Landkarte [CodeMap-AiNetLinter.md](CodeMap-AiNetLinter.md)
 
+Review der bisherigen Umsetzung und Belege für ergänzte Aufgaben: [Review-2026-09-30.md](Review-2026-09-30.md).
+
 
 Inklusive voller test abdeckung.
 
@@ -16,6 +18,12 @@ AiNetCodeNavigator ist ausschließlich ein MCP Server für agentische navigation
 bei unklarheiten immer in AiNetLinter nachschauen und nach AiNetCodeNavigator adaptieren
 
 bei entscheidungsfragen -> blocken und nutzer fragen!
+
+## Zielbild und Abnahme
+
+AiNetCodeNavigator soll als eigenständiger, ausschließlich lesender MCP-Server die C#-Navigationswerkzeuge von AiNetLinter für Solutions und verwaltete Assemblies anbieten. Ein Agent muss von einem gefundenen Symbol über die ausgegebene `h:...`-ID zu Body, Struktur, Referenzen, Aufrufern, Implementierungen und Kontext navigieren können. Die ID darf bei gleichem Namen in verschiedenen Projekten nicht auf das falsche Symbol zeigen; ungültige oder veraltete IDs sollen eine verständliche, wiederherstellbare Fehlermeldung liefern.
+
+Zur Abnahme gehören 20 Navigationswerkzeuge und zwei Wartungswerkzeuge (`get_server_health`, `reload_config`) über den realen MCP-Stdio-Transport, begrenzte und fortsetzbare Antworten, sichere Fehlerfälle sowie Tests für jeden öffentlichen Tool-Vertrag und dessen wichtige Fehlerfälle. Navigation verändert weder den analysierten Code noch den Benutzer-Workspace. Linting, Qualitätsmetriken, Diagnose- und Refactoring-Werkzeuge bleiben außerhalb des Produkts. Die `[x]`-Markierung eines Core-Bausteins belegt noch keinen funktionsfähigen MCP-Aufruf; die Ende-zu-Ende-Abnahme erfolgt in Cluster 10.
 
 
 roadmap:
@@ -54,6 +62,9 @@ grundlagen schaffen:
   - [x] `ProjectLease` & Nebenläufigkeits-Schutz
   - [x] Staleness-Erkennung bei geänderten Quelldateien
   - [x] FastTests und IntegrationTests für residenten Solution-Lebenszyklus
+- [ ] 2.3 Staleness und Ladefehler über echte Solutions absichern:
+  - [ ] Änderungen an vorhandenen Dateien, neu hinzugefügte/entfernte Dateien sowie geänderte Projekt- und Referenzstruktur in nachfolgenden Navigationsaufrufen korrekt abbilden; Snapshot-/Reload-Verhalten festlegen und testen.
+  - [ ] Lade- und MSBuild-Fehler mit Ursache und erneuter Versuchsmöglichkeit an den MCP-Aufrufer melden; Integrationstest mit realer `.slnx` statt nur in-memory-Workspace.
 
 ### Cluster 3: Kompaktes Handoff- & Symbol-Identitätssystem
 - [x] 3.1 Symbol-Identität (`AiNetCodeNavigator.Core.Symbols`):
@@ -63,6 +74,9 @@ grundlagen schaffen:
   - [x] `HandoffCounterAlphabet` & `HandoffCounterStore`: Kompakte ID-Generierung (`h:...`)
   - [x] `HandoffHandleRegistry` & `SymbolHandoffIdentifier`: Bidirektionale Zuordnung von Token zu Symbol/Speicherort
   - [x] FastTests für Handoff-Erzeugung, Token-Auflösung und Thread-Sicherheit
+- [ ] 3.3 Handoff-Vertrag über Producer und Consumer schließen:
+  - [ ] Alle ausgegebenen `h:...`-IDs aus Source- und Assembly-Tools auf dieselbe kanonische, ziel- und snapshotgebundene Identität zurückführen; rohe DocumentationCommentIds nicht als scheinbar gültige Handoffs ausgeben.
+  - [ ] Roundtrip-Tests von `find_symbol`, `get_file_skeleton` und `inspect_assembly` zu den jeweils erlaubten Folge-Tools ergänzen; unbekannte, fremde und nach Änderung veraltete Handles als typisierte Fehler behandeln.
 
 ### Cluster 4: Semantische Symbol- & Code-Inspektions-Engine (Core)
 - [x] 4.1 Symbolsuche (`find_symbol`-Engine):
@@ -86,6 +100,8 @@ grundlagen schaffen:
 - [x] 4.6 Feature-Kontext (`get_feature_context`-Engine):
   - [x] `FeatureContextScanner`: Bündelung von Symbol, Signatur, Aufrufern und Tests *(ohne Linter-Violations!)*
   - [x] FastTests für Feature-Kontext
+- [ ] 4.7 Gemeinsame Symbolauflösung für Folge-Tools fertigstellen: eindeutige qualifizierte Namen, Doc-IDs, Positionen und `h:...`-IDs unterstützen; bei mehrdeutigen Kurznamen auswählbare Treffer statt eines zufälligen ersten Symbols liefern. Die Tool-Verträge und Fehlerfälle mit FastTests belegen.
+- [ ] 4.8 Test-Kontext fachlich absichern: gleichnamige Testklassen in verschiedenen Projekten getrennt erhalten, xUnit/NUnit/MSTest korrekt klassifizieren und Empfehlungen als Heuristik ausweisen; Tests für Mehrprojektfälle und `TestMethodAttribute` ergänzen.
 
 ### Cluster 5: Call Graph, Beziehungen & Hierarchien (Core)
 - [x] 5.1 Call-Tree-Builder (`get_call_tree`-Engine):
@@ -106,6 +122,7 @@ grundlagen schaffen:
 - [x] 5.5 Projekt- & Namespace-Abhängigkeiten (`dependency_graph`-Engine):
   - [x] `DependencyGraphScanner`: Projektabhängigkeiten und Namespace-Referenzen
   - [x] FastTests für Dependency-Graphen
+- [ ] 5.6 Beziehungen über ein gemeinsames Test-Szenario prüfen: Aufrufe, Referenzen, Overrides, Interface-Implementierungen und transitive Auswirkungen über mehrere Projekte hinweg mit identischer Semantik und stabilen Handoffs testen; Grenzen und Kürzungen der Ergebnisse ausgeben.
 
 ### Cluster 6: Projekt-, Datei- & Scope-Struktur (Core)
 - [x] 6.1 Dateibaum-Scanner (`get_file_tree`-Engine):
@@ -132,6 +149,7 @@ grundlagen schaffen:
   - [ ] `find_assembly_extensions`: Auffinden von Extension Methods in Binaries
   - [ ] `resolve_type_origin`: DLL-Pfad und NuGet-Herkunft externer Typen ermitteln
   - [ ] FastTests für Assembly-Navigation
+- [ ] 7.3 Assembly-Folgeaufrufe und Lebenszyklus prüfen: `inspect_assembly`-Handoffs aus der formatierten und strukturierten Antwort müssen mit passender Assembly-Session bei Folge-Tools auflösbar sein; Cache-/Session-Wiederverwendung, geänderte DLL, abgelaufene Tokens, fehlende Referenzen und native Dateien testen.
 
 ### Cluster 8: MCP Protocol Layer, Budgeting & Response-Formatting
 - [ ] 8.1 Budgeting & Truncation:
@@ -144,6 +162,7 @@ grundlagen schaffen:
 - [ ] 8.4 Argument-Validierung:
   - [ ] `McpArgumentValidationFilter`: Schema- und Eingabevalidierung für alle Tools
   - [ ] FastTests für Budgeting, Formatting und Validierung
+- [ ] 8.5 Einheitlichen öffentlichen Fehler- und Fortsetzungsvertrag pro Tool testen: `IsError`, Retry bei noch ladendem Target, `RESPONSE_BUDGET_TOO_SMALL`, `minimumResponseBytes`, stabile Pagination und Eingabegrenzen dürfen weder partielle Erfolge vortäuschen noch Daten still verlieren.
 
 ### Cluster 9: MCP Server Host & Tool-Registrierungen (Ganz oben)
 - [ ] 9.1 Host-Runner & Lifecycle (`AiNetCodeNavigator`):
@@ -157,14 +176,16 @@ grundlagen schaffen:
   - [ ] Kontext-Tools: `get_feature_context`, `get_test_context`
 - [ ] 9.3 Host- & Handshake-Integrationstests:
   - [ ] Test der Tool-Registrierungen, Argumentfilter und MCP-Handshakes
+- [ ] 9.4 Realen Host-Lebenszyklus verifizieren: Stdio-Handshake, parallele Anfragen, Cancellation, Neustart, Logging nur auf `stderr`/Datei und sauberes Herunterfahren; der bisherige Typ-Existenztest genügt dafür nicht.
 
 ### Cluster 10: End-to-End Verifikation, Dokumentation & Abnahme
 - [ ] 10.1 E2E-Integrationstests:
   - [ ] Stdio-Kommunikation gegen echte Solution und echte Assemblies
-  - [ ] Verifikation aller 22 Navigationstools
+  - [ ] Verifikation aller 20 Navigations- und zwei Wartungswerkzeuge
 - [ ] 10.2 Dokumentation & Tool-Katalog:
   - [ ] `docs/tools/`: Vollständiger Tool-Katalog mit Schemas und Parametern
   - [ ] `docs/setup/`: Konfiguration für Claude Desktop, Cursor, Antigravity
 - [ ] 10.3 Finale Abnahme:
   - [ ] `pwsh -File ./scripts/build.ps1` (0 Warnungen, 0 Fehler)
   - [ ] `pwsh -File ./scripts/test.ps1` (100% bestandene Tests)
+- [ ] 10.4 Abnahmematrix aus AiNetLinter-Verhalten und Navigator-Vertrag erstellen: für jedes der 22 Werkzeuge mindestens Erfolg, relevante Filter, Handoff/Folgeaufruf, Pagination/Budget und Fehlerszenarien nachweisen; ausdrücklich ausgeschlossene Linter-, Metrik- und Schreibwerkzeuge dürfen nicht registriert sein.
