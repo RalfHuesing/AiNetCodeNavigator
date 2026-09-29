@@ -88,24 +88,24 @@ grundlagen schaffen:
   - [x] FastTests für Feature-Kontext
 
 ### Cluster 5: Call Graph, Beziehungen & Hierarchien (Core)
-- [ ] 5.1 Call-Tree-Builder (`get_call_tree`-Engine):
-  - [ ] `CallTreeBuilder`: Traversierung eingehender (`incoming`) und ausgehender (`outgoing`) Aufrufe via Roslyn-AST
-  - [ ] `CallGraphTextRenderer` (ASCII) & `CallTreeMermaidRenderer` (Mermaid-Diagramme)
-  - [ ] FastTests für Call-Trees
-- [ ] 5.2 Referenzen & Implementierungen (`find_references`, `find_implementations`-Engine):
-  - [ ] `FindReferencesResolver`: AST-Aufrufstellensuche über Solution-Grenzen
-  - [ ] Interface- und abstrakte Methoden-Implementierungssuche
-  - [ ] FastTests für Referenzen und Implementierungen
-- [ ] 5.3 Typ-Hierarchien (`get_type_hierarchy`-Engine):
-  - [ ] `TypeHierarchyScanner`: Basisklassen, Schnittstellen und abgeleitete Typen ermitteln
-  - [ ] `GetTypeHierarchyFormatter`: Formatierung als Baumstruktur
-  - [ ] FastTests für Typ-Hierarchien
-- [ ] 5.4 Transitive Impact-Analyse (`get_impact`-Engine):
-  - [ ] Ermittlung des transitiven Blast Radius bei Änderungen an Symbolen
-  - [ ] FastTests für Impact-Berechnung
-- [ ] 5.5 Projekt- & Namespace-Abhängigkeiten (`dependency_graph`-Engine):
-  - [ ] `DependencyGraphScanner`: Projektabhängigkeiten und Namespace-Referenzen
-  - [ ] FastTests für Dependency-Graphen
+- [x] 5.1 Call-Tree-Builder (`get_call_tree`-Engine):
+  - [x] `CallTreeBuilder`: Traversierung eingehender (`incoming`) und ausgehender (`outgoing`) Aufrufe via Roslyn-AST
+  - [x] `CallGraphTextRenderer` (ASCII) & `CallTreeMermaidRenderer` (Mermaid-Diagramme)
+  - [x] FastTests für Call-Trees
+- [x] 5.2 Referenzen & Implementierungen (`find_references`, `find_implementations`-Engine):
+  - [x] `FindReferencesResolver`: AST-Aufrufstellensuche über Solution-Grenzen
+  - [x] Interface- und abstrakte Methoden-Implementierungssuche
+  - [x] FastTests für Referenzen und Implementierungen
+- [x] 5.3 Typ-Hierarchien (`get_type_hierarchy`-Engine):
+  - [x] `TypeHierarchyScanner`: Basisklassen, Schnittstellen und abgeleitete Typen ermitteln
+  - [x] `GetTypeHierarchyFormatter`: Formatierung als Baumstruktur
+  - [x] FastTests für Typ-Hierarchien
+- [x] 5.4 Transitive Impact-Analyse (`get_impact`-Engine):
+  - [x] Ermittlung des transitiven Blast Radius bei Änderungen an Symbolen
+  - [x] FastTests für Impact-Berechnung
+- [x] 5.5 Projekt- & Namespace-Abhängigkeiten (`dependency_graph`-Engine):
+  - [x] `DependencyGraphScanner`: Projektabhängigkeiten und Namespace-Referenzen
+  - [x] FastTests für Dependency-Graphen
 
 ### Cluster 6: Projekt-, Datei- & Scope-Struktur (Core)
 - [ ] 6.1 Dateibaum-Scanner (`get_file_tree`-Engine):
