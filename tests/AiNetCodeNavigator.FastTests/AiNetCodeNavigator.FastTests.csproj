@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <XunitRegisterBuiltInRunnerReporters>false</XunitRegisterBuiltInRunnerReporters>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="xunit.v3.assert" />
+    <PackageReference Include="xunit.v3.core" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="AiNetCodeNavigator.TestKit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AiNetCodeNavigator.Core\AiNetCodeNavigator.Core.csproj" />
+    <ProjectReference Include="..\..\src\AiNetCodeNavigator\AiNetCodeNavigator.csproj" />
+    <ProjectReference Include="..\AiNetCodeNavigator.TestKit\AiNetCodeNavigator.TestKit.csproj" />
+  </ItemGroup>
+
+</Project>

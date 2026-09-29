@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AiNetCodeNavigator.Core/AiNetCodeNavigator.Core.csproj" />
+    <Project Path="src/AiNetCodeNavigator/AiNetCodeNavigator.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AiNetCodeNavigator.FastTests/AiNetCodeNavigator.FastTests.csproj" />
+    <Project Path="tests/AiNetCodeNavigator.IntegrationTests/AiNetCodeNavigator.IntegrationTests.csproj" />
+    <Project Path="tests/AiNetCodeNavigator.TestKit/AiNetCodeNavigator.TestKit.csproj" />
+  </Folder>
+</Solution>

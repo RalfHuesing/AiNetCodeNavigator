@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AiNetCodeNavigator.Core\AiNetCodeNavigator.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AiNetCodeNavigator.FastTests" />
+    <InternalsVisibleTo Include="AiNetCodeNavigator.IntegrationTests" />
+  </ItemGroup>
+
+</Project>

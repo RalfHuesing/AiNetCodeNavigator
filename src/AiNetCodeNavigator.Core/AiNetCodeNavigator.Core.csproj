@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="ICSharpCode.Decompiler" />
+    <PackageReference Include="Microsoft.Build.Locator" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" />
+    <PackageReference Include="SharpToken" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AiNetCodeNavigator" />
+    <InternalsVisibleTo Include="AiNetCodeNavigator.TestKit" />
+    <InternalsVisibleTo Include="AiNetCodeNavigator.FastTests" />
+    <InternalsVisibleTo Include="AiNetCodeNavigator.IntegrationTests" />
+  </ItemGroup>
+
+</Project>
