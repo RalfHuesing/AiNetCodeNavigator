@@ -1,0 +1,29 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>10.0</AnalysisLevel>
+    <MeziantouAnalysisMode>None</MeziantouAnalysisMode>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$(MSBuildProjectFullPath.Contains('tests'))">
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!-- Transitive dependency for Microsoft.CodeAnalysis.Workspaces.MSBuild:
+       MSBuild.Locator 1.11+ requires ExcludeAssets="runtime" and PrivateAssets="all"
+       so MSBuild runtime is not copied into output. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Build.Framework">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.StringTools">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>

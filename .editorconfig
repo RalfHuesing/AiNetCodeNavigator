@@ -1,0 +1,54 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = crlf
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.cs]
+# Build failures are reserved for concrete technical defects.
+# Design, size, complexity, coupling, and context-dependent performance advice belong in review.
+dotnet_diagnostic.MA0053.severity = none
+dotnet_diagnostic.CA1508.severity = none
+dotnet_diagnostic.CA1851.severity = none
+dotnet_diagnostic.CA1849.severity = none
+
+# Resource and memory safety
+dotnet_diagnostic.CA2000.severity = error
+dotnet_diagnostic.CA2012.severity = error
+dotnet_diagnostic.MA0025.severity = error
+
+# Async and task correctness. Cancellation boundaries require context-specific decisions.
+dotnet_diagnostic.MA0040.severity = none
+dotnet_diagnostic.MA0042.severity = error
+dotnet_diagnostic.MA0045.severity = none
+dotnet_diagnostic.MA0064.severity = error
+dotnet_diagnostic.MA0134.severity = error
+dotnet_diagnostic.MA0155.severity = error
+
+# Security
+dotnet_diagnostic.MA0009.severity = error
+
+# I/O correctness
+dotnet_diagnostic.MA0060.severity = error
+
+# Dangerous thread operations and async enumeration
+dotnet_diagnostic.MA0035.severity = error
+dotnet_diagnostic.MA0079.severity = none
+
+# Keep technical checks active in test infrastructure too. Suppress specific false positives locally.
+
+[**/*.g.cs]
+generated_code = true
+
+[**/obj/**.cs]
+generated_code = true
+
+[**/bin/**.cs]
+generated_code = true
