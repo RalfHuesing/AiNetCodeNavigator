@@ -65,27 +65,27 @@ grundlagen schaffen:
   - [x] FastTests für Handoff-Erzeugung, Token-Auflösung und Thread-Sicherheit
 
 ### Cluster 4: Semantische Symbol- & Code-Inspektions-Engine (Core)
-- [ ] 4.1 Symbolsuche (`find_symbol`-Engine):
-  - [ ] `FindSymbolScanner`: Filter nach Namen/Patterns, `SymbolKind`, `scopeType` (`production`, `tests`, `all`)
-  - [ ] FastTests für Symbolsuche
-- [ ] 4.2 Symbol-Body-Extraktion (`get_symbol_body`-Engine):
-  - [ ] `SourceSymbolBodyResolver`: Syntax-Extraktion aus AST mit Paginierung (`startLine`, `maxBodyLines`)
-  - [ ] Batch-Extraktion für mehrere Symbole in einem Aufruf
-  - [ ] FastTests für Symbol-Body-Lesen
-- [ ] 4.3 File-Skeletons (`get_file_skeleton`-Engine):
-  - [ ] `SkeletonSyntaxWalker` & `SkeletonMapBuilder`: Syntax-Knoten ohne Methodenrümpfe erfassen
-  - [ ] `SkeletonMarkdownRenderer`: Formatierte Markdown-Ausgabe mit Handoff-IDs
-  - [ ] FastTests für File-Skeletons
-- [ ] 4.4 Klassen-Struktur (`get_class_structure`-Engine):
-  - [ ] `ClassStructureScanner`: Vollständige Member-Übersicht (Properties, Methoden, Konstruktoren, Sichtbarkeiten)
-  - [ ] FastTests für Class-Structure
-- [ ] 4.5 Test-Erkennung & Test-Kontext (`get_test_context`-Engine):
-  - [ ] `TestDetector`: Erkennung von Testprojekten und Testframeworks (xUnit, NUnit, MSTest)
-  - [ ] `TestRecommendationBuilder`: Verknüpfung von Produktionscode mit abdeckenden Tests
-  - [ ] FastTests für Test-Kontext
-- [ ] 4.6 Feature-Kontext (`get_feature_context`-Engine):
-  - [ ] `FeatureContextScanner`: Bündelung von Symbol, Signatur, Aufrufern und Tests *(ohne Linter-Violations!)*
-  - [ ] FastTests für Feature-Kontext
+- [x] 4.1 Symbolsuche (`find_symbol`-Engine):
+  - [x] `FindSymbolScanner`: Filter nach Namen/Patterns, `SymbolKind`, `scopeType` (`production`, `tests`, `all`)
+  - [x] FastTests für Symbolsuche
+- [x] 4.2 Symbol-Body-Extraktion (`get_symbol_body`-Engine):
+  - [x] `SourceSymbolBodyResolver`: Syntax-Extraktion aus AST mit Paginierung (`startLine`, `maxBodyLines`)
+  - [x] Batch-Extraktion für mehrere Symbole in einem Aufruf
+  - [x] FastTests für Symbol-Body-Lesen
+- [x] 4.3 File-Skeletons (`get_file_skeleton`-Engine):
+  - [x] `SkeletonSyntaxWalker` & `SkeletonMapBuilder`: Syntax-Knoten ohne Methodenrümpfe erfassen
+  - [x] `SkeletonMarkdownRenderer`: Formatierte Markdown-Ausgabe mit Handoff-IDs
+  - [x] FastTests für File-Skeletons
+- [x] 4.4 Klassen-Struktur (`get_class_structure`-Engine):
+  - [x] `ClassStructureScanner`: Vollständige Member-Übersicht (Properties, Methoden, Konstruktoren, Sichtbarkeiten)
+  - [x] FastTests für Class-Structure
+- [x] 4.5 Test-Erkennung & Test-Kontext (`get_test_context`-Engine):
+  - [x] `TestDetector`: Erkennung von Testprojekten und Testframeworks (xUnit, NUnit, MSTest)
+  - [x] `TestRecommendationBuilder`: Verknüpfung von Produktionscode mit abdeckenden Tests
+  - [x] FastTests für Test-Kontext
+- [x] 4.6 Feature-Kontext (`get_feature_context`-Engine):
+  - [x] `FeatureContextScanner`: Bündelung von Symbol, Signatur, Aufrufern und Tests *(ohne Linter-Violations!)*
+  - [x] FastTests für Feature-Kontext
 
 ### Cluster 5: Call Graph, Beziehungen & Hierarchien (Core)
 - [ ] 5.1 Call-Tree-Builder (`get_call_tree`-Engine):
