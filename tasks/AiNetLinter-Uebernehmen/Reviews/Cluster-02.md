@@ -45,3 +45,11 @@
 | `git diff --check` | Passed |
 
 - The point 2.1 audit checkbox remains open for independent follow-up; no work on 2.2 or 2.3 is included.
+
+### Independent follow-up audit
+
+- Audit count: 2 of 3 for point 2.1; audited fix commit `891a3b0` independently. The P2 finding from audit 1 meets its acceptance condition and is closed; the point 2.1 audit checkbox is checked.
+- `src/AiNetCodeNavigator.Core/Workspace/AnalysisTargetResolver.cs:75-84` catches `IOException`, `UnauthorizedAccessException`, and `SecurityException` only around fingerprint creation and routes them to `TARGET_UNREADABLE` at `:174-182`. The error includes the canonical path as context, `$.targetPath`, retry guidance, and the existing error status. Successful hashing and prior path/type validation remain on their original paths.
+- `tests/AiNetCodeNavigator.FastTests/Workspace/AnalysisTargetResolverTests.cs:134-151` holds an existing `.slnx` file with `FileShare.None` and asserts the structured error without an exception. This is a deterministic regression case on the Windows target platform. The test and fix cover the reported lock/open failure; a separately timed file-removal race is not needed for this acceptance condition.
+- No additional point 2.1 finding emerged from the targeted review. Public MCP transport behavior and English product text remain assigned to clusters 9–11 and 10, respectively.
+- Audit verification: code, test, and documentation inspected; no build or tests were run by this auditor. The fix gates above are the implementer's reported results, not this audit's results. The documentation-only diff was reviewed and `git diff --check` passed before commit.

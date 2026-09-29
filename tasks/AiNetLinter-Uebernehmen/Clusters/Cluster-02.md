@@ -7,7 +7,7 @@
   - [x] Pfadnormalisierung und Sicherheitsprüfung
   - [x] FastTests für Target-Resolver
   - [x] Handle file access and race failures during target fingerprinting as structured, recoverable resolution errors; cover a locked or vanished target.
-  - [ ] Review/Audit zu 2.1 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 2.1 durchführen; Findings ergänzen und umsetzen.
 - [x] 2.2 Resident Solution Registry (`ProjectRegistry`):
   - [x] `ProjectDefinition` und `ProjectDefinitionLoader`
   - [x] Hintergrund-Laden via MSBuild-Locator (`operation=retry`-Verhalten)
