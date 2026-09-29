@@ -20,3 +20,5 @@
   - [x] Gespeicherte Hashes dürfen nicht durch hashlose Lookups umgangen werden; beide Cache-Arten testen.
   - [x] Compilations bei jeder semantisch relevanten Eingabeänderung invalidieren oder mit vollständigem Fingerprint prüfen.
   - [x] Review/Audit zu 1.3 durchführen; Findings ergänzen und umsetzen.
+
+- [ ] Cluster-Review: Aktuelle Integrationstest-Dokumentation ohne unbelegte MCP-Protokollabnahme formulieren.
