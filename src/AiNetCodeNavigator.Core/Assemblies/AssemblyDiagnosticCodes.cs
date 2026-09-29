@@ -1,0 +1,47 @@
+#nullable enable
+
+using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
+
+namespace AiNetCodeNavigator.Core.Assemblies;
+
+internal static class AssemblyDiagnosticCodes
+{
+    internal const string EmptyEventAccessor = "CS0073";
+    internal const string EmptyMemberBody = "CS0501";
+    internal const string MetadataMissing = "assembly-metadata-missing";
+
+    private static readonly ImmutableDictionary<string, string> Values = new Dictionary<string, string>
+    {
+        [Key(nameof(AssemblyDecompilationAdapter), nameof(OperationCanceledException))] = "assembly-decompilation-cancelled",
+        [Key(nameof(AssemblyDecompilationAdapter), nameof(AssemblyDecompilationOptions))] = "assembly-decompilation-failed",
+        [Key(nameof(AssemblyDecompilationAdapter), nameof(DecompiledDocument.CSharpSource))] = "assembly-type-decompilation-empty",
+        [Key(nameof(AssemblyDecompilationAdapter), nameof(DecompiledDocument.GeneratedPath))] = "assembly-type-decompilation-failed",
+        [Key(nameof(AssemblyDecompilationCache), nameof(AssemblyCacheReadRequest))] = "assembly-cache-invalid",
+        [Key(nameof(AssemblyDecompilationCache), nameof(AssemblyCachePublishRequest))] = "assembly-cache-publish-failed",
+        [Key(nameof(AssemblyDecompilationCache), nameof(AssemblyCacheContract.CurrentPointerFileName))] = "assembly-cache-pointer-race",
+        [Key(nameof(AssemblyDecompilationManifest), nameof(AssemblyDecompilationManifest.Diagnostics))] = "assembly-cache-warning",
+        [Key(nameof(AssemblyDecompilationManifest), nameof(AssemblyDecompilationManifest.Status))] = "assembly-cache-error",
+        [Key(nameof(AssemblyFingerprintCalculator), nameof(AssemblyFingerprintCalculator.Canonicalize))] = "assembly-path-missing",
+        [Key(nameof(AssemblyFingerprintCalculator), nameof(AssemblyFingerprintCalculator.TryCreate))] = "assembly-fingerprint-failed",
+        [Key(nameof(AssemblyReferenceResolver), nameof(AssemblyReferenceResolver.Resolve))] = MetadataMissing,
+        [Key(nameof(AssemblyReferenceResolver), nameof(AssemblyReferenceResolution.MetadataReferences))] = "assembly-reference-metadata-failed",
+        [Key(nameof(AssemblyReferenceResolver), nameof(AssemblyReferenceResolution.Identity))] = "assembly-metadata-read-failed",
+        [Key(nameof(AssemblyReferenceResolver), nameof(AssemblyReferenceDto.Resolved))] = "assembly-reference-unresolved",
+        [Key(nameof(AssemblyReferenceResolver), nameof(AssemblyReferenceDto.Version))] = "assembly-reference-identity-mismatch",
+        [Key(nameof(AssemblyReferenceResolver), nameof(AssemblyReferenceDto.Name))] = "assembly-reference-enumeration-failed",
+        [Key(nameof(AssemblyReferenceResolver), nameof(Microsoft.CodeAnalysis.MetadataReference))] = "assembly-reference-invalid",
+        [Key(nameof(AssemblyReferenceResolver), nameof(AssemblyIdentityDto))] = "assembly-reference-candidate-invalid",
+        [Key(nameof(AssemblyRoslynWorkspaceFactory), nameof(AssemblySessionStatus.Loading))] = "assembly-workspace-cancelled",
+        [Key(nameof(AssemblyRoslynWorkspaceFactory), nameof(AssemblySessionStatus.Failed))] = "assembly-workspace-failed",
+        [Key(nameof(AssemblyRoslynWorkspaceFactory), nameof(AssemblyRoslynSnapshot.Compilation))] = "assembly-workspace-compilation-failed",
+        [Key(nameof(AssemblyRoslynWorkspaceFactory), nameof(AssemblyRoslynSnapshot.Solution))] = "assembly-compilation-partial",
+    }.ToImmutableDictionary(StringComparer.Ordinal);
+
+    internal static string For(string owner, string member) => Values[Key(owner, member)];
+
+    internal static bool IsExpectedDeclarationOnlyDiagnostic(string id) => id is EmptyEventAccessor or EmptyMemberBody;
+
+    private static string Key(string owner, string member) => owner + "." + member;
+}
