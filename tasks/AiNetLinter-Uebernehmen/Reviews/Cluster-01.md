@@ -160,3 +160,11 @@ All official gates were executed after the final implementation and documentatio
 - **P3 — Current-state test documentation overstates protocol coverage.** `docs/development/build-and-tests.md:16` calls `AiNetCodeNavigator.IntegrationTests` an “End-to-end and MCP protocol integration test suite.” The current files under that project are `WorkspaceLoadingIntegrationTests.cs` and `McpServerIntegrationTests.cs`; the latter's process test at `tests/AiNetCodeNavigator.IntegrationTests/Mcp/McpServerIntegrationTests.cs:16-52` checks logging startup and stream silence, not a JSON-RPC handshake or tool call. `README.md:7` correctly says the MCP host and tool registrations are placeholders. Update the current-state test description so it does not imply protocol verification before Cluster 9/11 supplies it.
 - Acceptance: correct the integration-test description and review the affected docs for the same claim. This is cluster-level checklist work; points 1.1-1.3 remain closed. A follow-up integration review after the documentation fix is the first cluster fix round.
 - **Gate evidence:** the prior implementation record reports build (0 warnings/errors), FastTests (207/207), IntegrationTests (5/5), and full suite (212/212) passed. I inspected the existing `temp/build.log`, `temp/test-fast.log`, `temp/test-integration.log`, and `temp/test.log` tails; they show those results. I did not run build or tests for this documentation-only review.
+
+### Cluster Integration Review Fix Round 1
+
+- Fix base: `09f157087cfd20d0a3c76999e0625ca38bcd993d`.
+- Corrected the `IntegrationTests` project description in `docs/development/build-and-tests.md` to identify its current workspace-loading and host-startup coverage and state that MCP protocol handshakes and tool calls are not covered yet.
+- Searched `docs/` and `README.md` for other claims of MCP protocol or end-to-end test coverage. The remaining references describe reserved stdio/logging behavior or explicitly label the host and tool registrations as placeholders; none claims that a protocol exchange is tested.
+- Verification: `git diff --check` passed. This documentation-only fix did not require build or test gates.
+- The follow-up Cluster 1 integration review remains pending.

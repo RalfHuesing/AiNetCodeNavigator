@@ -13,7 +13,7 @@ The solution `AiNetCodeNavigator.slnx` contains five projects:
 - `src/AiNetCodeNavigator/`: MCP server host executable and Serilog logging bootstrap.
 - `tests/AiNetCodeNavigator.TestKit/`: Shared test support infrastructure, sample code fixtures, and workspace builders.
 - `tests/AiNetCodeNavigator.FastTests/`: Fast unit and component test suite.
-- `tests/AiNetCodeNavigator.IntegrationTests/`: End-to-end and MCP protocol integration test suite.
+- `tests/AiNetCodeNavigator.IntegrationTests/`: Workspace-loading and host-startup integration tests. MCP protocol handshakes and tool calls are not covered yet.
 
 Core, Host, and TestKit expose internal members to the test assemblies via `InternalsVisibleTo`.
 
