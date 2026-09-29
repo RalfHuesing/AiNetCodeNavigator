@@ -1,0 +1,14 @@
+---
+description: Verify changes against their scope.
+globs: '*'
+alwaysApply: true
+---
+
+# Verification
+
+- Do not change observable production behavior without an automated test at the appropriate level; test contracts and failure cases, not implementation details.
+- For reproducible defects, verify a failing test before fixing them. If a deterministic reproduction is infeasible, state why and verify the fix with the strongest practical check.
+- Do not claim a test, build, or product behavior passed without running the relevant check.
+- Do not weaken or skip a failing relevant test to make a change appear complete.
+- For code changes, run the affected tests and required project gates before committing. For documentation-only changes, review the diff and run `git diff --check`.
+- Do not run performance tests as a routine per-commit gate; run them when the relevant acceptance criteria require them.

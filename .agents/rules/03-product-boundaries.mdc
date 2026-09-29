@@ -1,0 +1,14 @@
+---
+description: Guardrails for product boundaries.
+globs: '*'
+alwaysApply: true
+---
+
+# Product boundaries
+
+- Do not treat task specifications as proof of implemented behavior; verify code before describing it as current state.
+- AiNetCodeNavigator is exclusively an MCP server for agentic C# code navigation.
+- Do not implement or copy linting, code auditing, diagnostics, code smell checks, or automatic refactoring into this project.
+- Navigation tools are strictly read-only: never modify analyzed source files or user workspaces.
+- Standard I/O (stdout) is reserved strictly for MCP JSON-RPC protocol transport. Never write log messages, diagnostic prints, or Serilog events to stdout (use stderr or rolling file logging).
+- Do not add dependencies from Core or navigation models to MCP transport/protocol layers.

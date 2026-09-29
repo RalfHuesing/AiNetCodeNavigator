@@ -1,0 +1,11 @@
+---
+description: Prefer maintained NuGet packages for general infrastructure.
+globs: '*'
+alwaysApply: true
+---
+# Dependencies
+
+- Do not reimplement general-purpose infrastructure covered by a suitable, maintained NuGet package.
+- Do not add floating or prerelease package versions by default. When adding or updating a package, choose the latest stable version compatible with the target framework and required contracts; pin it in `Directory.Packages.props`.
+- Do not add a package with a known unresolved vulnerability, incompatible license, or unsupported maintenance state. Verify API fit and relevant tests before adopting or upgrading it.
+- Document a concrete reason in the relevant task specification when a custom implementation or an older package version is necessary.

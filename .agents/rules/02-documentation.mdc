@@ -1,0 +1,12 @@
+---
+description: Keep current-state documentation aligned with each change.
+globs: '*'
+alwaysApply: true
+---
+
+# Documentation
+
+- With every repository change, check affected `docs/` pages and update them in the same commit when the implemented state changes.
+- Do not put plans, unimplemented contracts, history, or migration narratives in `docs/`.
+- Do not fill an empty `docs/` page until its subject exists and has been verified against the repository.
+- Keep each fact in one primary document; use links instead of duplicate descriptions. Keep indexes and relevant README files accurate.

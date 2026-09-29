@@ -1,0 +1,13 @@
+---
+description: Commit completed changes automatically and preserve unrelated work.
+globs: '*'
+alwaysApply: true
+---
+
+# Git and automatic commits
+
+- Commit each completed, verified task slice automatically, including documentation and rule-only changes. Do not wait for a separate commit request.
+- Before editing, note `HEAD` and working-tree status. Do not stage or commit unrelated or pre-existing user changes.
+- Never use `git add .`, `git add -A`, or `git commit -a`; stage explicit task paths only. Stop and report a staged-file conflict before committing.
+- Write commit messages in English following standard Conventional Commits.
+- Do not push, amend, or rewrite history unless the user explicitly asks.

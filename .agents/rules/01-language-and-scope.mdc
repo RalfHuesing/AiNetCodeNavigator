@@ -1,0 +1,13 @@
+---
+description: Language and repository boundaries.
+globs: '*'
+alwaysApply: true
+---
+
+# Language and scope
+
+- Communicate with the user in German, regardless of whether the task is written in German or English.
+- Task descriptions may be written in German or English.
+- Write code, rules, repository documentation, and new README files in English. Do not translate existing task specifications unless requested.
+- Do not modify external repositories such as `C:\Daten\Entwicklung\Ralf\AiNetLinter` or `C:\Daten\Entwicklung\Ralf\AiNetReview`. Treat them as read-only references.
+- Do not start another step of `.agents/agent-workflow/` unless the user invokes that step.

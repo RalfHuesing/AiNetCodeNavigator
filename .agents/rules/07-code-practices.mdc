@@ -1,0 +1,20 @@
+---
+description: Navigate C# code semantically, reuse existing code, and keep responsibilities focused.
+globs: '*'
+alwaysApply: true
+---
+
+# Code practices
+
+## Navigation
+
+- For C# navigation, proactively use AiNetLinter MCP's read-only symbol, reference, implementation, structure, and call tools before broad text searches. Pass the absolute path to the target solution (e.g. `AiNetCodeNavigator.slnx` once created, or `AiNetLinter.slnx` when inspecting reference code) as `targetPath`. Use `rg` for unindexed files or when MCP results are unavailable or incomplete. Do not run lint or verify tools for navigation.
+
+## Reuse and structure
+
+- Reuse existing project infrastructure and functions where appropriate. Extract shared code only for concrete reuse, keep refactoring within the task scope, and give each component a clear responsibility. Avoid speculative abstractions and god classes.
+
+## AiNetLinter as a reference
+
+- Before implementing a navigation feature or infrastructure component, inspect its AiNetLinter implementation and relevant tests.
+- Do not copy AiNetLinter linter/diagnostic rules, audit semantics, build gates, or CLI linter parsing. Adapt only navigation and query mechanisms into AiNetCodeNavigator and verify them with comprehensive tests.
