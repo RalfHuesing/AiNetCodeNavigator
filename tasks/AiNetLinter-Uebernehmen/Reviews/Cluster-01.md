@@ -101,8 +101,8 @@ All official gates were executed after the final code and documentation changes:
 - Implementation base: `c2c98848d96bb8293e77386797ddb76281dc5ca4` (working tree was clean).
 - Implementer comparison: AiNetLinter's `AnalysisCacheManager` and its cache tests were inspected read-only through the navigation MCP. The reference manager validates cached analysis entries against a content checksum and tests mismatched checksums, concurrency, and case-insensitive path lookup. Its cache is persistent and keyed by solution/configuration; it is not a direct implementation of this in-memory Roslyn compilation cache.
 - Existing `CompilationCacheManager` already provided separate thread-safe, case-insensitive path dictionaries for syntax trees and compilations, UTC MTime lookup, statistics, and per-file/per-project invalidation. However, `CachedTreeEntry.ContentHash` was stored but ignored on lookup; same-timestamp content changes could return a stale tree. The compilation cache had no matching source-hash safeguard, UTC `DateTime.Kind` was not enforced, and tests did not establish case-insensitive key or invalidation behavior.
-- Changes: optional content/source hash checks now supplement MTime lookup for trees and compilations while existing MTime-only calls remain supported. All lookup and store methods reject non-UTC timestamps. Tests cover same-MTime hash mismatches and matches, UTC validation, case-insensitive keys and invalidation, and the independent file/project invalidation scopes. Updated `docs/development/build-and-tests.md` with the cache contract and its checksum comparison to AiNetLinter.
-- Scope remains the in-memory cache. It is not connected to workspace/compilation consumers yet; callers must supply hashes when they need protection from same-timestamp source changes. The cache stays ephemeral, while AiNetLinter's reference cache persists analysis results to disk.
+- Initial changes added optional content/source hashes alongside MTime lookup and UTC timestamp validation. Audit 1 identified that callers could omit a hash and that a source-only hash did not capture every compilation input; the fixes below supersede that initial contract. File/project invalidation and case-insensitive lookup remain separate cache behaviors.
+- Final scope remains the in-memory cache. It is not connected to workspace/compilation consumers yet; callers must provide every non-empty `CompilationInputFingerprint` category and update the affected category when its inputs change. The cache stays ephemeral, while AiNetLinter's reference cache persists analysis results to disk.
 
 ### Verification
 
@@ -124,3 +124,23 @@ All official gates were executed after the final implementation and documentatio
 - Acceptance: close both stale-entry paths with focused regression tests, document the resulting hash/fingerprint contract, and rerun the affected official gates. The point 1.3 audit checkbox remains open while these findings are pending.
 - **Gate evidence:** the implementer's record above reports build (0 warnings/errors), FastTests (206/206), IntegrationTests (5/5), and full suite (211/211) passed. I inspected the current `temp/build.log`, `temp/test-fast.log`, `temp/test-integration.log`, and `temp/test.log` tails; they show those results. This auditor did not run build or tests.
 - No other Cluster 1 point was changed in this slice.
+
+### Audit 1 Finding Fixes
+
+- Fix base: `244c8893266bc33d10dad1bac960c58844315a75`.
+- **P2, hashless tree lookup — fixed.** Tree-cache reuse now requires exact equality between the stored and requested hashes; two `null` hashes retain the explicit MTime-only path, while a hashed entry cannot be reused without the same hash. Regression coverage checks omitted, mismatched, and matching hashes.
+- **P2, incomplete compilation key — fixed.** Compilation lookup and store now require a non-null `CompilationInputFingerprint` with non-empty hashes for source tree paths/content, per-tree parse options, assembly identity/compilation options, project-reference identities/versions, and metadata-reference identities/versions/properties/content. The fingerprint is compared by value alongside the project path and maximum source MTime. Tests vary each category independently at the same MTime, including source changes that would be hidden by another file's maximum timestamp.
+- Current-state documentation describes the required fingerprint categories and the caller's responsibility to recompute hashes whenever inputs change. No production consumer exists yet, so integration must build those fingerprints from all listed inputs.
+
+#### Fix Verification
+
+| Gate | Result |
+|---|---|
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 207/207 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 5/5 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 212/212 across both test projects |
+| `git diff --check` | Passed |
+
+- Audit count remains 1 of 3; the findings are awaiting follow-up audit. The Cluster 1 checklist's 1.3 audit checkbox remains open.
+- No other Cluster 1 point was changed in this fix slice.

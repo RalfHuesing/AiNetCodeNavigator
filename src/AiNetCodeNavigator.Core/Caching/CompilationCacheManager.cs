@@ -18,9 +18,25 @@ public sealed record CacheStatistics(long Hits, long Misses, int CachedTreesCoun
 public sealed record CachedTreeEntry(DateTime LastWriteTimeUtc, string? ContentHash, SyntaxTree Tree);
 
 /// <summary>
-/// Cache-Eintrag für eine Roslyn-Kompilation.
+/// Fingerprint for every semantic input that can affect a Roslyn compilation: source tree paths and contents,
+/// per-tree parse options, assembly identity and compilation options, project reference identities and versions,
+/// and metadata reference identities, versions, properties, and content. Each field must represent its complete
+/// input category.
 /// </summary>
-public sealed record CachedCompilationEntry(DateTime LatestSourceMTimeUtc, Compilation Compilation, string? SourceHash = null);
+public sealed record CompilationInputFingerprint(
+    string SourceTreesHash,
+    string ParseOptionsHash,
+    string CompilationOptionsHash,
+    string ProjectReferencesHash,
+    string MetadataReferencesHash);
+
+/// <summary>
+/// Cached Roslyn compilation and the complete fingerprint used to validate its inputs.
+/// </summary>
+public sealed record CachedCompilationEntry(
+    DateTime LatestSourceMTimeUtc,
+    CompilationInputFingerprint Fingerprint,
+    Compilation Compilation);
 
 /// <summary>
 /// Thread-sicherer In-Memory- und Zeitstempel-basierter Cache für Roslyn-Syntaxbäume und Kompilationen.
@@ -47,8 +63,8 @@ public sealed class CompilationCacheManager
     }
 
     /// <summary>
-    /// Versucht, einen gecachten SyntaxTree anhand des Dateipfads und Zeitstempels abzurufen.
-    /// Wenn ein Hash angegeben wird, muss auch dieser mit dem gespeicherten Inhaltshash übereinstimmen.
+    /// Versucht, einen gecachten SyntaxTree anhand des Dateipfads, Zeitstempels und Inhaltshash abzurufen.
+    /// Ein hashbehafteter Eintrag kann daher nicht durch eine Abfrage ohne Hash wiederverwendet werden.
     /// </summary>
     public bool TryGetTree(string filePath, DateTime lastWriteTimeUtc, out SyntaxTree? tree, string? contentHash = null)
     {
@@ -57,7 +73,7 @@ public sealed class CompilationCacheManager
 
         if (_treeCache.TryGetValue(filePath, out var entry)
             && entry.LastWriteTimeUtc == lastWriteTimeUtc
-            && (contentHash is null || string.Equals(entry.ContentHash, contentHash, StringComparison.Ordinal)))
+            && string.Equals(entry.ContentHash, contentHash, StringComparison.Ordinal))
         {
             Interlocked.Increment(ref _hits);
             tree = entry.Tree;
@@ -82,21 +98,22 @@ public sealed class CompilationCacheManager
     }
 
     /// <summary>
-    /// Versucht, eine gecachte Kompilation anhand des Projektpfads und Zeitstempels der jüngsten Datei abzurufen.
-    /// Wenn ein Quellenhash angegeben wird, muss auch dieser mit dem gespeicherten Hash übereinstimmen.
+    /// Versucht, eine gecachte Kompilation anhand des Projektpfads, Zeitstempels der jüngsten Datei und aller
+    /// semantisch relevanten Compilation-Eingaben abzurufen.
     /// </summary>
     public bool TryGetCompilation(
         string projectPath,
         DateTime latestSourceMTimeUtc,
-        out Compilation? compilation,
-        string? sourceHash = null)
+        CompilationInputFingerprint fingerprint,
+        out Compilation? compilation)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectPath);
         ValidateUtcTimestamp(latestSourceMTimeUtc, nameof(latestSourceMTimeUtc));
+        ValidateFingerprint(fingerprint, nameof(fingerprint));
 
         if (_compilationCache.TryGetValue(projectPath, out var entry)
             && entry.LatestSourceMTimeUtc == latestSourceMTimeUtc
-            && (sourceHash is null || string.Equals(entry.SourceHash, sourceHash, StringComparison.Ordinal)))
+            && entry.Fingerprint == fingerprint)
         {
             Interlocked.Increment(ref _hits);
             compilation = entry.Compilation;
@@ -114,14 +131,15 @@ public sealed class CompilationCacheManager
     public void StoreCompilation(
         string projectPath,
         DateTime latestSourceMTimeUtc,
-        Compilation compilation,
-        string? sourceHash = null)
+        CompilationInputFingerprint fingerprint,
+        Compilation compilation)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectPath);
         ValidateUtcTimestamp(latestSourceMTimeUtc, nameof(latestSourceMTimeUtc));
+        ValidateFingerprint(fingerprint, nameof(fingerprint));
         ArgumentNullException.ThrowIfNull(compilation);
 
-        _compilationCache[projectPath] = new CachedCompilationEntry(latestSourceMTimeUtc, compilation, sourceHash);
+        _compilationCache[projectPath] = new CachedCompilationEntry(latestSourceMTimeUtc, fingerprint, compilation);
     }
 
     /// <summary>
@@ -167,5 +185,15 @@ public sealed class CompilationCacheManager
         {
             throw new ArgumentException("Cache timestamps must use UTC.", parameterName);
         }
+    }
+
+    private static void ValidateFingerprint(CompilationInputFingerprint fingerprint, string parameterName)
+    {
+        ArgumentNullException.ThrowIfNull(fingerprint, parameterName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(fingerprint.SourceTreesHash, $"{parameterName}.{nameof(fingerprint.SourceTreesHash)}");
+        ArgumentException.ThrowIfNullOrWhiteSpace(fingerprint.ParseOptionsHash, $"{parameterName}.{nameof(fingerprint.ParseOptionsHash)}");
+        ArgumentException.ThrowIfNullOrWhiteSpace(fingerprint.CompilationOptionsHash, $"{parameterName}.{nameof(fingerprint.CompilationOptionsHash)}");
+        ArgumentException.ThrowIfNullOrWhiteSpace(fingerprint.ProjectReferencesHash, $"{parameterName}.{nameof(fingerprint.ProjectReferencesHash)}");
+        ArgumentException.ThrowIfNullOrWhiteSpace(fingerprint.MetadataReferencesHash, $"{parameterName}.{nameof(fingerprint.MetadataReferencesHash)}");
     }
 }
