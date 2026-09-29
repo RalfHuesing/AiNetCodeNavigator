@@ -108,16 +108,16 @@ grundlagen schaffen:
   - [x] FastTests für Dependency-Graphen
 
 ### Cluster 6: Projekt-, Datei- & Scope-Struktur (Core)
-- [ ] 6.1 Dateibaum-Scanner (`get_file_tree`-Engine):
-  - [ ] `SolutionFileWalker` & `GetFileTreeScanner`: Schneller Scan der Solution-Dateien
-  - [ ] `FileTreeFilter` und `summary`-Rendering
-  - [ ] FastTests für File-Trees
-- [ ] 6.2 Namespace-Baum (`get_namespace_tree`-Engine):
-  - [ ] `NamespaceTreeScanner`: Deklarierte Namespaces hierarchisch strukturieren
-  - [ ] FastTests für Namespace-Trees
-- [ ] 6.3 Index-Scope (`get_index_scope`-Engine):
-  - [ ] `IndexScopeScanner`: Status der C#-Indizierung und Dokumentenübersicht
-  - [ ] FastTests für Index-Scope
+- [x] 6.1 Dateibaum-Scanner (`get_file_tree`-Engine):
+  - [x] `SolutionFileWalker` & `GetFileTreeScanner`: Schneller Scan der Solution-Dateien
+  - [x] `FileTreeFilter` und `summary`-Rendering
+  - [x] FastTests für File-Trees
+- [x] 6.2 Namespace-Baum (`get_namespace_tree`-Engine):
+  - [x] `NamespaceTreeScanner`: Deklarierte Namespaces hierarchisch strukturieren
+  - [x] FastTests für Namespace-Trees
+- [x] 6.3 Index-Scope (`get_index_scope`-Engine):
+  - [x] `IndexScopeScanner`: Status der C#-Indizierung und Dokumentenübersicht
+  - [x] FastTests für Index-Scope
 
 ### Cluster 7: Assembly-Dekompilierung & Binary-Navigation (Core)
 - [ ] 7.1 Decompiler & virtueller Roslyn-Workspace:

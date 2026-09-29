@@ -106,4 +106,43 @@ public static class RegexAutoDetector
         if (anchored) sb.Append('$');
         return sb.ToString();
     }
+
+    public static bool TryCreateFilterRegex(
+        string? filter,
+        out Regex? regex,
+        out bool isNegated,
+        out string? errorMessage)
+    {
+        regex = null;
+        isNegated = false;
+        errorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(filter)) return true;
+
+        var trimmed = filter.Trim();
+        if (trimmed.StartsWith('!'))
+        {
+            isNegated = true;
+            trimmed = trimmed[1..].Trim();
+            if (string.IsNullOrWhiteSpace(trimmed)) return true;
+        }
+
+        var isGlob = (trimmed.Contains('*') || trimmed.Contains('?')) && !IsLikelyRegex(trimmed);
+        if (isGlob)
+        {
+            var converted = ConvertWildcardToRegex(trimmed, anchored: true);
+            if (IsValidRegex(converted, out regex, DefaultTimeout))
+            {
+                return true;
+            }
+        }
+
+        if (IsValidRegex(trimmed, out regex, DefaultTimeout))
+        {
+            return true;
+        }
+
+        errorMessage = $"Ungültiges Filter-Muster: '{filter}'";
+        return false;
+    }
 }
