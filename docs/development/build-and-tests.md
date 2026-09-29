@@ -29,7 +29,7 @@ Core, Host, and TestKit expose internal members to the test assemblies via `Inte
 
 ## Resident Solutions
 
-`ProjectRegistry` canonicalizes solution paths, deduplicates concurrent creation, and returns leases that keep in-flight solutions out of LRU and idle-TTL eviction. `ResidentSolution` starts asynchronous loads in the background and exposes `ServerLoadState.Loading` until they finish, so callers can defer navigation and retry while other solutions remain available. For each existing on-disk source document, staleness checks compare a SHA-256 content hash and apply changed text to the immutable Roslyn solution; this also detects edits that preserve the file timestamp. `MSBuildSolutionLoader` registers MSBuild Locator before creating its design-time workspace.
+`ProjectRegistry` canonicalizes solution paths, deduplicates concurrent creation, and returns leases that keep in-flight solutions out of LRU and idle-TTL eviction. `DisposeAsync` waits for active lease-creation operations; a solution created after disposal starts is disposed without being published, and the lease call returns `PROJECT_REGISTRY_DISPOSED`. `ResidentSolution` starts asynchronous loads in the background and exposes `ServerLoadState.Loading` until they finish, so callers can defer navigation and retry while other solutions remain available. For each existing on-disk source path, staleness checks compare a SHA-256 content hash, then apply changed text to every Roslyn document using that path before saving the new file state; this also detects edits that preserve the file timestamp. `MSBuildSolutionLoader` registers MSBuild Locator before creating its design-time workspace.
 
 ## Compilation Cache
 

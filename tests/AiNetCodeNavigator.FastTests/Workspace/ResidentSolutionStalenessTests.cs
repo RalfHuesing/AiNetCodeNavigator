@@ -80,6 +80,41 @@ public sealed class ResidentSolutionStalenessTests
     }
 
     [Fact]
+    public async Task GetCurrentSolution_RefreshesEveryProjectDocumentForSharedFilePath()
+    {
+        using var tempDir = TestTempDirectory.Create("staleness-shared-file-");
+        const string initialContent = "public class Shared { public int Value => 1; }";
+        const string changedContent = "public class Shared { public int Value => 2; }";
+        var filePath = tempDir.CreateFile("Shared.cs", initialContent);
+        var solutionHandle = TestWorkspaceBuilder.Create()
+            .WithProject("First", (filePath, initialContent))
+            .WithProject("Second", (filePath, initialContent))
+            .Build();
+
+        using (solutionHandle)
+        {
+            await using var resident = new ResidentSolution(solutionHandle.Solution);
+            var initial = resident.GetCurrentSolution();
+            Assert.NotNull(initial);
+            Assert.Equal(2, initial.Projects.Count());
+            var originalMtime = File.GetLastWriteTimeUtc(filePath);
+
+            await File.WriteAllTextAsync(filePath, changedContent);
+            File.SetLastWriteTimeUtc(filePath, originalMtime);
+
+            var refreshed = resident.GetCurrentSolution();
+            Assert.NotNull(refreshed);
+            var texts = await Task.WhenAll(refreshed.Projects.Select(async project =>
+            {
+                var document = Assert.Single(project.Documents);
+                return (await document.GetTextAsync()).ToString();
+            }));
+
+            Assert.Equal(new[] { changedContent, changedContent }, texts);
+        }
+    }
+
+    [Fact]
     public async Task GetCurrentSolution_RemovesDeletedDocumentOnDisk()
     {
         using var tempDir = TestTempDirectory.Create("staleness-del-");

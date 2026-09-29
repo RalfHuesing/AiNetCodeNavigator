@@ -25,7 +25,8 @@ public sealed record ResidentLoadedState(Solution Solution, Microsoft.CodeAnalys
 /// <summary>
 /// Hält die geladene Roslyn-<see cref="Solution"/> über die Lebensdauer resident im Speicher.
 /// Unterstützt Hintergrund-Laden und lazy Staleness-Erkennung (Dateiänderungen auf der Platte
-/// werden nach einem Inhalts-Hashvergleich inkrementell über <see cref="Solution.WithDocumentText"/> übernommen).
+/// werden nach einem Inhalts-Hashvergleich auf alle Dokumente des Dateipfads angewendet und inkrementell
+/// über <see cref="Solution.WithDocumentText"/> übernommen).
 /// </summary>
 public sealed class ResidentSolution : IDisposable, IAsyncDisposable
 {
@@ -172,45 +173,50 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
 
         var updated = currentSolution;
 
-        foreach (var project in updated.Projects)
-        {
-            foreach (var document in project.Documents)
-            {
-                var path = document.FilePath;
-                if (string.IsNullOrEmpty(path))
-                {
-                    continue;
-                }
+        var documentsByPath = updated.Projects
+            .SelectMany(project => project.Documents)
+            .Where(document => !string.IsNullOrEmpty(document.FilePath))
+            .GroupBy(document => document.FilePath!, StringComparer.OrdinalIgnoreCase);
 
-                if (!File.Exists(path))
+        foreach (var documents in documentsByPath)
+        {
+            var path = documents.Key;
+            if (!File.Exists(path))
+            {
+                foreach (var document in documents)
                 {
                     updated = updated.RemoveDocument(document.Id);
-                    fileStates.Remove(path);
+                }
+
+                fileStates.Remove(path);
+                continue;
+            }
+
+            try
+            {
+                var currentMtime = File.GetLastWriteTimeUtc(path);
+                var hasPreviousState = fileStates.TryGetValue(path, out var state);
+                var currentHash = ComputeFileHash(path);
+                if (hasPreviousState && state.Hash == currentHash)
+                {
+                    if (state.MtimeUtc != currentMtime)
+                    {
+                        fileStates[path] = state with { MtimeUtc = currentMtime };
+                    }
+
                     continue;
                 }
 
-                try
+                var text = SourceText.From(File.ReadAllText(path));
+                foreach (var document in documents)
                 {
-                    var currentMtime = File.GetLastWriteTimeUtc(path);
-                    var hasPreviousState = fileStates.TryGetValue(path, out var state);
-                    var currentHash = ComputeFileHash(path);
-                    if (hasPreviousState && state.Hash == currentHash)
-                    {
-                        if (state.MtimeUtc != currentMtime)
-                        {
-                            fileStates[path] = state with { MtimeUtc = currentMtime };
-                        }
-
-                        continue;
-                    }
-
-                    var text = File.ReadAllText(path);
-                    updated = updated.WithDocumentText(document.Id, SourceText.From(text));
-                    fileStates[path] = new DocumentFileState(currentMtime, currentHash);
+                    updated = updated.WithDocumentText(document.Id, text);
                 }
-                catch (IOException)
-                {
-                }
+
+                fileStates[path] = new DocumentFileState(currentMtime, currentHash);
+            }
+            catch (IOException)
+            {
             }
         }
 

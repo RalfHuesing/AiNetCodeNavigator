@@ -22,6 +22,8 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
     private readonly TimeSpan idleTtl;
     private readonly CancellationTokenSource tickSource = new();
     private readonly Task tickTask;
+    private TaskCompletionSource? leaseOperationsDrained;
+    private int activeLeaseOperations;
     private int disposed;
 
     public ProjectRegistry(ProjectRegistryOptions options)
@@ -37,15 +39,28 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
 
     public ProjectLeaseResult Lease(string solutionPath)
     {
-        var key = Canonicalize(solutionPath);
-        var retired = new List<ResidentSolution>();
-        var result = TryAdoptOrCreate(key, retired);
-        foreach (var server in retired)
+        lock (gate)
         {
-            server.Dispose();
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+            activeLeaseOperations++;
         }
 
-        return result;
+        try
+        {
+            var key = Canonicalize(solutionPath);
+            var retired = new List<ResidentSolution>();
+            var result = TryAdoptOrCreate(key, retired);
+            foreach (var server in retired)
+            {
+                server.Dispose();
+            }
+
+            return result;
+        }
+        finally
+        {
+            CompleteLeaseOperation();
+        }
     }
 
     public int ActiveLoadCount
@@ -75,9 +90,14 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref disposed, 1) != 0)
+        lock (gate)
         {
-            return;
+            if (Volatile.Read(ref disposed) != 0)
+            {
+                return;
+            }
+
+            Volatile.Write(ref disposed, 1);
         }
 
         await tickSource.CancelAsync().ConfigureAwait(false);
@@ -89,11 +109,31 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
         {
         }
 
+        Task? pendingLeaseOperations;
+        lock (gate)
+        {
+            if (activeLeaseOperations == 0)
+            {
+                pendingLeaseOperations = null;
+            }
+            else
+            {
+                leaseOperationsDrained ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                pendingLeaseOperations = leaseOperationsDrained.Task;
+            }
+        }
+
+        if (pendingLeaseOperations is not null)
+        {
+            await pendingLeaseOperations.ConfigureAwait(false);
+        }
+
         List<ResidentSolution> remaining;
         lock (gate)
         {
             remaining = projects.Values.Select(entry => entry.ResidentSolution).ToList();
             projects.Clear();
+            reservations.Clear();
         }
 
         foreach (var server in remaining)
@@ -154,6 +194,7 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
         ProjectCreationReservation reservation;
         lock (gate)
         {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
             var resident = FindAdoptable(key, retired);
             if (resident is not null)
             {
@@ -191,6 +232,7 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
     {
         lock (gate)
         {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
             return FindAdoptable(key, retired);
         }
     }
@@ -225,14 +267,27 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
         List<ResidentSolution> retired)
     {
         var created = attempt.Creation;
-        if (!created.Succeeded)
-        {
-            RemoveReservation(key, reservation);
-            return ProjectLeaseResult.Failure(created.ErrorCode!, created.ErrorMessage!);
-        }
-
         lock (gate)
         {
+            if (Volatile.Read(ref disposed) != 0)
+            {
+                RemoveReservationUnderLock(key, reservation);
+                if (created.Solution is not null)
+                {
+                    retired.Add(created.Solution);
+                }
+
+                return ProjectLeaseResult.Failure(
+                    ProjectErrorCodes.RegistryDisposed,
+                    "Die Projekt-Registry wurde beendet, bevor die neue Solution veröffentlicht werden konnte.");
+            }
+
+            if (!created.Succeeded)
+            {
+                RemoveReservationUnderLock(key, reservation);
+                return ProjectLeaseResult.Failure(created.ErrorCode!, created.ErrorMessage!);
+            }
+
             if (projects.TryGetValue(key, out var raced))
             {
                 RemoveReservationUnderLock(key, reservation);
@@ -258,6 +313,21 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
         {
             RemoveReservationUnderLock(key, reservation);
         }
+    }
+
+    private void CompleteLeaseOperation()
+    {
+        TaskCompletionSource? drained = null;
+        lock (gate)
+        {
+            activeLeaseOperations--;
+            if (Volatile.Read(ref disposed) != 0 && activeLeaseOperations == 0)
+            {
+                drained = leaseOperationsDrained;
+            }
+        }
+
+        drained?.TrySetResult();
     }
 
     private void RemoveReservationUnderLock(string key, ProjectCreationReservation reservation)

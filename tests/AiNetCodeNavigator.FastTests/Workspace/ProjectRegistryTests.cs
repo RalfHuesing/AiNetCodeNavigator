@@ -266,6 +266,62 @@ public sealed class ProjectRegistryTests
         Assert.NotNull(registry.FindSnapshot(thirdPath));
     }
 
+    [Fact]
+    public async Task DisposeAsync_DuringCreationWaitsAndDisposesUnpublishedResident()
+    {
+        using var tempDir = TestTempDirectory.Create("project-registry-dispose-creation-");
+        var solutionPath = CreateSolutionPath(tempDir, "pending");
+        var factory = new TrackingSolutionFactory();
+        var creationReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releasePublish = new ManualResetEventSlim(false);
+        ProjectCreationAttempt? pendingAttempt = null;
+        await using var registry = new ProjectRegistry(new ProjectRegistryOptions(
+            factory.Factory,
+            TimeProvider.System)
+        {
+            BeforePublishCreation = (_, attempt) =>
+            {
+                pendingAttempt = attempt;
+                creationReady.TrySetResult();
+                Assert.True(releasePublish.Wait(TimeSpan.FromSeconds(30)));
+                return null;
+            },
+        });
+
+        var leaseTask = Task.Run(() => registry.Lease(solutionPath));
+        await creationReady.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var disposeTask = registry.DisposeAsync().AsTask();
+        var disposeCompletedBeforePublish = disposeTask.IsCompleted;
+
+        releasePublish.Set();
+        await disposeTask.WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await leaseTask.WaitAsync(TimeSpan.FromSeconds(10));
+        var succeeded = result.Succeeded;
+        var errorCode = result.ErrorCode;
+        var snapshotCount = registry.Snapshots().Count;
+        var disposalCountBeforeFallbackCleanup = factory.SolutionsDisposed;
+
+        if (result.Lease is { } orphanLease)
+        {
+            await orphanLease.ResidentSolution.DisposeAsync();
+            orphanLease.Dispose();
+        }
+        else
+        {
+            if (pendingAttempt?.Creation.Solution is { } unpublished)
+            {
+                await unpublished.DisposeAsync();
+            }
+        }
+
+        Assert.False(disposeCompletedBeforePublish);
+        Assert.False(succeeded);
+        Assert.Equal(ProjectErrorCodes.RegistryDisposed, errorCode);
+        Assert.Empty(registry.Snapshots());
+        Assert.Equal(0, snapshotCount);
+        Assert.Equal(1, disposalCountBeforeFallbackCleanup);
+    }
+
     private static string CreateSolutionPath(TestTempDirectory tempDir, string name) =>
         tempDir.CreateFile($"{name}/app.slnx", "");
 
