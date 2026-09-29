@@ -104,3 +104,11 @@
 | `git diff --check` | Passed |
 
 - The point 2.2 audit checkbox remains open for independent follow-up. No 2.3 implementation was included.
+
+### Independent follow-up audit for point 2.2
+
+- Audit count: 2 of 3 for point 2.2; independently audited commit `038eadb5aca3b580a9133bd579e8ca92d470b796`, including its code fix `f5dfea7`. Both audit 1 findings meet their acceptance conditions, so the 2.2 checklist audit checkbox is checked.
+- **P1 closed:** `src/AiNetCodeNavigator.Core/Workspace/ResidentSolution.cs:176-216` groups documents by physical path, calculates one hash and reads one text per path, applies that text to every document in the group, and only then advances the cached state. `tests/AiNetCodeNavigator.FastTests/Workspace/ResidentSolutionStalenessTests.cs:82-115` places the same `.cs` file in two projects, changes its contents while restoring the original timestamp, and asserts both documents expose the new text. Existing distinct-path and deletion tests remain in place.
+- **P2 closed:** `src/AiNetCodeNavigator.Core/Workspace/ProjectRegistry.cs:40-63,91-143,263-330` tracks active lease operations, marks closure under the registry lock, waits for those operations before draining entries, and rejects a late publish while retiring its created resident. `tests/AiNetCodeNavigator.FastTests/Workspace/ProjectRegistryTests.cs:269-324` pauses creation before publication and verifies that disposal waits, the lease fails with `PROJECT_REGISTRY_DISPOSED`, no entry remains, and the resident is disposed once. New calls after closure are rejected at lease entry.
+- The targeted review found no further point 2.2 finding. Real `.slnx` loading and structural staleness remain point 2.3; public MCP response behavior and English product output remain later-cluster gates.
+- Audit verification: source, regression tests, and updated documentation inspected; no build or tests were run by this auditor. The fix verification table above records the implementer's runs only. The documentation-only diff was reviewed and `git diff --check` passed before commit.
