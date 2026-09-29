@@ -2,6 +2,8 @@
 
 using System;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using AiNetCodeNavigator.Core.Workspace;
 using AiNetCodeNavigator.TestKit;
 using Xunit;
@@ -27,6 +29,27 @@ public sealed class AnalysisTargetResolverTests
         Assert.Equal(Path.GetFullPath(solutionPath), result.Target.CanonicalPath);
         Assert.Equal(Path.GetDirectoryName(result.Target.CanonicalPath), result.Target.AnalysisRoot);
         Assert.NotEmpty(result.Target.Fingerprint);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Resolve_TargetPathOnly_RejectsMissingOrBlankTargetPath(string? targetPath)
+    {
+        var result = AnalysisTargetResolver.Resolve(new AnalysisTargetRequest(targetPath));
+
+        Assert.Null(result.Target);
+        Assert.NotNull(result.Error);
+        Assert.Equal(NavigationErrorCodes.InvalidArgument, result.Error!.Code);
+        Assert.Contains("erforderlich", result.Error.Message, StringComparison.Ordinal);
+        Assert.Equal("$.targetPath", result.Error.FieldPath);
+    }
+
+    [Fact]
+    public void Resolve_RejectsNullRequest()
+    {
+        Assert.Throws<ArgumentNullException>(() => AnalysisTargetResolver.Resolve(null!));
     }
 
     [Theory]
@@ -71,6 +94,40 @@ public sealed class AnalysisTargetResolverTests
         Assert.Equal(
             expectedType == AnalysisTargetType.Project ? AnalysisTargetOrigin.Source : AnalysisTargetOrigin.Decompiled,
             target.Origin);
+    }
+
+    [Theory]
+    [InlineData("sample.SLN", "Project")]
+    [InlineData("sample.SlNx", "Project")]
+    [InlineData("sample.DLL", "Assembly")]
+    [InlineData("sample.ExE", "Assembly")]
+    public void Resolve_TargetPathOnly_RecognizesExtensionsWithoutCaseSensitivity(string fileName, string expectedTypeName)
+    {
+        using var tempDir = TestTempDirectory.Create("analysis-target-extension-case-");
+        var path = tempDir.CreateFile(fileName, "content");
+
+        var result = AnalysisTargetResolver.Resolve(new AnalysisTargetRequest(path));
+
+        Assert.Null(result.Error);
+        Assert.NotNull(result.Target);
+        Assert.Equal(Enum.Parse<AnalysisTargetType>(expectedTypeName), result.Target!.TargetType);
+    }
+
+    [Fact]
+    public void Resolve_TargetFingerprint_IsSha256OfCurrentTargetContents()
+    {
+        using var tempDir = TestTempDirectory.Create("analysis-target-fingerprint-");
+        var path = tempDir.CreateFile("sample.slnx", "first version");
+
+        var first = AnalysisTargetResolver.Resolve(new AnalysisTargetRequest(path)).Target;
+        File.WriteAllText(path, "second version");
+        var second = AnalysisTargetResolver.Resolve(new AnalysisTargetRequest(path)).Target;
+
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("first version"))), first!.Fingerprint);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("second version"))), second!.Fingerprint);
+        Assert.NotEqual(first.Fingerprint, second.Fingerprint);
     }
 
     [Fact]

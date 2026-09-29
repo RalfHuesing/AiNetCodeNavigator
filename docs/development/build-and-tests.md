@@ -23,6 +23,10 @@ Core, Host, and TestKit expose internal members to the test assemblies via `Inte
 
 `SampleCodeFixtures` contains compilable examples for callers, interfaces and implementations, inheritance, records, record structs, and extension methods. `NavigationAssertions` checks symbol names, handoff identifiers using the core product alphabet, line ranges, and result text patterns. Fast tests verify these helpers against real Roslyn syntax trees, compilations, and symbols.
 
+## Analysis Target Resolution
+
+`AnalysisTargetResolver` accepts one absolute path to an existing file. `.sln` and `.slnx` files select source mode; `.dll` and `.exe` files select assembly mode. The resolver normalizes the path with `Path.GetFullPath`, rejects directories, missing files, unsupported extensions, and wildcard paths, and reports invalid paths as `INVALID_ARGUMENT` on `$.targetPath`. The target fingerprint is the SHA-256 hash of the target file contents.
+
 ## Compilation Cache
 
 `CompilationCacheManager` keeps syntax trees by file path and compilations by project path in thread-safe, case-insensitive in-memory dictionaries. Callers must pass UTC timestamps; entries are reusable only when their last-write timestamp and hashes match exactly. A tree stored with a content hash cannot be retrieved without the same hash. Compilation lookups require a `CompilationInputFingerprint` with non-empty hashes for source tree paths and contents, parse options, assembly identity and compilation options, project references, and metadata references. The caller must recompute the affected category hash whenever any input in that category changes; this catches edits to a source file even when another file still supplies the same maximum MTime. File and project invalidation remove entries from their respective caches, and `Clear` removes both caches and resets hit/miss counters. The AiNetLinter reference cache validates analysis entries against their current content checksum; this cache applies the same rule and adds a fingerprint for all compilation inputs.
