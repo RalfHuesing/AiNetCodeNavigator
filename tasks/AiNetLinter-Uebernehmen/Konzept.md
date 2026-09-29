@@ -31,7 +31,7 @@ Wenn der Auftrag lautet, dieses Konzept umzusetzen, führe die Arbeit selbststä
 
 ### Rollen und Reihenfolge
 
-1. Du bist der Orchestrator. Lies vor Beginn die Repository-Regeln, dieses Konzept, die Code-Map und den aktuellen Git-Stand. Plane die Cluster 1 bis 11 und darin jeden nummerierten Punkt in Roadmap-Reihenfolge. Bereits gesetzte `[x]` sind Vorarbeiten, keine Audit-Freigabe. Prüfe auch diese Punkte; vermeide erneute Implementierung bereits belegter Funktionen.
+1. Du bist der Orchestrator. Lies vor Beginn die Repository-Regeln, dieses Konzept, die Code-Map, die unten verlinkten Clusterdateien und den aktuellen Git-Stand. Plane die Cluster 1 bis 11 und darin jeden nummerierten Punkt in Roadmap-Reihenfolge. Bereits gesetzte `[x]` sind Vorarbeiten, keine Audit-Freigabe. Prüfe auch diese Punkte; vermeide erneute Implementierung bereits belegter Funktionen.
 2. Beauftrage für Implementierungsarbeit je aktivem Cluster einen **Implementierer-Subagenten mit `gpt-6-luna` und Reasoning Effort `high`**. Gib ihm den konkreten Punkt, relevante Findings aus früheren Reviews, Repository-Regeln und die Abnahmekriterien. Er soll AiNetLinter nur lesend als Referenz prüfen, passende Tests ergänzen, die offiziellen PowerShell-Gates ausführen, betroffene `docs/`-Seiten bei geänderter Implementierung aktualisieren und abgeschlossene, verifizierte Slices gemäß Git-Regeln committen. Er soll innerhalb des Clusters zuerst unabhängige, wertvolle Funktionen fertigstellen und lokale Probleme samt Belegen melden.
 3. **Nach jedem nummerierten Roadmap-Punkt**, auch nach bereits abgehakten Punkten, beauftrage einen unabhängigen **Review-/Audit-Subagenten mit `gpt-6-sol` und Reasoning Effort `medium`**. Der Auditor prüft Code und Tests gegen diesen Punkt, das Konzept, die AiNetLinter-Referenz und die öffentlichen Tool-Verträge. Er ändert keinen Code und liefert priorisierte Findings mit Datei/Zeile, Reproduktion oder begründeter Evidenz sowie konkreten Abnahmebedingungen. Er darf neue `[ ]`-Arbeit unter dem betroffenen Punkt ergänzen; jeder neue eigenständige nummerierte Punkt erhält ebenfalls eine Audit-Checkbox. Ein Testlauf ist nur dann als bestanden zu melden, wenn er tatsächlich ausgeführt wurde.
    - Der Auditor **kann eigene Recherche-Subagenten mit `gpt-6-luna` und Reasoning Effort `high` starten**, wenn mehrere klar abgegrenzte, unabhängige Such- oder Vergleichsaufgaben dadurch besser abgedeckt werden, etwa AiNetLinter-Referenzverhalten, relevante Tests oder betroffene Aufrufpfade. Er nutzt dafür nur freie Agent-Slots und startet keine Recherche-Subagenten für kleine oder aufeinander aufbauende Schritte. Diese Subagenten arbeiten ausschließlich lesend: keine Dateiänderungen, Builds, Tests, Restores, Commits oder weiteren Subagenten. Sie liefern Belege an den Auditor zurück. Der Auditor prüft und gewichtet ihre Ergebnisse selbst; ihre Arbeit ist kein zusätzliches Audit und erhöht nicht das Drei-Audit-Limit.
@@ -67,205 +67,16 @@ grundlagen schaffen:
 
 ## Detaillierte Umsetzungs-Roadmap (Von "unten" nach "oben")
 
-### Cluster 1: Fundamentale Basis- & Test-Infrastruktur
-- [x] 1.1 TestKit-Basisinfrastruktur aufbauen:
-  - [x] `TestWorkspaceBuilder`: Dynamischer `AdhocWorkspace` für In-Memory-Projekte, SyntaxTrees und Compilations
-  - [x] `SampleCodeFixtures`: Realistische C#-Codevorlagen (Klassen, Interfaces, Vererbung, Records, Extensions)
-  - [x] Semantische Assertions & Result-Prüfhilfen in TestKit
-  - [ ] Review/Audit zu 1.1 durchführen; Findings ergänzen und umsetzen.
-- [x] 1.2 Logging-Setup in Host (`AiNetCodeNavigator.Logging`):
-  - [x] Serilog-Konfiguration mit täglicher Rotation und Dateiausgabe unter Host-Pfad
-  - [x] `stderr`-Fehlerkanal, striktes Verbot von Ausgaben auf `stdout`
-  - [ ] Review/Audit zu 1.2 durchführen; Findings ergänzen und umsetzen.
-- [x] 1.3 Caching-Infrastruktur (`AiNetCodeNavigator.Core.Caching`):
-  - [x] `CompilationCacheManager`: In-Memory- und MTime-basierter Cache für SyntaxTrees & Compilations
-  - [x] FastTests für Cache-Hit/Miss und Invalidierung
-  - [ ] Review/Audit zu 1.3 durchführen; Findings ergänzen und umsetzen.
+Die verlinkten Clusterdateien sind die verbindlichen Checklisten für die nummerierten Clusterpunkte. Bearbeite sie in dieser Reihenfolge; deren Status und Audit-Punkte stehen ausschließlich dort.
 
-### Cluster 2: Workspace- & Resident-Solution-Engine
-- [x] 2.1 Target-Erkennung & Validierung (`AiNetCodeNavigator.Core.Workspace`):
-  - [x] `AnalysisTarget` & `AnalysisTargetResolver`: Unterscheidung Source-Modus (`.sln`/`.slnx`) vs. Assembly-Modus (`.dll`/`.exe`)
-  - [x] Pfadnormalisierung und Sicherheitsprüfung
-  - [x] FastTests für Target-Resolver
-  - [ ] Review/Audit zu 2.1 durchführen; Findings ergänzen und umsetzen.
-- [x] 2.2 Resident Solution Registry (`ProjectRegistry`):
-  - [x] `ProjectDefinition` und `ProjectDefinitionLoader`
-  - [x] Hintergrund-Laden via MSBuild-Locator (`operation=retry`-Verhalten)
-  - [x] `ProjectLease` & Nebenläufigkeits-Schutz
-  - [x] Staleness-Erkennung bei geänderten Quelldateien
-  - [x] FastTests und IntegrationTests für residenten Solution-Lebenszyklus
-  - [ ] Review/Audit zu 2.2 durchführen; Findings ergänzen und umsetzen.
-- [ ] 2.3 Staleness und Ladefehler über echte Solutions absichern:
-  - [ ] Änderungen an vorhandenen Dateien, neu hinzugefügte/entfernte Dateien sowie geänderte Projekt- und Referenzstruktur in nachfolgenden Navigationsaufrufen korrekt abbilden; Snapshot-/Reload-Verhalten festlegen und testen.
-  - [ ] Lade- und MSBuild-Fehler mit Ursache und erneuter Versuchsmöglichkeit an den MCP-Aufrufer melden; Integrationstest mit realer `.slnx` statt nur in-memory-Workspace.
-  - [ ] Review/Audit zu 2.3 durchführen; Findings ergänzen und umsetzen.
-
-### Cluster 3: Kompaktes Handoff- & Symbol-Identitätssystem
-- [x] 3.1 Symbol-Identität (`AiNetCodeNavigator.Core.Symbols`):
-  - [x] `AnalysisSymbolIdentity`: Normalisierung von `ISymbol` zu kanonischen Identifikatoren (Doc-Comment-ID, File/Line)
-  - [x] FastTests für Symbol-Identitätsabbildung
-  - [ ] Review/Audit zu 3.1 durchführen; Findings ergänzen und umsetzen.
-- [x] 3.2 Handoff-Tokensystem (`AiNetCodeNavigator.Core.Models` / `Symbols`):
-  - [x] `HandoffCounterAlphabet` & `HandoffCounterStore`: Kompakte ID-Generierung (`h:...`)
-  - [x] `HandoffHandleRegistry` & `SymbolHandoffIdentifier`: Bidirektionale Zuordnung von Token zu Symbol/Speicherort
-  - [x] FastTests für Handoff-Erzeugung, Token-Auflösung und Thread-Sicherheit
-  - [ ] Review/Audit zu 3.2 durchführen; Findings ergänzen und umsetzen.
-- [ ] 3.3 Handoff-Vertrag über Producer und Consumer schließen:
-  - [ ] Alle ausgegebenen `h:...`-IDs aus Source- und Assembly-Tools auf dieselbe kanonische, ziel- und snapshotgebundene Identität zurückführen; rohe DocumentationCommentIds nicht als scheinbar gültige Handoffs ausgeben.
-  - [ ] Roundtrip-Tests von `find_symbol`, `get_file_skeleton` und `inspect_assembly` zu den jeweils erlaubten Folge-Tools ergänzen; unbekannte, fremde und nach Änderung veraltete Handles als typisierte Fehler behandeln.
-  - [ ] Review/Audit zu 3.3 durchführen; Findings ergänzen und umsetzen.
-
-### Cluster 4: Semantische Symbol- & Code-Inspektions-Engine (Core)
-- [x] 4.1 Symbolsuche (`find_symbol`-Engine):
-  - [x] `FindSymbolScanner`: Filter nach Namen/Patterns, `SymbolKind`, `scopeType` (`production`, `tests`, `all`)
-  - [x] FastTests für Symbolsuche
-  - [ ] Review/Audit zu 4.1 durchführen; Findings ergänzen und umsetzen.
-- [x] 4.2 Symbol-Body-Extraktion (`get_symbol_body`-Engine):
-  - [x] `SourceSymbolBodyResolver`: Syntax-Extraktion aus AST mit Paginierung (`startLine`, `maxBodyLines`)
-  - [x] Batch-Extraktion für mehrere Symbole in einem Aufruf
-  - [x] FastTests für Symbol-Body-Lesen
-  - [ ] Review/Audit zu 4.2 durchführen; Findings ergänzen und umsetzen.
-- [x] 4.3 File-Skeletons (`get_file_skeleton`-Engine):
-  - [x] `SkeletonSyntaxWalker` & `SkeletonMapBuilder`: Syntax-Knoten ohne Methodenrümpfe erfassen
-  - [x] `SkeletonMarkdownRenderer`: Formatierte Markdown-Ausgabe mit Handoff-IDs
-  - [x] FastTests für File-Skeletons
-  - [ ] Review/Audit zu 4.3 durchführen; Findings ergänzen und umsetzen.
-- [x] 4.4 Klassen-Struktur (`get_class_structure`-Engine):
-  - [x] `ClassStructureScanner`: Vollständige Member-Übersicht (Properties, Methoden, Konstruktoren, Sichtbarkeiten)
-  - [x] FastTests für Class-Structure
-  - [ ] Review/Audit zu 4.4 durchführen; Findings ergänzen und umsetzen.
-- [x] 4.5 Test-Erkennung & Test-Kontext (`get_test_context`-Engine):
-  - [x] `TestDetector`: Erkennung von Testprojekten und Testframeworks (xUnit, NUnit, MSTest)
-  - [x] `TestRecommendationBuilder`: Verknüpfung von Produktionscode mit abdeckenden Tests
-  - [x] FastTests für Test-Kontext
-  - [ ] Review/Audit zu 4.5 durchführen; Findings ergänzen und umsetzen.
-- [x] 4.6 Feature-Kontext (`get_feature_context`-Engine):
-  - [x] `FeatureContextScanner`: Bündelung von Symbol, Signatur, Aufrufern und Tests *(ohne Linter-Violations!)*
-  - [x] FastTests für Feature-Kontext
-  - [ ] Review/Audit zu 4.6 durchführen; Findings ergänzen und umsetzen.
-- [ ] 4.7 Gemeinsame Symbolauflösung für Folge-Tools fertigstellen: eindeutige qualifizierte Namen, Doc-IDs, Positionen und `h:...`-IDs unterstützen; bei mehrdeutigen Kurznamen auswählbare Treffer statt eines zufälligen ersten Symbols liefern. Die Tool-Verträge und Fehlerfälle mit FastTests belegen.
-  - [ ] Review/Audit zu 4.7 durchführen; Findings ergänzen und umsetzen.
-- [ ] 4.8 Test-Kontext fachlich absichern: gleichnamige Testklassen in verschiedenen Projekten getrennt erhalten, xUnit/NUnit/MSTest korrekt klassifizieren und Empfehlungen als Heuristik ausweisen; Tests für Mehrprojektfälle und `TestMethodAttribute` ergänzen.
-  - [ ] Review/Audit zu 4.8 durchführen; Findings ergänzen und umsetzen.
-
-### Cluster 5: Call Graph, Beziehungen & Hierarchien (Core)
-- [x] 5.1 Call-Tree-Builder (`get_call_tree`-Engine):
-  - [x] `CallTreeBuilder`: Traversierung eingehender (`incoming`) und ausgehender (`outgoing`) Aufrufe via Roslyn-AST
-  - [x] `CallGraphTextRenderer` (ASCII) & `CallTreeMermaidRenderer` (Mermaid-Diagramme)
-  - [x] FastTests für Call-Trees
-  - [ ] Review/Audit zu 5.1 durchführen; Findings ergänzen und umsetzen.
-- [x] 5.2 Referenzen & Implementierungen (`find_references`, `find_implementations`-Engine):
-  - [x] `FindReferencesResolver`: AST-Aufrufstellensuche über Solution-Grenzen
-  - [x] Interface- und abstrakte Methoden-Implementierungssuche
-  - [x] FastTests für Referenzen und Implementierungen
-  - [ ] Review/Audit zu 5.2 durchführen; Findings ergänzen und umsetzen.
-- [x] 5.3 Typ-Hierarchien (`get_type_hierarchy`-Engine):
-  - [x] `TypeHierarchyScanner`: Basisklassen, Schnittstellen und abgeleitete Typen ermitteln
-  - [x] `GetTypeHierarchyFormatter`: Formatierung als Baumstruktur
-  - [x] FastTests für Typ-Hierarchien
-  - [ ] Review/Audit zu 5.3 durchführen; Findings ergänzen und umsetzen.
-- [x] 5.4 Transitive Impact-Analyse (`get_impact`-Engine):
-  - [x] Ermittlung des transitiven Blast Radius bei Änderungen an Symbolen
-  - [x] FastTests für Impact-Berechnung
-  - [ ] Review/Audit zu 5.4 durchführen; Findings ergänzen und umsetzen.
-- [x] 5.5 Projekt- & Namespace-Abhängigkeiten (`dependency_graph`-Engine):
-  - [x] `DependencyGraphScanner`: Projektabhängigkeiten und Namespace-Referenzen
-  - [x] FastTests für Dependency-Graphen
-  - [ ] Review/Audit zu 5.5 durchführen; Findings ergänzen und umsetzen.
-- [ ] 5.6 Beziehungen über ein gemeinsames Test-Szenario prüfen: Aufrufe, Referenzen, Overrides, Interface-Implementierungen und transitive Auswirkungen über mehrere Projekte hinweg mit identischer Semantik und stabilen Handoffs testen; Grenzen und Kürzungen der Ergebnisse ausgeben.
-  - [ ] Review/Audit zu 5.6 durchführen; Findings ergänzen und umsetzen.
-
-### Cluster 6: Projekt-, Datei- & Scope-Struktur (Core)
-- [x] 6.1 Dateibaum-Scanner (`get_file_tree`-Engine):
-  - [x] `SolutionFileWalker` & `GetFileTreeScanner`: Schneller Scan der Solution-Dateien
-  - [x] `FileTreeFilter` und `summary`-Rendering
-  - [x] FastTests für File-Trees
-  - [ ] Review/Audit zu 6.1 durchführen; Findings ergänzen und umsetzen.
-- [x] 6.2 Namespace-Baum (`get_namespace_tree`-Engine):
-  - [x] `NamespaceTreeScanner`: Deklarierte Namespaces hierarchisch strukturieren
-  - [x] FastTests für Namespace-Trees
-  - [ ] Review/Audit zu 6.2 durchführen; Findings ergänzen und umsetzen.
-- [x] 6.3 Index-Scope (`get_index_scope`-Engine):
-  - [x] `IndexScopeScanner`: Status der C#-Indizierung und Dokumentenübersicht
-  - [x] FastTests für Index-Scope
-  - [ ] Review/Audit zu 6.3 durchführen; Findings ergänzen und umsetzen.
-
-### Cluster 7: Assembly-Dekompilierung & Binary-Navigation (Core)
-- [x] 7.1 Decompiler & virtueller Roslyn-Workspace:
-  - [x] `ICSharpCode.Decompiler`-Adapter (`AssemblyDecompilationAdapter`)
-  - [x] `AssemblyDecompilationCache`: On-the-Fly-Dekompilierung und Caching
-  - [x] `AssemblyRoslynWorkspaceFactory`: Erzeugung eines virtuellen Roslyn-Workspaces aus Dekompilaten
-  - [x] FastTests für Dekompilierung und virtuellen Workspace
-  - [ ] Review/Audit zu 7.1 durchführen; Findings ergänzen und umsetzen.
-- [ ] 7.2 Assembly-Navigations-Backends:
-  - [x] `inspect_assembly`: Öffentliche API und Typdefinitionen extrahieren
-  - [ ] `get_assembly_context`: Zusammenfassung von Assemblies
-  - [ ] `search_assembly`: Text-, Aufruf- und Datenzugriffssuche im Dekompilat
-  - [ ] `find_assembly_extensions`: Auffinden von Extension Methods in Binaries
-  - [ ] `resolve_type_origin`: DLL-Pfad und NuGet-Herkunft externer Typen ermitteln
-  - [ ] FastTests für Assembly-Navigation
-  - [ ] Review/Audit zu 7.2 durchführen; Findings ergänzen und umsetzen.
-- [ ] 7.3 Assembly-Folgeaufrufe und Lebenszyklus prüfen: `inspect_assembly`-Handoffs aus der formatierten und strukturierten Antwort müssen mit passender Assembly-Session bei Folge-Tools auflösbar sein; Cache-/Session-Wiederverwendung, geänderte DLL, abgelaufene Tokens, fehlende Referenzen und native Dateien testen.
-  - [ ] Review/Audit zu 7.3 durchführen; Findings ergänzen und umsetzen.
-
-### Cluster 8: MCP Protocol Layer, Budgeting & Response-Formatting
-- [ ] 8.1 Budgeting & Truncation:
-  - [ ] `SharpToken`-Integration für Token-Begrenzungen
-  - [ ] `McpTruncation`: Präzises Abschneiden mit Fortsetzungshinweisen (`RESPONSE_BUDGET_TOO_SMALL`)
-  - [ ] Review/Audit zu 8.1 durchführen; Findings ergänzen und umsetzen.
-- [ ] 8.2 Standardisiertes Result-Building:
-  - [ ] `McpToolResults`: Einheitliche Erzeugung von `CallToolResult`, `IsError`-Policy und Statusblöcken
-  - [ ] Review/Audit zu 8.2 durchführen; Findings ergänzen und umsetzen.
-- [ ] 8.3 Langläufer & Paginierung:
-  - [ ] `LongRunningToolCallStore`: Polling- und Fortsetzungs-Tokens (`operationToken`, `continuationToken`)
-  - [ ] Review/Audit zu 8.3 durchführen; Findings ergänzen und umsetzen.
-- [ ] 8.4 Argument-Validierung:
-  - [ ] `McpArgumentValidationFilter`: Schema- und Eingabevalidierung für alle Tools
-  - [ ] FastTests für Budgeting, Formatting und Validierung
-  - [ ] Review/Audit zu 8.4 durchführen; Findings ergänzen und umsetzen.
-- [ ] 8.5 Einheitlichen öffentlichen Fehler- und Fortsetzungsvertrag pro Tool testen: `IsError`, Retry bei noch ladendem Target, `RESPONSE_BUDGET_TOO_SMALL`, `minimumResponseBytes`, stabile Pagination und Eingabegrenzen dürfen weder partielle Erfolge vortäuschen noch Daten still verlieren.
-  - [ ] Review/Audit zu 8.5 durchführen; Findings ergänzen und umsetzen.
-
-### Cluster 9: MCP Server Host & Tool-Registrierungen (Ganz oben)
-- [ ] 9.1 Host-Runner & Lifecycle (`AiNetCodeNavigator`):
-  - [ ] CLI-Parameter und Host-Bootstrap mit Stdio-Transport (`ModelContextProtocol` SDK)
-  - [ ] Wartungstools: `get_server_health`, `reload_config`
-  - [ ] Review/Audit zu 9.1 durchführen; Findings ergänzen und umsetzen.
-- [ ] 9.2 Tool-Registrierungen:
-  - [ ] Symbol-Tools: `find_symbol`, `get_symbol_body`
-  - [ ] Struktur-Tools: `get_file_skeleton`, `get_class_structure`, `get_file_tree`, `get_namespace_tree`, `get_index_scope`
-  - [ ] Beziehungs-Tools: `get_call_tree`, `find_references`, `get_type_hierarchy`, `find_implementations`, `get_impact`, `dependency_graph`, `resolve_type_origin`
-  - [ ] Assembly-Tools: `get_assembly_context`, `inspect_assembly`, `search_assembly`, `find_assembly_extensions`
-  - [ ] Kontext-Tools: `get_feature_context`, `get_test_context`
-  - [ ] Review/Audit zu 9.2 durchführen; Findings ergänzen und umsetzen.
-- [ ] 9.3 Host- & Handshake-Integrationstests:
-  - [ ] Test der Tool-Registrierungen, Argumentfilter und MCP-Handshakes
-  - [ ] Review/Audit zu 9.3 durchführen; Findings ergänzen und umsetzen.
-- [ ] 9.4 Realen Host-Lebenszyklus verifizieren: Stdio-Handshake, parallele Anfragen, Cancellation, Neustart, Logging nur auf `stderr`/Datei und sauberes Herunterfahren; der bisherige Typ-Existenztest genügt dafür nicht.
-  - [ ] Review/Audit zu 9.4 durchführen; Findings ergänzen und umsetzen.
-
-### Cluster 10: Repository und Produkt-Ausgaben vollständig auf Englisch umstellen
-- [ ] 10.1 Alle versionierten, selbst verfassten Inhalte inventarisieren: `rg --files` und beispielsweise `rg -n '[ÄÖÜäöüß]|\b(Fehler|Keine|Bitte|ungültig|gefunden|Zeilen|Vollständigkeit|Starte|Bestanden)\b'` für typische deutsche Wörter und Meldungen einsetzen; auch ASCII-only-Texte manuell prüfen. `src/`, `tests/`, `scripts/`, `docs/`, `tasks/`, `.agents/`, Konfigurationsdateien und README-/AGENTS-Dateien einbeziehen. Generierte, ignorierte oder externe Dateien nicht als zu bearbeitenden Repository-Inhalt zählen.
-  - [ ] Review/Audit zu 10.1 durchführen; Findings ergänzen und umsetzen.
-- [ ] 10.2 Sämtliche deutschsprachigen Kommentare, XML-Dokumentation, Fehlermeldungen, Hinweise, MCP-Tool-Antworten, CLI-/Log-Ausgaben, PowerShell-Skriptausgaben, Testnamen/-Assertions/-Fixtures, Regeln und Dokumentation ins Englische übertragen. Auch bestehende Aufgabenbeschreibungen einschließlich dieses Konzepts und der Review-Dateien übersetzen. `.agents/rules/01-language-and-scope.mdc` danach auf Englisch als verbindliche Repository-Sprache für künftige Inhalte festlegen. Die Kommunikation des Agenten mit dem Nutzer bleibt Deutsch.
-  - [ ] Review/Audit zu 10.2 durchführen; Findings ergänzen und umsetzen.
-- [ ] 10.3 Deutschsprachige selbst verfasste Bezeichner, Datei- und Verzeichnisnamen auf Englisch bringen und alle Verweise/Links nachziehen. Etablierte MCP-Toolnamen, JSON-Feldnamen, Fehlercodes, Handoff-Formate und andere Maschinenverträge nur bei fachlich nötiger, getesteter Vertragsänderung ändern; Übersetzungen dürfen Navigationssemantik und read-only-Verhalten nicht verschlechtern.
-  - [ ] Review/Audit zu 10.3 durchführen; Findings ergänzen und umsetzen.
-- [ ] 10.4 Betroffene Tests auf englische Ausgaben aktualisieren und reale MCP-Aufrufe für Erfolg, Fehler und Retry prüfen. Nach der Migration die offiziellen Build-, Fast-, Integrations- und Gesamttest-Skripte ausführen. Die gezielte `rg`-Suche wiederholen und jeden verbleibenden Treffer prüfen; für selbst verfasste deutsche Texte dürfen keine offenen Treffer bleiben.
-  - [ ] Review/Audit zu 10.4 durchführen; Findings ergänzen und umsetzen.
-
-### Cluster 11: End-to-End Verifikation, Dokumentation & Abnahme
-- [ ] 11.1 E2E-Integrationstests:
-  - [ ] Stdio-Kommunikation gegen echte Solution und echte Assemblies
-  - [ ] Verifikation aller 20 Navigations- und zwei Wartungswerkzeuge
-  - [ ] Review/Audit zu 11.1 durchführen; Findings ergänzen und umsetzen.
-- [ ] 11.2 Dokumentation & Tool-Katalog:
-  - [ ] `docs/tools/`: Vollständiger Tool-Katalog mit Schemas und Parametern
-  - [ ] `docs/setup/`: Konfiguration für Claude Desktop, Cursor, Antigravity
-  - [ ] Review/Audit zu 11.2 durchführen; Findings ergänzen und umsetzen.
-- [ ] 11.3 Finale Abnahme:
-  - [ ] `pwsh -File ./scripts/build.ps1` (0 Warnungen, 0 Fehler)
-  - [ ] `pwsh -File ./scripts/test.ps1` (100% bestandene Tests)
-  - [ ] Review/Audit zu 11.3 durchführen; Findings ergänzen und umsetzen.
-- [ ] 11.4 Abnahmematrix aus AiNetLinter-Verhalten und Navigator-Vertrag erstellen: für jedes der 22 Werkzeuge mindestens Erfolg, relevante Filter, Handoff/Folgeaufruf, Pagination/Budget und Fehlerszenarien nachweisen; ausdrücklich ausgeschlossene Linter-, Metrik- und Schreibwerkzeuge dürfen nicht registriert sein.
-  - [ ] Review/Audit zu 11.4 durchführen; Findings ergänzen und umsetzen.
+1. [Cluster 1: Fundamentale Basis- & Test-Infrastruktur](Clusters/Cluster-01.md)
+2. [Cluster 2: Workspace- & Resident-Solution-Engine](Clusters/Cluster-02.md)
+3. [Cluster 3: Kompaktes Handoff- & Symbol-Identitätssystem](Clusters/Cluster-03.md)
+4. [Cluster 4: Semantische Symbol- & Code-Inspektions-Engine (Core)](Clusters/Cluster-04.md)
+5. [Cluster 5: Call Graph, Beziehungen & Hierarchien (Core)](Clusters/Cluster-05.md)
+6. [Cluster 6: Projekt-, Datei- & Scope-Struktur (Core)](Clusters/Cluster-06.md)
+7. [Cluster 7: Assembly-Dekompilierung & Binary-Navigation (Core)](Clusters/Cluster-07.md)
+8. [Cluster 8: MCP Protocol Layer, Budgeting & Response-Formatting](Clusters/Cluster-08.md)
+9. [Cluster 9: MCP Server Host & Tool-Registrierungen (Ganz oben)](Clusters/Cluster-09.md)
+10. [Cluster 10: Repository und Produkt-Ausgaben vollständig auf Englisch umstellen](Clusters/Cluster-10.md)
+11. [Cluster 11: End-to-End Verifikation, Dokumentation & Abnahme](Clusters/Cluster-11.md)
