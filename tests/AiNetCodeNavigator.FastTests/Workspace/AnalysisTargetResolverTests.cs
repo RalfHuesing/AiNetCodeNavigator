@@ -131,6 +131,25 @@ public sealed class AnalysisTargetResolverTests
     }
 
     [Fact]
+    public void Resolve_TargetLockedAgainstReading_ReturnsRecoverableTargetPathError()
+    {
+        using var tempDir = TestTempDirectory.Create("analysis-target-locked-");
+        var path = tempDir.CreateFile("sample.slnx", "locked contents");
+        using var exclusiveLock = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var result = AnalysisTargetResolver.Resolve(new AnalysisTargetRequest(path));
+
+        Assert.Null(result.Target);
+        Assert.NotNull(result.Error);
+        Assert.Equal(NavigationErrorCodes.TargetUnreadable, result.Error!.Code);
+        Assert.Equal("$.targetPath", result.Error.FieldPath);
+        Assert.Equal(path, result.Error.Context);
+        Assert.Contains("Fingerprint", result.Error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Leseberechtigung", result.Error.Hint, StringComparison.Ordinal);
+        Assert.Contains("Status: operation=error, completeness=not_applicable", result.Error.FullMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Resolve_TargetPathOnly_RejectsRelativeMissingAndDirectoryPaths()
     {
         using var tempDir = TestTempDirectory.Create("analysis-target-path-");

@@ -26,3 +26,22 @@
 - Scope note: the resolver is not wired into a public MCP tool at this commit (`src/AiNetCodeNavigator/Mcp/McpServerHost.cs` and tool classes are placeholders). Real transport-level `targetPath` behavior and English product output belong to clusters 9–11 and 10, respectively; they are not claimed as passed by this point audit.
 - Audit verification: source, tests, and reference inspected read-only; no build or tests were run in this audit. The implementation-slice gate results above are inherited from its earlier review record. Documentation-only changes were checked with `git diff --check` before committing.
 - No work on points 2.2 or 2.3 is included in this audit.
+
+### Audit 1 Finding Fix
+
+- Fix base: `b904b63e91eea2ff7a3b554087c9a443e954b1df`.
+- **P2 — target fingerprinting error contract — fixed.** `AnalysisTargetResolver` now catches expected filesystem access failures (`IOException`, `UnauthorizedAccessException`, and `SecurityException`) from opening or hashing the canonical target and returns `TARGET_UNREADABLE` with `fieldPath: $.targetPath`, target context, retry guidance, and the standard recoverable error status. Unexpected failures are not masked. The resolver no longer throws when a target already confirmed by `File.Exists` becomes inaccessible before or during hashing.
+- Added a deterministic regression test that holds the existing target open with `FileShare.None` and confirms the resolver returns the structured error without throwing.
+- Updated current-state target-resolution documentation and marked the access-failure contract implemented. Removed the resolved item from the open Findings register.
+
+#### Fix Verification
+
+| Gate | Result |
+|---|---|
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 217/217 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 5/5 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 222/222 across both test projects |
+| `git diff --check` | Passed |
+
+- The point 2.1 audit checkbox remains open for independent follow-up; no work on 2.2 or 2.3 is included.

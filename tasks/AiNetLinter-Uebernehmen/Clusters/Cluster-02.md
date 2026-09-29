@@ -6,7 +6,7 @@
   - [x] `AnalysisTarget` & `AnalysisTargetResolver`: Unterscheidung Source-Modus (`.sln`/`.slnx`) vs. Assembly-Modus (`.dll`/`.exe`)
   - [x] Pfadnormalisierung und Sicherheitsprüfung
   - [x] FastTests für Target-Resolver
-  - [ ] Handle file access and race failures during target fingerprinting as structured, recoverable resolution errors; cover a locked or vanished target.
+  - [x] Handle file access and race failures during target fingerprinting as structured, recoverable resolution errors; cover a locked or vanished target.
   - [ ] Review/Audit zu 2.1 durchführen; Findings ergänzen und umsetzen.
 - [x] 2.2 Resident Solution Registry (`ProjectRegistry`):
   - [x] `ProjectDefinition` und `ProjectDefinitionLoader`

@@ -2,6 +2,7 @@
 
 using System;
 using System.IO;
+using System.Security;
 using System.Security.Cryptography;
 
 namespace AiNetCodeNavigator.Core.Workspace;
@@ -71,7 +72,17 @@ public static class AnalysisTargetResolver
         }
 
         var analysisRoot = Path.GetDirectoryName(canonicalPath)!;
-        var fingerprint = CreateFingerprint(canonicalPath);
+        string fingerprint;
+        try
+        {
+            fingerprint = CreateFingerprint(canonicalPath);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or SecurityException)
+        {
+            return Unreadable(canonicalPath, exception);
+        }
+
         var target = new AnalysisTarget(targetKind.Value, canonicalPath, request)
         {
             AnalysisRoot = analysisRoot,
@@ -158,6 +169,16 @@ public static class AnalysisTargetResolver
                 message,
                 hint ?? "targetPath mit dem absoluten Pfad einer vorhandenen .sln/.slnx/.dll/.exe-Datei übergeben.",
                 Context: targetPath,
+                FieldPath: "$.targetPath"));
+
+    private static AnalysisTargetResolution Unreadable(string canonicalPath, Exception exception) =>
+        new(
+            null,
+            new AnalysisTargetError(
+                NavigationErrorCodes.TargetUnreadable,
+                $"Die Datei konnte zum Berechnen des Fingerprints nicht gelesen werden: '{exception.Message}'.",
+                "Leseberechtigung prüfen und den Aufruf wiederholen, sobald die Datei verfügbar ist.",
+                Context: canonicalPath,
                 FieldPath: "$.targetPath"));
 
     private sealed record PathResolution(string? CanonicalPath, string? Error, string? Hint = null);

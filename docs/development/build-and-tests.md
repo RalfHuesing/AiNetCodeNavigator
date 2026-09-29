@@ -25,7 +25,7 @@ Core, Host, and TestKit expose internal members to the test assemblies via `Inte
 
 ## Analysis Target Resolution
 
-`AnalysisTargetResolver` accepts one absolute path to an existing file. `.sln` and `.slnx` files select source mode; `.dll` and `.exe` files select assembly mode. The resolver normalizes the path with `Path.GetFullPath`, rejects directories, missing files, unsupported extensions, and wildcard paths, and reports invalid paths as `INVALID_ARGUMENT` on `$.targetPath`. The target fingerprint is the SHA-256 hash of the target file contents.
+`AnalysisTargetResolver` accepts one absolute path to an existing file. `.sln` and `.slnx` files select source mode; `.dll` and `.exe` files select assembly mode. The resolver normalizes the path with `Path.GetFullPath`, rejects directories, missing files, unsupported extensions, and wildcard paths, and reports invalid paths as `INVALID_ARGUMENT` on `$.targetPath`. The target fingerprint is the SHA-256 hash of the target file contents. If the target becomes unavailable or cannot be read while hashing, resolution returns `TARGET_UNREADABLE` on `$.targetPath` so the caller can fix access or retry.
 
 ## Compilation Cache
 
