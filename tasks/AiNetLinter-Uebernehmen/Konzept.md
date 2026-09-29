@@ -1,6 +1,10 @@
 AiNetCodeNavigator ist die Ablösug von AiNetLinter.
 
 Ich will alle Features von AiNetLinter die für Code-Navigation zuständig sind in diesem Projekt haben.
+
+siehe Landkarte [CodeMap-AiNetLinter.md](CodeMap-AiNetLinter.md)
+
+
 Inklusive voller test abdeckung.
 
 AiNetlinter ist erprobt und getestet - wir sollen sehr viel davon übernehmen.
@@ -12,6 +16,7 @@ AiNetCodeNavigator ist ausschließlich ein MCP Server für agentische navigation
 bei unklarheiten immer in AiNetLinter nachschauen und nach AiNetCodeNavigator adaptieren
 
 bei entscheidungsfragen -> blocken und nutzer fragen!
+
 
 roadmap:
 
