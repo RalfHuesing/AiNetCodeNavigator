@@ -5,6 +5,7 @@ This repository contains product specifications, an MCP server for agentic C# co
 ## Where to look
 
 - [Project status and entry points](README.md)
+- [Current-state documentation index](docs/README.md)
 - [Agent rules](.agents/rules/README.md)
 - [Optional task workflow](.agents/agent-workflow/README.md); use a step only when the task invokes it
 

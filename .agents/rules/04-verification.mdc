@@ -10,5 +10,11 @@ alwaysApply: true
 - For reproducible defects, verify a failing test before fixing them. If a deterministic reproduction is infeasible, state why and verify the fix with the strongest practical check.
 - Do not claim a test, build, or product behavior passed without running the relevant check.
 - Do not weaken or skip a failing relevant test to make a change appear complete.
-- For code changes, run the affected tests and required project gates before committing. For documentation-only changes, review the diff and run `git diff --check`.
+- For code changes, run the affected tests and required project gates using the official PowerShell scripts before committing. For documentation-only changes, review the diff and run `git diff --check`.
+- Execute verification gates via:
+  - `pwsh -File ./scripts/build.ps1` to build the solution with all analyzers and warnings-as-errors enabled.
+  - `pwsh -File ./scripts/test-fast.ps1` for fast unit tests.
+  - `pwsh -File ./scripts/test-integration.ps1` for integration tests.
+  - `pwsh -File ./scripts/test.ps1` for the full test suite across the solution.
+- All scripts stream their console output into static log files under `temp/*.log` (`temp/build.log`, `temp/test-fast.log`, `temp/test-integration.log`, `temp/test.log`). When diagnosing build or test failures, inspect the corresponding log in `temp/`.
 - Do not run performance tests as a routine per-commit gate; run them when the relevant acceptance criteria require them.
