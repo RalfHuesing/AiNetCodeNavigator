@@ -57,6 +57,7 @@
 ## Point 2.2: Resident Solution Registry
 
 - Implementation base: `6713fceb3618d16e8e4d40b6d643e1e7a8d3c93a`; the working tree was clean.
+- Implementation commit: `fa488cf`.
 - Reference checked read-only through AiNetLinter MCP: `ProjectRegistry`, `ProjectLease`, `ProjectDefinitionLoader`, `ProjectRegistryTests`, and `ProjectLeaseTests`. The reference exercises normalized cache keys, same-root concurrent creation, LRU eviction that skips busy entries, load retry after failure, background-load isolation, TTL behavior, and idempotent lease disposal. Its server exposes a loading state while a non-blocking factory performs its load; response formatting is outside the registry.
 - AiNetCodeNavigator already had MSBuild Locator registration/design-time workspace tests, missing-solution retry, same-root creation deduplication, LRU/TTL behavior, and active leases. `MSBuildSolutionLoader.LoadSolutionAsync` has no production caller yet; host/tool composition belongs to later clusters, and real `.slnx` lifecycle/load-error integration remains in point 2.3.
 - A regression test reproduced a stale existing document when its contents changed without changing its timestamp. `ResidentSolution.RefreshStalenessUnderLock` skipped hashing on equal timestamps. It now checks each existing document's content hash on refresh and applies changed text. Tests now cover unchanged-timestamp edits, loading-state visibility with a blocked background load, retry after a failed background load, and LRU eviction preserving entries with active leases.
