@@ -168,3 +168,10 @@ All official gates were executed after the final implementation and documentatio
 - Searched `docs/` and `README.md` for other claims of MCP protocol or end-to-end test coverage. The remaining references describe reserved stdio/logging behavior or explicitly label the host and tool registrations as placeholders; none claims that a protocol exchange is tested.
 - Verification: `git diff --check` passed. This documentation-only fix did not require build or test gates.
 - The follow-up Cluster 1 integration review remains pending.
+
+### Follow-up Cluster Integration Review — Fix Round 1
+
+- Reviewed commit `cf74539c8e791d5d6648a0047f2e9a4b8bfc5937` with `gpt-6-sol` (medium); the working tree was clean before this documentation edit. This is the review after cluster fix round 1, not another audit of points 1.1-1.3.
+- **P3 documentation finding — resolved.** `docs/development/build-and-tests.md:16` now describes the integration project as workspace-loading and host-startup tests and explicitly says that MCP handshakes and tool calls are not yet covered. This matches the existing test files and `README.md:7`. A targeted search across `docs/` and `README.md` found no remaining claim of completed MCP protocol test coverage.
+- The documentation change does not alter TestKit, logging, cache, or host interfaces; it introduces no new Cluster 1 integration risk. No cluster finding remains open, so the cluster loop closes after this first fix round.
+- **Verification:** I reviewed the documentation diff and ran `git diff --check`; it passed. The fix is documentation-only, and I did not run build or test gates. The most recent code-gate outcomes remain the implementer's earlier reports, recorded above; they do not validate this documentation edit independently.
