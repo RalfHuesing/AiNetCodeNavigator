@@ -6,10 +6,10 @@
   - [x] `TestWorkspaceBuilder`: Dynamischer `AdhocWorkspace` für In-Memory-Projekte, SyntaxTrees und Compilations
   - [x] `SampleCodeFixtures`: Realistische C#-Codevorlagen (Klassen, Interfaces, Vererbung, Records, Extensions)
   - [x] Semantische Assertions & Result-Prüfhilfen in TestKit
-  - [ ] Handoff-Assertion an das tatsächliche Counter-Alphabet angleichen und Grenzfälle testen.
-  - [ ] Exponierte `Solution` und `Workspace.CurrentSolution` konsistent halten; Projekte, Dokumente und Referenzen prüfen.
-  - [ ] Fehlerpfade der öffentlichen Builder-Eingaben einschließlich Fluent-API testen.
-  - [ ] Review/Audit zu 1.1 durchführen; Findings ergänzen und umsetzen.
+  - [x] Handoff-Assertion an das tatsächliche Counter-Alphabet angleichen und Grenzfälle testen.
+  - [x] Exponierte `Solution` und `Workspace.CurrentSolution` konsistent halten; Projekte, Dokumente und Referenzen prüfen.
+  - [x] Fehlerpfade der öffentlichen Builder-Eingaben einschließlich Fluent-API testen.
+  - [x] Review/Audit zu 1.1 durchführen; Findings ergänzen und umsetzen.
 - [x] 1.2 Logging-Setup in Host (`AiNetCodeNavigator.Logging`):
   - [x] Serilog-Konfiguration mit täglicher Rotation und Dateiausgabe unter Host-Pfad
   - [x] `stderr`-Fehlerkanal, striktes Verbot von Ausgaben auf `stdout`

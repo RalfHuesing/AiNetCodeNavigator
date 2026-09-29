@@ -55,3 +55,12 @@ Two earlier standalone FastTests runs failed in the unrelated `HandoffHandleRegi
 
 - The independent audit checkbox remains open for the auditor's follow-up; this implementation record does not mark the audit complete.
 - No 1.2 or 1.3 implementation work was included in this fix slice.
+
+### Independent audit 2
+
+- Audit count: 2 of 3. Reviewed commit `56d31407410bb5ae8b8145d2a8f8cdff2ee69505` with `gpt-6-sol` (medium); the working tree was clean before this documentation edit. Scope was limited to the three findings from audit 1 and their relevant effects.
+- **P2, handoff alphabet — resolved.** `tests/AiNetCodeNavigator.TestKit/Assertions/NavigationAssertions.cs:20-23` now delegates to `HandoffCounterAlphabet.IsValidHandle`; `tests/AiNetCodeNavigator.FastTests/TestKit/TestKitInfrastructureTests.cs:265-297` covers accepted alphanumeric handles and rejected hyphens, underscores, malformed prefixes, empty values, and null. The assertion now matches the product validator.
+- **P2, workspace consistency — resolved.** `tests/AiNetCodeNavigator.TestKit/Builders/TestWorkspaceBuilder.cs:126-131` applies the completed immutable solution to the workspace and returns `workspace.CurrentSolution`, with failure disposal preserved by the surrounding catch. Tests at `tests/AiNetCodeNavigator.FastTests/TestKit/TestKitInfrastructureTests.cs:31-32,58-61` compare solution/project identities, document IDs, and project references across both views.
+- **P3, public input failures — resolved.** `tests/AiNetCodeNavigator.FastTests/TestKit/TestKitInfrastructureTests.cs:134-211` now covers null project arrays and entries, blank names, null document lists/content, malformed paths, null metadata references, and blank/duplicate project-reference names. The fluent path and project entry points are included; `WithVirtualSolutionPath` validates blank input at `tests/AiNetCodeNavigator.TestKit/Builders/TestWorkspaceBuilder.cs:48-52`.
+- **Gate evidence:** the implementer's record above reports build (0 warnings/errors), focused TestKit tests (31/31), FastTests (202/202), IntegrationTests (4/4), and full suite (206/206) passed. I inspected the current `temp/build.log`, `temp/test-fast.log`, `temp/test-integration.log`, and `temp/test.log` tails; they show those official gate outcomes. This auditor did not rerun gates. The previously observed transient HandoffHandleRegistry test failure is outside point 1.1.
+- No remaining point 1.1 finding. Its audit checkbox is complete; no third point audit is needed.
