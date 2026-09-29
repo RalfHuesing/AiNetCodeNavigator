@@ -13,7 +13,7 @@
 - [x] 1.2 Logging-Setup in Host (`AiNetCodeNavigator.Logging`):
   - [x] Serilog-Konfiguration mit täglicher Rotation und Dateiausgabe unter Host-Pfad
   - [x] `stderr`-Fehlerkanal, striktes Verbot von Ausgaben auf `stdout`
-  - [ ] Review/Audit zu 1.2 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 1.2 durchführen; Findings ergänzen und umsetzen.
 - [x] 1.3 Caching-Infrastruktur (`AiNetCodeNavigator.Core.Caching`):
   - [x] `CompilationCacheManager`: In-Memory- und MTime-basierter Cache für SyntaxTrees & Compilations
   - [x] FastTests für Cache-Hit/Miss und Invalidierung

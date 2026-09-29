@@ -88,6 +88,10 @@ All official gates were executed after the final code and documentation changes:
 
 ### Independent audit
 
-- Audit count: 0 of 3; point 1.2 audit is pending.
-- The Cluster 1 checklist's point 1.2 audit checkbox remains open for the auditor.
+- Audit count: 1 of 3. Reviewed commit `99dcf802e766f61c3bfba0ca23311e2eaf794e04` with `gpt-6-sol` (medium); the working tree was clean before this documentation edit.
+- Scope: point 1.2, the concept and code map, `LoggingSetup`, `Program.Main`, its fast and process integration tests, and AiNetLinter's `SystemLog`, `LoggingConfig.ResolveDirectory`, and startup sequence (read-only).
+- **Findings: none.** `src/AiNetCodeNavigator/Logging/LoggingSetup.cs:27-49` creates the host-relative log directory and configures daily file rolling with a size limit and retention, while the only console sink receives Error/Fatal events through `Console.Error` at lines 56-74. `src/AiNetCodeNavigator/Program.cs:7-11` initializes and flushes logging. The fast test at `tests/AiNetCodeNavigator.FastTests/Logging/LoggingSetupTests.cs:15-59` covers file naming and contents, stderr routing for Error/Fatal, exclusion of Information from stderr, and empty stdout. The process test at `tests/AiNetCodeNavigator.IntegrationTests/Mcp/McpServerIntegrationTests.cs:16-52` checks the actual entry point, stream silence, and a file beside the host assembly. The tests do not simulate a day boundary, but the configured `RollingInterval.Day` directly establishes the requested rotation behavior.
+- The executable currently exits after its logging bootstrap; an active MCP transport and its lifetime belong to Cluster 9 as already recorded above. This does not leave point 1.2 open.
+- **Gate evidence:** the implementer's record above reports build (0 warnings/errors), FastTests (202/202), IntegrationTests (5/5), and full suite (207/207) passed. I inspected the current `temp/build.log`, `temp/test-fast.log`, `temp/test-integration.log`, and `temp/test.log` tails; they show these results. This auditor did not run build or tests.
+- The Cluster 1 checklist's point 1.2 audit checkbox is complete; no follow-up point audit is needed.
 - No 1.1 or 1.3 implementation work was included in this slice.
