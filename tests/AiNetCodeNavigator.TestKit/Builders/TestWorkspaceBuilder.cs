@@ -11,7 +11,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
 /// <summary>
-/// Deklarative Projektbeschreibung für Test-Solutions.
+/// Declarative project description for an in-memory test solution.
 /// </summary>
 public sealed record ProjectSpec(
     string Name,
@@ -24,7 +24,7 @@ public sealed record ProjectSpec(
     string? VirtualProjectDirectory = null);
 
 /// <summary>
-/// Verwalteter Solution-Snapshot inklusive Workspace-Lebenszyklus.
+/// A solution snapshot and the workspace that owns its lifetime.
 /// </summary>
 public sealed record TestSolutionHandle(Solution Solution, Workspace Workspace) : IDisposable
 {
@@ -32,8 +32,7 @@ public sealed record TestSolutionHandle(Solution Solution, Workspace Workspace) 
 }
 
 /// <summary>
-/// Flexibler In-Memory-Solution- und Workspace-Builder auf Basis von <see cref="AdhocWorkspace"/>.
-/// Verwendet gecachte Kern-Referenzen der BCL für maximale Testgeschwindigkeit.
+/// Builds in-memory Roslyn solutions with cached BCL references.
 /// </summary>
 public sealed class TestWorkspaceBuilder
 {
@@ -88,37 +87,103 @@ public sealed class TestWorkspaceBuilder
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "Ownership of AdhocWorkspace is transferred to TestSolutionHandle which implements IDisposable.")]
     private static TestSolutionHandle CreateSolutionCore(string? virtualSolutionFilePath, ProjectSpec[] specs)
     {
+        ArgumentNullException.ThrowIfNull(specs);
+        ValidateProjectSpecs(specs);
+
         var workspace = new AdhocWorkspace();
-        var normalizedSolutionFilePath = virtualSolutionFilePath is null
-            ? null
-            : Path.GetFullPath(virtualSolutionFilePath);
+        try
+        {
+            var normalizedSolutionFilePath = virtualSolutionFilePath is null
+                ? null
+                : Path.GetFullPath(virtualSolutionFilePath);
 
-        var solution = normalizedSolutionFilePath is null
-            ? workspace.CurrentSolution
-            : workspace.AddSolution(SolutionInfo.Create(
-                SolutionId.CreateNewId(),
-                VersionStamp.Create(),
-                filePath: normalizedSolutionFilePath));
+            var solution = normalizedSolutionFilePath is null
+                ? workspace.CurrentSolution
+                : workspace.AddSolution(SolutionInfo.Create(
+                    SolutionId.CreateNewId(),
+                    VersionStamp.Create(),
+                    filePath: normalizedSolutionFilePath));
 
-        var solutionDirectory = normalizedSolutionFilePath is null
-            ? null
-            : Path.GetDirectoryName(normalizedSolutionFilePath)!;
+            var solutionDirectory = normalizedSolutionFilePath is null
+                ? null
+                : Path.GetDirectoryName(normalizedSolutionFilePath)!;
 
-        var projectIdsByName = new Dictionary<string, ProjectId>(StringComparer.Ordinal);
+            var projectIdsByName = new Dictionary<string, ProjectId>(StringComparer.Ordinal);
 
+            foreach (var spec in specs)
+            {
+                var projectId = ProjectId.CreateNewId(spec.Name);
+                projectIdsByName.Add(spec.Name, projectId);
+                solution = AddProject(solution, projectId, spec, solutionDirectory);
+            }
+
+            foreach (var spec in specs)
+            {
+                solution = WireProjectReferences(solution, spec, projectIdsByName);
+            }
+
+            return new TestSolutionHandle(solution, workspace);
+        }
+        catch
+        {
+            workspace.Dispose();
+            throw;
+        }
+    }
+
+    private static void ValidateProjectSpecs(ProjectSpec[] specs)
+    {
+        var projectNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var spec in specs)
         {
-            var projectId = ProjectId.CreateNewId(spec.Name);
-            projectIdsByName[spec.Name] = projectId;
-            solution = AddProject(solution, projectId, spec, solutionDirectory);
+            ArgumentNullException.ThrowIfNull(spec);
+            ArgumentException.ThrowIfNullOrWhiteSpace(spec.Name);
+            ArgumentNullException.ThrowIfNull(spec.Documents);
+            if (!projectNames.Add(spec.Name))
+            {
+                throw new ArgumentException($"Project name '{spec.Name}' is specified more than once.", nameof(specs));
+            }
+
+            foreach (var (fileName, content) in spec.Documents)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+                ArgumentNullException.ThrowIfNull(content);
+                if (string.IsNullOrWhiteSpace(Path.GetFileName(fileName)))
+                {
+                    throw new ArgumentException($"Document path '{fileName}' must include a file name.", nameof(specs));
+                }
+            }
+
+            if (spec.AdditionalReferences is not null && spec.AdditionalReferences.Any(reference => reference is null))
+            {
+                throw new ArgumentException($"Project '{spec.Name}' contains a null metadata reference.", nameof(specs));
+            }
         }
 
         foreach (var spec in specs)
         {
-            solution = WireProjectReferences(solution, spec, projectIdsByName);
-        }
+            if (spec.ProjectReferences is null)
+            {
+                continue;
+            }
 
-        return new TestSolutionHandle(solution, workspace);
+            var referencedNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var referencedName in spec.ProjectReferences)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(referencedName);
+                if (!referencedNames.Add(referencedName))
+                {
+                    throw new ArgumentException(
+                        $"Project '{spec.Name}' references project '{referencedName}' more than once.", nameof(specs));
+                }
+
+                if (!projectNames.Contains(referencedName))
+                {
+                    throw new InvalidOperationException(
+                        $"ProjectSpec '{spec.Name}' references unknown project '{referencedName}'.");
+                }
+            }
+        }
     }
 
     private static Solution WireProjectReferences(
@@ -135,7 +200,7 @@ public sealed class TestWorkspaceBuilder
             if (!projectIdsByName.TryGetValue(referencedName, out var referencedId))
             {
                 throw new InvalidOperationException(
-                    $"ProjectSpec '{spec.Name}' referenziert unbekanntes Projekt '{referencedName}'.");
+                    $"ProjectSpec '{spec.Name}' references unknown project '{referencedName}'.");
             }
 
             solution = solution.AddProjectReference(projectId, new ProjectReference(referencedId));

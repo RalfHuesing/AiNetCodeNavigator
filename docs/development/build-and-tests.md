@@ -17,6 +17,12 @@ The solution `AiNetCodeNavigator.slnx` contains five projects:
 
 Core, Host, and TestKit expose internal members to the test assemblies via `InternalsVisibleTo`.
 
+## Shared Test Support
+
+`AiNetCodeNavigator.TestKit` provides disposable in-memory Roslyn solutions through `TestWorkspaceBuilder`. A `ProjectSpec` can set project references, metadata references, nullable options, preprocessor symbols, output kind, and virtual file paths. The builder reuses its BCL metadata references and rejects duplicate project names or unresolved project references. Virtual paths describe documents without creating files.
+
+`SampleCodeFixtures` contains compilable examples for callers, interfaces and implementations, inheritance, records, record structs, and extension methods. `NavigationAssertions` checks symbol names, handoff identifier syntax, line ranges, and result text patterns. Fast tests verify these helpers against real Roslyn syntax trees, compilations, and symbols.
+
 ## Building
 
 Build the solution using the official PowerShell build script:

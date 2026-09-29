@@ -2,76 +2,185 @@
 
 namespace AiNetCodeNavigator.FastTests.TestKit;
 
+using System;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.TestKit.Assertions;
 using AiNetCodeNavigator.TestKit.Builders;
 using AiNetCodeNavigator.TestKit.Fixtures;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 
-public class TestKitInfrastructureTests
+public sealed class TestKitInfrastructureTests
 {
     [Fact]
-    public void TestWorkspaceBuilder_CreatesValidSingleProjectSolution()
+    public async Task TestWorkspaceBuilder_CreatesSyntaxTreeAndWorkingCompilation()
     {
         using var solutionHandle = TestWorkspaceBuilder.CreateSolution(
-            "public class Demo { public int Val => 42; }",
+            "public class Worker { public string Work() => \"Done\"; }",
             projectName: "DemoProj",
             docName: "Demo.cs");
 
-        Assert.NotNull(solutionHandle);
-        Assert.NotNull(solutionHandle.Solution);
-        Assert.Single(solutionHandle.Solution.Projects);
-
-        var project = solutionHandle.Solution.Projects.First();
-        Assert.Equal("DemoProj", project.Name);
-        Assert.Single(project.Documents);
-        Assert.Equal("Demo.cs", project.Documents.First().Name);
-    }
-
-    [Fact]
-    public async Task TestWorkspaceBuilder_ProducesWorkingCompilation()
-    {
-        using var solutionHandle = TestWorkspaceBuilder.CreateSolution(
-            "public class Worker { public string Work() => \"Done\"; }");
-
-        var project = solutionHandle.Solution.Projects.First();
+        var project = Assert.Single(solutionHandle.Solution.Projects);
+        var document = Assert.Single(project.Documents);
+        var syntaxTree = await document.GetSyntaxTreeAsync();
         var compilation = await project.GetCompilationAsync();
 
+        Assert.Equal("DemoProj", project.Name);
+        Assert.Equal("Demo.cs", document.Name);
+        Assert.NotNull(syntaxTree);
+        Assert.Contains("class Worker", syntaxTree.ToString(), StringComparison.Ordinal);
         Assert.NotNull(compilation);
-        var typeSymbol = compilation.GetTypeByMetadataName("Worker");
-        NavigationAssertions.AssertSymbolName(typeSymbol, "Worker");
+        Assert.Empty(compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
+        NavigationAssertions.AssertSymbolName(compilation.GetTypeByMetadataName("Worker"), "Worker");
     }
 
     [Fact]
-    public async Task SampleCodeFixtures_CreatesStandardMultiProjectSolution()
+    public async Task TestWorkspaceBuilder_ProjectReferenceResolvesSymbolsAcrossProjects()
+    {
+        using var solutionHandle = TestWorkspaceBuilder.Create()
+            .WithProject(new ProjectSpec("Provider", [("Gadget.cs", "namespace Widgets; public class Gadget {}")]))
+            .WithProject(new ProjectSpec(
+                "Consumer",
+                [("Consumer.cs", "namespace Widgets.Consumers; public class Consumer { public Widgets.Gadget? Field; }")],
+                ProjectReferences: ["Provider"]))
+            .Build();
+
+        var provider = solutionHandle.Solution.Projects.Single(project => project.Name == "Provider");
+        var consumer = solutionHandle.Solution.Projects.Single(project => project.Name == "Consumer");
+        var compilation = await consumer.GetCompilationAsync();
+
+        Assert.Equal(provider.Id, Assert.Single(consumer.ProjectReferences).ProjectId);
+        Assert.NotNull(compilation);
+        NavigationAssertions.AssertSymbolName(compilation.GetTypeByMetadataName("Widgets.Gadget"), "Gadget");
+        Assert.Empty(compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
+    }
+
+    [Fact]
+    public async Task TestWorkspaceBuilder_AppliesNullableAndPreprocessorOptions()
+    {
+        const string source = """
+            #if PROBE_SYMBOL
+            public class ConditionalType
+            {
+                public string Get()
+                {
+                    string? maybe = null;
+                    string value = maybe;
+                    return value;
+                }
+            }
+            #endif
+            """;
+
+        using var enabled = TestWorkspaceBuilder.CreateSolution(
+            new ProjectSpec("Enabled", [("Probe.cs", source)], Nullable: NullableContextOptions.Enable, PreprocessorSymbols: ["PROBE_SYMBOL"]));
+        using var disabled = TestWorkspaceBuilder.CreateSolution(
+            new ProjectSpec("Disabled", [("Probe.cs", source)], Nullable: NullableContextOptions.Disable));
+
+        var enabledCompilation = await enabled.Solution.Projects.Single().GetCompilationAsync();
+        var disabledCompilation = await disabled.Solution.Projects.Single().GetCompilationAsync();
+
+        Assert.NotNull(enabledCompilation);
+        Assert.NotNull(disabledCompilation);
+        Assert.NotNull(enabledCompilation.GetTypeByMetadataName("ConditionalType"));
+        Assert.Null(disabledCompilation.GetTypeByMetadataName("ConditionalType"));
+        Assert.Contains(enabledCompilation.GetDiagnostics(), diagnostic => diagnostic.Id == "CS8600");
+        Assert.DoesNotContain(disabledCompilation.GetDiagnostics(), diagnostic => diagnostic.Id == "CS8600");
+    }
+
+    [Fact]
+    public void TestWorkspaceBuilder_ReusesCoreMetadataReferenceInstances()
+    {
+        using var first = TestWorkspaceBuilder.CreateSolution("public class FirstType {}");
+        using var second = TestWorkspaceBuilder.CreateSolution("public class SecondType {}");
+
+        var corlibLocation = typeof(object).Assembly.Location;
+        var firstReference = FindCoreReference(first.Solution, corlibLocation);
+        var secondReference = FindCoreReference(second.Solution, corlibLocation);
+
+        Assert.Same(firstReference, secondReference);
+    }
+
+    [Fact]
+    public void TestWorkspaceBuilder_UnknownProjectReferenceNamesMissingProject()
+    {
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            TestWorkspaceBuilder.CreateSolution(
+                new ProjectSpec("Consumer", [("Consumer.cs", "public class Consumer {}")], ProjectReferences: ["MissingProject"])));
+
+        Assert.Contains("MissingProject", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TestWorkspaceBuilder_RejectsDuplicateProjectNames()
+    {
+        var exception = Assert.Throws<ArgumentException>(() =>
+            TestWorkspaceBuilder.CreateSolution(
+                new ProjectSpec("Shared", [("First.cs", "public class First {}")]),
+                new ProjectSpec("Shared", [("Second.cs", "public class Second {}")])));
+
+        Assert.Contains("Shared", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TestWorkspaceBuilder_VirtualPathsAreNormalizedWithoutCreatingFiles()
+    {
+        var solutionPath = Path.Combine(Path.GetTempPath(), $"navigator-{Guid.NewGuid():N}", "Sample.slnx");
+        using var solutionHandle = TestWorkspaceBuilder.CreateSolution(
+            solutionPath,
+            new ProjectSpec("Sample", [("Nested/Probe.cs", "public class Probe {}")], VirtualProjectDirectory: "src/Sample"));
+
+        var normalizedSolutionPath = Path.GetFullPath(solutionPath);
+        var expectedDocumentPath = Path.Combine(Path.GetDirectoryName(normalizedSolutionPath)!, "src", "Sample", "Nested", "Probe.cs");
+        var document = Assert.Single(Assert.Single(solutionHandle.Solution.Projects).Documents);
+
+        Assert.Equal(normalizedSolutionPath, solutionHandle.Solution.FilePath);
+        Assert.Equal(expectedDocumentPath, document.FilePath);
+        Assert.False(File.Exists(normalizedSolutionPath));
+        Assert.False(Directory.Exists(Path.GetDirectoryName(expectedDocumentPath)!));
+    }
+
+    [Fact]
+    public async Task SampleCodeFixtures_ExposeNavigableTypesAndRelationships()
     {
         using var solutionHandle = SampleCodeFixtures.CreateStandardTestSolution();
+        var coreProject = solutionHandle.Solution.Projects.Single(project => project.Name == "Sample.Core");
+        var appProject = solutionHandle.Solution.Projects.Single(project => project.Name == "Sample.App");
+        var coreCompilation = await coreProject.GetCompilationAsync();
+        var appCompilation = await appProject.GetCompilationAsync();
 
-        Assert.Equal(2, solutionHandle.Solution.Projects.Count());
-
-        var coreProj = solutionHandle.Solution.Projects.First(p => p.Name == "Sample.Core");
-        var appProj = solutionHandle.Solution.Projects.First(p => p.Name == "Sample.App");
-
-        Assert.Single(appProj.ProjectReferences);
-        Assert.Equal(coreProj.Id, appProj.ProjectReferences.First().ProjectId);
-
-        var coreCompilation = await coreProj.GetCompilationAsync();
         Assert.NotNull(coreCompilation);
+        Assert.NotNull(appCompilation);
+        Assert.Empty(coreCompilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
+        Assert.Empty(appCompilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
 
-        var greeterSymbol = coreCompilation.GetTypeByMetadataName("SampleNamespace.Greeter");
-        NavigationAssertions.AssertSymbolName(greeterSymbol, "Greeter");
+        var greeter = coreCompilation.GetTypeByMetadataName("SampleNamespace.Greeter");
+        var caller = appCompilation.GetTypeByMetadataName("SampleNamespace.ServiceCaller");
+        var processor = coreCompilation.GetTypeByMetadataName("SampleNamespace.Hierarchy.IProcessor");
+        var person = coreCompilation.GetTypeByMetadataName("SampleNamespace.Types.Person");
+        var coordinate = coreCompilation.GetTypeByMetadataName("SampleNamespace.Types.Coordinate");
+        var extension = coreCompilation.GetTypeByMetadataName("SampleNamespace.Extensions.StringExtensions")?.GetMembers("DoubleString").OfType<IMethodSymbol>().Single();
 
-        var processorSymbol = coreCompilation.GetTypeByMetadataName("SampleNamespace.Hierarchy.IProcessor");
-        NavigationAssertions.AssertSymbolName(processorSymbol, "IProcessor");
+        NavigationAssertions.AssertSymbolName(greeter, "Greeter");
+        NavigationAssertions.AssertSymbolName(caller, "ServiceCaller");
+        NavigationAssertions.AssertSymbolName(processor, "IProcessor");
+        NavigationAssertions.AssertSymbolName(person, "Person");
+        NavigationAssertions.AssertSymbolName(coordinate, "Coordinate");
+        Assert.True(person!.IsRecord);
+        Assert.True(coordinate!.IsRecord);
+        Assert.Equal(TypeKind.Struct, coordinate.TypeKind);
+        Assert.True(extension!.IsExtensionMethod);
+        Assert.Contains(greeter!.GetMembers("Greet"), symbol => symbol is IMethodSymbol);
     }
 
     [Theory]
     [InlineData("h:gwtQ")]
     [InlineData("h:abc-123")]
     [InlineData("h:foo_bar")]
-    public void NavigationAssertions_ValidHandoff_Passes(string handoffId)
+    public void NavigationAssertions_ValidHandoffPasses(string handoffId)
     {
         NavigationAssertions.AssertValidHandoffId(handoffId);
     }
@@ -81,8 +190,21 @@ public class TestKitInfrastructureTests
     [InlineData("")]
     [InlineData("h:")]
     [InlineData("x:123")]
-    public void NavigationAssertions_InvalidHandoff_Fails(string invalidHandoff)
+    public void NavigationAssertions_InvalidHandoffFails(string invalidHandoff)
     {
-        Assert.ThrowsAny<Exception>(() => NavigationAssertions.AssertValidHandoffId(invalidHandoff));
+        Assert.Throws<Xunit.Sdk.MatchesException>(() => NavigationAssertions.AssertValidHandoffId(invalidHandoff));
+    }
+
+    [Fact]
+    public void NavigationAssertions_ValidatesLineRangesAndPatterns()
+    {
+        NavigationAssertions.AssertValidLineRange(3, 6, minimumLines: 4);
+        NavigationAssertions.AssertContainsPattern(["class Greeter", "class Caller"], "Caller");
+    }
+
+    private static MetadataReference FindCoreReference(Solution solution, string assemblyPath)
+    {
+        return Assert.Single(solution.Projects.Single().MetadataReferences.OfType<PortableExecutableReference>()
+            .Where(reference => reference.FilePath == assemblyPath));
     }
 }
