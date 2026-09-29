@@ -48,6 +48,38 @@ public sealed class ResidentSolutionStalenessTests
     }
 
     [Fact]
+    public async Task GetCurrentSolution_ReflectsModifiedDocumentWhenTimestampIsUnchanged()
+    {
+        using var tempDir = TestTempDirectory.Create("staleness-same-mtime-");
+        const string initialContent = "public class Greeter { public string V => \"1\"; }";
+        const string changedContent = "public class Greeter { public string V => \"2\"; }";
+        var filePath = tempDir.CreateFile("Greeter.cs", initialContent);
+
+        var solutionHandle = TestWorkspaceBuilder.Create()
+            .WithProject("App", (filePath, await File.ReadAllTextAsync(filePath)))
+            .Build();
+
+        using (solutionHandle)
+        {
+            await using var resident = new ResidentSolution(solutionHandle.Solution);
+            var initial = resident.GetCurrentSolution();
+            Assert.NotNull(initial);
+            var initialDocument = initial.Projects.Single().Documents.Single();
+            Assert.Equal(initialContent, (await initialDocument.GetTextAsync()).ToString());
+            var originalMtime = File.GetLastWriteTimeUtc(filePath);
+
+            await File.WriteAllTextAsync(filePath, changedContent);
+            File.SetLastWriteTimeUtc(filePath, originalMtime);
+            Assert.Equal(originalMtime, File.GetLastWriteTimeUtc(filePath));
+
+            var refreshed = resident.GetCurrentSolution();
+            Assert.NotNull(refreshed);
+            var refreshedDocument = refreshed.Projects.Single().Documents.Single();
+            Assert.Equal(changedContent, (await refreshedDocument.GetTextAsync()).ToString());
+        }
+    }
+
+    [Fact]
     public async Task GetCurrentSolution_RemovesDeletedDocumentOnDisk()
     {
         using var tempDir = TestTempDirectory.Create("staleness-del-");

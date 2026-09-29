@@ -53,3 +53,27 @@
 - `tests/AiNetCodeNavigator.FastTests/Workspace/AnalysisTargetResolverTests.cs:134-151` holds an existing `.slnx` file with `FileShare.None` and asserts the structured error without an exception. This is a deterministic regression case on the Windows target platform. The test and fix cover the reported lock/open failure; a separately timed file-removal race is not needed for this acceptance condition.
 - No additional point 2.1 finding emerged from the targeted review. Public MCP transport behavior and English product text remain assigned to clusters 9–11 and 10, respectively.
 - Audit verification: code, test, and documentation inspected; no build or tests were run by this auditor. The fix gates above are the implementer's reported results, not this audit's results. The documentation-only diff was reviewed and `git diff --check` passed before commit.
+
+## Point 2.2: Resident Solution Registry
+
+- Implementation base: `6713fceb3618d16e8e4d40b6d643e1e7a8d3c93a`; the working tree was clean.
+- Reference checked read-only through AiNetLinter MCP: `ProjectRegistry`, `ProjectLease`, `ProjectDefinitionLoader`, `ProjectRegistryTests`, and `ProjectLeaseTests`. The reference exercises normalized cache keys, same-root concurrent creation, LRU eviction that skips busy entries, load retry after failure, background-load isolation, TTL behavior, and idempotent lease disposal. Its server exposes a loading state while a non-blocking factory performs its load; response formatting is outside the registry.
+- AiNetCodeNavigator already had MSBuild Locator registration/design-time workspace tests, missing-solution retry, same-root creation deduplication, LRU/TTL behavior, and active leases. `MSBuildSolutionLoader.LoadSolutionAsync` has no production caller yet; host/tool composition belongs to later clusters, and real `.slnx` lifecycle/load-error integration remains in point 2.3.
+- A regression test reproduced a stale existing document when its contents changed without changing its timestamp. `ResidentSolution.RefreshStalenessUnderLock` skipped hashing on equal timestamps. It now checks each existing document's content hash on refresh and applies changed text. Tests now cover unchanged-timestamp edits, loading-state visibility with a blocked background load, retry after a failed background load, and LRU eviction preserving entries with active leases.
+- Verification of the reproduced defect: before the production fix, the focused same-timestamp test failed because it returned the old document text. After the fix, all 11 focused staleness and registry tests passed.
+- Updated [build-and-tests.md](../../../docs/development/build-and-tests.md) to describe asynchronous load state, lease-aware eviction, and content-hash staleness checks.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 221/221 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 5/5 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 226/226 across both test projects |
+| `git diff --check` | Passed |
+
+### Independent audit
+
+- Audit count: 0 of 3. The point 2.2 audit has not been performed; keep its checklist audit checkbox open.
+- No implementation or testing for point 2.3 is included here.

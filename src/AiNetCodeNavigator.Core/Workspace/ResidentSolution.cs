@@ -25,7 +25,7 @@ public sealed record ResidentLoadedState(Solution Solution, Microsoft.CodeAnalys
 /// <summary>
 /// Hält die geladene Roslyn-<see cref="Solution"/> über die Lebensdauer resident im Speicher.
 /// Unterstützt Hintergrund-Laden und lazy Staleness-Erkennung (Dateiänderungen auf der Platte
-/// werden inkrementell über <see cref="Solution.WithDocumentText"/> übernommen).
+/// werden nach einem Inhalts-Hashvergleich inkrementell über <see cref="Solution.WithDocumentText"/> übernommen).
 /// </summary>
 public sealed class ResidentSolution : IDisposable, IAsyncDisposable
 {
@@ -189,18 +189,18 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
                     continue;
                 }
 
-                var currentMtime = File.GetLastWriteTimeUtc(path);
-                if (fileStates.TryGetValue(path, out var state) && state.MtimeUtc == currentMtime)
-                {
-                    continue;
-                }
-
                 try
                 {
+                    var currentMtime = File.GetLastWriteTimeUtc(path);
+                    var hasPreviousState = fileStates.TryGetValue(path, out var state);
                     var currentHash = ComputeFileHash(path);
-                    if (state.Hash == currentHash)
+                    if (hasPreviousState && state.Hash == currentHash)
                     {
-                        fileStates[path] = state with { MtimeUtc = currentMtime };
+                        if (state.MtimeUtc != currentMtime)
+                        {
+                            fileStates[path] = state with { MtimeUtc = currentMtime };
+                        }
+
                         continue;
                     }
 
