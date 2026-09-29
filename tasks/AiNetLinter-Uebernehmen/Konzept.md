@@ -44,16 +44,16 @@ grundlagen schaffen:
   - [x] FastTests für Cache-Hit/Miss und Invalidierung
 
 ### Cluster 2: Workspace- & Resident-Solution-Engine
-- [ ] 2.1 Target-Erkennung & Validierung (`AiNetCodeNavigator.Core.Workspace`):
-  - [ ] `AnalysisTarget` & `AnalysisTargetResolver`: Unterscheidung Source-Modus (`.sln`/`.slnx`) vs. Assembly-Modus (`.dll`/`.exe`)
-  - [ ] Pfadnormalisierung und Sicherheitsprüfung
-  - [ ] FastTests für Target-Resolver
-- [ ] 2.2 Resident Solution Registry (`ProjectRegistry`):
-  - [ ] `ProjectDefinition` und `ProjectDefinitionLoader`
-  - [ ] Hintergrund-Laden via MSBuild-Locator (`operation=retry`-Verhalten)
-  - [ ] `ProjectLease` & Nebenläufigkeits-Schutz
-  - [ ] Staleness-Erkennung bei geänderten Quelldateien
-  - [ ] FastTests und IntegrationTests für residenten Solution-Lebenszyklus
+- [x] 2.1 Target-Erkennung & Validierung (`AiNetCodeNavigator.Core.Workspace`):
+  - [x] `AnalysisTarget` & `AnalysisTargetResolver`: Unterscheidung Source-Modus (`.sln`/`.slnx`) vs. Assembly-Modus (`.dll`/`.exe`)
+  - [x] Pfadnormalisierung und Sicherheitsprüfung
+  - [x] FastTests für Target-Resolver
+- [x] 2.2 Resident Solution Registry (`ProjectRegistry`):
+  - [x] `ProjectDefinition` und `ProjectDefinitionLoader`
+  - [x] Hintergrund-Laden via MSBuild-Locator (`operation=retry`-Verhalten)
+  - [x] `ProjectLease` & Nebenläufigkeits-Schutz
+  - [x] Staleness-Erkennung bei geänderten Quelldateien
+  - [x] FastTests und IntegrationTests für residenten Solution-Lebenszyklus
 
 ### Cluster 3: Kompaktes Handoff- & Symbol-Identitätssystem
 - [ ] 3.1 Symbol-Identität (`AiNetCodeNavigator.Core.Symbols`):

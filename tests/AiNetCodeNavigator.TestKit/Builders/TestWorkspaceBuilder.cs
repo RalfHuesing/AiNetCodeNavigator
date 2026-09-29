@@ -44,6 +44,8 @@ public sealed class TestWorkspaceBuilder
 
     public static ImmutableArray<MetadataReference> CoreReferences => CoreReferencesLazy.Value;
 
+    public static TestWorkspaceBuilder Create() => new();
+
     public TestWorkspaceBuilder WithVirtualSolutionPath(string path)
     {
         _virtualSolutionFilePath = path;
@@ -178,10 +180,11 @@ public sealed class TestWorkspaceBuilder
         foreach (var (fileName, content) in spec.Documents)
         {
             var documentId = DocumentId.CreateNewId(projectId);
-            var filePath = solutionDirectory is null
-                ? null
-                : Path.GetFullPath(Path.Combine(solutionDirectory, projectDirectory, fileName));
-            solution = solution.AddDocument(documentId, fileName, content, filePath: filePath);
+            var filePath = Path.IsPathRooted(fileName)
+                ? Path.GetFullPath(fileName)
+                : (solutionDirectory is null ? null : Path.GetFullPath(Path.Combine(solutionDirectory, projectDirectory, fileName)));
+            var docName = Path.GetFileName(fileName);
+            solution = solution.AddDocument(documentId, docName, content, filePath: filePath);
         }
 
         return solution;
