@@ -56,13 +56,13 @@ grundlagen schaffen:
   - [x] FastTests und IntegrationTests für residenten Solution-Lebenszyklus
 
 ### Cluster 3: Kompaktes Handoff- & Symbol-Identitätssystem
-- [ ] 3.1 Symbol-Identität (`AiNetCodeNavigator.Core.Symbols`):
-  - [ ] `AnalysisSymbolIdentity`: Normalisierung von `ISymbol` zu kanonischen Identifikatoren (Doc-Comment-ID, File/Line)
-  - [ ] FastTests für Symbol-Identitätsabbildung
-- [ ] 3.2 Handoff-Tokensystem (`AiNetCodeNavigator.Core.Models` / `Symbols`):
-  - [ ] `HandoffCounterAlphabet` & `HandoffCounterStore`: Kompakte ID-Generierung (`h:...`)
-  - [ ] `HandoffHandleRegistry` & `SymbolHandoffIdentifier`: Bidirektionale Zuordnung von Token zu Symbol/Speicherort
-  - [ ] FastTests für Handoff-Erzeugung, Token-Auflösung und Thread-Sicherheit
+- [x] 3.1 Symbol-Identität (`AiNetCodeNavigator.Core.Symbols`):
+  - [x] `AnalysisSymbolIdentity`: Normalisierung von `ISymbol` zu kanonischen Identifikatoren (Doc-Comment-ID, File/Line)
+  - [x] FastTests für Symbol-Identitätsabbildung
+- [x] 3.2 Handoff-Tokensystem (`AiNetCodeNavigator.Core.Models` / `Symbols`):
+  - [x] `HandoffCounterAlphabet` & `HandoffCounterStore`: Kompakte ID-Generierung (`h:...`)
+  - [x] `HandoffHandleRegistry` & `SymbolHandoffIdentifier`: Bidirektionale Zuordnung von Token zu Symbol/Speicherort
+  - [x] FastTests für Handoff-Erzeugung, Token-Auflösung und Thread-Sicherheit
 
 ### Cluster 4: Semantische Symbol- & Code-Inspektions-Engine (Core)
 - [ ] 4.1 Symbolsuche (`find_symbol`-Engine):
