@@ -10,10 +10,8 @@ using Serilog.Core;
 using Serilog.Events;
 
 /// <summary>
-/// Serilog-Initialisierung für den MCP-Host.
-/// Garantiert, dass standardmäßig NIEMALS auf stdout geschrieben wird,
-/// um das MCP JSON-RPC-Protokoll nicht zu beschädigen.
-/// Ausgaben erfolgen in rotierende Logdateien und bei Fehlern optional auf stderr.
+/// Configures Serilog for the MCP host without writing protocol output to stdout.
+/// Events are written to rolling files, with errors also sent to stderr.
 /// </summary>
 public static class LoggingSetup
 {
@@ -24,7 +22,7 @@ public static class LoggingSetup
     public static string? ActiveLogDirectory => _activeLogDirectory;
 
     /// <summary>
-    /// Initialisiert Serilog mit Dateiausgabe und stderr-Kanal.
+    /// Initializes Serilog with file output and an error channel on stderr.
     /// </summary>
     public static void Initialize(string command = "mcp", string? customLogDirectory = null, LogEventLevel minimumLevel = LogEventLevel.Information)
     {
@@ -44,35 +42,35 @@ public static class LoggingSetup
                 retainedFileCountLimit: 30,
                 shared: true,
                 outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
-            .WriteTo.Sink(new StderrSink(LogEventLevel.Error));
+            .WriteTo.Sink(new StderrSink(Console.Error));
 
         Log.Logger = config.CreateLogger();
         Log.Information("AiNetCodeNavigator logging initialized. OutputDirectory={LogDirectory}, Command={Command}", logDirectory, command);
     }
 
     /// <summary>
-    /// Schließt und flusht alle aktiven Serilog-Sinks asynchron.
+    /// Closes and asynchronously flushes all active Serilog sinks.
     /// </summary>
     public static ValueTask CloseAndFlushAsync() => Log.CloseAndFlushAsync();
 
     private sealed class StderrSink : ILogEventSink
     {
-        private readonly LogEventLevel _minimumLevel;
+        private readonly TextWriter _writer;
 
-        public StderrSink(LogEventLevel minimumLevel)
+        public StderrSink(TextWriter writer)
         {
-            _minimumLevel = minimumLevel;
+            _writer = writer;
         }
 
         public void Emit(LogEvent logEvent)
         {
-            if (logEvent.Level < _minimumLevel)
+            if (logEvent.Level is not (LogEventLevel.Error or LogEventLevel.Fatal))
             {
                 return;
             }
 
-            var message = $"[{logEvent.Level:u3}] {logEvent.RenderMessage()}{(logEvent.Exception != null ? Environment.NewLine + logEvent.Exception : string.Empty)}";
-            Console.Error.WriteLine(message);
+            var message = $"[{logEvent.Level.ToString().ToUpperInvariant()}] {logEvent.RenderMessage()}{(logEvent.Exception != null ? Environment.NewLine + logEvent.Exception : string.Empty)}";
+            _writer.WriteLine(message);
         }
     }
 }

@@ -10,7 +10,7 @@
 The solution `AiNetCodeNavigator.slnx` contains five projects:
 
 - `src/AiNetCodeNavigator.Core/`: Core library for Roslyn workspace resolution, AST exploration, symbol queries, call hierarchies, decompilation, and caching.
-- `src/AiNetCodeNavigator/`: MCP server host executable communicating via standard I/O (JSON-RPC), CLI host, and Serilog logging.
+- `src/AiNetCodeNavigator/`: MCP server host executable and Serilog logging bootstrap.
 - `tests/AiNetCodeNavigator.TestKit/`: Shared test support infrastructure, sample code fixtures, and workspace builders.
 - `tests/AiNetCodeNavigator.FastTests/`: Fast unit and component test suite.
 - `tests/AiNetCodeNavigator.IntegrationTests/`: End-to-end and MCP protocol integration test suite.
@@ -22,6 +22,10 @@ Core, Host, and TestKit expose internal members to the test assemblies via `Inte
 `AiNetCodeNavigator.TestKit` provides disposable in-memory Roslyn solutions through `TestWorkspaceBuilder`. A `ProjectSpec` can set project references, metadata references, nullable options, preprocessor symbols, output kind, and virtual file paths. The returned `Solution` matches the owning workspace's `CurrentSolution`. The builder reuses its BCL metadata references and validates project and document inputs before creating the workspace. Virtual paths describe documents without creating files.
 
 `SampleCodeFixtures` contains compilable examples for callers, interfaces and implementations, inheritance, records, record structs, and extension methods. `NavigationAssertions` checks symbol names, handoff identifiers using the core product alphabet, line ranges, and result text patterns. Fast tests verify these helpers against real Roslyn syntax trees, compilations, and symbols.
+
+## Host Logging
+
+The host entry point initializes Serilog and flushes it before exit. By default, logs are written beneath `AppContext.BaseDirectory/logs` in daily rolling files, with an additional 10 MiB size limit and 30 retained files. Error and fatal events are also written to `stderr`; the logger has no `stdout` sink so it cannot corrupt MCP protocol output. The host integration test launches the built executable and checks its streams and log location.
 
 ## Building
 

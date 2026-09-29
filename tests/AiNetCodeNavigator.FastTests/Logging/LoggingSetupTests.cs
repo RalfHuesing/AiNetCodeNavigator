@@ -9,38 +9,52 @@ using AiNetCodeNavigator.Logging;
 using Serilog;
 using Xunit;
 
-public class LoggingSetupTests
+public sealed class LoggingSetupTests
 {
     [Fact]
-    public async Task LoggingSetup_InitializesDirectoryAndLogsCorrectly()
+    public async Task LoggingSetup_WritesDailyFileAndErrorsToStderrWithoutStdout()
     {
-        var tempLogDir = Path.Combine(Path.GetTempPath(), "AiNetCodeNavigator_LogTests_" + Guid.NewGuid().ToString("N"));
+        using var tempDirectory = TestTempDirectory.Create("logging-setup-");
+        var logDirectory = tempDirectory.GetPath("logs");
+        using var capturedStdout = new StringWriter();
+        using var capturedStderr = new StringWriter();
+        var originalStdout = Console.Out;
+        var originalStderr = Console.Error;
+
         try
         {
-            LoggingSetup.Initialize(command: "test-cmd", customLogDirectory: tempLogDir);
-
-            Assert.True(Directory.Exists(tempLogDir));
-            Assert.Equal(tempLogDir, LoggingSetup.ActiveLogDirectory);
+            Console.SetOut(capturedStdout);
+            Console.SetError(capturedStderr);
+            LoggingSetup.Initialize(command: "test-cmd", customLogDirectory: logDirectory);
 
             Log.Information("Test info message");
             Log.Error("Test error message");
+            Log.Fatal(new InvalidOperationException("Test fatal details"), "Test fatal message");
 
             await LoggingSetup.CloseAndFlushAsync();
-
-            var logFiles = Directory.GetFiles(tempLogDir, "ainetcodenavigator-*.log");
-            Assert.Single(logFiles);
-
-            var logContent = await File.ReadAllTextAsync(logFiles[0]);
-            Assert.Contains("Test info message", logContent, StringComparison.Ordinal);
-            Assert.Contains("Test error message", logContent, StringComparison.Ordinal);
-            Assert.Contains("test-cmd", logContent, StringComparison.Ordinal);
         }
         finally
         {
-            if (Directory.Exists(tempLogDir))
-            {
-                try { Directory.Delete(tempLogDir, recursive: true); } catch { /* ignore */ }
-            }
+            Console.SetOut(originalStdout);
+            Console.SetError(originalStderr);
         }
+
+        Assert.True(Directory.Exists(logDirectory));
+        Assert.Equal(logDirectory, LoggingSetup.ActiveLogDirectory);
+        Assert.Empty(capturedStdout.ToString());
+        Assert.Contains("Test error message", capturedStderr.ToString(), StringComparison.Ordinal);
+        Assert.Contains("Test fatal message", capturedStderr.ToString(), StringComparison.Ordinal);
+        Assert.Contains("Test fatal details", capturedStderr.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("Test info message", capturedStderr.ToString(), StringComparison.Ordinal);
+
+        var logFile = Assert.Single(Directory.GetFiles(logDirectory, "ainetcodenavigator-*.log"));
+        Assert.Matches("^ainetcodenavigator-\\d{8}\\.log$", Path.GetFileName(logFile));
+
+        var logContent = await File.ReadAllTextAsync(logFile);
+        Assert.Contains("Test info message", logContent, StringComparison.Ordinal);
+        Assert.Contains("Test error message", logContent, StringComparison.Ordinal);
+        Assert.Contains("Test fatal message", logContent, StringComparison.Ordinal);
+        Assert.Contains("Test fatal details", logContent, StringComparison.Ordinal);
+        Assert.Contains("test-cmd", logContent, StringComparison.Ordinal);
     }
 }

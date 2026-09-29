@@ -64,3 +64,30 @@ Two earlier standalone FastTests runs failed in the unrelated `HandoffHandleRegi
 - **P3, public input failures — resolved.** `tests/AiNetCodeNavigator.FastTests/TestKit/TestKitInfrastructureTests.cs:134-211` now covers null project arrays and entries, blank names, null document lists/content, malformed paths, null metadata references, and blank/duplicate project-reference names. The fluent path and project entry points are included; `WithVirtualSolutionPath` validates blank input at `tests/AiNetCodeNavigator.TestKit/Builders/TestWorkspaceBuilder.cs:48-52`.
 - **Gate evidence:** the implementer's record above reports build (0 warnings/errors), focused TestKit tests (31/31), FastTests (202/202), IntegrationTests (4/4), and full suite (206/206) passed. I inspected the current `temp/build.log`, `temp/test-fast.log`, `temp/test-integration.log`, and `temp/test.log` tails; they show those official gate outcomes. This auditor did not rerun gates. The previously observed transient HandoffHandleRegistry test failure is outside point 1.1.
 - No remaining point 1.1 finding. Its audit checkbox is complete; no third point audit is needed.
+
+## Point 1.2: Host Logging
+
+- Implementation base: `68a5af082d3661ca1e714397840a0c572b9e522f` (working tree was clean).
+- Implementer comparison: AiNetLinter's `SystemLog` and `LoggingConfig` were inspected read-only through the navigation MCP. `Program.RunMainAsync` initializes the process logger before CLI dispatch and closes it at process exit. The root logger writes daily rolling files under a directory resolved from `AppContext.BaseDirectory`; MCP command diagnostics are logged while console errors use the error stream.
+- Existing AiNetCodeNavigator `LoggingSetup` already configured daily file rolling, a 10 MiB size cap, 30 retained files, and an error sink. However, `Program.Main` never initialized or flushed it. The stderr sink also formatted `LogEventLevel` with a Serilog-specific `u3` format token inside C# interpolation; that throws for Error events and the sink drops the resulting exception. The sole FastTest previously checked only file output.
+- Changes: initialize the logger in the executable entry point and flush it before exit; capture the process `Console.Error` writer in the error sink; format levels with an ordinary invariant enum string. Tests verify daily filename shape, file output, Error/Fatal to stderr, Information excluded from stderr, and no stdout output. An integration test launches the built host assembly and verifies silent process streams and the default log directory beside the executable.
+- Current-state documentation updated: [development/build-and-tests.md](../../../docs/development/build-and-tests.md).
+- Scope note: `McpServerHost` still has no MCP transport lifecycle; the real stdio session, cancellation, and shutdown checks remain under Cluster 9. Point 1.2 now proves host startup logging and stream routing.
+
+### Verification
+
+All official gates were executed after the final code and documentation changes:
+
+| Gate | Result |
+|---|---|
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 202/202 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 5/5 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 207/207 across both test projects |
+| `git diff --check` | Passed |
+
+### Independent audit
+
+- Audit count: 0 of 3; point 1.2 audit is pending.
+- The Cluster 1 checklist's point 1.2 audit checkbox remains open for the auditor.
+- No 1.1 or 1.3 implementation work was included in this slice.
