@@ -82,3 +82,25 @@
 - AiNetLinter was inspected read-only: `src/AiNetLinter/Mcp/Projects/ProjectRegistry.cs:95-124,159-205,239-270` has the same disposal interleaving, and its publish-race test checks disposal of a losing creation, not disposal during creation. The shared-file staleness issue concerns this repository's `ResidentSolution` adaptation rather than AiNetLinter's registry contract. Reference parity does not close either finding.
 - Scope: the async loading state, retry after an emitted load-failure response, lease-aware LRU behavior, and same-root creation deduplication have focused tests. Real `.slnx` loading, structural staleness, and MCP load-error reporting remain point 2.3 or later integration work; this audit does not claim those gates.
 - Verification: code, tests, and reference inspected read-only. No build or tests were run by this auditor; the gate table above records the implementer's results. Documentation-only diff reviewed and `git diff --check` passed before commit.
+
+### Audit 1 Finding Fix
+
+- Fix base: `da16d00e1472c12d25e7952af94d7aad5007f8a3`.
+- Implementation commit: `f5dfea718cae6a8227909729d3e172b71e99165c`.
+- The two regression tests were run before the production changes and failed as expected: a shared-file test showed the second project's document still contained old text; the disposal interleaving test showed the registry could complete disposal before publishing and return a successful lease.
+- **P1 — shared physical source refresh — fixed.** `ResidentSolution` now groups loaded documents by physical file path, reads and hashes each path once, applies the changed `SourceText` to every document in the group, and advances the path's cached state only after the group update. The regression uses the same physical `.cs` path in two projects and preserves its timestamp while changing its contents.
+- **P2 — publication after disposal — fixed.** `ProjectRegistry.Lease` tracks active creation operations. `DisposeAsync` marks the registry closed and waits for those operations to finish before draining entries. Creation checks the disposed state while holding the registry lock; a late successful instance is removed from its reservation, disposed, and returned as `PROJECT_REGISTRY_DISPOSED` rather than published. New lease calls after closure throw `ObjectDisposedException`.
+- The disposal regression pauses at the pre-publish hook, starts `DisposeAsync`, then releases creation. It asserts disposal waits, the lease fails with `PROJECT_REGISTRY_DISPOSED`, no snapshot remains, and the created resident is disposed exactly once.
+- Updated [build-and-tests.md](../../../docs/development/build-and-tests.md) with shared-path refresh and registry disposal behavior; removed both resolved items from the open Findings register.
+
+#### Fix Verification
+
+| Gate | Result |
+|---|---|
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 223/223 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 5/5 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 228/228 across both test projects |
+| `git diff --check` | Passed |
+
+- The point 2.2 audit checkbox remains open for independent follow-up. No 2.3 implementation was included.
