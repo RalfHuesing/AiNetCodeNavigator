@@ -18,7 +18,7 @@ roadmap:
 grundlagen schaffen:
 1. [x] .agents\rules anpassen (habe ich aus anderem repo kopiert)
 2. [x] solution/projekt skelette anlegen (projekte, core, tests, usw. was wir so brauchen)
-3. [ ] namespaces mit gitkeep und klassen hüllen
+3. [x] namespaces mit gitkeep und klassen hüllen
 4. [ ] pwsh scripte für build und die tests - diese müssen dann immer aufgerufen werden (in rules oder docs erankern), output nach temp\ (sieht in docs dann das der agent dort nachlesen soll, evtl. gibt das script das auch so aus). temp\ in gitignore
 5. [ ] komplette basis infrastrutur für tests und core module
 
