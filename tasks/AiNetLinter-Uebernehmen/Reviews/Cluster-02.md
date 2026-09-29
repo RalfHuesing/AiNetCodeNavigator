@@ -21,5 +21,8 @@
 
 ### Independent audit
 
-- Audit count: 0 of 3. The point audit has not been performed; keep the Cluster 2 checklist audit checkbox open.
-- No work on points 2.2 or 2.3 is included in this slice.
+- Audit count: 1 of 3 for point 2.1; audited commit `9f42a57` independently. The point audit checkbox remains open because the finding below is unresolved.
+- Finding **P2 — target fingerprinting can escape the resolver's error contract**: `src/AiNetCodeNavigator.Core/Workspace/AnalysisTargetResolver.cs:132-150` checks `File.Exists`, then opens and hashes the same path without catching `IOException` or `UnauthorizedAccessException`. A file locked with `FileShare.None`, denied for reading, or removed between those operations can make `Resolve` throw instead of returning `AnalysisTargetResolution.Error` with a recoverable status. `tests/AiNetCodeNavigator.FastTests/Workspace/AnalysisTargetResolverTests.cs:16-195` covers invalid paths and successful hashing but no file access failure. The read-only AiNetLinter reference has the same gap at `src/AiNetLinter/Mcp/AnalysisTargetResolver.cs:146-159`; parity alone does not meet the concept's safe failure requirement. **Acceptance:** convert expected open/read/hash failures into a structured target error without masking cancellation or unexpected defects, and add a deterministic locked-file or equivalent failure test proving that the resolver does not throw and identifies `$.targetPath`.
+- Scope note: the resolver is not wired into a public MCP tool at this commit (`src/AiNetCodeNavigator/Mcp/McpServerHost.cs` and tool classes are placeholders). Real transport-level `targetPath` behavior and English product output belong to clusters 9–11 and 10, respectively; they are not claimed as passed by this point audit.
+- Audit verification: source, tests, and reference inspected read-only; no build or tests were run in this audit. The implementation-slice gate results above are inherited from its earlier review record. Documentation-only changes were checked with `git diff --check` before committing.
+- No work on points 2.2 or 2.3 is included in this audit.
