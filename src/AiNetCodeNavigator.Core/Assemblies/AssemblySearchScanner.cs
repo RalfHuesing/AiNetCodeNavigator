@@ -129,7 +129,9 @@ public static class AssemblySearchScanner
     {
         var declarationHeaders = declarationOnly
             ? root.DescendantNodesAndSelf().OfType<MemberDeclarationSyntax>()
-                .Select(GetDeclarationNameSpan).Where(span => span is not null).Select(span => span!.Value).ToArray()
+                .SelectMany(GetDeclarationNameSpans)
+                .Concat(root.DescendantNodesAndSelf().OfType<EnumMemberDeclarationSyntax>().Select(member => member.Identifier.Span))
+                .ToArray()
             : Array.Empty<TextSpan>();
         for (var i = 0; i < sourceText.Lines.Count; i++)
         {
@@ -154,6 +156,21 @@ public static class AssemblySearchScanner
                 }
             }
         }
+    }
+
+    private static IEnumerable<TextSpan> GetDeclarationNameSpans(MemberDeclarationSyntax member)
+    {
+        if (member is FieldDeclarationSyntax field)
+        {
+            return field.Declaration.Variables.Select(variable => variable.Identifier.Span);
+        }
+        if (member is EventFieldDeclarationSyntax eventField)
+        {
+            return eventField.Declaration.Variables.Select(variable => variable.Identifier.Span);
+        }
+
+        var span = GetDeclarationNameSpan(member);
+        return span is null ? Array.Empty<TextSpan>() : [span.Value];
     }
 
     private static TextSpan? GetDeclarationNameSpan(MemberDeclarationSyntax member) => member switch
@@ -193,7 +210,11 @@ public static class AssemblySearchScanner
             .AncestorsAndSelf()
             .OfType<MemberDeclarationSyntax>()
             .FirstOrDefault();
-        var nameSpan = member is null ? null : GetDeclarationNameSpan(member);
+        var nameSpan = member is null
+            ? null
+            : GetDeclarationNameSpans(member)
+                .Select(span => (TextSpan?)span)
+                .FirstOrDefault(span => span!.Value.IntersectsWith(line.Span));
         return nameSpan is null ? null : sourceText.ToString(nameSpan.Value);
     }
 

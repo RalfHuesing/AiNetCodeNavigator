@@ -56,12 +56,16 @@ public static class ResolveTypeOriginScanner
                 request.IncludeReferences ? "Check the fully qualified type name and confirm the assembly reference is available." : "Enable reference lookup or check the type name.");
         }
 
-        var paths = unique.Select(type => ResolveAssemblyPath(type.ContainingAssembly!, context))
-            .Where(path => path is not null)
-            .Select(path => path!)
+        var pathMatches = unique
+            .Select(type => (Type: type, Paths: ResolveAssemblyPaths(type.ContainingAssembly!, context)))
+            .ToArray();
+        var paths = pathMatches.SelectMany(match => match.Paths)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        if (unique.Count > 1)
+        var unprovenReferencePath = pathMatches.Any(match =>
+            !SymbolEqualityComparer.Default.Equals(match.Type.ContainingAssembly, context.Assembly)
+            && match.Paths.Length != 1);
+        if (unique.Count > 1 || unprovenReferencePath)
         {
             return Result<ResolveTypeOriginPayload>.Success(new ResolveTypeOriginPayload(
                 request.TypeName.Trim(), "ambiguous", null, null, null, null, true,
@@ -70,7 +74,7 @@ public static class ResolveTypeOriginScanner
 
         var resolvedType = unique[0];
         var isLocal = SymbolEqualityComparer.Default.Equals(resolvedType.ContainingAssembly, context.Assembly);
-        var assemblyPath = ResolveAssemblyPath(resolvedType.ContainingAssembly!, context);
+        var assemblyPath = pathMatches[0].Paths.SingleOrDefault();
         var package = TryGetNuGetPackage(assemblyPath);
         var framework = !isLocal && assemblyPath is not null && IsFrameworkPath(assemblyPath);
         return Result<ResolveTypeOriginPayload>.Success(new ResolveTypeOriginPayload(
@@ -95,7 +99,9 @@ public static class ResolveTypeOriginScanner
             return;
         }
 
-        if (fullyQualified.Contains(".", StringComparison.Ordinal) || fullyQualified.Contains("+", StringComparison.Ordinal)) return;
+        if (!fullyQualified.Contains('+')
+            && TryAddNestedMatches(assembly, fullyQualified, matches)) return;
+        if (fullyQualified.Contains('+')) return;
         foreach (var type in AssemblyAnalysisSymbolTraversal.GetAllTypes(assembly.GlobalNamespace))
         {
             if (matches.Count >= MaxCandidates) return;
@@ -112,26 +118,75 @@ public static class ResolveTypeOriginScanner
         }
     }
 
+    private static bool TryAddNestedMatches(IAssemblySymbol assembly, string name, ICollection<ITypeSymbol> matches)
+    {
+        var found = false;
+        for (var separator = name.LastIndexOf('.'); separator > 0; separator = name.LastIndexOf('.', separator - 1))
+        {
+            var metadataName = name[..separator] + "+" + name[(separator + 1)..].Replace('.', '+');
+            var nested = assembly.GetTypeByMetadataName(NormalizeMetadataName(metadataName));
+            if (nested is null) continue;
+            matches.Add(nested);
+            found = true;
+        }
+        return found;
+    }
+
     private static string NormalizeTypeName(string value) => value.Trim()
         .Replace("global::", string.Empty, StringComparison.Ordinal)
         .Replace('/', '+');
 
     private static string NormalizeMetadataName(string value)
     {
-        var genericStart = value.IndexOf('<');
-        if (genericStart < 0 || !value.EndsWith('>')) return value;
-        var arguments = value[(genericStart + 1)..^1];
-        var arity = 1 + arguments.Count(character => character == ',');
-        return $"{value[..genericStart]}`{arity}";
+        if (!value.Contains('<')) return value;
+        var normalized = new System.Text.StringBuilder(value.Length);
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (value[index] != '<')
+            {
+                normalized.Append(value[index]);
+                continue;
+            }
+
+            var depth = 1;
+            var arity = 1;
+            var closing = index + 1;
+            for (; closing < value.Length && depth > 0; closing++)
+            {
+                if (value[closing] == '<') depth++;
+                else if (value[closing] == '>') depth--;
+                else if (value[closing] == ',' && depth == 1) arity++;
+            }
+
+            if (depth != 0)
+            {
+                normalized.Append(value.AsSpan(index));
+                break;
+            }
+
+            normalized.Append('`').Append(arity);
+            index = closing - 1;
+        }
+        return normalized.ToString();
     }
 
-    private static string? ResolveAssemblyPath(IAssemblySymbol assembly, AssemblyContext context)
+    internal static string? ResolveAssemblyPath(IAssemblySymbol assembly, AssemblyContext context)
     {
-        if (SymbolEqualityComparer.Default.Equals(assembly, context.Assembly)) return context.Origin.CanonicalPath;
-        return context.References.FirstOrDefault(reference =>
-                string.Equals(reference.Name, assembly.Identity.Name, StringComparison.OrdinalIgnoreCase)
-                && reference.Resolved)
-            ?.ResolvedPath;
+        var paths = ResolveAssemblyPaths(assembly, context);
+        return paths.Length == 1 ? paths[0] : null;
+    }
+
+    private static string[] ResolveAssemblyPaths(IAssemblySymbol assembly, AssemblyContext context)
+    {
+        if (SymbolEqualityComparer.Default.Equals(assembly, context.Assembly)) return [context.Origin.CanonicalPath];
+        return context.Compilation.References
+            .OfType<PortableExecutableReference>()
+            .Where(reference => reference.FilePath is not null)
+            .Where(reference => context.Compilation.GetAssemblyOrModuleSymbol(reference) is IAssemblySymbol referencedAssembly
+                && referencedAssembly.Identity.Equals(assembly.Identity))
+            .Select(reference => reference.FilePath!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static bool IsFrameworkPath(string path) =>

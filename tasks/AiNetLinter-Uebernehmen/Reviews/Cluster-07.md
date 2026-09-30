@@ -55,6 +55,24 @@
 - **P2 — Declaration-only search drops field and enum-member declarations.** The filter enumerates `MemberDeclarationSyntax` nodes, yet `GetDeclarationNameSpan` has no `FieldDeclarationSyntax`, `EventFieldDeclarationSyntax`, or `EnumMemberDeclarationSyntax` arm (`src/AiNetCodeNavigator.Core/Assemblies/AssemblySearchScanner.cs:124-173`). Therefore a query matching a declared field or enum member is removed when `DeclarationOnly=true`, despite being a declaration name. AiNetLinter's declaration filter explicitly handles those declaration kinds. The current test exercises only a method (`AssemblyNavigationScannerTests.cs:42-76`). **Acceptance:** Search decompiled field, event-field, and enum-member names with `DeclarationOnly=true`; return their declaration lines while continuing to exclude comments, strings, and method-body uses.
 - **Verified boundaries:** The shared scope maps missing/native inputs to structured errors and disposes its session. Search uses bounded result counts and a regex timeout; context reports reference truncation. Reference traversal caps resolved paths at 128, so the extension scanner's matching `.Take(128)` does not introduce a separate omission. The staging owner lock is acquired before the staging directory is created, retained until discard, and checked before retention cleanup; existing concurrency coverage exercises that path. No target-binary write was found. The three findings keep the point 7.2 audit checkbox open for fixes and a follow-up audit.
 
+### Independent audit 1/3 finding fixes for point 7.2
+
+- Fix base: `b5efe89fab75ff7275526742863aca428045c5f8` (clean working tree). Three focused regression tests failed before the production fixes: a version-2 symbol was mapped to the first version-1 path, `Probe.Outer.Inner` returned `SYMBOL_NOT_FOUND`, and declaration-only field/event-field/enum-member searches returned no hit.
+- **P1 — Type origin uses the compilation's full assembly identity mapping — fixed.** Resolved symbols are mapped through `Compilation.References` by Roslyn `AssemblyIdentity.Equals`, then the matching `PortableExecutableReference.FilePath` is returned only when exactly one path matches. If a reference's origin path cannot be proven uniquely, the payload is marked ambiguous rather than selecting a same-name reference. The regression fixture supplies two `SharedDependency` versions and requires the version-2 package path for its symbol.
+- **P2 — C# dotted nested names resolve — fixed.** Lookup now tries dotted namespace/nested-type splits, normalizes generic arity per type segment, and supports closed generic nested names such as `Probe.GenericOuter<int>.GenericInner<string>`. The test keeps existing local, reference, simple-name ambiguity, and missing-name coverage.
+- **P2 — Declaration-only search includes field-like declarations — fixed.** The filter now includes every declarator in field and event-field declarations plus enum-member identifiers. The regression covers multiple fields in one declaration and confirms a field name used in a method body, string, or comment still produces only the declaration hit.
+- The point 7.2 audit checkbox remains open for independent follow-up. Point 7.3 remains excluded.
+
+| Gate after 7.2 audit fixes | Result |
+|---|---|
+| Focused pre-fix regressions | 3 failed as expected |
+| Focused post-fix assembly navigation tests | Passed, 11/11 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 439/439 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 451/451 across both test projects |
+| `git diff --check` | Passed before commit; only expected LF-to-CRLF working-copy notices |
+
 ### Independent audit 1/3 of point 7.1
 
 - Reviewed commit: `9430da952afef7abc902494b198f50d2e4531169` (clean working tree before review). The adapter, cache, workspace factory, component tests, and AiNetLinter's corresponding classes and cache concurrency tests were inspected read-only. No product build or tests were run in this audit; the verification table above belongs to the implementation review.

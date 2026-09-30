@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Assemblies;
 using AiNetCodeNavigator.TestKit;
 using AiNetCodeNavigator.TestKit.Fixtures;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 
 namespace AiNetCodeNavigator.FastTests.Assemblies;
@@ -77,6 +79,37 @@ public sealed class AssemblyNavigationScannerTests
     }
 
     [Fact]
+    public async Task Search_DeclarationOnlyIncludesFieldsEventFieldsAndEnumMembers()
+    {
+        using var temp = TestTempDirectory.Create("assembly-search-declarations-");
+        var path = AssemblyTestHelper.EmitAssembly(temp, "DeclarationProbe", """
+            namespace Probe.Declarations;
+            public sealed class Searchable
+            {
+                public int TargetField, NeighborField;
+                public event System.Action? TargetEvent;
+                public void UseMembers() { _ = TargetField; _ = "TargetField"; /* TargetField */ }
+            }
+            public enum TargetEnum { TargetMember }
+            """);
+
+        var field = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "TargetField", DeclarationOnly: true));
+        var secondField = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "NeighborField", DeclarationOnly: true));
+        var eventField = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "TargetEvent", DeclarationOnly: true));
+        var enumMember = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "TargetMember", DeclarationOnly: true));
+
+        Assert.True(field.IsSuccess, field.Error?.ToString());
+        Assert.Single(field.Value!.Results);
+        Assert.Contains(field.Value.Results, hit => hit.Text.Contains("TargetField", StringComparison.Ordinal));
+        Assert.True(secondField.IsSuccess, secondField.Error?.ToString());
+        Assert.Contains(secondField.Value!.Results, hit => hit.Text.Contains("NeighborField", StringComparison.Ordinal));
+        Assert.True(eventField.IsSuccess, eventField.Error?.ToString());
+        Assert.Contains(eventField.Value!.Results, hit => hit.Text.Contains("TargetEvent", StringComparison.Ordinal));
+        Assert.True(enumMember.IsSuccess, enumMember.Error?.ToString());
+        Assert.Contains(enumMember.Value!.Results, hit => hit.Text.Contains("TargetMember", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Extensions_FindsMatchingReceiverAndHonorsLimit()
     {
         using var temp = TestTempDirectory.Create("assembly-extensions-");
@@ -137,6 +170,70 @@ public sealed class AssemblyNavigationScannerTests
         Assert.True(ambiguous.IsSuccess);
         Assert.True(ambiguous.Value!.IsAmbiguous);
         Assert.False(missing.IsSuccess);
+    }
+
+    [Fact]
+    public async Task TypeOrigin_ResolvesNestedTypeUsingCSharpQualifiedName()
+    {
+        using var temp = TestTempDirectory.Create("assembly-origin-nested-");
+        var path = AssemblyTestHelper.EmitAssembly(temp, "NestedOriginProbe", """
+            namespace Probe;
+            public class Outer { public class Inner { } }
+            public class GenericOuter<T> { public class GenericInner<U> { } }
+            """);
+
+        var result = await ResolveTypeOriginScanner.ResolveAsync(new ResolveTypeOriginRequest(path, "Probe.Outer.Inner"));
+        var generic = await ResolveTypeOriginScanner.ResolveAsync(new ResolveTypeOriginRequest(path, "Probe.GenericOuter<int>.GenericInner<string>"));
+
+        Assert.True(result.IsSuccess, result.Error?.ToString());
+        Assert.Equal("local", result.Value!.OriginKind);
+        Assert.Equal(Path.GetFullPath(path), Path.GetFullPath(result.Value.AssemblyPath!));
+        Assert.True(generic.IsSuccess, generic.Error?.ToString());
+        Assert.Equal("local", generic.Value!.OriginKind);
+    }
+
+    [Fact]
+    public void TypeOrigin_UsesFullAssemblyIdentityForSameNamedPackageVersions()
+    {
+        using var temp = TestTempDirectory.Create("assembly-origin-identity-");
+        var packageV1 = temp.CreateSubdirectory(Path.Combine(".nuget", "packages", "shared.package", "1.0.0", "lib", "net10.0"));
+        var packageV2 = temp.CreateSubdirectory(Path.Combine(".nuget", "packages", "shared.package", "2.0.0", "lib", "net10.0"));
+        using var olderTemp = TestTempDirectory.Create("assembly-origin-v1-");
+        using var newerTemp = TestTempDirectory.Create("assembly-origin-v2-");
+        var oldGenerated = AssemblyTestHelper.EmitAssembly(olderTemp, "SharedDependency", """
+            [assembly: System.Reflection.AssemblyVersion("1.0.0.0")]
+            namespace Probe.Versions; public sealed class VersionOneType { }
+            """);
+        var newGenerated = AssemblyTestHelper.EmitAssembly(newerTemp, "SharedDependency", """
+            [assembly: System.Reflection.AssemblyVersion("2.0.0.0")]
+            namespace Probe.Versions; public sealed class VersionTwoType { }
+            """);
+        var olderPath = Path.Combine(packageV1, "SharedDependency.dll");
+        var newerPath = Path.Combine(packageV2, "SharedDependency.dll");
+        File.Move(oldGenerated, olderPath);
+        File.Move(newGenerated, newerPath);
+        var oldMetadataReference = MetadataReference.CreateFromFile(olderPath);
+        var newMetadataReference = MetadataReference.CreateFromFile(newerPath);
+        var compilation = CSharpCompilation.Create("IdentityProbe", references: [oldMetadataReference, newMetadataReference]);
+        var symbol = Assert.IsAssignableFrom<IAssemblySymbol>(compilation.GetAssemblyOrModuleSymbol(newMetadataReference));
+        var references = new[]
+        {
+            new AssemblyReferenceDto("SharedDependency", "1.0.0.0", "neutral", true, olderPath),
+            new AssemblyReferenceDto("SharedDependency", "2.0.0.0", "neutral", true, newerPath),
+        };
+        var context = new AssemblyContext(
+            compilation.Assembly,
+            null,
+            references,
+            [],
+            compilation,
+            new AssemblyOrigin("target", temp.GetPath("target.dll"), "", ""),
+            0,
+            AssemblySessionStatus.Complete);
+
+        var resolvedPath = ResolveTypeOriginScanner.ResolveAssemblyPath(symbol, context);
+
+        Assert.Equal(newerPath, resolvedPath);
     }
 
     [Fact]
