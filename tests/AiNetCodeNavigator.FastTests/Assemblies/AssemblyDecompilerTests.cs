@@ -75,6 +75,27 @@ public sealed class AssemblyCacheCleanupTests
         Assert.False(Directory.Exists(Path.Combine(tempDir.DirectoryPath, names[1])));
     }
 
+    [Fact]
+    public void RetainGenerations_PreservesStagingOwnedByAnActiveDecompilation()
+    {
+        using var tempDir = TestTempDirectory.Create("assembly-cache-retain-active-stage-");
+        var options = AssemblyDecompilationOptions.Default;
+        var key = new AssemblyDecompilationCacheKey(
+            Path.Combine(tempDir.DirectoryPath, "probe.dll"),
+            "fingerprint",
+            options.DecompilerVersion,
+            options.Identity,
+            options.CacheSchemaVersion);
+        var cache = new AssemblyDecompilationCache(tempDir.DirectoryPath);
+        var stagingDirectory = cache.CreateStagingDirectory(key);
+
+        AssemblyCacheCleanup.RetainGenerations(cache.GetEntryDirectory(key), "generation-current");
+
+        Assert.True(Directory.Exists(stagingDirectory));
+        cache.DiscardStagingDirectory(stagingDirectory);
+        Assert.False(Directory.Exists(stagingDirectory));
+    }
+
     private static string CreateGenerationName() =>
         AssemblyCacheContract.GenerationDirectoryPrefix + Guid.NewGuid().ToString("N");
 }

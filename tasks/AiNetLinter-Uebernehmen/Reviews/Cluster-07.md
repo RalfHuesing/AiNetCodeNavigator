@@ -24,6 +24,29 @@
 | `pwsh -File ./scripts/test.ps1` | Passed, 437/437 across both test projects |
 | `git diff --check` | Passed before commit |
 
+## Point 7.2: Assembly Navigation Core Scanners
+
+- Implementation base: `c891a13c52aabfaaa254ea84de05d880efe25bd8`, clean working tree.
+- AiNetLinter reference code and test contracts were inspected read-only through AiNetLinter MCP. The implementation adapts the assembly-context summary, built-in data-access and external-call search patterns, declaration filtering, extension-method discovery, and referenced-assembly type lookup as Core navigation scanners. No AiNetLinter files or linter tools were changed.
+- The pre-fix regression test was red at compile time because the four request/model/scanner APIs did not exist (`CS0103`/`CS0246`). After implementation, the focused assembly-navigation tests passed.
+- Implemented shared read-only assembly-session validation and failure mapping, bounded assembly context and reference summaries, literal/regex search with timeout and result bounds, `external_calls`/`data_access` built-in patterns, extension-method lookup, and local/reference/framework type-origin resolution with ambiguity and NuGet path metadata.
+- Tests cover context and search bounds, built-in search categories, declaration-only results, extension receiver filtering, local/external/framework origins, ambiguous and missing names, missing/native binaries, and invalid regexes.
+- Parallel use exposed a cache-retention race: `RetainGenerations` deleted every `*.staging` folder, including one still used by a concurrent scanner. A focused pre-fix cache test failed, and four concurrent scanner calls returned `WORKSPACE_DIAGNOSTIC`. Staging creation now holds a cross-process owner lock; retention deletes only directories whose lock it can acquire. The regression test and concurrent scanner roundtrip pass.
+- Current-state documentation: [assembly-navigation.md](../../../docs/navigation/assembly-navigation.md). Point 7.2 review/audit remains open for independent audit; no point 7.3 follow-up/session resolver was implemented.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| Pre-fix requested API repro | Failed as expected: requested scanner/request types were absent |
+| Pre-fix staging-retention repro | Failed as expected: active staging directory was deleted |
+| Focused post-fix assembly navigation and cache regressions | Passed, 9/9 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 436/436 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 448/448 across both test projects |
+| `git diff --check` | Passed; only expected LF-to-CRLF working-copy notices |
+
 ### Independent audit 1/3 of point 7.1
 
 - Reviewed commit: `9430da952afef7abc902494b198f50d2e4531169` (clean working tree before review). The adapter, cache, workspace factory, component tests, and AiNetLinter's corresponding classes and cache concurrency tests were inspected read-only. No product build or tests were run in this audit; the verification table above belongs to the implementation review.

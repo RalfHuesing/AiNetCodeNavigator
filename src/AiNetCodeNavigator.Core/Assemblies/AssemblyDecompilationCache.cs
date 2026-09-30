@@ -1,6 +1,7 @@
 #nullable enable
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -19,6 +20,7 @@ internal sealed partial class AssemblyDecompilationCache
     private const int PointerPublishAttempts = 3;
     private static readonly UTF8Encoding Utf8 = new(false, true);
     private static readonly AssemblyArtifactFileLockRegistry PublishLocks = new();
+    private static readonly ConcurrentDictionary<string, FileStream> ActiveStagingLeases = new(StringComparer.OrdinalIgnoreCase);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -54,21 +56,49 @@ internal sealed partial class AssemblyDecompilationCache
         return Path.Combine(RootPath, pathHash, keyHash);
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The owner lock stream is retained in ActiveStagingLeases until the staging directory is discarded.")]
     internal string CreateStagingDirectory(AssemblyDecompilationCacheKey key)
     {
         var entryDirectory = GetEntryDirectory(key);
         Directory.CreateDirectory(entryDirectory);
-        var stagingDirectory = Path.Combine(
+        var stagingDirectory = Path.GetFullPath(Path.Combine(
             entryDirectory,
-            AssemblyCacheContract.GenerationDirectoryPrefix + Guid.NewGuid().ToString("N") + AssemblyCacheContract.StagingDirectorySuffix);
-        Directory.CreateDirectory(stagingDirectory);
-        return stagingDirectory;
+            AssemblyCacheContract.GenerationDirectoryPrefix + Guid.NewGuid().ToString("N") + AssemblyCacheContract.StagingDirectorySuffix));
+        var ownerLockPath = GetStagingOwnerLockPath(stagingDirectory);
+        FileStream? ownerLock = null;
+        try
+        {
+            ownerLock = new FileStream(ownerLockPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+            Directory.CreateDirectory(stagingDirectory);
+            if (!ActiveStagingLeases.TryAdd(stagingDirectory, ownerLock))
+            {
+                throw new IOException("A staging directory owner lock could not be registered.");
+            }
+            ownerLock = null;
+            return stagingDirectory;
+        }
+        catch
+        {
+            ownerLock?.Dispose();
+            AssemblyCacheCleanup.DeleteDirectory(stagingDirectory);
+            AssemblyCacheCleanup.DeleteFile(ownerLockPath);
+            throw;
+        }
     }
 
     internal void DiscardStagingDirectory(string? stagingDirectory)
     {
-        if (stagingDirectory is not null) AssemblyCacheCleanup.DeleteDirectory(stagingDirectory);
+        if (stagingDirectory is null) return;
+        var fullPath = Path.GetFullPath(stagingDirectory);
+        if (ActiveStagingLeases.TryRemove(fullPath, out var ownerLock))
+        {
+            ownerLock.Dispose();
+            AssemblyCacheCleanup.DeleteDirectory(fullPath);
+            AssemblyCacheCleanup.DeleteFile(GetStagingOwnerLockPath(fullPath));
+        }
     }
+
+    internal static string GetStagingOwnerLockPath(string stagingDirectory) => stagingDirectory + ".owner.lock";
 
     internal bool TryRead(
         AssemblyCacheReadRequest request,

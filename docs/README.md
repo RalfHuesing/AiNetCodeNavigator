@@ -23,3 +23,4 @@
 - [Test Context](navigation/test-context.md): Test project/file/class detection and heuristic fixture and method recommendations.
 - [Get Feature Context](navigation/get-feature-context.md): Combined declaration, caller and test candidate context, scope, handoffs, errors, and result limits.
 - [Assembly Decompilation Core](navigation/assembly-decompilation.md): Read-only binary fingerprinting, decompilation cache generations, native/invalid image handling, and the virtual Roslyn snapshot.
+- [Assembly Navigation Core Scanners](navigation/assembly-navigation.md): Assembly context, bounded text/data/external-call searches, extension method discovery, and referenced type origins.

@@ -1,0 +1,13 @@
+# Assembly Navigation Core Scanners
+
+The assembly scanners open a managed `.dll` or `.exe` through the read-only decompilation session and use its in-memory Roslyn compilation. Each operation disposes its session after producing the result. They do not execute the target binary or modify the target file.
+
+`AssemblyContextScanner.GetAsync` returns the assembly identity, analysis status, decompilation origin, namespace and type totals, reference totals, and diagnostics. `MaxResults` defaults to 100 and is capped at 1,000 for the namespace and type name lists. Reference details are omitted by default; `IncludeReferences` includes up to 128 resolved and unresolved reference entries. Totals remain visible when details are omitted or truncated.
+
+`AssemblySearchScanner.SearchAsync` supports `text`, `external_calls`, and `data_access`. Text searches require a query. The other two kinds use built-in patterns when the query is omitted; a supplied query replaces that pattern. Literal matching is the default; regular expressions have a 250 ms per-match timeout. `DeclarationOnly` restricts matches to declaration names and excludes comments and string literals. `FileFilter` is a case-insensitive path substring. Results default to 100 and are capped at 1,000; `ContextLines` is clamped to 0–5. The result count is exact while stored matches stay within the requested limit.
+
+`FindAssemblyExtensionsScanner.FindAsync` finds extension methods declared in the target assembly. It can also search the compilation's direct reference assemblies with `IncludeReferences`; receiver type, method name, and namespace filters use case-insensitive matching. Results default to 100 and are capped at 1,000.
+
+`ResolveTypeOriginScanner.ResolveAsync` resolves a type in the target assembly and, by default, its resolved references. Fully qualified names take the direct metadata lookup path; simple names are searched across types and can return an ambiguity result. The payload distinguishes local, reference, and framework origins. When a resolved file path is under the NuGet global packages directory, it also reports the package ID and version. Missing types return `SYMBOL_NOT_FOUND`; native or invalid targets return the shared assembly error result.
+
+The tests cover successful decompilation-based navigation, text and built-in search categories, extension method filtering, local/reference/framework type origins, ambiguity, missing and native targets, invalid regexes, and result bounds in [assembly navigation FastTests](../../tests/AiNetCodeNavigator.FastTests/Assemblies/AssemblyNavigationScannerTests.cs).
