@@ -67,7 +67,7 @@ internal static class MSBuildStructureInputCollector
         ProjectRootElement projectFile,
         ISet<string> paths)
     {
-        foreach (var import in projectFile.Children.OfType<ProjectImportElement>())
+        foreach (var import in EnumerateImportElements(projectFile))
         {
             var containingDirectory = Path.TrimEndingDirectorySeparator(import.ContainingProject.DirectoryPath);
             var importExpression = import.Project
@@ -95,6 +95,24 @@ internal static class MSBuildStructureInputCollector
                 catch (ArgumentException)
                 {
                     // An unresolved or invalid optional import must not make an otherwise loaded solution fail.
+                }
+            }
+        }
+    }
+
+    private static IEnumerable<ProjectImportElement> EnumerateImportElements(ProjectElementContainer container)
+    {
+        foreach (var child in container.Children)
+        {
+            if (child is ProjectImportElement import)
+            {
+                yield return import;
+            }
+            else if (child is ProjectElementContainer nestedContainer)
+            {
+                foreach (var nestedImport in EnumerateImportElements(nestedContainer))
+                {
+                    yield return nestedImport;
                 }
             }
         }

@@ -236,6 +236,37 @@ public sealed class WorkspaceLoadingIntegrationTests
         Assert.Equal("Extra", refreshed.Solution.GetProject(refreshedApp.ProjectReferences.Single().ProjectId)!.Name);
     }
 
+    [Fact]
+    public async Task ResidentSnapshot_CreatingMissingImportGroupImport_RefreshesProjectReferences()
+    {
+        using var tempDir = TestTempDirectory.Create("integration-import-group-import-");
+        WriteProject(
+            tempDir,
+            "src/App/App.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ImportGroup Condition=\"Exists('../../build/Optional.props')\"><Import Project=\"../../build/Optional.props\" /></ImportGroup></Project>");
+        WriteProject(tempDir, "src/Library/Library.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        WriteProject(tempDir, "src/Extra/Extra.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        await File.WriteAllTextAsync(tempDir.GetPath("src/App/App.cs"), "namespace App; public sealed class AppType;");
+        await File.WriteAllTextAsync(tempDir.GetPath("src/Library/Library.cs"), "namespace Library; public sealed class LibraryType;");
+        await File.WriteAllTextAsync(tempDir.GetPath("src/Extra/Extra.cs"), "namespace Extra; public sealed class ExtraType;");
+        var solutionPath = await WriteSolutionAsync(tempDir, "src/App/App.csproj", "src/Library/Library.csproj", "src/Extra/Extra.csproj");
+
+        await using var resident = MSBuildSolutionLoader.CreateResidentSolution(solutionPath);
+        await resident.LoadTask!.WaitAsync(TimeSpan.FromSeconds(30));
+        var initial = await resident.GetCurrentSnapshotAsync();
+        Assert.True(initial.Succeeded, initial.Error?.Message);
+        Assert.Empty(initial.Solution!.Projects.Single(project => project.Name == "App").ProjectReferences);
+
+        tempDir.CreateFile(
+            "build/Optional.props",
+            "<Project><ItemGroup><ProjectReference Include=\"$(MSBuildThisFileDirectory)../src/Extra/Extra.csproj\" /></ItemGroup></Project>");
+
+        var refreshed = await resident.GetCurrentSnapshotAsync();
+        Assert.True(refreshed.Succeeded, refreshed.Error?.Message);
+        var refreshedApp = refreshed.Solution!.Projects.Single(project => project.Name == "App");
+        Assert.Equal("Extra", refreshed.Solution.GetProject(refreshedApp.ProjectReferences.Single().ProjectId)!.Name);
+    }
+
     private static string WriteProject(TestTempDirectory tempDir, string relativePath, string content) => tempDir.CreateFile(relativePath, content);
 
     private static async Task<string> WriteSolutionAsync(TestTempDirectory tempDir, params string[] projectPaths)
