@@ -42,7 +42,7 @@
   - [x] Feature-Kontext bleibt frei von Linter-Violations und Qualitätsmetriken.
   - [x] Classify callers from their Roslyn document and project, not only the relative file name; test neutral file names in a test project and scoped totals.
   - [x] Apply the requested scope to static test recommendations before totals, sorting, and truncation; test production/tests/all outcomes with both project- and path-based test evidence.
-  - [ ] Review/Audit zu 4.6 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 4.6 durchführen; Findings ergänzen und umsetzen.
 - [ ] 4.7 Gemeinsame Symbolauflösung für Folge-Tools fertigstellen: eindeutige qualifizierte Namen, Doc-IDs, Positionen und `h:...`-IDs unterstützen; bei mehrdeutigen Kurznamen auswählbare Treffer statt eines zufälligen ersten Symbols liefern. Die Tool-Verträge und Fehlerfälle mit FastTests belegen.
   - [ ] Review/Audit zu 4.7 durchführen; Findings ergänzen und umsetzen.
 - [ ] 4.8 Test-Kontext fachlich absichern: gleichnamige Testklassen in verschiedenen Projekten getrennt erhalten, xUnit/NUnit/MSTest korrekt klassifizieren und Empfehlungen als Heuristik ausweisen; Tests für Mehrprojektfälle und `TestMethodAttribute` ergänzen.

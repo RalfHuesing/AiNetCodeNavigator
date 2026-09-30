@@ -331,3 +331,16 @@ The point 4.6 audit checkbox remains open pending fixes and a follow-up audit. N
 - Updated [Get Feature Context](../../../docs/navigation/get-feature-context.md) to describe project/document-based scope and its ordering before limits. The AiNetLinter comparison was read-only; no external source was changed.
 - Verification: focused scope regressions and `FeatureContextScannerTests` passed; `pwsh -File ./scripts/build.ps1` passed with 0 warnings/errors; `pwsh -File ./scripts/test-fast.ps1` passed 323/323; `pwsh -File ./scripts/test-integration.ps1` passed 12/12; `pwsh -File ./scripts/test.ps1` passed 335/335; `git diff --check` passed.
 - The independent point 4.6 audit checkbox remains `[ ]` for follow-up.
+
+## Independent audit 2/3 of point 4.6
+
+- Reviewed commit: `bfc92d50606c63d0ae1d45eb1b78cf1808f2060d` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Narrow read-only review of the two scope fixes, their tests, and current-state documentation. The implementation slice's gate results are recorded above; this audit did not run a build or tests.
+
+### Finding disposition
+
+1. **P2 caller project scope — closed.** `CollectCallersAsync` now applies `MatchesScope(IsTestDocument(doc, relPath), scope)` while the Roslyn document is available, before accumulating, sorting, totals, and limits. `IsTestDocument` considers project metadata/name and document/relative paths. The new test separates a neutral-file test-project caller, a path-based test caller, and a production caller, checking `all`, `production`, and `tests` counts and membership.
+2. **P2 recommendation scope — closed.** `TestFixtureMatch` internally retains the source `ProjectId`; `FlattenTestRecommendations` checks both source project and file path before sorting, totals, truncation, and `MaxTests`. The new test supplies project-based and path-based candidates and verifies `Scope=production` returns zero tests without truncation, while `all` and `tests` report the scoped totals and one-item truncation.
+
+No open finding remains for point 4.6. The audit checkbox is complete after two audits. Common symbol resolution and equal-name fixture handling remain assigned to points 4.7 and 4.8. No product code or external repository was changed in this audit.
