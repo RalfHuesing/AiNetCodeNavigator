@@ -1,5 +1,6 @@
 #nullable enable
 
+using System;
 using System.Collections.Generic;
 using AiNetCodeNavigator.Core.Models;
 using Microsoft.CodeAnalysis;
@@ -27,7 +28,10 @@ public sealed record ClassStructurePayload(
     bool Truncated,
     IReadOnlyList<ClassStructureMemberEntry> Members,
     IReadOnlyList<string> TruncatedBy,
-    ResultError? Error = null);
+    ResultError? Error = null)
+{
+    public IReadOnlyList<SymbolResolutionCandidate> ResolutionCandidates { get; init; } = Array.Empty<SymbolResolutionCandidate>();
+}
 
 public sealed record ClassStructureScanRequest(
     Solution Solution,

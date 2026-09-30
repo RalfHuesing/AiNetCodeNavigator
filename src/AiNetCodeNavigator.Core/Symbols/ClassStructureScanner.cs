@@ -54,14 +54,17 @@ public static class ClassStructureScanner
             identity = await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
         }
 
-        var resolveResult = await ResolveTypeSymbolResultAsync(request.Solution, request.SymbolIdentifier, identity, ct).ConfigureAwait(false);
-        if (!resolveResult.IsSuccess)
+        var resolution = await SourceSymbolResolver.ResolveAsync(request.Solution, request.SymbolIdentifier, identity, ct).ConfigureAwait(false);
+        if (!resolution.IsSuccess)
         {
             return new ClassStructurePayload(
                 string.Empty, string.Empty, Array.Empty<string>(), 0, 0, 0, false,
-                Array.Empty<ClassStructureMemberEntry>(), Array.Empty<string>(), resolveResult.Error);
+                Array.Empty<ClassStructureMemberEntry>(), Array.Empty<string>(), resolution.Error)
+            {
+                ResolutionCandidates = resolution.Candidates
+            };
         }
-        var namedType = resolveResult.IsSuccess ? resolveResult.Value : null;
+        var namedType = resolution.Symbol as INamedTypeSymbol ?? resolution.Symbol?.ContainingType as INamedTypeSymbol;
         if (namedType is null) return null;
 
         var solutionDir = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
@@ -110,59 +113,10 @@ public static class ClassStructureScanner
         ArgumentNullException.ThrowIfNull(solution);
         ArgumentException.ThrowIfNullOrWhiteSpace(symbolIdentifier);
 
-        var cleanId = InputNormalizer.NormalizeSymbolIdentifier(symbolIdentifier);
-
-        if (InputNormalizer.HasOpaqueHandoffPrefix(cleanId) || cleanId.StartsWith("i:", StringComparison.Ordinal))
-        {
-            if (identity is null)
-                return Result<INamedTypeSymbol?>.Failure(NavigationErrorCodes.InvalidHandoff, "A canonical source identity could not be created for this solution.");
-            var handoffResult = await SourceHandoffResolver.ResolveAsync(solution, cleanId, identity, ct).ConfigureAwait(false);
-            if (!handoffResult.IsSuccess) return Result<INamedTypeSymbol?>.Failure(handoffResult.Error!.Value);
-            var handoffSymbol = handoffResult.Value;
-            return Result<INamedTypeSymbol?>.Success(handoffSymbol as INamedTypeSymbol ?? handoffSymbol?.ContainingType as INamedTypeSymbol);
-        }
-
-        // 2. Exact metadata name lookup across project compilations
-        foreach (var project in solution.Projects)
-        {
-            ct.ThrowIfCancellationRequested();
-            var compilation = await project.GetCompilationAsync(ct).ConfigureAwait(false);
-            if (compilation is null) continue;
-
-            var type = compilation.GetTypeByMetadataName(cleanId);
-            if (type != null) return Result<INamedTypeSymbol?>.Success(type);
-        }
-
-        // 3. Search declarations via SymbolFinder
-        var nameFilter = SymbolNameMatcher.CreateDeclarationNameFilter(cleanId);
-        var symbols = await SymbolFinder.FindSourceDeclarationsAsync(
-            solution,
-            nameFilter,
-            SymbolFilter.Type,
-            ct).ConfigureAwait(false);
-
-        var match = symbols
-            .OfType<INamedTypeSymbol>()
-            .FirstOrDefault(s => string.Equals(s.Name, cleanId, StringComparison.OrdinalIgnoreCase))
-            ?? symbols
-            .OfType<INamedTypeSymbol>()
-            .FirstOrDefault(s => SymbolNameMatcher.MatchesSymbol(s, cleanId));
-
-        if (match != null) return Result<INamedTypeSymbol?>.Success(match);
-
-        // 4. Try searching for member and resolving its containing type
-        var memberSymbols = await SymbolFinder.FindSourceDeclarationsAsync(
-            solution,
-            nameFilter,
-            SymbolFilter.Member,
-            ct).ConfigureAwait(false);
-
-        var memberMatch = memberSymbols
-            .FirstOrDefault(s => string.Equals(s.Name, cleanId, StringComparison.OrdinalIgnoreCase))
-            ?? memberSymbols
-            .FirstOrDefault(s => SymbolNameMatcher.MatchesSymbol(s, cleanId));
-
-        return Result<INamedTypeSymbol?>.Success(memberMatch?.ContainingType);
+        var resolution = await SourceSymbolResolver.ResolveAsync(solution, symbolIdentifier, identity, ct).ConfigureAwait(false);
+        if (!resolution.IsSuccess) return Result<INamedTypeSymbol?>.Failure(resolution.Error!.Value);
+        var symbol = resolution.Symbol;
+        return Result<INamedTypeSymbol?>.Success(symbol as INamedTypeSymbol ?? symbol?.ContainingType as INamedTypeSymbol);
     }
 
     private static (List<string> Files, int TotalLines) CollectDeclarationFiles(

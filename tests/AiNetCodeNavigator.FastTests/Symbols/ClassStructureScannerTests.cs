@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Workspace;
 using AiNetCodeNavigator.Core.Symbols;
+using AiNetCodeNavigator.TestKit.Builders;
 using AiNetCodeNavigator.TestKit.Fixtures;
 using Xunit;
 
@@ -30,6 +31,44 @@ public sealed class ClassStructureScannerTests
         Assert.Contains(payload.Members, m => m.Name == "Prefix" && m.Kind == "Property" && m.Visibility == "public");
         Assert.Contains(payload.Members, m => m.Name == "Greet" && m.Kind == "Method" && m.Visibility == "public");
         Assert.Contains(payload.Members, m => m.Name == "GreetLoud" && m.Kind == "Method" && m.Visibility == "public");
+    }
+
+    [Fact]
+    public async Task ScanAsync_UsesSharedResolverForDocumentationIdsPositionsAndAmbiguousTypes()
+    {
+        const string source = "namespace Demo;\npublic class Greeter\n{\n public void Greet() { }\n}";
+        using var handle = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\ClassResolution.slnx",
+            new ProjectSpec("Demo.One", [("Greeter.cs", source)]));
+        var document = handle.Solution.Projects.Single().Documents.Single();
+        var line = source.Split('\n')[1];
+        var position = $"{document.FilePath}:2:{line.IndexOf("Greeter", System.StringComparison.Ordinal) + 1}";
+
+        foreach (var identifier in new[] { "T:Demo.Greeter", position })
+        {
+            var payload = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(handle.Solution, identifier));
+            Assert.NotNull(payload);
+            Assert.Null(payload.Error);
+            Assert.Equal("Demo.Greeter", payload.TypeName);
+            Assert.Contains(payload.Members, member => member.Name == "Greet");
+        }
+
+        using var ambiguous = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\AmbiguousTypes.slnx",
+            new ProjectSpec("Demo.One", [("Shared.cs", "namespace Demo; public class Shared { public void First() { } }")]),
+            new ProjectSpec("Demo.Two", [("Shared.cs", "namespace Demo; public class Shared { public void Second() { } }")]));
+        var unresolved = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(ambiguous.Solution, "Demo.Shared"));
+
+        Assert.NotNull(unresolved);
+        Assert.Equal(NavigationErrorCodes.AmbiguousSymbol, unresolved.Error?.Code);
+        Assert.Equal(2, unresolved.ResolutionCandidates.Count);
+        Assert.All(unresolved.ResolutionCandidates, candidate => Assert.StartsWith("h:", candidate.HandoffId));
+
+        var selected = await ClassStructureScanner.ScanAsync(
+            new ClassStructureScanRequest(ambiguous.Solution, unresolved.ResolutionCandidates[0].HandoffId!));
+        Assert.NotNull(selected);
+        Assert.Null(selected.Error);
+        Assert.Contains(selected.Members, member => member.Name is "First" or "Second");
     }
 
     [Fact]

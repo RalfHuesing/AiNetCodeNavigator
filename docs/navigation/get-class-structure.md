@@ -1,6 +1,6 @@
 # Get Class Structure
 
-`ClassStructureScanner.ScanAsync` resolves a type or a member to its containing type and returns the type kind, declaring files, source line total, and a member list. It includes declared fields, constants, events, properties, methods, and constructors across partial declarations. It reports declared accessibility separately from each member signature, omits compiler-generated members other than constructors, and includes invariant literal values for constants.
+`ClassStructureScanner.ScanAsync` resolves a type or a member to its containing type using the [shared symbol resolution contract](symbol-resolution.md), then returns the type kind, declaring files, source line total, and a member list. Ambiguous names return structured errors with selectable resolution candidates. It includes declared fields, constants, events, properties, methods, and constructors across partial declarations. It reports declared accessibility separately from each member signature, omits compiler-generated members other than constructors, and includes invariant literal values for constants.
 
 Type kinds distinguish `Class`, `Record Class`, `Record Struct`, `Interface`, `Struct`, and `Enum`. A record's positional primary-constructor parameters appear as `PrimaryCtor-Param` entries in addition to the record's declared members. Kind and name filters and `SortBy` apply before the `MaxMembers` limit. The limit is clamped to 1–200; the payload reports total and shown counts and whether it was truncated.
 

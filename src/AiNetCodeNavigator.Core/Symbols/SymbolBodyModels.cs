@@ -1,6 +1,7 @@
 #nullable enable
 
 using System.Collections.Generic;
+using AiNetCodeNavigator.Core.Models;
 
 namespace AiNetCodeNavigator.Core.Symbols;
 
@@ -18,3 +19,8 @@ public sealed record SymbolBodyResult(
 
 public sealed record BatchSymbolBodyResult(
     IReadOnlyList<SymbolBodyResult> Items);
+
+public sealed record SymbolBodyResolutionResult(
+    SymbolBodyResult? Body,
+    IReadOnlyList<SymbolResolutionCandidate> ResolutionCandidates,
+    ResultError? Error);

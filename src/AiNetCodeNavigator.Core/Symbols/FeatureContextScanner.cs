@@ -50,15 +50,18 @@ public static class FeatureContextScanner
             identity = await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
         }
 
-        var resolved = await ResolveSymbolResultAsync(request.Solution, request.SymbolIdentifier, identity, ct).ConfigureAwait(false);
+        var resolved = await SourceSymbolResolver.ResolveAsync(request.Solution, request.SymbolIdentifier, identity, ct).ConfigureAwait(false);
         if (!resolved.IsSuccess)
         {
             return new FeatureContextPayload(
                 new FeatureContextDeclaration(string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0, 0),
-                Array.Empty<FeatureContextCallerEntry>(), Array.Empty<FeatureContextTestRecommendation>(), 0, 0, false, false, resolved.Error);
+                Array.Empty<FeatureContextCallerEntry>(), Array.Empty<FeatureContextTestRecommendation>(), 0, 0, false, false, resolved.Error)
+            {
+                ResolutionCandidates = resolved.Candidates
+            };
         }
 
-        var symbol = resolved.Value;
+        var symbol = resolved.Symbol;
         if (symbol is null) return null;
 
         var solutionDir = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
@@ -115,42 +118,9 @@ public static class FeatureContextScanner
         AnalysisSymbolIdentity? identity,
         CancellationToken ct = default)
     {
-        ArgumentNullException.ThrowIfNull(solution);
-        ArgumentException.ThrowIfNullOrWhiteSpace(symbolIdentifier);
-
-        var cleanId = InputNormalizer.NormalizeSymbolIdentifier(symbolIdentifier);
-
-        if (InputNormalizer.HasOpaqueHandoffPrefix(cleanId) || cleanId.StartsWith("i:", StringComparison.Ordinal))
-        {
-            if (identity is null)
-            {
-                return Result<ISymbol?>.Failure(NavigationErrorCodes.InvalidHandoff, "A canonical source identity could not be created for this solution.");
-            }
-
-            return await SourceHandoffResolver.ResolveAsync(solution, cleanId, identity, ct).ConfigureAwait(false);
-        }
-
-        // 2. Exact metadata name lookup
-        foreach (var project in solution.Projects)
-        {
-            ct.ThrowIfCancellationRequested();
-            var compilation = await project.GetCompilationAsync(ct).ConfigureAwait(false);
-            if (compilation is null) continue;
-
-            var type = compilation.GetTypeByMetadataName(cleanId);
-            if (type != null) return Result<ISymbol?>.Success(type);
-        }
-
-        // 3. Search declarations
-        var nameFilter = SymbolNameMatcher.CreateDeclarationNameFilter(cleanId);
-        var symbols = await SymbolFinder.FindSourceDeclarationsAsync(
-            solution,
-            nameFilter,
-            SymbolFilter.TypeAndMember,
-            ct).ConfigureAwait(false);
-
-        return Result<ISymbol?>.Success(symbols.FirstOrDefault(s => string.Equals(s.Name, cleanId, StringComparison.OrdinalIgnoreCase))
-            ?? symbols.FirstOrDefault(s => SymbolNameMatcher.MatchesSymbol(s, cleanId)));
+        var resolution = await SourceSymbolResolver.ResolveAsync(solution, symbolIdentifier, identity, ct).ConfigureAwait(false);
+        if (resolution.IsSuccess) return Result<ISymbol?>.Success(resolution.Symbol);
+        return Result<ISymbol?>.Failure(resolution.Error!.Value);
     }
 
     private static FeatureContextDeclaration ExtractDeclaration(ISymbol symbol, string solutionDir, AnalysisSymbolIdentity? identity, Solution solution)

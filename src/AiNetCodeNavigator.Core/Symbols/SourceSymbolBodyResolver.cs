@@ -3,6 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using AiNetCodeNavigator.Core.Models;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -15,6 +18,32 @@ namespace AiNetCodeNavigator.Core.Symbols;
 /// </summary>
 public static class SourceSymbolBodyResolver
 {
+    /// <summary>Resolves a source identifier before extracting its body; ambiguous names return selectable candidates.</summary>
+    public static async Task<SymbolBodyResolutionResult> ResolveAsync(
+        Solution solution,
+        string symbolIdentifier,
+        int maxBodyLines,
+        int startLine = 1,
+        AnalysisSymbolIdentity? handoffIdentity = null,
+        CancellationToken cancellationToken = default)
+    {
+        var resolution = await SourceSymbolResolver.ResolveAsync(solution, symbolIdentifier, handoffIdentity, cancellationToken).ConfigureAwait(false);
+        if (!resolution.IsSuccess)
+        {
+            return new SymbolBodyResolutionResult(null, resolution.Candidates, resolution.Error);
+        }
+
+        var candidate = resolution.Candidates.FirstOrDefault();
+        var body = Resolve(
+            resolution.Symbol!,
+            maxBodyLines,
+            startLine,
+            candidate?.HandoffId,
+            handoffIdentity,
+            solution);
+        return new SymbolBodyResolutionResult(body, resolution.Candidates, null);
+    }
+
     /// <summary>
     /// Extracts the symbol declaration from source syntax and returns the requested one-based line window.
     /// Values below one for <paramref name="maxBodyLines"/> or <paramref name="startLine"/> are normalized to one.

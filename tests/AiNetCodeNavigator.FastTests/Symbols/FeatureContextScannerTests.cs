@@ -61,6 +61,35 @@ public sealed class FeatureContextScannerTests
     }
 
     [Fact]
+    public async Task FindSymbolHandoff_RoundtripsThroughBodyFeatureAndClassStructure()
+    {
+        using var handle = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\FollowUpResolution.slnx",
+            new ProjectSpec("Sample.Core", [("Greeter.cs", "namespace Sample.Core;\npublic class Greeter\n{\n public string Greet() => \"hello\";\n}")]));
+        var search = await FindSymbolScanner.FindMatchesWithDetailsAsync(new FindSymbolScanRequest(handle.Solution, "Greet"));
+        var entry = Assert.Single(search.Entries, candidate => candidate.Name == "Greet");
+        Assert.StartsWith("h:", entry.HandoffId);
+        var document = handle.Solution.Projects.Single().Documents.Single();
+        var sourceText = await document.GetTextAsync();
+        var position = $"{document.FilePath}:4:{sourceText.ToString().Split('\n')[3].IndexOf("Greet", StringComparison.Ordinal) + 1}";
+
+        foreach (var identifier in new[] { entry.HandoffId!, entry.DocCommentId!, position, $"{document.FilePath}:4" })
+        {
+            var body = await SourceSymbolBodyResolver.ResolveAsync(handle.Solution, identifier, maxBodyLines: 20);
+            var feature = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(handle.Solution, identifier));
+            var structure = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(handle.Solution, identifier));
+
+            Assert.Null(body.Error);
+            Assert.Contains("Greet", body.Body?.Body);
+            Assert.NotNull(feature);
+            Assert.Equal("Greet", feature.Declaration.SymbolName);
+            Assert.NotNull(structure);
+            Assert.Equal("Sample.Core.Greeter", structure.TypeName);
+            Assert.Contains(structure.Members, member => member.Name == "Greet");
+        }
+    }
+
+    [Fact]
     public async Task ScanAsync_ReturnsTestCandidateWithMethodHandoff()
     {
         const string testSource = """
@@ -236,9 +265,95 @@ public sealed class FeatureContextScannerTests
         var missing = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(fixture.Solution, "MissingType"));
         var invalidHandoff = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(fixture.Solution, "h:unknown99"));
 
-        Assert.Null(missing);
+        Assert.NotNull(missing);
+        Assert.Equal(NavigationErrorCodes.SymbolNotFound, missing.Error?.Code);
         Assert.NotNull(invalidHandoff);
         Assert.Equal(NavigationErrorCodes.HandoffUnknown, invalidHandoff.Error?.Code);
+    }
+
+    [Fact]
+    public async Task ResolveSymbolResultAsync_ReportsInvalidPositionAsRecoverableError()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var document = fixture.Solution.Projects.Single(project => project.Name == "Sample.Core")
+            .Documents.Single(candidate => candidate.Name == "Greeter.cs");
+
+        var resolution = await FeatureContextScanner.ResolveSymbolResultAsync(
+            fixture.Solution,
+            $"{document.FilePath}:0:1",
+            null);
+
+        Assert.False(resolution.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.InvalidArgument, resolution.Error?.Code);
+    }
+
+    [Fact]
+    public async Task ResolveSymbolResultAsync_ResolvesDocumentationIdsAndQualifiedNames()
+    {
+        const string source = "namespace Sample.Core; public class Greeter { public string Greet() => \"hello\"; }";
+        using var handle = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\IdentifierForms.slnx",
+            new ProjectSpec("Sample.Core", [("Greeter.cs", source)]));
+
+        var byDocId = await FeatureContextScanner.ResolveSymbolResultAsync(
+            handle.Solution, "M:Sample.Core.Greeter.Greet", null);
+        var byQualifiedName = await FeatureContextScanner.ResolveSymbolResultAsync(
+            handle.Solution, "Sample.Core.Greeter.Greet", null);
+
+        Assert.True(byDocId.IsSuccess);
+        Assert.Equal("Greet", byDocId.Value?.Name);
+        Assert.True(byQualifiedName.IsSuccess);
+        Assert.Equal("Greet", byQualifiedName.Value?.Name);
+    }
+
+    [Fact]
+    public async Task ResolveSymbolResultAsync_ResolvesPositionAndReportsAmbiguousNames()
+    {
+        const string first = "namespace Sample.One; public class Worker { public void Run() { } }";
+        const string second = "namespace Sample.Two; public class Worker { public void Run() { } }";
+        using var handle = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\PositionAndAmbiguity.slnx",
+            new ProjectSpec("Sample.One", [("One.cs", first)]),
+            new ProjectSpec("Sample.Two", [("Two.cs", second)]));
+        var firstDocument = handle.Solution.Projects.Single(project => project.Name == "Sample.One").Documents.Single();
+        var position = $"{firstDocument.FilePath}:1:{first.IndexOf("Run", StringComparison.Ordinal) + 1}";
+
+        var byPosition = await FeatureContextScanner.ResolveSymbolResultAsync(handle.Solution, position, null);
+        var ambiguous = await FeatureContextScanner.ResolveSymbolResultAsync(handle.Solution, "Run", null);
+
+        Assert.True(byPosition.IsSuccess);
+        Assert.Equal("Run", byPosition.Value?.Name);
+        Assert.False(ambiguous.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.AmbiguousSymbol, ambiguous.Error?.Code);
+    }
+
+    [Fact]
+    public async Task ScanAsync_AmbiguousNameReturnsSelectableHandoffCandidates()
+    {
+        using var handle = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\AmbiguousCandidates.slnx",
+            new ProjectSpec("Sample.One", [("One.cs", "namespace Sample.One; public class Worker { public void Run() { } }")]),
+            new ProjectSpec("Sample.Two", [("Two.cs", "namespace Sample.Two; public class Worker { public void Run() { } }")]));
+
+        var payload = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(handle.Solution, "Run"));
+
+        Assert.NotNull(payload);
+        Assert.Equal(NavigationErrorCodes.AmbiguousSymbol, payload.Error?.Code);
+        Assert.Equal(2, payload.ResolutionCandidates.Count);
+        Assert.All(payload.ResolutionCandidates, candidate => Assert.StartsWith("h:", candidate.HandoffId));
+        Assert.Equal(2, payload.ResolutionCandidates.Select(candidate => candidate.ProjectName).Distinct().Count());
+
+        var selected = payload.ResolutionCandidates[0];
+        var body = await SourceSymbolBodyResolver.ResolveAsync(handle.Solution, selected.HandoffId!, maxBodyLines: 20);
+        var feature = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(handle.Solution, selected.HandoffId!));
+        var structure = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(handle.Solution, selected.HandoffId!));
+
+        Assert.Null(body.Error);
+        Assert.NotNull(body.Body);
+        Assert.NotNull(feature);
+        Assert.Equal("Run", feature.Declaration.SymbolName);
+        Assert.NotNull(structure);
+        Assert.Contains("Worker", structure.TypeName);
     }
 
     [Fact]

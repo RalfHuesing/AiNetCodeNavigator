@@ -118,11 +118,13 @@ public sealed class FindSymbolScannerTests
 
         var featureContext = await FeatureContextScanner.ScanAsync(
             new FeatureContextRequest(fixture.Solution, @"H:\repo\file.cs"));
-        Assert.Null(featureContext);
+        Assert.NotNull(featureContext);
+        Assert.Equal(NavigationErrorCodes.SymbolNotFound, featureContext.Error?.Code);
 
         var classStructure = await ClassStructureScanner.ScanAsync(
             new ClassStructureScanRequest(fixture.Solution, @"H:\repo\file.cs"));
-        Assert.Null(classStructure);
+        Assert.NotNull(classStructure);
+        Assert.Equal(NavigationErrorCodes.SymbolNotFound, classStructure.Error?.Code);
     }
 
     [Fact]

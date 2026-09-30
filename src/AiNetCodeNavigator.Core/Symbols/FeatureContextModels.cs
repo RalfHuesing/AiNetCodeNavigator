@@ -1,5 +1,6 @@
 #nullable enable
 
+using System;
 using System.Collections.Generic;
 using AiNetCodeNavigator.Core.Models;
 using Microsoft.CodeAnalysis;
@@ -41,7 +42,10 @@ public sealed record FeatureContextPayload(
     int TotalTests,
     bool CallersTruncated,
     bool TestsTruncated,
-    ResultError? Error = null);
+    ResultError? Error = null)
+{
+    public IReadOnlyList<SymbolResolutionCandidate> ResolutionCandidates { get; init; } = Array.Empty<SymbolResolutionCandidate>();
+}
 
 public sealed record FeatureContextRequest(
     Solution Solution,
