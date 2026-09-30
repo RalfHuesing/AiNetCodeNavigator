@@ -1,5 +1,7 @@
 # Open Findings and Technical Debt
 
+Point 2.3 remains open with its documented MSBuild structure boundary: declared wildcard imports and expressions unresolved during the loaded evaluation are not tracked as exact candidate paths. See [Cluster 2 integration review after fix round 1](Reviews/Cluster-02.md#integration-review-after-cluster-fix-round-1). Its three point audits are exhausted; the nested conditional import finding was fixed separately. Public tool composition and stdio acceptance remain later work.
+
 The Cluster 3 point 3.3 Assembly session/consumer blocker was addressed by the Cluster 7.3 implementation; see [Cluster 7 review](Reviews/Cluster-07.md#point-73-assembly-handoffs-and-session-lifecycle). Its three point audits are already exhausted, so this implementation does not request another point 3.3 audit. MCP stdio dispatch remains part of the later host/tool-registration work.
 
 Resolved integration findings and closure are recorded in [Cluster 6 integration review 3](Reviews/Cluster-06.md#cluster-6-integration-review-3-after-fix-round-2).

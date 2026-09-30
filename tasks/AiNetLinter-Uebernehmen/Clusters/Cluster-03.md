@@ -17,12 +17,12 @@
   - [x] Neu ausgegebene Handles bei parallelem Zugriff sofort rückwärts auflösen können.
   - [x] Formatierung öffentlich konstruierter Identifier gegen ungültige Tokens und DocIDs absichern.
   - [x] Review/Audit zu 3.2 durchführen; Findings ergänzen und umsetzen.
-- [ ] 3.3 Handoff-Vertrag über Producer und Consumer schließen:
+- [x] 3.3 Handoff-Vertrag über Producer und Consumer schließen:
   - [x] Source-Produzenten binden `h:...` an kanonische Lösungssnapshots und stabile Projektmarker; rohe DocumentationCommentIds werden nicht als Handoffs ausgegeben.
   - [x] Roundtrips von `find_symbol` und `get_file_skeleton` zu Source-Folge-Tools sowie typisierte Fehler für unbekannte, fremde und veraltete Source-Handles ergänzen.
   - [x] Source-Snapshot-Pfade normalisieren und übergebene `find_symbol`-Identitäten gegen die aktuelle Lösung prüfen.
   - [x] Übergebene Feature-/Class-Structure-Identitäten validieren und Source-Roundtrips über Mehrprojekt- und Pfadvarianten abdecken.
-  - [ ] Assembly-Folge-Tools und Roundtrips für `inspect_assembly` abschließen (Auflösung und Sitzungslebenszyklus siehe Cluster 7).
+  - [x] Assembly-Folge-Tools und Roundtrips für `inspect_assembly` abschließen (Auflösung und Sitzungslebenszyklus siehe Cluster 7; closure evidence in the [Cluster 3 status reconciliation](../Reviews/Cluster-03.md#status-reconciliation-after-cluster-7)).
   - [x] Assembly-DTOs nur bei kanonischer Identität als Handoff mit Folge-Tools kennzeichnen.
   - [x] Review/Audit zu 3.3 durchführen; Findings ergänzen und umsetzen.
 - [x] Cluster-Integration: Handoff-artige Eingaben in Feature Context und Class Structure konsistent als typisierte Fehler behandeln.
