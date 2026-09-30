@@ -19,3 +19,20 @@
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 349/349 across both test projects |
 | `git diff --check` | Pending before commit |
+
+## Independent audit 1/3 of point 5.1
+
+- Audited commit: `05cdd1b8a63c89cffddbc88ac827c436243d28f4` (clean working tree before review edits).
+- Reviewer: `gpt-6-sol`, medium reasoning effort. Read-only comparison used AiNetLinter's `CallGraphTreeBuilder`, `OutgoingCallScanner`, and call graph contracts. No build or tests were run in this audit; the implementation gates above are reported from the prior implementation record only.
+- Outcome: Open findings below. The 5.1 audit checkbox stays unchecked. The implementation's constructor/member access coverage, source handoffs, null input handling, and basic Mermaid escaping have relevant tests, but the following contract gaps need fixes and regression coverage.
+
+### Findings
+
+1. **P1 — Third-party metadata calls disappear when `IncludeBcl` is false.** `src/AiNetCodeNavigator.Core/CallTree/CallTreeBuilder.cs:167` rejects every target without a source location. A source method calling a non-BCL referenced assembly method therefore has no outgoing edge under the default request. AiNetLinter's `OutgoingCallScanner.AddOutgoingSymbol` excludes external targets only when `IsBclSymbol` also holds. Acceptance: distinguish BCL from other metadata assemblies, preserve the latter by default, and test a source caller with both a non-BCL metadata callee and a BCL callee under both `IncludeBcl` settings.
+2. **P2 — `TopN` applies twice for `Both`.** `CallTreeBuilder.cs:118-122` and `:219-223` take `TopN` separately from incoming and outgoing groups. With `TopN=1`, a seed with at least one caller and one callee emits two incident edges, whereas AiNetLinter's graph builder combines direction groups and applies one `Take(TopN)`. Acceptance: bound the combined expansion to `TopN` per expanded symbol, maintain deterministic direction/order choice, count hidden groups once, and cover a `Both` graph with callers and callees.
+3. **P2 — The 250-node stop misreports completeness.** `CallTreeBuilder.cs:47` stops as soon as the node list reaches 250; `:347-353` then sets `Truncated` from that equality, even when the graph has exactly 250 complete terminal nodes. If queued nodes still await expansion, their undiscovered edges are absent but `HiddenEdgeCount` can remain zero. This contradicts `docs/navigation/get-call-tree.md:5`, which promises a positive hidden count for cap omissions. Acceptance: distinguish actual hard-cap omission from merely reaching 250 nodes, report remaining work without claiming a known edge count that was never scanned, and cover both an exactly complete 250-node graph and one with pending expansion at the cap.
+
+### Review verification
+
+- Inspected the fixed commit and AiNetLinter source; no production files were changed.
+- The documentation diff was inspected and `git diff --check` passed before commit.

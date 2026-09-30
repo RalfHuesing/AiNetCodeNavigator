@@ -6,6 +6,9 @@
   - [x] `CallTreeBuilder`: Traversierung eingehender (`incoming`) und ausgehender (`outgoing`) Aufrufe via Roslyn-AST
   - [x] `CallGraphTextRenderer` (ASCII) & `CallTreeMermaidRenderer` (Mermaid-Diagramme)
   - [x] FastTests für Call-Trees
+  - [ ] Preserve non-BCL metadata callees with the default `IncludeBcl` setting and test both settings.
+  - [ ] Apply `TopN` to the combined incoming/outgoing expansion and cover `Both`.
+  - [ ] Report node-cap completeness accurately, including exact-cap and pending-work cases.
   - [ ] Review/Audit zu 5.1 durchführen; Findings ergänzen und umsetzen.
 - [x] 5.2 Referenzen & Implementierungen (`find_references`, `find_implementations`-Engine):
   - [x] `FindReferencesResolver`: AST-Aufrufstellensuche über Solution-Grenzen
