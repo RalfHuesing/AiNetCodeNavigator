@@ -48,3 +48,10 @@
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 439/439 across both test projects |
 | `git diff --check` | Passed before commit |
+
+### Independent audit 2/3 of point 7.1
+
+- Reviewed commit: `80c56e5fa478f78b94c1950c42e18f7a568b11e7` (clean working tree before review). Scope was the two findings from audit 1, their regression tests, and immediate cache/adapter interactions. Code and tests were inspected read-only; this auditor did not run product gates. The preceding gate table records the implementer's runs.
+- **P2 cached-source integrity resolved.** The v3 cache manifest records a SHA-256 digest per generated C# document (`AssemblyDecompilationCache.cs:355-363`); the converter requires the new field and rejects duplicate entries (`AssemblyDecompilationManifestJsonConverter.cs:24-29,220-243`). Cache reads validate the expected key set and digest format, then compare each decoded source with its published digest before constructing the returned document (`Coordinators/AssemblyCacheGenerationStorage.cs:119-126,154-166`). The new regression test changes a same-length source file after publication and requires a rejected cache read with a diagnostic (`AssemblyDecompilationBoundaryTests.cs:189-222`). The schema bump separates prior manifests. Normal cache hit and concurrent-identical-publish coverage remains in the focused suite.
+- **P2 timeout recovery resolved.** The adapter now passes a linked deadline token to decompilation, including the test override, and returns empty incomplete output directly after its own timeout (`AssemblyDecompilationAdapter.cs:44-73`). It no longer calls `ReadProjectOutput` on that branch. The new test stages an 8 MiB partial C# file and confirms the result contains no documents and has a timeout diagnostic (`AssemblyDecompilationBoundaryTests.cs:122-155`). The existing caller-cancellation test still covers propagation. Ordinary non-timeout errors still use the prior partial-output diagnostic path.
+- No point 7.1 finding remains open after this follow-up. The point 7.1 audit checkbox is closed. This audit did not review points 7.2 or 7.3.

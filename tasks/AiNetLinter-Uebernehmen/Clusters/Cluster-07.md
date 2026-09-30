@@ -7,7 +7,7 @@
   - [x] `AssemblyDecompilationCache`: On-the-Fly-Dekompilierung und Caching
   - [x] `AssemblyRoslynWorkspaceFactory`: Erzeugung eines virtuellen Roslyn-Workspaces aus Dekompilaten
   - [x] FastTests für Dekompilierung und virtuellen Workspace
-  - [ ] Review/Audit zu 7.1 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 7.1 durchführen; Findings ergänzen und umsetzen.
 - [ ] 7.2 Assembly-Navigations-Backends:
   - [x] `inspect_assembly`: Öffentliche API und Typdefinitionen extrahieren
   - [ ] `get_assembly_context`: Zusammenfassung von Assemblies
