@@ -2,6 +2,8 @@
 
 using System;
 using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Assemblies;
 using AiNetCodeNavigator.TestKit;
@@ -87,10 +89,10 @@ public sealed class AssemblyNavigationScannerTests
             public sealed class Searchable
             {
                 public int TargetField, NeighborField;
-                public event System.Action? TargetEvent;
+                public event System.Action? TargetEvent, NeighborEvent;
                 public void UseMembers() { _ = TargetField; _ = "TargetField"; /* TargetField */ }
             }
-            public enum TargetEnum { TargetMember }
+            public enum TargetEnum { FirstMember, TargetMember }
             """);
 
         var field = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "TargetField", DeclarationOnly: true));
@@ -103,10 +105,48 @@ public sealed class AssemblyNavigationScannerTests
         Assert.Contains(field.Value.Results, hit => hit.Text.Contains("TargetField", StringComparison.Ordinal));
         Assert.True(secondField.IsSuccess, secondField.Error?.ToString());
         Assert.Contains(secondField.Value!.Results, hit => hit.Text.Contains("NeighborField", StringComparison.Ordinal));
+        Assert.Equal("NeighborField", Assert.Single(secondField.Value.Results).Symbol);
         Assert.True(eventField.IsSuccess, eventField.Error?.ToString());
         Assert.Contains(eventField.Value!.Results, hit => hit.Text.Contains("TargetEvent", StringComparison.Ordinal));
+        var secondEvent = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "NeighborEvent", DeclarationOnly: true));
+        Assert.True(secondEvent.IsSuccess, secondEvent.Error?.ToString());
+        Assert.Equal("NeighborEvent", Assert.Single(secondEvent.Value!.Results).Symbol);
         Assert.True(enumMember.IsSuccess, enumMember.Error?.ToString());
         Assert.Contains(enumMember.Value!.Results, hit => hit.Text.Contains("TargetMember", StringComparison.Ordinal));
+        Assert.Equal("TargetMember", Assert.Single(enumMember.Value!.Results).Symbol);
+    }
+
+    [Fact]
+    public void Search_DeclarationSymbolSelectsMatchingSecondFieldDeclarator()
+    {
+        var tree = CSharpSyntaxTree.ParseText("""
+            public sealed class Probe
+            {
+                public int A, B;
+            }
+            """);
+        var sourceText = tree.GetText();
+        var root = tree.GetRoot();
+        var match = Assert.Single(AssemblySearchScanner.FindTextLines(sourceText, root, new Regex("B", RegexOptions.NonBacktracking), declarationOnly: true));
+        Assert.Equal("B", sourceText.ToString(match.DeclarationNameSpan!.Value));
+
+        var symbol = AssemblySearchScanner.GetContainingSymbolName(root, sourceText, sourceText.Lines[match.LineNumber], match.DeclarationNameSpan);
+
+        Assert.Equal("B", symbol);
+    }
+
+    [Fact]
+    public void Search_DeclarationSymbolSelectsMatchingEnumMember()
+    {
+        var tree = CSharpSyntaxTree.ParseText("public enum ProbeEnum { FirstMember, BMember }");
+        var sourceText = tree.GetText();
+        var root = tree.GetRoot();
+        var match = Assert.Single(AssemblySearchScanner.FindTextLines(sourceText, root, new Regex("BMember", RegexOptions.NonBacktracking), declarationOnly: true));
+        Assert.Equal("BMember", sourceText.ToString(match.DeclarationNameSpan!.Value));
+
+        var symbol = AssemblySearchScanner.GetContainingSymbolName(root, sourceText, sourceText.Lines[match.LineNumber], match.DeclarationNameSpan);
+
+        Assert.Equal("BMember", symbol);
     }
 
     [Fact]

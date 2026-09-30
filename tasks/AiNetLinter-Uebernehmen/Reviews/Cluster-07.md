@@ -81,6 +81,22 @@
 - **P2 — Multi-field search hit can identify the wrong symbol.** `SearchAsync` reduces matches to line numbers and calls `GetContainingSymbolName` with the whole line, not the matched span (`AssemblySearchScanner.cs:88-102`). For `int TargetField, NeighborField;`, that helper selects the first declaration-name span intersecting the line (`:204-219`). A `DeclarationOnly` query for `NeighborField` therefore returns the correct line but may label its `AssemblySearchHit.Symbol` as `TargetField`; the new test asserts only the hit text, not `Symbol` (`AssemblyNavigationScannerTests.cs:81-109`). **Acceptance:** Assert the matched field name in the hit's `Symbol` for the second declarator (and for an enum member on a shared line); derive the symbol from the actual match span or leave it unset when the line cannot identify one unambiguously. Preserve the absence of body/comment/string false positives.
 - The three audit-1 findings are resolved, but the new DTO accuracy finding keeps the point 7.2 audit checkbox open for a focused fix and a final audit. Point 7.3 remains outside this audit.
 
+### Independent audit 2/3 finding fix for point 7.2
+
+- Fix base: `e1964db5fd9119fbf47bbfbb77e14b9ee1de2a39` (clean working tree). Two focused pre-fix tests failed as expected: for `int A, B;`, the line-based symbol helper returned `A`; for `FirstMember, BMember`, it returned the enum type name instead of `BMember`.
+- **P2 — Declaration hits retain the exact matching name span — fixed.** Declaration filtering now returns the matched declaration-name span with its line. `SearchAsync` uses that span for `AssemblySearchHit.Symbol`, so subsequent declarators and enum members on a shared line retain their own names. Non-declaration searches keep their containing-member lookup. End-to-end checks assert symbol names for field, event-field, and enum-member searches; syntax-level regressions cover multi-name field and enum lines.
+- Point 7.2 remains open for the final point audit. Point 7.3 remains separate.
+
+| Gate after 7.2 audit 2 fix | Result |
+|---|---|
+| Focused pre-fix symbol-span regressions | 2 failed as expected |
+| Focused post-fix symbol and assembly navigation tests | Passed, 13/13 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 441/441 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 453/453 across both test projects |
+| `git diff --check` | Passed before commit; only expected LF-to-CRLF working-copy notices |
+
 ### Independent audit 1/3 of point 7.1
 
 - Reviewed commit: `9430da952afef7abc902494b198f50d2e4531169` (clean working tree before review). The adapter, cache, workspace factory, component tests, and AiNetLinter's corresponding classes and cache concurrency tests were inspected read-only. No product build or tests were run in this audit; the verification table above belongs to the implementation review.

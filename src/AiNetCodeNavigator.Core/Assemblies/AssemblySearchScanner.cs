@@ -17,6 +17,8 @@ namespace AiNetCodeNavigator.Core.Assemblies;
 
 public static class AssemblySearchScanner
 {
+    internal readonly record struct SearchLineMatch(int LineNumber, TextSpan? DeclarationNameSpan);
+
     public const int DefaultMaxResults = 100;
     public const int MaxResults = 1000;
     public const int MaxContextLines = 5;
@@ -87,19 +89,19 @@ public static class AssemblySearchScanner
                 var root = await tree.GetRootAsync(cancellationToken).ConfigureAwait(false);
                 var matchingLines = FindTextLines(sourceText, root, matcher, request.DeclarationOnly);
 
-                foreach (var lineNumber in matchingLines)
+                foreach (var match in matchingLines)
                 {
                     totalCount++;
                     if (results.Count >= limit) continue;
-                    var line = sourceText.Lines[lineNumber];
+                    var line = sourceText.Lines[match.LineNumber];
                     var surrounding = contextLineLimit == 0
                         ? Array.Empty<string>()
-                        : Enumerable.Range(Math.Max(0, lineNumber - contextLineLimit),
-                                Math.Min(sourceText.Lines.Count - 1, lineNumber + contextLineLimit) - Math.Max(0, lineNumber - contextLineLimit) + 1)
+                        : Enumerable.Range(Math.Max(0, match.LineNumber - contextLineLimit),
+                                Math.Min(sourceText.Lines.Count - 1, match.LineNumber + contextLineLimit) - Math.Max(0, match.LineNumber - contextLineLimit) + 1)
                             .Select(index => sourceText.Lines[index].ToString())
                             .ToArray();
-                    var symbol = GetContainingSymbolName(root, sourceText, line);
-                    results.Add(new AssemblySearchHit(filePath, lineNumber + 1, line.ToString(), symbol, surrounding));
+                    var symbol = GetContainingSymbolName(root, sourceText, line, match.DeclarationNameSpan);
+                    results.Add(new AssemblySearchHit(filePath, match.LineNumber + 1, line.ToString(), symbol, surrounding));
                 }
             }
         }
@@ -121,7 +123,7 @@ public static class AssemblySearchScanner
             context.Diagnostics));
     }
 
-    private static IEnumerable<int> FindTextLines(
+    internal static IEnumerable<SearchLineMatch> FindTextLines(
         Microsoft.CodeAnalysis.Text.SourceText sourceText,
         Microsoft.CodeAnalysis.SyntaxNode root,
         Regex matcher,
@@ -139,7 +141,7 @@ public static class AssemblySearchScanner
             if (!matcher.IsMatch(line.ToString())) continue;
             if (!declarationOnly)
             {
-                yield return i;
+                yield return new SearchLineMatch(i, null);
                 continue;
             }
 
@@ -149,9 +151,10 @@ public static class AssemblySearchScanner
                 var trivia = root.FindTrivia(span.Start, findInsideTrivia: true);
                 var token = root.FindToken(span.Start, findInsideTrivia: true);
                 if (IsCommentOrDocTrivia(trivia) || token.Parent is StructuredTriviaSyntax || IsStringLiteral(token)) continue;
-                if (declarationHeaders.Any(header => header.Contains(span)))
+                var declarationNameSpan = declarationHeaders.FirstOrDefault(header => header.Contains(span));
+                if (declarationNameSpan.Length > 0)
                 {
-                    yield return i;
+                    yield return new SearchLineMatch(i, declarationNameSpan);
                     break;
                 }
             }
@@ -201,11 +204,17 @@ public static class AssemblySearchScanner
         or SyntaxKind.MultiLineDocumentationCommentTrivia
         or SyntaxKind.DocumentationCommentExteriorTrivia;
 
-    private static string? GetContainingSymbolName(
+    internal static string? GetContainingSymbolName(
         SyntaxNode root,
         Microsoft.CodeAnalysis.Text.SourceText sourceText,
-        Microsoft.CodeAnalysis.Text.TextLine line)
+        Microsoft.CodeAnalysis.Text.TextLine line,
+        TextSpan? declarationNameSpan = null)
     {
+        if (declarationNameSpan is TextSpan matchedDeclarationNameSpan)
+        {
+            return sourceText.ToString(matchedDeclarationNameSpan);
+        }
+
         var member = root.FindNode(line.Span, getInnermostNodeForTie: true)
             .AncestorsAndSelf()
             .OfType<MemberDeclarationSyntax>()
