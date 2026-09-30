@@ -2,17 +2,17 @@
 
 [Zurück zum Konzept](../Konzept.md)
 
-- [ ] 9.1 Host-Runner & Lifecycle (`AiNetCodeNavigator`):
+- [x] 9.1 Host-Runner & Lifecycle (`AiNetCodeNavigator`):
   - [x] CLI-Parameter und Host-Bootstrap mit Stdio-Transport (`ModelContextProtocol` SDK)
   - [x] Wartungstools: `get_server_health`, `reload_config`
   - [x] JSON-Konfiguration validieren und unterstützte Einstellungen atomar reloaden
   - [x] Health-Abfrage für globalen oder bereits residenten Zustand ohne Target-Load
   - [x] Prozessintegration: Initialize, Toolliste, Maintenance-Aufrufe, stderr/stdout und EOF
-  - [ ] Review/Audit zu 9.1 durchführen; Findings ergänzen und umsetzen (audit 1/3: three P2 findings; two point audits remain).
+  - [x] Review/Audit zu 9.1 durchführen; Findings ergänzen und umsetzen (accepted in independent audit 2/3; all three P2 findings closed).
   - [x] Audit 1 P2 remediation implemented: health returns a complete snapshot or a retryable minimum budget; a recovery envelope that cannot fit returns sanitized `InvalidParams`.
   - [x] Audit 1 P2 remediation implemented: reload preflights the complete acknowledgement under its serialized reload gate before publishing any changed setting.
   - [x] Audit 1 P2 remediation implemented: identical settings retain their version, matching the public idempotency hint.
-  - [ ] Independent audit 2/3 of the three P2 remediations; implementation is complete, but acceptance and point closure remain pending.
+  - [x] Independent audit 2/3 accepted all three P2 remediations and closed point 9.1; no third audit is required without a new concrete finding.
 - [ ] 9.2 Tool-Registrierungen:
   - [ ] Symbol-Tools: `find_symbol`, `get_symbol_body`
   - [ ] Struktur-Tools: `get_file_skeleton`, `get_class_structure`, `get_file_tree`, `get_namespace_tree`, `get_index_scope`
@@ -25,3 +25,5 @@
   - [ ] Review/Audit zu 9.3 durchführen; Findings ergänzen und umsetzen.
 - [ ] 9.4 Realen Host-Lebenszyklus verifizieren: Stdio-Handshake, parallele Anfragen, Cancellation, Neustart, Logging nur auf `stderr`/Datei und sauberes Herunterfahren; der bisherige Typ-Existenztest genügt dafür nicht.
   - [ ] Review/Audit zu 9.4 durchführen; Findings ergänzen und umsetzen.
+
+Point 9.1 is closed after [independent audit 2/3](../Reviews/Cluster-09.md#point-91-independent-audit-23--accepted) accepted fixed commit `3cd6919e9c2c8f2c543082cd93fb662f2e406ae5`. Own focused gates passed 10 fast and 4 real-host integration cases; exact health budget retries and rejected/unchanged reload state were independently checked through stdio. Point 9.2, point 8.5 (0/3), and the later lifecycle/product acceptance remain separate open work.
