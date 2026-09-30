@@ -15,6 +15,11 @@ namespace AiNetCodeNavigator.Core.Symbols;
 /// </summary>
 public static class SourceSymbolBodyResolver
 {
+    /// <summary>
+    /// Extracts the symbol declaration from source syntax and returns the requested one-based line window.
+    /// Values below one for <paramref name="maxBodyLines"/> or <paramref name="startLine"/> are normalized to one.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="symbol"/> is null.</exception>
     public static SymbolBodyResult Resolve(
         ISymbol symbol,
         int maxBodyLines,
@@ -23,7 +28,9 @@ public static class SourceSymbolBodyResolver
         AnalysisSymbolIdentity? handoffIdentity = null,
         Solution? solution = null)
     {
-        var hasSyntax = symbol.DeclaringSyntaxReferences.Any();
+        ArgumentNullException.ThrowIfNull(symbol);
+
+        var hasSyntax = GetBodySyntaxReference(symbol) is not null;
         var unavailable = HasUnavailableBody(symbol, hasSyntax);
         var hint = GetHint(symbol, hasSyntax, unavailable);
         var docCommentId = symbol.GetDocumentationCommentId();
@@ -44,11 +51,17 @@ public static class SourceSymbolBodyResolver
             HandoffId: handoffId);
     }
 
+    /// <summary>
+    /// Extracts the same line window for each input symbol, preserving input order.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="symbols"/> is null.</exception>
     public static BatchSymbolBodyResult ResolveBatch(
         IEnumerable<ISymbol> symbols,
         int maxBodyLines,
         int startLine = 1)
     {
+        ArgumentNullException.ThrowIfNull(symbols);
+
         var results = symbols
             .Select(s => Resolve(s, maxBodyLines, startLine))
             .ToList();
@@ -57,10 +70,13 @@ public static class SourceSymbolBodyResolver
     }
 
     private static bool HasUnavailableBody(ISymbol symbol, bool hasSyntax) =>
-        !hasSyntax || GetDeclaringType(symbol)?.TypeKind == TypeKind.Interface
+        !hasSyntax
+        || symbol is INamedTypeSymbol { TypeKind: TypeKind.Interface }
         || symbol switch
         {
-            IMethodSymbol method => method.IsAbstract || HasExternModifier(method),
+            IMethodSymbol method => method.IsAbstract
+                || HasExternModifier(method)
+                || (method.IsPartialDefinition && method.PartialImplementationPart is null),
             IPropertySymbol property => HasNoBody(property),
             IEventSymbol eventSymbol => eventSymbol.AddMethod?.IsAbstract == true
                 || eventSymbol.RemoveMethod?.IsAbstract == true,
@@ -69,14 +85,21 @@ public static class SourceSymbolBodyResolver
 
     private static string? GetHint(ISymbol symbol, bool hasSyntax, bool unavailable)
     {
-        if (GetDeclaringType(symbol)?.TypeKind == TypeKind.Interface)
-            return "Interfaces stellen keinen ausführbaren Body bereit.";
         if (!hasSyntax) return "Für das Symbol ist kein Quell-Syntax verfügbar.";
-        return unavailable ? "Das Symbol ist abstract oder extern und besitzt keinen Body." : null;
-    }
+        if (!unavailable) return null;
+        if (symbol is INamedTypeSymbol { TypeKind: TypeKind.Interface }
+            || symbol.ContainingType?.TypeKind == TypeKind.Interface)
+        {
+            return "Interfaces stellen für dieses Symbol keinen ausführbaren Body bereit.";
+        }
 
-    private static INamedTypeSymbol? GetDeclaringType(ISymbol symbol) =>
-        symbol as INamedTypeSymbol ?? symbol.ContainingType;
+        if (symbol is IMethodSymbol { IsPartialDefinition: true, PartialImplementationPart: null })
+        {
+            return "Die partielle Methodendeklaration besitzt keine Implementierung.";
+        }
+
+        return "Das Symbol ist abstract oder extern und besitzt keinen Body.";
+    }
 
     private static bool HasNoBody(IPropertySymbol property) =>
         property.GetMethod?.IsAbstract == true
@@ -85,10 +108,20 @@ public static class SourceSymbolBodyResolver
         || HasExternModifier(property.SetMethod);
 
     private static bool HasExternModifier(ISymbol? symbol) =>
-        symbol?.DeclaringSyntaxReferences
-            .Select(reference => reference.GetSyntax())
-            .OfType<MemberDeclarationSyntax>()
-            .Any(member => member.Modifiers.Any(SyntaxKind.ExternKeyword)) == true;
+        symbol is not null
+        && GetBodySyntaxReference(symbol) is { } reference
+        && reference.GetSyntax() is MemberDeclarationSyntax member
+        && member.Modifiers.Any(SyntaxKind.ExternKeyword);
+
+    private static SyntaxReference? GetBodySyntaxReference(ISymbol symbol)
+    {
+        if (symbol is IMethodSymbol { PartialImplementationPart: { } implementation })
+        {
+            return implementation.DeclaringSyntaxReferences.FirstOrDefault();
+        }
+
+        return symbol.DeclaringSyntaxReferences.FirstOrDefault();
+    }
 
     private static (string Body, int TotalLines, int DisplayedStart, int DisplayedEnd, bool HasMore) Extract(
         ISymbol symbol,
@@ -97,7 +130,7 @@ public static class SourceSymbolBodyResolver
     {
         var normalizedMax = Math.Max(1, maxBodyLines);
         var normalizedStart = Math.Max(1, startLine);
-        var declaringReference = symbol.DeclaringSyntaxReferences.FirstOrDefault();
+        var declaringReference = GetBodySyntaxReference(symbol);
         if (declaringReference is null)
         {
             return ($"// Kein Quell-Syntax verfügbar für '{symbol.ToDisplayString()}'.", 0, 1, 0, false);

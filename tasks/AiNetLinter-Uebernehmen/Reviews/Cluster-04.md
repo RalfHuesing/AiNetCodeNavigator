@@ -66,3 +66,25 @@ The point 4.1 audit checkbox remains open pending fixes and a follow-up audit. N
 2. **P2 generated-source filtering — closed.** `FindSymbolScanRequest.IncludeGenerated` defaults to `false`. `CollectVisibleLocationsAsync` filters each source location after project/document scope classification. `IsGeneratedDocumentAsync` matches the reference's path suffixes, `obj/` segment, first-five-line header, and declared-symbol attribute checks. New FastTests cover generated path variants, header, attribute, explicit inclusion in production and test scopes, and an editable/generated partial declaration. The existing scope and multi-project tests remain present.
 
 No open finding remains for point 4.1 on this reviewed Core implementation. The audit checkbox is complete after two audits. The end-to-end MCP contract remains subject to Cluster 11 verification.
+
+## Point 4.2 implementation
+
+- Base commit: `d7f6e52facf480573bb0db4390dba618ce5b2537`; the working tree was clean before this slice.
+- Read-only AiNetLinter MCP inspection covered `SourceSymbolBodyResolver` and `GetSymbolBodyToolTests`. The resolver uses AST declaration text with a one-based `startLine`/`maxBodyLines` window; its tests cover truncation and out-of-range windows. The existing Core code had the same basic approach but did not cover partial-method implementations, executable default interface members, null inputs, source-less metadata symbols, or mixed availability in a batch.
+- **P2 — Partial method lookup returned its declaration instead of its body.** A regression for `partial void Execute(); partial void Execute() { Runs++; }` failed before the fix: resolving the declared method returned only `partial void Execute();`. `Resolve` now selects the implementation syntax reference when Roslyn exposes a partial implementation. A partial definition with no implementation reports `unavailable` and a specific hint.
+- **P2 — Executable default interface methods were marked unavailable.** The previous availability test treated every symbol under an interface as bodyless. The regression failed before the fix for an interface method with a concrete body. Availability now treats the interface type declaration itself as non-executable while relying on method/property/event body metadata for members.
+- Added null argument validation for `Resolve` and `ResolveBatch`. Tests cover metadata-only symbols as recoverable unavailable results, empty and ordered mixed batches, non-positive line-window normalization, and an out-of-range start line. Added [current-state documentation](../../../docs/navigation/get-symbol-body.md) and indexed it in `docs/README.md`.
+- The independent point 4.2 audit checkbox remains `[ ]`; this implementation record is not the independent audit.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| Partial-method regression before fix | Failed as expected: returned the body-free declaration |
+| Default-interface-method regression before fix | Failed as expected: marked the executable body unavailable |
+| Focused GetSymbolBody FastTests after fix | Passed, 13/13 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 280/280 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 292/292 across both test projects |
+| `git diff --check` | Passed before commit |
