@@ -355,6 +355,11 @@ internal sealed partial class AssemblyDecompilationCache
                 OptionsIdentity = request.CacheKey.OptionsIdentity,
                 CacheSchemaVersion = request.CacheKey.CacheSchemaVersion,
                 GeneratedFiles = generatedFiles,
+                GeneratedFileHashes = request.Decompilation.Documents
+                    .Select((document, index) => new KeyValuePair<string, string>(
+                        generatedFiles[index],
+                        AssemblyCacheGenerationStorage.ComputeTextSha256(document.CSharpSource ?? string.Empty)))
+                    .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
                 Encoding = AssemblyCacheContract.Utf8EncodingName,
             },
             Diagnostics = new AssemblyManifestDiagnostics

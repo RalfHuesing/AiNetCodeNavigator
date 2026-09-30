@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -38,6 +39,9 @@ internal static class AssemblyCacheGenerationStorage
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .FirstOrDefault()
             : null;
+
+    internal static string ComputeTextSha256(string source) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source)));
 
     internal static string GetSafeRelativePath(string root, string fullPath) =>
         NormalizeDocumentPath(Path.GetRelativePath(root, fullPath));
@@ -115,7 +119,12 @@ internal static class AssemblyCacheGenerationStorage
         string.Equals(format.DecompilerVersion, key.DecompilerVersion, StringComparison.Ordinal)
         && string.Equals(format.OptionsIdentity, key.OptionsIdentity, StringComparison.Ordinal)
         && string.Equals(format.CacheSchemaVersion, key.CacheSchemaVersion, StringComparison.Ordinal)
+        && format.GeneratedFileHashes.Count == format.GeneratedFiles.Count
+        && format.GeneratedFiles.All(path => format.GeneratedFileHashes.TryGetValue(path, out var hash) && IsSha256(hash))
         && string.Equals(format.Encoding, AssemblyCacheContract.Utf8EncodingName, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsSha256(string value) =>
+        value.Length == 64 && value.All(character => character is >= '0' and <= '9' or >= 'A' and <= 'F' or >= 'a' and <= 'f');
 
     private static bool IsReferencesCompatible(
         AssemblyManifestReferences manifestReferences,
@@ -145,6 +154,12 @@ internal static class AssemblyCacheGenerationStorage
             if (!File.Exists(fullPath)) throw new InvalidDataException($"The cache document '{relativePath}' is missing.");
 
             var source = File.ReadAllText(fullPath, encoding);
+            if (!manifest.Format.GeneratedFileHashes.TryGetValue(normalized, out var expectedHash)
+                || !string.Equals(Convert.ToHexString(SHA256.HashData(encoding.GetBytes(source))), expectedHash, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException($"The cache document '{relativePath}' does not match its published content hash.");
+            }
+
             documents.Add(new DecompiledDocument(fullPath, Path.GetFileNameWithoutExtension(fullPath), source));
         }
 

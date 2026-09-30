@@ -363,6 +363,7 @@ internal sealed record AssemblyManifestFormat
     internal required string OptionsIdentity { get; init; }
     internal required string CacheSchemaVersion { get; init; }
     internal required IReadOnlyList<string> GeneratedFiles { get; init; }
+    internal required IReadOnlyDictionary<string, string> GeneratedFileHashes { get; init; }
     internal required string Encoding { get; init; }
 }
 

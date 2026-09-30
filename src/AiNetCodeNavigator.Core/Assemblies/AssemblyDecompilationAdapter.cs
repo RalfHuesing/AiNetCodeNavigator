@@ -25,15 +25,10 @@ internal sealed class AssemblyDecompilationAdapter
         this.decompileOverride = decompileOverride;
     }
 
-    internal Task<DecompilationResult> DecompileAsync(
+    internal async Task<DecompilationResult> DecompileAsync(
         DecompilationRequest request,
         AssemblyReferenceResolution references)
     {
-        if (decompileOverride is not null)
-        {
-            return decompileOverride(request, references);
-        }
-
         request.CancellationToken.ThrowIfCancellationRequested();
         var ownsStagingDirectory = request.StagingDirectory is null;
         var stagingDirectory = request.StagingDirectory ?? Path.Combine(
@@ -46,7 +41,7 @@ internal sealed class AssemblyDecompilationAdapter
                 AssemblyDiagnosticCodes.For(nameof(AssemblyDecompilationAdapter), nameof(AssemblyDecompilationOptions)),
                 "The decompilation timeout is outside the range supported by CancellationTokenSource.CancelAfter.",
                 AssemblyDiagnosticSeverity.Error));
-            return Task.FromResult(new DecompilationResult([], diagnostics, false));
+            return new DecompilationResult([], diagnostics, false);
         }
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(request.CancellationToken);
@@ -54,7 +49,14 @@ internal sealed class AssemblyDecompilationAdapter
         try
         {
             deadline.CancelAfter(request.Options.EffectiveTimeout);
-            return Task.FromResult(DecompileProject(request, references, stagingDirectory, deadline.Token, diagnostics));
+            if (decompileOverride is not null)
+            {
+                return await decompileOverride(
+                    request with { CancellationToken = deadline.Token },
+                    references).ConfigureAwait(false);
+            }
+
+            return DecompileProject(request, references, stagingDirectory, deadline.Token, diagnostics);
         }
         catch (OperationCanceledException) when (request.CancellationToken.IsCancellationRequested)
         {
@@ -66,7 +68,7 @@ internal sealed class AssemblyDecompilationAdapter
                 AssemblyDiagnosticCodes.For(nameof(AssemblyDecompilationAdapter), nameof(OperationCanceledException)),
                 "Full decompilation was aborted due to the configured timeout.",
                 AssemblyDiagnosticSeverity.Error));
-            return Task.FromResult(ReadProjectOutput(stagingDirectory, diagnostics, CancellationToken.None, false));
+            return new DecompilationResult([], diagnostics.ToList(), false);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException or MetadataFileNotSupportedException or InvalidOperationException or ArgumentException or InvalidDataException or DecompilerException)
         {
@@ -76,7 +78,7 @@ internal sealed class AssemblyDecompilationAdapter
                     ? $"{AssemblyReferenceResolver.NativeMetadataFailureMessage} Note: a managed .NET .dll or .exe with IL is required."
                     : $"Full decompilation failed: {ex.Message}",
                 AssemblyDiagnosticSeverity.Error));
-            return Task.FromResult(ReadProjectOutput(stagingDirectory, diagnostics, CancellationToken.None, false));
+            return ReadProjectOutput(stagingDirectory, diagnostics, CancellationToken.None, false);
         }
         finally
         {

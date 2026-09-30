@@ -24,6 +24,7 @@ internal sealed class AssemblyDecompilationManifestJsonConverter : JsonConverter
         JsonPropertyName(nameof(AssemblyManifestFormat.OptionsIdentity)),
         JsonPropertyName(nameof(AssemblyManifestFormat.CacheSchemaVersion)),
         JsonPropertyName(nameof(AssemblyManifestFormat.GeneratedFiles)),
+        JsonPropertyName(nameof(AssemblyManifestFormat.GeneratedFileHashes)),
         JsonPropertyName(nameof(AssemblyManifestFormat.Encoding)),
         JsonPropertyName(nameof(AssemblyManifestDiagnostics.Warnings)),
         JsonPropertyName(nameof(AssemblyManifestDiagnostics.Errors)),
@@ -63,6 +64,7 @@ internal sealed class AssemblyDecompilationManifestJsonConverter : JsonConverter
                 OptionsIdentity = ReadString(properties, JsonPropertyName(nameof(AssemblyManifestFormat.OptionsIdentity))),
                 CacheSchemaVersion = ReadString(properties, JsonPropertyName(nameof(AssemblyManifestFormat.CacheSchemaVersion))),
                 GeneratedFiles = ReadStringArray(properties, JsonPropertyName(nameof(AssemblyManifestFormat.GeneratedFiles))),
+                GeneratedFileHashes = ReadStringDictionary(properties, JsonPropertyName(nameof(AssemblyManifestFormat.GeneratedFileHashes))),
                 Encoding = ReadString(properties, JsonPropertyName(nameof(AssemblyManifestFormat.Encoding))),
             },
             Diagnostics = new AssemblyManifestDiagnostics
@@ -99,6 +101,7 @@ internal sealed class AssemblyDecompilationManifestJsonConverter : JsonConverter
         writer.WriteString(JsonPropertyName(nameof(AssemblyManifestFormat.OptionsIdentity)), value.Format.OptionsIdentity);
         writer.WriteString(JsonPropertyName(nameof(AssemblyManifestFormat.CacheSchemaVersion)), value.Format.CacheSchemaVersion);
         WriteStrings(writer, JsonPropertyName(nameof(AssemblyManifestFormat.GeneratedFiles)), value.Format.GeneratedFiles);
+        WriteStringDictionary(writer, JsonPropertyName(nameof(AssemblyManifestFormat.GeneratedFileHashes)), value.Format.GeneratedFileHashes);
         writer.WriteString(JsonPropertyName(nameof(AssemblyManifestFormat.Encoding)), value.Format.Encoding);
         WriteStrings(writer, JsonPropertyName(nameof(AssemblyManifestDiagnostics.Warnings)), value.Diagnostics.Warnings);
         WriteStrings(writer, JsonPropertyName(nameof(AssemblyManifestDiagnostics.Errors)), value.Diagnostics.Errors);
@@ -212,6 +215,29 @@ internal sealed class AssemblyDecompilationManifestJsonConverter : JsonConverter
             }
 
             result.Add(item.GetString() ?? throw new JsonException($"Manifest field '{name}' contains null."));
+        }
+
+        return result;
+    }
+
+    private static IReadOnlyDictionary<string, string> ReadStringDictionary(
+        IReadOnlyDictionary<string, JsonElement> properties,
+        string name)
+    {
+        var value = properties[name];
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            throw new JsonException($"Manifest field '{name}' must be an object.");
+        }
+
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var property in value.EnumerateObject())
+        {
+            if (property.Value.ValueKind != JsonValueKind.String
+                || !result.TryAdd(property.Name, property.Value.GetString() ?? throw new JsonException($"Manifest field '{name}' contains a null value.")))
+            {
+                throw new JsonException($"Manifest field '{name}' contains an invalid or duplicate entry.");
+            }
         }
 
         return result;
@@ -364,5 +390,16 @@ internal sealed class AssemblyDecompilationManifestJsonConverter : JsonConverter
         writer.WriteStartArray(name);
         foreach (var value in values) writer.WriteStringValue(value);
         writer.WriteEndArray();
+    }
+
+    private static void WriteStringDictionary(Utf8JsonWriter writer, string name, IReadOnlyDictionary<string, string> values)
+    {
+        writer.WriteStartObject(name);
+        foreach (var pair in values.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            writer.WriteString(pair.Key, pair.Value);
+        }
+
+        writer.WriteEndObject();
     }
 }

@@ -14,7 +14,7 @@ internal static class AssemblyCacheContract
     internal const string GenerationDirectoryPrefix = "generation-";
     internal const string StagingDirectorySuffix = ".tmp";
     internal const string Utf8EncodingName = "utf-8";
-    internal const string CacheSchemaVersion = "assembly-cache-v2";
+    internal const string CacheSchemaVersion = "assembly-cache-v3";
     internal const string SyntheticProjectName = "decompiled-assembly";
     internal const int FileBufferSize = 4096;
     internal const string DefaultCacheDirectoryName = "cache";
