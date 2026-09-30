@@ -15,7 +15,7 @@ namespace AiNetCodeNavigator.Core.Workspace;
 /// </summary>
 internal static class SolutionStructureFingerprint
 {
-    internal static string Create(Solution solution, string solutionPath)
+    internal static string Create(Solution solution, string solutionPath, SolutionStructureInputs? structureInputs = null)
     {
         var inputs = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         AddHashedFile(inputs, solutionPath);
@@ -46,6 +46,19 @@ internal static class SolutionStructureFingerprint
             }
         }
 
+        if (structureInputs is not null)
+        {
+            foreach (var importPath in structureInputs.ImportedFiles)
+            {
+                AddHashedFile(inputs, importPath);
+            }
+
+            foreach (var globRoot in structureInputs.CompileGlobRoots)
+            {
+                AddSourceFilesUnderRoot(inputs, globRoot);
+            }
+        }
+
         AddMSBuildConfigurationFiles(inputs, Path.GetDirectoryName(solutionPath));
         var aggregate = string.Join("\n", inputs.Select(pair => $"{pair.Key}\0{pair.Value}"));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(aggregate)));
@@ -54,10 +67,59 @@ internal static class SolutionStructureFingerprint
     private static void AddHashedFile(IDictionary<string, string> inputs, string path)
     {
         var canonicalPath = Path.GetFullPath(path);
-        if (File.Exists(canonicalPath))
+        inputs[canonicalPath] = ReadStableFileFingerprint(canonicalPath);
+    }
+
+    private static string ReadStableFileFingerprint(string path)
+    {
+        for (var attempt = 0; attempt < 3; attempt++)
         {
-            using var stream = new FileStream(canonicalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            inputs[canonicalPath] = Convert.ToHexString(SHA256.HashData(stream));
+            var before = new FileInfo(path);
+            if (!before.Exists)
+            {
+                return "missing";
+            }
+
+            var beforeLength = before.Length;
+            var beforeWriteTime = before.LastWriteTimeUtc;
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                var hash = Convert.ToHexString(SHA256.HashData(stream));
+                var after = new FileInfo(path);
+                if (!after.Exists)
+                {
+                    return "missing";
+                }
+
+                if (after.Length == beforeLength && after.LastWriteTimeUtc == beforeWriteTime)
+                {
+                    return $"{beforeWriteTime.Ticks}:{beforeLength}:{hash}";
+                }
+            }
+            catch (IOException) when (attempt < 2)
+            {
+                // Retry transient replacement or sharing races with a fresh metadata/hash sample.
+            }
+        }
+
+        throw new IOException($"The file changed while its structure fingerprint was being read: '{path}'.");
+    }
+
+    private static void AddSourceFilesUnderRoot(IDictionary<string, string> inputs, string root)
+    {
+        var canonicalRoot = Path.GetFullPath(root);
+        if (!Directory.Exists(canonicalRoot))
+        {
+            inputs[canonicalRoot] = "directory-missing";
+            return;
+        }
+
+        inputs[canonicalRoot] = "directory";
+        foreach (var sourcePath in Directory.EnumerateFiles(canonicalRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(filePath => !IsGeneratedOrBuildPath(canonicalRoot, filePath)))
+        {
+            inputs[Path.GetFullPath(sourcePath)] = "source";
         }
     }
 

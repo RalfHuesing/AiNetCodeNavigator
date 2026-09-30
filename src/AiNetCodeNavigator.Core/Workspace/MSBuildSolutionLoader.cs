@@ -113,11 +113,24 @@ public static class MSBuildSolutionLoader
         ArgumentException.ThrowIfNullOrWhiteSpace(solutionPath);
         var canonicalPath = Path.GetFullPath(solutionPath);
         return new ResidentSolution(
-            async cancellationToken =>
-            {
-                var (solution, workspace) = await LoadSolutionAsync(canonicalPath, cancellationToken).ConfigureAwait(false);
-                return new ResidentLoadedState(solution, workspace);
-            },
+            async cancellationToken => await LoadResidentStateAsync(canonicalPath, cancellationToken).ConfigureAwait(false),
             canonicalPath);
+    }
+
+    internal static async Task<ResidentLoadedState> LoadResidentStateAsync(
+        string solutionPath,
+        CancellationToken cancellationToken = default)
+    {
+        var (solution, workspace) = await LoadSolutionAsync(solutionPath, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var inputs = MSBuildStructureInputCollector.Collect(solution);
+            return new ResidentLoadedState(solution, workspace) { StructureInputs = inputs };
+        }
+        catch
+        {
+            workspace.Dispose();
+            throw;
+        }
     }
 }

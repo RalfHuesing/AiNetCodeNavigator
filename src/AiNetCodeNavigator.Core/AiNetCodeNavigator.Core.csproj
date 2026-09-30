@@ -3,6 +3,10 @@
   <ItemGroup>
     <PackageReference Include="ICSharpCode.Decompiler" />
     <PackageReference Include="Serilog" />
+    <PackageReference Include="Microsoft.Build">
+      <ExcludeAssets>runtime</ExcludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
     <PackageReference Include="Microsoft.Build.Locator" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />

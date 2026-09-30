@@ -14,6 +14,8 @@
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <PackageVersion Include="ICSharpCode.Decompiler" Version="10.0.1.8346" />
     <PackageVersion Include="Microsoft.Build.Framework" Version="18.9.6" />
+    <!-- Match the MSBuild 18.9.6 engine selected by the pinned .NET SDK. -->
+    <PackageVersion Include="Microsoft.Build" Version="18.9.6" />
     <PackageVersion Include="Microsoft.Build.Locator" Version="1.11.2" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="5.9.0" />

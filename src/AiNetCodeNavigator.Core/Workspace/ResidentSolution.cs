@@ -20,7 +20,10 @@ public readonly record struct DocumentFileState(DateTime MtimeUtc, string Hash);
 /// <summary>
 /// Internal state container for loaded solution and optional workspace.
 /// </summary>
-public sealed record ResidentLoadedState(Solution Solution, Microsoft.CodeAnalysis.Workspace? Workspace);
+public sealed record ResidentLoadedState(Solution Solution, Microsoft.CodeAnalysis.Workspace? Workspace)
+{
+    internal SolutionStructureInputs? StructureInputs { get; init; }
+}
 
 /// <summary>
 /// Hält die geladene Roslyn-<see cref="Solution"/> über die Lebensdauer resident im Speicher.
@@ -39,6 +42,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
     private Solution? currentSolution;
     private Microsoft.CodeAnalysis.Workspace? currentWorkspace;
     private string? structureFingerprint;
+    private SolutionStructureInputs? structureInputs;
     private ResidentSolutionLoadError? loadFailure;
     private int disposed;
 
@@ -88,10 +92,11 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
                     {
                         currentSolution = result.Solution;
                         currentWorkspace = result.Workspace;
+                        structureInputs = result.StructureInputs;
                         InitializeFileStates(result.Solution);
                         if (!string.IsNullOrEmpty(this.solutionPath))
                         {
-                            structureFingerprint = SolutionStructureFingerprint.Create(result.Solution, this.solutionPath);
+                            structureFingerprint = SolutionStructureFingerprint.Create(result.Solution, this.solutionPath, structureInputs);
                         }
 
                         loadFailure = null;
@@ -203,10 +208,12 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
         {
             Solution? current;
             string? expectedFingerprint;
+            SolutionStructureInputs? inputs;
             lock (syncLock)
             {
                 current = currentSolution;
                 expectedFingerprint = structureFingerprint;
+                inputs = structureInputs;
             }
 
             if (string.IsNullOrEmpty(solutionPath))
@@ -229,7 +236,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
             {
                 try
                 {
-                    var observedFingerprint = SolutionStructureFingerprint.Create(current, solutionPath);
+                    var observedFingerprint = SolutionStructureFingerprint.Create(current, solutionPath, inputs);
                     var retryFailedLoad = LoadFailure is not null;
                     if ((retryFailedLoad || !StringComparer.Ordinal.Equals(expectedFingerprint, observedFingerprint))
                         && !await TryReloadAsync(solutionPath, refreshToken).ConfigureAwait(false))
@@ -265,15 +272,18 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
         Microsoft.CodeAnalysis.Workspace? newlyLoadedWorkspace = null;
         try
         {
-            var (newSolution, newWorkspace) = await MSBuildSolutionLoader.LoadSolutionAsync(path, cancellationToken).ConfigureAwait(false);
+            var loadedState = await MSBuildSolutionLoader.LoadResidentStateAsync(path, cancellationToken).ConfigureAwait(false);
+            var newSolution = loadedState.Solution;
+            var newWorkspace = loadedState.Workspace;
             newlyLoadedWorkspace = newWorkspace;
-            var newStructureFingerprint = SolutionStructureFingerprint.Create(newSolution, path);
+            var newStructureFingerprint = SolutionStructureFingerprint.Create(newSolution, path, loadedState.StructureInputs);
             Microsoft.CodeAnalysis.Workspace? oldWorkspace;
             lock (syncLock)
             {
                 oldWorkspace = currentWorkspace;
                 currentSolution = newSolution;
                 currentWorkspace = newWorkspace;
+                structureInputs = loadedState.StructureInputs;
                 newlyLoadedWorkspace = null;
                 fileStates.Clear();
                 InitializeFileStates(newSolution);
