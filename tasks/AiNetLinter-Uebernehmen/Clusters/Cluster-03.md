@@ -20,5 +20,7 @@
 - [ ] 3.3 Handoff-Vertrag über Producer und Consumer schließen:
   - [x] Source-Produzenten binden `h:...` an kanonische Lösungssnapshots und stabile Projektmarker; rohe DocumentationCommentIds werden nicht als Handoffs ausgegeben.
   - [x] Roundtrips von `find_symbol` und `get_file_skeleton` zu Source-Folge-Tools sowie typisierte Fehler für unbekannte, fremde und veraltete Source-Handles ergänzen.
+  - [ ] Source-Snapshot und übergebene Identitäten gegen gleichwertige Zielpfade sowie aktuelle Lösung validieren; Mehrprojekt-Roundtrips abdecken.
   - [ ] Assembly-Folge-Tools und Roundtrips für `inspect_assembly` abschließen (Auflösung und Sitzungslebenszyklus siehe Cluster 7).
+  - [ ] Assembly-DTOs nur bei kanonischer Identität als Handoff mit Folge-Tools kennzeichnen.
   - [ ] Review/Audit zu 3.3 durchführen; Findings ergänzen und umsetzen.
