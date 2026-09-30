@@ -60,6 +60,7 @@ No public MCP stdio acceptance is claimed. The three findings are resolved by th
 
 ### Point 8.2 audit 1 remediation — independent follow-up pending
 
+- Remediation commit: `6613172` (`fix(mcp): preserve required result recovery fields`).
 - Regression tests were added before the fix and run against the original implementation. Three failed as expected: the success retry boundary reported the wrong minimum; a large recoverable context removed `nextAction`; and a 70,000-character loading message bypassed the default byte limit. The initial API-shape check also confirmed loading had no budget parameters.
 - Success budget minima and retry eligibility now come from the success projection. The builder formats a separate error-status envelope with those same minima and checks the envelope against the requested byte and token budgets. Tests cover the 65,536-byte retry boundary, exact byte/token minima, and rechecking an existing error envelope under a smaller token cap.
 - Error code/message, field path, budget recovery, and correction action are treated as one required envelope. The builder verifies that the full required block fits before adding optional context; context is then shortened or omitted if needed. An unrepresentable required block raises `ArgumentOutOfRangeException` instead of returning a partial error. Tests cover large context for recoverable and invalid-argument results, plus byte and token rejection boundaries.
