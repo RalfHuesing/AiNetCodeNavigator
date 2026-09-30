@@ -4,7 +4,7 @@ AiNetCodeNavigator is a .NET project for an MCP server that helps agents navigat
 
 ## Status
 
-The project is under development. The core library contains components for loading solutions, resolving symbols, examining code structure and relationships, and inspecting assemblies. The MCP host and public tool registrations are still placeholders, so the repository does not yet provide a usable MCP server.
+The project is under development. The MCP stdio host currently exposes `get_server_health` and `reload_config`; the 20 C# navigation tools are not registered yet, so this is not yet a usable code-navigation server. The core library contains components for loading solutions, resolving symbols, examining code structure and relationships, and inspecting assemblies.
 
 The [implementation roadmap](tasks/AiNetLinter-Uebernehmen/Konzept.md) tracks planned work. Check the code and tests for the current implementation state.
 

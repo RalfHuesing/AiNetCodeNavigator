@@ -7,6 +7,7 @@
 - [MCP Tool Results](mcp-tool-results.md): Internal `CallToolResult` builders, status text, structured success content, and error classification.
 - [MCP Argument Validation](mcp-argument-validation.md): SDK input-schema validation, binder compatibility checks, safe field paths, and error-budget behavior.
 - [MCP Long-Running Calls and Continuations](mcp-long-running-calls.md): Operation token lifecycle, polling, immutable text snapshots, continuation tokens, and their limits.
+- [MCP Host](mcp-host.md): Stdio lifecycle, maintenance tools, health scope, and reloadable host settings.
 
 ## Navigation
 

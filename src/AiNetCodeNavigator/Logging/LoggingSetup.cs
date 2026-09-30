@@ -24,14 +24,15 @@ public static class LoggingSetup
     /// <summary>
     /// Initializes Serilog with file output and an error channel on stderr.
     /// </summary>
-    public static void Initialize(string command = "mcp", string? customLogDirectory = null, LogEventLevel minimumLevel = LogEventLevel.Information)
+    public static LoggingLevelSwitch Initialize(string command = "mcp", string? customLogDirectory = null, LogEventLevel minimumLevel = LogEventLevel.Information)
     {
         var logDirectory = customLogDirectory ?? Path.Combine(AppContext.BaseDirectory, "logs");
         Directory.CreateDirectory(logDirectory);
         _activeLogDirectory = logDirectory;
 
+        var levelSwitch = new LoggingLevelSwitch(minimumLevel);
         var config = new LoggerConfiguration()
-            .MinimumLevel.Is(minimumLevel)
+            .MinimumLevel.ControlledBy(levelSwitch)
             .Enrich.FromLogContext()
             .Enrich.WithProperty("Command", command)
             .WriteTo.File(
@@ -46,6 +47,13 @@ public static class LoggingSetup
 
         Log.Logger = config.CreateLogger();
         Log.Information("AiNetCodeNavigator logging initialized. OutputDirectory={LogDirectory}, Command={Command}", logDirectory, command);
+        return levelSwitch;
+    }
+
+    public static void SetMinimumLevel(LoggingLevelSwitch levelSwitch, LogEventLevel minimumLevel)
+    {
+        ArgumentNullException.ThrowIfNull(levelSwitch);
+        levelSwitch.MinimumLevel = minimumLevel;
     }
 
     /// <summary>

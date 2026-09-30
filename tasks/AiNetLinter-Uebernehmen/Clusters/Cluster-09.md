@@ -3,8 +3,11 @@
 [Zurück zum Konzept](../Konzept.md)
 
 - [ ] 9.1 Host-Runner & Lifecycle (`AiNetCodeNavigator`):
-  - [ ] CLI-Parameter und Host-Bootstrap mit Stdio-Transport (`ModelContextProtocol` SDK)
-  - [ ] Wartungstools: `get_server_health`, `reload_config`
+  - [x] CLI-Parameter und Host-Bootstrap mit Stdio-Transport (`ModelContextProtocol` SDK)
+  - [x] Wartungstools: `get_server_health`, `reload_config`
+  - [x] JSON-Konfiguration validieren und unterstützte Einstellungen atomar reloaden
+  - [x] Health-Abfrage für globalen oder bereits residenten Zustand ohne Target-Load
+  - [x] Prozessintegration: Initialize, Toolliste, Maintenance-Aufrufe, stderr/stdout und EOF
   - [ ] Review/Audit zu 9.1 durchführen; Findings ergänzen und umsetzen.
 - [ ] 9.2 Tool-Registrierungen:
   - [ ] Symbol-Tools: `find_symbol`, `get_symbol_body`

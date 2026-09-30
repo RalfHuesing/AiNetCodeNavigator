@@ -25,6 +25,19 @@ internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
 
     internal static AssemblyAnalysisSessionRegistry Default => DefaultRegistry.Value;
 
+    /// <summary>Returns resident session metadata without acquiring or refreshing a session.</summary>
+    internal IReadOnlyList<AssemblySessionHealthSnapshot> GetHealthSnapshot(string? assemblyPath = null)
+    {
+        var canonicalPath = assemblyPath is null ? null : Path.GetFullPath(assemblyPath);
+        lock (gate)
+        {
+            return sessions.Values
+                .Where(entry => canonicalPath is null || string.Equals(entry.Path, canonicalPath, StringComparison.OrdinalIgnoreCase))
+                .Select(entry => new AssemblySessionHealthSnapshot(entry.Path, entry.LastAccessUtc, entry.ActiveAccesses, entry.Session.CurrentGeneration is not null))
+                .ToArray();
+        }
+    }
+
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "Successful accesses transfer ownership to the caller; idle session ownership stays with this registry until eviction.")]
     internal async Task<Result<AssemblySessionAccess>> AcquireAsync(string assemblyPath, CancellationToken cancellationToken)
     {
@@ -226,3 +239,5 @@ internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
         }
     }
 }
+
+internal sealed record AssemblySessionHealthSnapshot(string Path, DateTime LastAccessUtc, int ActiveAccesses, bool HasResidentGeneration);
