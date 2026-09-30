@@ -91,6 +91,50 @@ internal static class McpToolResults
         return Create(formatted.Text, isError: false, structuredContent);
     }
 
+    internal static CallToolResult CompleteOrBudgetTooSmall(
+        string text,
+        int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
+        int? maxResponseTokens = null,
+        int? minimumResponseBytes = null,
+        int? minimumResponseTokens = null)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var formatted = McpResponseFormatter.Format(
+            text,
+            maxResponseBytes,
+            maxResponseTokens,
+            responsePrefix: SuccessStatusPrefix);
+        if (formatted.ErrorCode is null && !formatted.IsTruncated)
+        {
+            return Create(formatted.Text, isError: false);
+        }
+
+        var completeBytes = Math.Max(
+            McpResponseBudgetLimits.MinimumBytes,
+            minimumResponseBytes ?? Encoding.UTF8.GetByteCount(SuccessStatusPrefix + text));
+        var completeTokens = minimumResponseTokens ?? McpResponseFormatter.CountTokens(SuccessStatusPrefix + text);
+        var retryWithBytes = completeBytes <= McpResponseBudgetLimits.MaximumBytes;
+        var recoveryHint = !retryWithBytes
+            ? $"recovery: narrow the required result to fit within {McpResponseBudgetLimits.MaximumBytes} bytes."
+            : completeBytes > maxResponseBytes
+                ? $"retry: repeat with maxResponseBytes={completeBytes} and maxResponseTokens at least {completeTokens}."
+                : $"retry: repeat with maxResponseTokens at least {completeTokens}.";
+        var failure = new McpResponseFormatResult(
+            string.Empty,
+            0,
+            0,
+            IsTruncated: false,
+            ErrorCode: "RESPONSE_BUDGET_TOO_SMALL",
+            MinimumResponseBytes: completeBytes,
+            MinimumResponseTokens: completeTokens,
+            NextOffset: null,
+            OmittedUtf8Bytes: 0,
+            ContinuationHint: null,
+            CanRetryWithLargerResponseBudget: retryWithBytes,
+            RecoveryHint: recoveryHint);
+        return BudgetTooSmall(failure, maxResponseBytes, maxResponseTokens);
+    }
+
     internal static CallToolResult Error(
         string code,
         string message,

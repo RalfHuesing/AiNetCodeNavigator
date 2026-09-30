@@ -9,9 +9,10 @@
   - [x] Health-Abfrage für globalen oder bereits residenten Zustand ohne Target-Load
   - [x] Prozessintegration: Initialize, Toolliste, Maintenance-Aufrufe, stderr/stdout und EOF
   - [ ] Review/Audit zu 9.1 durchführen; Findings ergänzen und umsetzen (audit 1/3: three P2 findings; two point audits remain).
-  - [ ] Audit 1 P2: Replace health's unsupported offset continuation with executable atomic budget recovery or a supported continuation contract.
-  - [ ] Audit 1 P2: Preserve settings/version when reload cannot represent its required acknowledgement within the requested response budget.
-  - [ ] Audit 1 P2: Align reload's public idempotent annotation with its observed settings-version behavior.
+  - [x] Audit 1 P2 remediation implemented: health returns a complete snapshot or a retryable minimum budget; a recovery envelope that cannot fit returns sanitized `InvalidParams`.
+  - [x] Audit 1 P2 remediation implemented: reload preflights the complete acknowledgement under its serialized reload gate before publishing any changed setting.
+  - [x] Audit 1 P2 remediation implemented: identical settings retain their version, matching the public idempotency hint.
+  - [ ] Independent audit 2/3 of the three P2 remediations; implementation is complete, but acceptance and point closure remain pending.
 - [ ] 9.2 Tool-Registrierungen:
   - [ ] Symbol-Tools: `find_symbol`, `get_symbol_body`
   - [ ] Struktur-Tools: `get_file_skeleton`, `get_class_structure`, `get_file_tree`, `get_namespace_tree`, `get_index_scope`

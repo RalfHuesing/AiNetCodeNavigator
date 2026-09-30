@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.ComponentModel.DataAnnotations;
+using AiNetCodeNavigator.Configuration;
 using AiNetCodeNavigator.Core.Workspace;
 using AiNetCodeNavigator.Mcp.Formatting;
 using ModelContextProtocol;
@@ -81,10 +82,21 @@ public sealed class MaintenanceTools(NavigatorHostRuntime runtime)
             }
         }
 
-        return BuildBudgetedResult(() => McpToolResults.Success(
-            string.Join('\n', lines),
-            maxResponseBytes: maxResponseBytes,
-            maxResponseTokens: maxResponseTokens), maxResponseTokens);
+        var fullText = string.Join('\n', lines);
+        var conservativeLines = lines.Select(line => IsHealthCounter(line)
+            ? line[..(line.IndexOf(": ", StringComparison.Ordinal) + 2)] + "9999999999999999999"
+            : line);
+        var conservativeText = string.Join('\n', conservativeLines);
+        var minimumBytes = Math.Max(
+            McpResponseBudgetLimits.MinimumBytes,
+            System.Text.Encoding.UTF8.GetByteCount(McpToolResults.SuccessStatusPrefix + conservativeText));
+        var minimumTokens = McpResponseFormatter.CountTokens(McpToolResults.SuccessStatusPrefix + conservativeText);
+        return BuildBudgetedResult(() => McpToolResults.CompleteOrBudgetTooSmall(
+            fullText,
+            maxResponseBytes,
+            maxResponseTokens,
+            minimumBytes,
+            minimumTokens), maxResponseTokens);
     }
 
     [McpServerTool(Name = "reload_config", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -93,9 +105,34 @@ public sealed class MaintenanceTools(NavigatorHostRuntime runtime)
         [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes)] int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
         [Range(1, int.MaxValue)] int? maxResponseTokens = null)
     {
-        var result = await runtime.Configuration.ReloadAsync(cancellationToken).ConfigureAwait(false);
+        CallToolResult? preparedConfirmation = null;
+        ConfigurationReloadResult result;
+        try
+        {
+            result = await runtime.Configuration.ReloadAsync(settings =>
+            {
+                preparedConfirmation = McpToolResults.CompleteOrBudgetTooSmall(
+                    $"Configuration reloaded.\nversion: {settings.Version}\nminimumLogLevel: {settings.MinimumLogLevel}",
+                    maxResponseBytes,
+                    maxResponseTokens);
+                return preparedConfirmation.IsError != true;
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ArgumentOutOfRangeException) when (maxResponseTokens is not null)
+        {
+            throw new McpProtocolException(
+                "The response token budget is too small to represent the required tool result.",
+                null,
+                McpErrorCode.InvalidParams);
+        }
+
         if (!result.Succeeded)
         {
+            if (result.ErrorCode == "RESPONSE_BUDGET_TOO_SMALL")
+            {
+                return preparedConfirmation!;
+            }
+
             return BuildBudgetedResult(() => McpToolResults.Recoverable(
                 result.ErrorCode!,
                 result.Message!,
@@ -104,10 +141,21 @@ public sealed class MaintenanceTools(NavigatorHostRuntime runtime)
                 maxResponseTokens: maxResponseTokens), maxResponseTokens);
         }
 
-        return BuildBudgetedResult(() => McpToolResults.Success(
-            $"Configuration reloaded.\nversion: {result.Settings.Version}\nminimumLogLevel: {result.Settings.MinimumLogLevel}",
-            maxResponseBytes: maxResponseBytes,
-            maxResponseTokens: maxResponseTokens), maxResponseTokens);
+        return preparedConfirmation!;
+    }
+
+    private static bool IsHealthCounter(string line)
+    {
+        var fieldEnd = line.IndexOf(": ", StringComparison.Ordinal);
+        if (fieldEnd < 0)
+        {
+            return false;
+        }
+
+        return line[..fieldEnd] is "uptimeSeconds" or "residentSolutions" or "loadingSolutions"
+            or "residentAssemblySessions" or "activeAssemblyAccesses" or "handoffHandles"
+            or "cacheHits" or "cacheMisses" or "cachedSyntaxTrees" or "cachedCompilations"
+            or "managedMemoryBytes" or "settingsVersion" or "targetActiveAccesses";
     }
 
     private static CallToolResult BuildBudgetedResult(Func<CallToolResult> build, int? maxResponseTokens)

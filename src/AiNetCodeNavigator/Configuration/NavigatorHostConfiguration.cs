@@ -56,7 +56,13 @@ internal sealed class NavigatorHostConfiguration : IDisposable
     }
 
     internal async Task<ConfigurationReloadResult> ReloadAsync(CancellationToken cancellationToken)
+        => await ReloadAsync(static _ => true, cancellationToken).ConfigureAwait(false);
+
+    internal async Task<ConfigurationReloadResult> ReloadAsync(
+        Func<NavigatorHostSettingsSnapshot, bool> canPublish,
+        CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(canPublish);
         await reloadGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -112,9 +118,23 @@ internal sealed class NavigatorHostConfiguration : IDisposable
             NavigatorHostSettingsSnapshot next;
             lock (stateGate)
             {
-                next = new NavigatorHostSettingsSnapshot(current.Version + 1, level);
-                LoggingSetup.SetMinimumLevel(minimumLevelSwitch, level);
-                Volatile.Write(ref current, next);
+                next = current.Version > 0 && current.MinimumLogLevel == level
+                    ? current
+                    : new NavigatorHostSettingsSnapshot(current.Version + 1, level);
+            }
+
+            if (!canPublish(next))
+            {
+                return Failure("RESPONSE_BUDGET_TOO_SMALL", "The response budget cannot represent the complete reload confirmation.");
+            }
+
+            lock (stateGate)
+            {
+                if (current != next)
+                {
+                    LoggingSetup.SetMinimumLevel(minimumLevelSwitch, next.MinimumLogLevel);
+                    Volatile.Write(ref current, next);
+                }
             }
             return new ConfigurationReloadResult(true, next);
         }

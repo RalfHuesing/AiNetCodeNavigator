@@ -31,6 +31,9 @@ public sealed class McpServerIntegrationTests
                 .Select(tool => tool.GetProperty("name").GetString())
                 .ToArray();
             Assert.Equal(new[] { "get_server_health", "reload_config" }, tools.Order(StringComparer.Ordinal).ToArray());
+            var reloadTool = toolsResponse.GetProperty("result").GetProperty("tools").EnumerateArray()
+                .Single(tool => tool.GetProperty("name").GetString() == "reload_config");
+            Assert.True(reloadTool.GetProperty("annotations").GetProperty("idempotentHint").GetBoolean());
             var healthSchema = toolsResponse.GetProperty("result").GetProperty("tools").EnumerateArray()
                 .Single(tool => tool.GetProperty("name").GetString() == "get_server_health")
                 .GetProperty("inputSchema").GetProperty("properties");
@@ -59,6 +62,35 @@ public sealed class McpServerIntegrationTests
             Assert.Contains("response token budget is too small", tinyTokenMessage, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("ArgumentOutOfRangeException", tinyTokenMessage, StringComparison.Ordinal);
 
+            await SendRequestAsync(process, 10, "tools/call", new { name = "get_server_health", arguments = new { maxResponseBytes = 512, maxResponseTokens = 40 } }, timeout.Token);
+            var healthBudgetError = await ReadResponseAsync(process, 10, timeout.Token);
+            Assert.Equal(-32602, healthBudgetError.GetProperty("error").GetProperty("code").GetInt32());
+
+            await SendRequestAsync(process, 20, "tools/call", new { name = "get_server_health", arguments = new { maxResponseBytes = 512, maxResponseTokens = 90 } }, timeout.Token);
+            healthBudgetError = await ReadResponseAsync(process, 20, timeout.Token);
+            Assert.True(healthBudgetError.GetProperty("result").GetProperty("isError").GetBoolean());
+            var healthBudgetText = GetFirstText(healthBudgetError);
+            Assert.Contains("RESPONSE_BUDGET_TOO_SMALL", healthBudgetText, StringComparison.Ordinal);
+            Assert.DoesNotContain("continue at UTF-16 offset", healthBudgetText, StringComparison.Ordinal);
+            var healthMinimumBytes = ReadIntegerLine(healthBudgetText, "minimumResponseBytes");
+            var healthMinimumTokens = ReadIntegerLine(healthBudgetText, "minimumResponseTokens");
+            Assert.True(healthMinimumBytes >= 512);
+            Assert.True(healthMinimumTokens > 90);
+            await SendRequestAsync(process, 11, "tools/call", new { name = "get_server_health", arguments = new { maxResponseBytes = healthMinimumBytes, maxResponseTokens = healthMinimumTokens } }, timeout.Token);
+            var recoveredHealth = await ReadResponseAsync(process, 11, timeout.Token);
+            Assert.False(recoveredHealth.GetProperty("result").GetProperty("isError").GetBoolean());
+            var recoveredHealthText = GetFirstText(recoveredHealth);
+            Assert.DoesNotContain("completeness=truncated", recoveredHealthText, StringComparison.Ordinal);
+            foreach (var requiredField in new[]
+            {
+                "uptimeSeconds:", "residentSolutions:", "loadingSolutions:", "residentAssemblySessions:",
+                "activeAssemblyAccesses:", "handoffHandles:", "cacheHits:", "cacheMisses:", "cachedSyntaxTrees:",
+                "cachedCompilations:", "managedMemoryBytes:", "settingsVersion:", "minimumLogLevel:",
+            })
+            {
+                Assert.Contains(requiredField, recoveredHealthText, StringComparison.Ordinal);
+            }
+
             var sourceTarget = Path.Combine(repositoryRoot, "AiNetCodeNavigator.slnx");
             await SendRequestAsync(process, 6, "tools/call", new { name = "get_server_health", arguments = new { targetPath = sourceTarget } }, timeout.Token);
             var targetedHealth = await ReadResponseAsync(process, 6, timeout.Token);
@@ -67,19 +99,46 @@ public sealed class McpServerIntegrationTests
             Assert.Contains("targetState: not_resident", targetedHealthText, StringComparison.Ordinal);
 
             await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Debug\"}", timeout.Token);
-            await SendRequestAsync(process, 7, "tools/call", new { name = "reload_config", arguments = new { } }, timeout.Token);
-            var reload = await ReadResponseAsync(process, 7, timeout.Token);
+            await SendRequestAsync(process, 12, "tools/call", new { name = "reload_config", arguments = new { maxResponseTokens = 1 } }, timeout.Token);
+            var oneTokenReload = await ReadResponseAsync(process, 12, timeout.Token);
+            Assert.Equal(-32602, oneTokenReload.GetProperty("error").GetProperty("code").GetInt32());
+            Assert.DoesNotContain("ArgumentOutOfRangeException", oneTokenReload.GetProperty("error").GetProperty("message").GetString(), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 13, "tools/call", new { name = "get_server_health", arguments = new { } }, timeout.Token);
+            var afterOneTokenReload = await ReadResponseAsync(process, 13, timeout.Token);
+            var afterOneTokenReloadText = GetFirstText(afterOneTokenReload);
+            Assert.Contains("settingsVersion: 1", afterOneTokenReloadText, StringComparison.Ordinal);
+            Assert.Contains("minimumLogLevel: Information", afterOneTokenReloadText, StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 14, "tools/call", new { name = "reload_config", arguments = new { maxResponseTokens = 22 } }, timeout.Token);
+            var narrowReload = await ReadResponseAsync(process, 14, timeout.Token);
+            Assert.Equal(-32602, narrowReload.GetProperty("error").GetProperty("code").GetInt32());
+
+            await SendRequestAsync(process, 15, "tools/call", new { name = "get_server_health", arguments = new { } }, timeout.Token);
+            var afterNarrowReload = await ReadResponseAsync(process, 15, timeout.Token);
+            var afterNarrowReloadText = GetFirstText(afterNarrowReload);
+            Assert.Contains("settingsVersion: 1", afterNarrowReloadText, StringComparison.Ordinal);
+            Assert.Contains("minimumLogLevel: Information", afterNarrowReloadText, StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 16, "tools/call", new { name = "reload_config", arguments = new { } }, timeout.Token);
+            var reload = await ReadResponseAsync(process, 16, timeout.Token);
             Assert.False(reload.GetProperty("result").GetProperty("isError").GetBoolean());
+            Assert.Contains("version: 2", GetFirstText(reload), StringComparison.Ordinal);
             Assert.Contains("minimumLogLevel: Debug", GetFirstText(reload), StringComparison.Ordinal);
 
+            await SendRequestAsync(process, 17, "tools/call", new { name = "reload_config", arguments = new { } }, timeout.Token);
+            var repeatedReload = await ReadResponseAsync(process, 17, timeout.Token);
+            Assert.False(repeatedReload.GetProperty("result").GetProperty("isError").GetBoolean());
+            Assert.Contains("version: 2", GetFirstText(repeatedReload), StringComparison.Ordinal);
+
             await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information,Warning\"}", timeout.Token);
-            await SendRequestAsync(process, 8, "tools/call", new { name = "reload_config", arguments = new { } }, timeout.Token);
-            var rejectedReload = await ReadResponseAsync(process, 8, timeout.Token);
+            await SendRequestAsync(process, 18, "tools/call", new { name = "reload_config", arguments = new { } }, timeout.Token);
+            var rejectedReload = await ReadResponseAsync(process, 18, timeout.Token);
             Assert.True(rejectedReload.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("CONFIG_INVALID", GetFirstText(rejectedReload), StringComparison.Ordinal);
 
-            await SendRequestAsync(process, 9, "tools/call", new { name = "get_server_health", arguments = new { } }, timeout.Token);
-            var afterRejectedReload = await ReadResponseAsync(process, 9, timeout.Token);
+            await SendRequestAsync(process, 19, "tools/call", new { name = "get_server_health", arguments = new { } }, timeout.Token);
+            var afterRejectedReload = await ReadResponseAsync(process, 19, timeout.Token);
             var afterRejectedReloadText = GetFirstText(afterRejectedReload);
             Assert.Contains("settingsVersion: 2", afterRejectedReloadText, StringComparison.Ordinal);
             Assert.Contains("minimumLogLevel: Debug", afterRejectedReloadText, StringComparison.Ordinal);
@@ -124,6 +183,91 @@ public sealed class McpServerIntegrationTests
         Assert.Contains("--unknown-option", await stderrTask, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ReloadBudgetRejectionsPreserveConfigurationBeforeRetry()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        var configPath = Path.Combine(Path.GetTempPath(), "ainet-host-" + Guid.NewGuid().ToString("N") + ".json");
+        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var process = await StartInitializedHostAsync(repositoryRoot, GetHostAssemblyPath(repositoryRoot), configPath, timeout.Token);
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+
+        try
+        {
+            await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Debug\"}", timeout.Token);
+            await SendRequestAsync(process, 2, "tools/call", new { name = "reload_config", arguments = new { maxResponseTokens = 1 } }, timeout.Token);
+            var tinyBudgetReload = await ReadResponseAsync(process, 2, timeout.Token);
+            Assert.Equal(-32602, tinyBudgetReload.GetProperty("error").GetProperty("code").GetInt32());
+            await AssertSettingsAsync(process, 3, timeout.Token, 1, "Information");
+
+            await SendRequestAsync(process, 4, "tools/call", new { name = "reload_config", arguments = new { maxResponseTokens = 22 } }, timeout.Token);
+            var narrowBudgetReload = await ReadResponseAsync(process, 4, timeout.Token);
+            Assert.Equal(-32602, narrowBudgetReload.GetProperty("error").GetProperty("code").GetInt32());
+            await AssertSettingsAsync(process, 5, timeout.Token, 1, "Information");
+
+            await SendRequestAsync(process, 6, "tools/call", new { name = "reload_config", arguments = new { } }, timeout.Token);
+            var recoveredReload = await ReadResponseAsync(process, 6, timeout.Token);
+            Assert.False(recoveredReload.GetProperty("result").GetProperty("isError").GetBoolean());
+            var recoveredText = GetFirstText(recoveredReload);
+            Assert.Contains("version: 2", recoveredText, StringComparison.Ordinal);
+            Assert.Contains("minimumLogLevel: Debug", recoveredText, StringComparison.Ordinal);
+            Assert.DoesNotContain("completeness=truncated", recoveredText, StringComparison.Ordinal);
+            await AssertSettingsAsync(process, 7, timeout.Token, 2, "Debug");
+
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
+            _ = await stderrTask;
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            File.Delete(configPath);
+        }
+    }
+
+    [Fact]
+    public async Task IdenticalReloadsRetainVersionAndAdvertisedIdempotency()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        var configPath = Path.Combine(Path.GetTempPath(), "ainet-host-" + Guid.NewGuid().ToString("N") + ".json");
+        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var process = await StartInitializedHostAsync(repositoryRoot, GetHostAssemblyPath(repositoryRoot), configPath, timeout.Token);
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+
+        try
+        {
+            await SendRequestAsync(process, 2, "tools/list", new { }, timeout.Token);
+            var toolList = await ReadResponseAsync(process, 2, timeout.Token);
+            var reloadTool = toolList.GetProperty("result").GetProperty("tools").EnumerateArray()
+                .Single(tool => tool.GetProperty("name").GetString() == "reload_config");
+            Assert.True(reloadTool.GetProperty("annotations").GetProperty("idempotentHint").GetBoolean());
+
+            for (var id = 3; id <= 4; id++)
+            {
+                await SendRequestAsync(process, id, "tools/call", new { name = "reload_config", arguments = new { } }, timeout.Token);
+                var reload = await ReadResponseAsync(process, id, timeout.Token);
+                Assert.False(reload.GetProperty("result").GetProperty("isError").GetBoolean());
+                Assert.Contains("version: 1", GetFirstText(reload), StringComparison.Ordinal);
+            }
+
+            await AssertSettingsAsync(process, 5, timeout.Token, 1, "Information");
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
+            _ = await stderrTask;
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            File.Delete(configPath);
+        }
+    }
+
     private static Process StartHost(string repositoryRoot, string hostAssemblyPath, params string[] arguments)
     {
         var startInfo = new ProcessStartInfo("dotnet")
@@ -142,6 +286,30 @@ public sealed class McpServerIntegrationTests
         }
 
         return Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start MCP host process.");
+    }
+
+    private static async Task<Process> StartInitializedHostAsync(string repositoryRoot, string hostAssemblyPath, string configPath, CancellationToken cancellationToken)
+    {
+        var process = StartHost(repositoryRoot, hostAssemblyPath, "--config", configPath);
+        await SendRequestAsync(process, 1, "initialize", new
+        {
+            protocolVersion = "2025-03-26",
+            capabilities = new { },
+            clientInfo = new { name = "integration-test", version = "1.0" },
+        }, cancellationToken);
+        var initialize = await ReadResponseAsync(process, 1, cancellationToken);
+        Assert.Equal("2025-03-26", initialize.GetProperty("result").GetProperty("protocolVersion").GetString());
+        await SendNotificationAsync(process, "notifications/initialized", cancellationToken);
+        return process;
+    }
+
+    private static async Task AssertSettingsAsync(Process process, int requestId, CancellationToken cancellationToken, int version, string logLevel)
+    {
+        await SendRequestAsync(process, requestId, "tools/call", new { name = "get_server_health", arguments = new { } }, cancellationToken);
+        var response = await ReadResponseAsync(process, requestId, cancellationToken);
+        var text = GetFirstText(response);
+        Assert.Contains($"settingsVersion: {version}", text, StringComparison.Ordinal);
+        Assert.Contains($"minimumLogLevel: {logLevel}", text, StringComparison.Ordinal);
     }
 
     private static string GetHostAssemblyPath(string repositoryRoot)
@@ -180,4 +348,10 @@ public sealed class McpServerIntegrationTests
     private static string GetFirstText(JsonElement response) => response.GetProperty("result").GetProperty("content").EnumerateArray()
         .First(block => block.GetProperty("type").GetString() == "text")
         .GetProperty("text").GetString()!;
+
+    private static int ReadIntegerLine(string text, string name)
+    {
+        var line = text.Split('\n').Single(value => value.StartsWith(name + ": ", StringComparison.Ordinal));
+        return int.Parse(line[(name.Length + 2)..], System.Globalization.CultureInfo.InvariantCulture);
+    }
 }
