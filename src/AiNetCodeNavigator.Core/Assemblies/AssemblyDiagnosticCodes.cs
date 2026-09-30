@@ -18,6 +18,7 @@ internal static class AssemblyDiagnosticCodes
         [Key(nameof(AssemblyDecompilationAdapter), nameof(AssemblyDecompilationOptions))] = "assembly-decompilation-failed",
         [Key(nameof(AssemblyDecompilationAdapter), nameof(DecompiledDocument.CSharpSource))] = "assembly-type-decompilation-empty",
         [Key(nameof(AssemblyDecompilationAdapter), nameof(DecompiledDocument.GeneratedPath))] = "assembly-type-decompilation-failed",
+        [Key(nameof(AssemblyDecompilationAdapter), nameof(DecompilationResult.ProjectFilePath))] = "assembly-decompilation-project-missing",
         [Key(nameof(AssemblyDecompilationCache), nameof(AssemblyCacheReadRequest))] = "assembly-cache-invalid",
         [Key(nameof(AssemblyDecompilationCache), nameof(AssemblyCachePublishRequest))] = "assembly-cache-publish-failed",
         [Key(nameof(AssemblyDecompilationCache), nameof(AssemblyCacheContract.CurrentPointerFileName))] = "assembly-cache-pointer-race",

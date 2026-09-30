@@ -68,11 +68,13 @@ internal sealed class AssemblyDecompilationAdapter
                 AssemblyDiagnosticSeverity.Error));
             return Task.FromResult(ReadProjectOutput(stagingDirectory, diagnostics, CancellationToken.None, false));
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException or ArgumentException or InvalidDataException or DecompilerException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException or MetadataFileNotSupportedException or InvalidOperationException or ArgumentException or InvalidDataException or DecompilerException)
         {
             diagnostics.Add(new AssemblySessionDiagnostic(
                 AssemblyDiagnosticCodes.For(nameof(AssemblyDecompilationAdapter), nameof(AssemblyDecompilationOptions)),
-                $"Full decompilation failed: {ex.Message}",
+                ex is BadImageFormatException or MetadataFileNotSupportedException
+                    ? $"{AssemblyReferenceResolver.NativeMetadataFailureMessage} Note: a managed .NET .dll or .exe with IL is required."
+                    : $"Full decompilation failed: {ex.Message}",
                 AssemblyDiagnosticSeverity.Error));
             return Task.FromResult(ReadProjectOutput(stagingDirectory, diagnostics, CancellationToken.None, false));
         }
