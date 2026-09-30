@@ -81,6 +81,7 @@ No public MCP stdio acceptance is claimed. The three findings are resolved by th
 
 ### Point 8.2 audit 2 remediation — audit 3/3 pending
 
+- Remediation commit: `b7895eef60e834443f0e094989a8f7c7924e09a9` (`fix(mcp): keep result retries and error fields atomic`).
 - Regression tests were added before the fix. The focused run was red on exactly the two findings: the multiline success retry did not advertise the 616-byte/97-token truncated projection, and adding context removed part of a trailing-newline multiline `nextAction` even though the required body fit on its own.
 - `Success` now evaluates an executable truncated projection with `TruncatedSuccessStatusPrefix` and its continuation marker, plus the complete projection when its full response fits the public byte maximum. It recommends the complete result when that is the smaller valid byte retry; otherwise it retains the truncated projection's exact byte and token minima. Regression coverage retries the advertised 616/97 pair and verifies the short-rest case retries to a complete result. Existing single-unit 65,536-byte coverage remains in place.
 - Optional context is retained only when the resulting text starts with the exact previously formatted required response, including every character and newline in the required body. If that exact prefix would be truncated, context is omitted. The trailing-newline multiline correction regression verifies the complete field survives and the result stays within 512 bytes.
