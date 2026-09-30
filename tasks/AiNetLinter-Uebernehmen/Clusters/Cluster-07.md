@@ -24,4 +24,5 @@
   - [x] Reject a failed refresh of an already resident target instead of exposing the previous generation through a new inspect call.
   - [x] Refresh the reference set when dependencies change without changing the target DLL, and cover the resulting handoff/body behavior.
   - [x] Enforce the 32-target resident limit when all existing sessions have active accesses.
+  - [ ] Recover a resident session after a failed refresh when the original valid target and reference snapshot return.
   - [ ] Review/Audit zu 7.3 durchführen; Findings ergänzen und umsetzen.
