@@ -25,3 +25,4 @@
   - [ ] Assembly-Folge-Tools und Roundtrips für `inspect_assembly` abschließen (Auflösung und Sitzungslebenszyklus siehe Cluster 7).
   - [x] Assembly-DTOs nur bei kanonischer Identität als Handoff mit Folge-Tools kennzeichnen.
   - [x] Review/Audit zu 3.3 durchführen; Findings ergänzen und umsetzen.
+- [ ] Cluster-Integration: Handoff-artige Eingaben in Feature Context und Class Structure konsistent als typisierte Fehler behandeln.
