@@ -440,3 +440,15 @@ The point 5.5 audit checkbox remains unchecked for the final allowed point audit
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 395/395 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Independent audit 1/3 of point 5.6
+
+- Audited commit: `85a836f736fe202cb1d4b60665c736b38b19cbb4` (clean working tree before review edits). Reviewer: `gpt-6-sol`, medium reasoning effort. This was a read-only code and test audit; no independent build or test gate was run.
+- **Accepted in the covered three-project scenario:** `CrossFeatureRelationshipContractTests.cs:19-124` compares all five ordered reference and impact sites, checks the two same-line converging origins and their project-bound handoffs, and follows outgoing/incoming call trees through the expression-bodied Middle methods. It also covers interface implementations, abstract overrides, base/interface/subtype handoffs, and result truncation in the shared fixture (`:126-165`). `CallTreeBuilder.GetBodyNode` includes arrow-expression nodes, so root invocations are visible to descendant traversal. The AiNetLinter reference uses one `CallGraphTraversal` for references and symbol impact; this shared scenario is aligned with that contract for its tested sites.
+- **P2 open — repeated calls on one line diverge between references and impact.** `FindReferencesResolver.cs:84-87,115-126,143-156` records the source column and retains two locations that differ only by column. `ImpactModels.cs:7-15` has no column, and `ImpactAnalyzer.cs:86-107,117-137` groups by project/path/line/caller/depth/origin, collapsing those same two calls into one entry. For example, in one caller line, `Contracts.Api.Record(); Contracts.Api.Record();` yields two reference sites but one impact site and a smaller direct/transitive impact count. The new cross-feature equality test (`CrossFeatureRelationshipContractTests.cs:52-58,167-176`) has same-line *different* reached-from symbols, but never repeats one target on a line. Acceptance: choose and document a consistent call-site identity for both APIs, preferably retaining each source span/column in impact; add a shared cross-project regression with two calls to the same target on one line that compares ordered sites, totals, and display truncation. Keep distinct reached-from branches intact.
+- Point 5.6 audit checkbox remains open while this contract mismatch is unresolved. The separate 5.5 multi-page completeness technical debt is unchanged.
+
+### Review verification
+
+- Inspected committed Core code, the shared test, and the AiNetLinter `CallGraphTraversal` through read-only MCP navigation. No production files were changed.
+- The documentation diff was inspected and `git diff --check` passed before commit.
