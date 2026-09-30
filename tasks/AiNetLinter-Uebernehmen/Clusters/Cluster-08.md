@@ -12,13 +12,14 @@
 - [x] 8.2 Standardisiertes Result-Building:
   - [x] `McpToolResults`: Einheitliche Erzeugung von `CallToolResult`, `IsError`-Policy und Statusblöcken
 - [x] Review/Audit zu 8.2 durchführen; Findings ergänzen und umsetzen (accepted in final independent audit 3/3).
-- [x] Audit 1 P2: Calculate success budget retries from the intended success projection rather than the error status prefix.
-- [x] Audit 1 P2: Preserve required recovery and argument-correction fields when error context is shortened.
-- [x] Audit 1 P2: Apply response budgets to loading/retry results, including their status and next action.
-- [x] Audit 2 P2: Make the advertised truncated-success byte/token retry executable with the final status projection.
-- [x] Audit 2 P2: Preserve the exact required error envelope when optional context follows multiline correction fields.
+  - [x] Audit 1 P2: Calculate success budget retries from the intended success projection rather than the error status prefix.
+  - [x] Audit 1 P2: Preserve required recovery and argument-correction fields when error context is shortened.
+  - [x] Audit 1 P2: Apply response budgets to loading/retry results, including their status and next action.
+  - [x] Audit 2 P2: Make the advertised truncated-success byte/token retry executable with the final status projection.
+  - [x] Audit 2 P2: Preserve the exact required error envelope when optional context follows multiline correction fields.
 - [ ] 8.3 Langläufer & Paginierung:
-  - [ ] `LongRunningToolCallStore`: Polling- und Fortsetzungs-Tokens (`operationToken`, `continuationToken`)
+  - [x] `LongRunningToolCallStore`: Polling- und Fortsetzungs-Tokens (`operationToken`, `continuationToken`)
+  - [x] Lifecycle-, Cancellation-, Tokenbindungs-, Capacity- und Pagination-Vertrag dokumentieren und testen.
   - [ ] Review/Audit zu 8.3 durchführen; Findings ergänzen und umsetzen.
 - [ ] 8.4 Argument-Validierung:
   - [ ] `McpArgumentValidationFilter`: Schema- und Eingabevalidierung für alle Tools

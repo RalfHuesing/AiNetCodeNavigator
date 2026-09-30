@@ -168,6 +168,33 @@ internal static class McpToolResults
         return Create(formatted.Text, isError: false);
     }
 
+    internal static CallToolResult Running(string operationToken, int maxResponseBytes, int? maxResponseTokens)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(operationToken);
+        var formatted = McpResponseFormatter.Format(
+            $"operationToken={operationToken}\nretry: repeat the same tool call with this operationToken.",
+            maxResponseBytes,
+            maxResponseTokens,
+            responsePrefix: "Status: operation=running, completeness=not_applicable\n");
+        return formatted.ErrorCode is null
+            ? Create(formatted.Text, isError: false)
+            : BudgetTooSmall(formatted, maxResponseBytes, maxResponseTokens);
+    }
+
+    internal static CallToolResult TextResult(string text, bool isError, JsonElement? structuredContent = null) =>
+        Create(text, isError, structuredContent);
+
+    internal static string NormalizeExistingResult(CallToolResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        if (result.Content.Count != 1 || result.Content[0] is not TextContentBlock text)
+        {
+            throw new InvalidOperationException("Long-running and continuation results must contain exactly one text content block.");
+        }
+
+        return text.Text;
+    }
+
     internal static CallToolResult BudgetTooSmall(
         McpResponseFormatResult result,
         int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
