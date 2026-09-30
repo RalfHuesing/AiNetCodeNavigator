@@ -29,3 +29,10 @@
   - [x] Report generated-document and test-document totals over the selected Roslyn scope, independent of presentation limits; cover them in FastTests and documentation.
   - [x] Share generated-document classification with symbol navigation and align test-document classification with navigation scope rules.
   - [x] Review/Audit zu 6.3 durchführen; Findings ergänzen und umsetzen.
+
+## Cluster 6 integration
+
+- [ ] Keep namespace results within the C# coverage declared by index scope when a solution contains another Roslyn project language.
+- [ ] Align or explicitly explain generated-source visibility across namespace discovery, index scope, and default symbol navigation.
+- [ ] Normalize project-name filters consistently between namespace tree and index scope.
+- [ ] Complete the independent Cluster 6 integration review after these findings are addressed.
