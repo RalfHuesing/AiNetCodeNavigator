@@ -471,3 +471,15 @@ The point 5.5 audit checkbox remains unchecked for the final allowed point audit
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 395/395 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Independent audit 2/3 of point 5.6
+
+- Audited commit: `dbd43f24fbc4a3a7a8dc83ab4ba5aa791b9b9bb3` (clean working tree before review edits). Reviewer: `gpt-6-sol`, medium reasoning effort. Scope was the audit-1 same-line call-site finding; no independent build or test gate was run.
+- **Accepted — call-site identity and ordering:** `ImpactAnalyzer.cs:86-89,99-108,117-140` now captures the one-based source column, includes it in the de-duplication key, and sorts by the same project/path/line/caller/origin/column sequence as `FindReferencesResolver.cs:143-156`. `ImpactCallSiteEntry` exposes the column. Two calls to the same target from one caller on one line therefore remain separate, while distinct reached-from branches also remain separate.
+- **Accepted — cross-project regression and limits:** `CrossFeatureRelationshipContractTests.cs:38-66,146-173,175-183` uses Contracts → Middle → App, adds two `Api.Record()` calls on one `Handler.Handle` line, and compares all six ordered reference/impact sites including column, caller and origin handoffs. It asserts two distinct columns, three direct and three transitive impact sites, matching total counts, and equal displayed entries with `maxResults: 1` plus truncation/incompleteness. The implementation's `Take(effectiveResultLimit)` applies to the already matched full ordering. The before-fix failure and the passing focused, build, fast, integration, and full gates are recorded above in the implementation remediation; this audit did not rerun them.
+- The audit-1 P2 finding is closed. Point 5.6 meets its audited Core contract and its checklist checkbox is complete at audit 2/3. The unrelated point 5.5 multi-page completeness technical debt remains open.
+
+### Review verification
+
+- Inspected the committed source, tests, and current-state contract documentation; no production files were changed.
+- The documentation diff was inspected and `git diff --check` passed before commit.
