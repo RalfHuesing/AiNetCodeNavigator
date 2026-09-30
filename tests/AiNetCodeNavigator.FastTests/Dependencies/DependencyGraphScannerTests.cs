@@ -116,4 +116,104 @@ public sealed class DependencyGraphScannerTests
         await Assert.ThrowsAsync<System.ArgumentOutOfRangeException>(() =>
             DependencyGraphScanner.ScanSolutionAsync(fixture.Solution, options: new DependencyGraphScanOptions(Offset: -1)));
     }
+
+    [Fact]
+    public async Task ScanSolutionAsync_FindsGenericAndQualifiedTypeDependencies()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\DependencyGeneric.slnx",
+            new ProjectSpec("Contracts", [("Types.cs", "namespace Contracts; public class Box<T> { } public class Item { }")], VirtualProjectDirectory: "src/Contracts"),
+            new ProjectSpec("App", [("Use.cs", "namespace App; public class Use { public Contracts.Box<Contracts.Item> Value { get; set; } = new(); }")], ProjectReferences: ["Contracts"], VirtualProjectDirectory: "src/App"));
+
+        var graph = await DependencyGraphScanner.ScanSolutionAsync(fixture.Solution);
+
+        Assert.Contains(graph.FileDependencies, edge => edge.CrossingTypes.Contains("Box"));
+        Assert.Contains(graph.FileDependencies, edge => edge.CrossingTypes.Contains("Item"));
+
+        var targetGraph = await DependencyGraphScanner.ScanSolutionAsync(
+            fixture.Solution,
+            options: new DependencyGraphScanOptions(TargetTypeName: "Contracts.Box", Direction: DependencyGraphDirection.Incoming));
+        Assert.Single(targetGraph.TypeDependencies!);
+        Assert.Equal("global::Contracts.Box<T>", targetGraph.TypeDependencies![0].ToType);
+    }
+
+    [Fact]
+    public async Task ScanSolutionAsync_FollowsTargetTypeDirectionAndDepthWithPerTypeProvenance()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\DependencyTarget.slnx",
+            new ProjectSpec("Further", [("Dependency.cs", "namespace Further; public class Dependency { }")], VirtualProjectDirectory: "src/Further"),
+            new ProjectSpec("Contracts", [("Types.cs", "namespace Contracts; public class Target { public Further.Dependency Link { get; set; } = new(); } public class Other { }")], ProjectReferences: ["Further"], VirtualProjectDirectory: "src/Contracts"),
+            new ProjectSpec("App", [("Callers.cs", "namespace App; public class CallerA { public Contracts.Target Value { get; set; } = new(); } public class CallerB { public Contracts.Other Value { get; set; } = new(); }")], ProjectReferences: ["Contracts"], VirtualProjectDirectory: "src/App"));
+
+        var graph = await DependencyGraphScanner.ScanSolutionAsync(
+            fixture.Solution,
+            options: new DependencyGraphScanOptions(
+                TargetTypeName: "App.CallerA",
+                Direction: DependencyGraphDirection.Outgoing,
+                Depth: 2));
+
+        Assert.Equal(2, graph.TypeDependencies?.Count);
+        Assert.Contains(graph.TypeDependencies!, edge => edge.FromType == "global::App.CallerA" && edge.ToType == "global::Contracts.Target" && edge.Depth == 1);
+        Assert.Contains(graph.TypeDependencies!, edge => edge.FromType == "global::Contracts.Target" && edge.ToType == "global::Further.Dependency" && edge.Depth == 2);
+        Assert.DoesNotContain(graph.TypeDependencies!, edge => edge.FromType == "global::App.CallerB");
+
+        var incoming = await DependencyGraphScanner.ScanSolutionAsync(
+            fixture.Solution,
+            options: new DependencyGraphScanOptions(
+                TargetTypeName: "Contracts.Target",
+                Direction: DependencyGraphDirection.Incoming,
+                Depth: 1));
+        Assert.Single(incoming.TypeDependencies!);
+        Assert.Equal("global::App.CallerA", incoming.TypeDependencies![0].FromType);
+    }
+
+    [Fact]
+    public async Task ScanSolutionAsync_ContinuesDocumentScanWithoutRepeatingPriorPage()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\DependencyContinuation.slnx",
+            new ProjectSpec("App", [
+                ("A.cs", "namespace App; public class A { }"),
+                ("B.cs", "namespace App; public class B { }")], VirtualProjectDirectory: "src/App"));
+
+        var first = await DependencyGraphScanner.ScanSolutionAsync(
+            fixture.Solution,
+            options: new DependencyGraphScanOptions(MaxDocuments: 1));
+        var nextOffset = Assert.IsType<int>(first.NextDocumentOffset);
+        var second = await DependencyGraphScanner.ScanSolutionAsync(
+            fixture.Solution,
+            options: new DependencyGraphScanOptions(MaxDocuments: 1, DocumentOffset: nextOffset));
+
+        Assert.Equal(1, first.ScannedDocumentCount);
+        Assert.Equal(1, second.ScannedDocumentCount);
+        Assert.Equal(0, first.DocumentOffset);
+        Assert.Equal(1, second.DocumentOffset);
+        Assert.Equal(1, first.NextDocumentOffset);
+        Assert.Null(second.NextDocumentOffset);
+        Assert.False(second.DocumentLimitReached);
+        Assert.True(second.IsTruncated);
+        Assert.False(second.IsComplete);
+    }
+
+    [Fact]
+    public async Task ScanSolutionAsync_FiltersByTargetFileAndClampsDepth()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\DependencyTargetFile.slnx",
+            new ProjectSpec("Contracts", [("Types.cs", "namespace Contracts; public class Target { } public class Other { }")], VirtualProjectDirectory: "src/Contracts"),
+            new ProjectSpec("App", [("Callers.cs", "namespace App; public class CallerA { public Contracts.Target Value { get; set; } = new(); } public class CallerB { public Contracts.Other Value { get; set; } = new(); }")], ProjectReferences: ["Contracts"], VirtualProjectDirectory: "src/App"));
+
+        var graph = await DependencyGraphScanner.ScanSolutionAsync(
+            fixture.Solution,
+            options: new DependencyGraphScanOptions(
+                TargetFilePath: "src/App/Callers.cs",
+                Direction: DependencyGraphDirection.Outgoing,
+                Depth: 9));
+
+        Assert.Equal(2, graph.TypeDependencies?.Count);
+        Assert.True(graph.IsDepthClamped);
+        Assert.Equal(DependencyGraphScanner.MaximumDepth, graph.EffectiveDepth);
+        Assert.All(graph.TypeDependencies!, edge => Assert.Equal("src/App/Callers.cs", edge.FromFile));
+    }
 }

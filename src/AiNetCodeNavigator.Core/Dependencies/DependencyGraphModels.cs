@@ -25,7 +25,35 @@ public sealed record FileDependency(
 public sealed record DependencyGraphScanOptions(
     int Offset = 0,
     int PageSize = 100,
-    int MaxDocuments = DependencyGraphScanner.MaximumDocuments);
+    int MaxDocuments = DependencyGraphScanner.MaximumDocuments,
+    int DocumentOffset = 0,
+    string? TargetFilePath = null,
+    string? TargetTypeName = null,
+    string? TargetProject = null,
+    DependencyGraphDirection Direction = DependencyGraphDirection.Both,
+    int Depth = 1);
+
+public enum DependencyGraphDirection
+{
+    Outgoing,
+    Incoming,
+    Both
+}
+
+public sealed record DependencyTypeReference(
+    string FromTypeId,
+    string ToTypeId,
+    string FromType,
+    string ToType,
+    string FromTypeName,
+    string ToTypeName,
+    string FromNamespace,
+    string ToNamespace,
+    string FromProject,
+    string ToProject,
+    string FromFile,
+    string ToFile,
+    int Depth = 1);
 
 public sealed record DependencyGraphScanError(
     string Project,
@@ -46,11 +74,20 @@ public sealed record DependencyGraphPayload(
     bool DocumentLimitReached = false,
     bool PageSizeWasClamped = false,
     bool DocumentLimitWasClamped = false,
-    IReadOnlyList<DependencyGraphScanError>? Errors = null)
+    IReadOnlyList<DependencyGraphScanError>? Errors = null,
+    IReadOnlyList<DependencyTypeReference>? TypeDependencies = null,
+    int TotalTypeDependencyCount = 0,
+    int DocumentOffset = 0,
+    int? NextDocumentOffset = null,
+    DependencyGraphDirection Direction = DependencyGraphDirection.Both,
+    int RequestedDepth = 1,
+    int EffectiveDepth = 1,
+    bool IsDepthClamped = false)
 {
     public bool HasMoreProjectDependencies => (long)Offset + ProjectDependencies.Count < TotalProjectDependencyCount;
     public bool HasMoreNamespaceDependencies => (long)Offset + NamespaceDependencies.Count < TotalNamespaceDependencyCount;
     public bool HasMoreFileDependencies => (long)Offset + FileDependencies.Count < TotalFileDependencyCount;
-    public bool IsTruncated => DocumentLimitReached || (Errors?.Count ?? 0) > 0 || HasMoreProjectDependencies || HasMoreNamespaceDependencies || HasMoreFileDependencies;
-    public bool IsComplete => !DocumentLimitReached && (Errors?.Count ?? 0) == 0;
+    public bool HasMoreTypeDependencies => (long)Offset + (TypeDependencies?.Count ?? 0) < TotalTypeDependencyCount;
+    public bool IsTruncated => DocumentOffset > 0 || NextDocumentOffset is not null || IsDepthClamped || (Errors?.Count ?? 0) > 0 || HasMoreProjectDependencies || HasMoreNamespaceDependencies || HasMoreFileDependencies || HasMoreTypeDependencies;
+    public bool IsComplete => DocumentOffset == 0 && NextDocumentOffset is null && !IsDepthClamped && (Errors?.Count ?? 0) == 0;
 }

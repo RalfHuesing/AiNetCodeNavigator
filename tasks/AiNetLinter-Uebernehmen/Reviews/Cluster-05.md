@@ -164,6 +164,27 @@
 - Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
 - The documentation diff was inspected and `git diff --check` passed before commit.
 
+### Audit 1 remediation
+
+- At the audited baseline `a83f28f`, the Core API exposed no target, direction, depth, or document continuation fields. The before-fix executable generic repro also failed: the dependency edge for `Contracts.Box<Contracts.Item>` contained Item but omitted Box.
+- Added symbol-backed `DependencyTypeReference` edges with assembly-qualified IDs, fully qualified names, source/target type provenance, project, file, namespace, and depth. Type syntax collection includes identifier, generic, and qualified forms, while source-location checks continue to exclude BCL/package metadata.
+- Added `TargetFilePath`/`TargetTypeName`, optional project restriction, `Outgoing`/`Incoming`/`Both`, depth clamped to 1–3, and deterministic type-edge paging. Tests cover a two-type file with distinct outgoing edges, incoming traversal, a two-hop caller-to-target-to-dependency chain, file targets, and generic target matching.
+- Added `DocumentOffset` and `NextDocumentOffset`; continuation starts at the next stable-sorted document rather than repeating earlier documents. Results expose their starting offset and remain explicitly incomplete when a response covers only a later batch. The continuation regression checks offsets 0 then 1 and a null final cursor.
+- Continuation is stateless: target traversals operate on the current document batch. For a complete target traversal over more than one batch, callers must first gather unfiltered `TypeDependencies` from every document page and then traverse the combined edges. This limitation is documented; `IsComplete` does not claim the later page alone is a complete solution graph.
+- Updated [Dependency Graph Core Scanner](../../../docs/navigation/dependency-graph.md) and the 5.5 acceptance rows. The 5.5 audit checkbox remains open for the final independent review.
+
+### Audit 1 remediation verification
+
+| Gate | Result |
+|---|---|
+| Before-fix generic/qualified type regression | Failed as expected: generic Box edge missing |
+| Focused DependencyGraphScanner FastTests after remediation | Passed, 10/10 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 380/380 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 392/392 across both test projects |
+| `git diff --check` | Passed before commit |
+
 ## Independent audit 2/3 of point 5.2
 
 - Audited commit: `61195aa02695bc40df3592263d84680bad4391a6` (clean working tree before review edits).
