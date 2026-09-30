@@ -26,3 +26,8 @@
   - [x] Enforce the 32-target resident limit when all existing sessions have active accesses.
   - [x] Recover a resident session after a failed refresh when the original valid target and reference snapshot return.
   - [x] Review/Audit zu 7.3 durchführen; Findings ergänzen und umsetzen.
+
+## Cluster 7 integration
+
+- [ ] Bind cached decompiled source to the content snapshot of resolved references, including same-identity replacements at the same path.
+- [ ] Complete the independent Cluster 7 integration review after the cache/session finding is addressed.
