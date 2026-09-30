@@ -4,7 +4,7 @@
 
 - [x] 4.1 Symbolsuche (`find_symbol`-Engine):
   - [x] `FindSymbolScanner`: Filter nach Namen/Patterns, `SymbolKind`, `scopeType` (`production`, `tests`, `all`)
-  - [x] FastTests für Symbolsuche
+  - [x] FastTests für Symbolsuche (Name/Pattern, `SymbolKind`, Produktions-/Testprojekt-Scope, Mehrprojektfall)
   - [ ] Review/Audit zu 4.1 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.2 Symbol-Body-Extraktion (`get_symbol_body`-Engine):
   - [x] `SourceSymbolBodyResolver`: Syntax-Extraktion aus AST mit Paginierung (`startLine`, `maxBodyLines`)

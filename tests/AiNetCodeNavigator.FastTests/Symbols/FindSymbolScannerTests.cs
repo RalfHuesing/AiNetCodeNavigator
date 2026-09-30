@@ -275,6 +275,32 @@ public sealed class FindSymbolScannerTests
     }
 
     [Fact]
+    public async Task FindMatchesWithDetailsAsync_FiltersByProjectScope()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\Scope.slnx",
+            new ProjectSpec(
+                "App",
+                [("Shared.cs", "namespace Shared; public class SharedType { }")],
+                VirtualProjectDirectory: "src/App"),
+            new ProjectSpec(
+                "App.Tests",
+                [("Shared.cs", "namespace Shared; public class SharedType { }")],
+                VirtualProjectDirectory: "src/TestHost"));
+
+        var production = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(fixture.Solution, "SharedType", ScopeType: SymbolScopeType.Production));
+        var tests = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(fixture.Solution, "SharedType", ScopeType: SymbolScopeType.Tests));
+        var all = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(fixture.Solution, "SharedType", ScopeType: SymbolScopeType.All));
+
+        Assert.Equal("App", Assert.Single(production.Entries).ProjectName);
+        Assert.Equal("App.Tests", Assert.Single(tests.Entries).ProjectName);
+        Assert.Equal(2, all.Entries.Count);
+    }
+
+    [Fact]
     public async Task FindMatchesWithDetailsAsync_WildcardSearch_ReturnsMatchingSymbols()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();

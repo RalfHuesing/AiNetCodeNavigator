@@ -120,12 +120,7 @@ public static class FindSymbolScanner
         {
             ct.ThrowIfCancellationRequested();
 
-            if (!MatchesScope(symbol, request.ScopeType))
-            {
-                continue;
-            }
-
-            var locations = CollectVisibleLocations(declarations, outputRoot);
+            var locations = CollectVisibleLocations(request.Solution, declarations, outputRoot, request.ScopeType);
             if (locations.Count == 0) continue;
 
             locations.Sort((a, b) =>
@@ -160,21 +155,11 @@ public static class FindSymbolScanner
         return entries;
     }
 
-    private static bool MatchesScope(ISymbol symbol, SymbolScopeType scopeType)
-    {
-        if (scopeType == SymbolScopeType.All) return true;
-        var isTest = TestDetector.IsTestSymbol(symbol);
-        return scopeType switch
-        {
-            SymbolScopeType.Production => !isTest,
-            SymbolScopeType.Tests => isTest,
-            _ => true
-        };
-    }
-
     private static List<SymbolLocationItem> CollectVisibleLocations(
+        Solution solution,
         IReadOnlyList<ISymbol> declarations,
-        string outputRoot)
+        string outputRoot,
+        SymbolScopeType scopeType)
     {
         var result = new List<SymbolLocationItem>();
         foreach (var decl in declarations)
@@ -183,6 +168,9 @@ public static class FindSymbolScanner
             {
                 if (!loc.IsInSource || loc.SourceTree is null) continue;
                 var filePath = loc.SourceTree.FilePath;
+                var document = solution.GetDocument(loc.SourceTree);
+                if (document is null || !MatchesScope(document, scopeType)) continue;
+
                 var relativePath = PathNormalizer.ToRelative(outputRoot, filePath);
                 var lineSpan = loc.GetLineSpan();
                 var startLine = lineSpan.StartLinePosition.Line + 1;
@@ -194,6 +182,20 @@ public static class FindSymbolScanner
         }
 
         return result;
+    }
+
+    private static bool MatchesScope(Document document, SymbolScopeType scopeType)
+    {
+        if (scopeType == SymbolScopeType.All) return true;
+
+        var isTest = TestDetector.IsTestProject(document.Project)
+            || TestDetector.IsTestFile(document.FilePath ?? document.Name);
+        return scopeType switch
+        {
+            SymbolScopeType.Production => !isTest,
+            SymbolScopeType.Tests => isTest,
+            _ => false
+        };
     }
 
     private static Dictionary<ISymbol, List<ISymbol>> GroupSymbols(IReadOnlyList<ISymbol> symbols)
