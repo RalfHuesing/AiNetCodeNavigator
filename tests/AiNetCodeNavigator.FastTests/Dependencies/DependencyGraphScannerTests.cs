@@ -302,4 +302,57 @@ public sealed class DependencyGraphScannerTests
         Assert.True(capped.IsTruncated);
         Assert.False(capped.IsComplete);
     }
+
+    [Fact]
+    public void MergeAndTraverse_AcceptsSharedOffsetPagesWhenShortCollectionsAreExhausted()
+    {
+        var typeEdges = Enumerable.Range(0, 101)
+            .Select(index => new DependencyTypeReference(
+                "app-root",
+                $"contracts-target-{index:D3}",
+                "global::App.Root",
+                $"global::Contracts.Target{index:D3}",
+                "Root",
+                $"Target{index:D3}",
+                "App",
+                "Contracts",
+                "App",
+                "Contracts",
+                "src/App/Root.cs",
+                "src/Contracts/Targets.cs"))
+            .ToList();
+
+        var firstPage = new DependencyGraphPayload(
+            ProjectDependencies: [new ProjectDependency("App", "Contracts")],
+            NamespaceDependencies: [],
+            FileDependencies: [],
+            TotalProjectDependencyCount: 1,
+            Offset: 0,
+            PageSize: 100,
+            ScannedDocumentCount: 2,
+            TotalDocumentCount: 2,
+            TypeDependencies: typeEdges.Take(100).ToList(),
+            TotalTypeDependencyCount: typeEdges.Count);
+        var secondPage = firstPage with
+        {
+            ProjectDependencies = [],
+            Offset = 100,
+            TypeDependencies = typeEdges.Skip(100).ToList()
+        };
+
+        var options = new DependencyGraphTraversalOptions(
+            TargetTypeName: "App.Root",
+            Direction: DependencyGraphDirection.Outgoing,
+            Depth: 1,
+            PageSize: 200);
+        var merged = DependencyGraphTraversal.MergeAndTraverse([firstPage, secondPage], options);
+        var missingTypePage = DependencyGraphTraversal.MergeAndTraverse([firstPage], options);
+
+        Assert.False(merged.ContinuationInputIncomplete);
+        Assert.True(merged.IsComplete);
+        Assert.Equal(101, merged.TypeDependencies?.Count);
+        Assert.Single(merged.ProjectDependencies);
+        Assert.False(missingTypePage.IsComplete);
+        Assert.True(missingTypePage.ContinuationInputIncomplete);
+    }
 }

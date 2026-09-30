@@ -491,3 +491,23 @@ The point 5.5 audit checkbox remains unchecked for the final allowed point audit
 - **P2 priority for cluster fix round 0 — merged relationship-page completeness:** the existing point 5.5 finding remains reproducible from `DependencyGraphTraversal.cs:174-190`: `ArePagesComplete` requires every collection's next `Offset` to equal the count returned by that collection. Scanner pages instead share one requested offset across independently sized collections (`DependencyGraphScanner.cs:172-175`). When type edges require a second page but project edges end on the first, complete input is falsely reported as `ContinuationInputIncomplete`, and `IsComplete` becomes false. Correct validation of shared page windows, including exhausted short collections; add a regression with more than one type-edge page and fewer project/namespace/file edges, and a missing-page control that must remain incomplete. This is the existing 5.5 technical debt promoted for the cluster fix round, not a fourth point audit.
 - **Finding disposition:** no additional cluster-wide defect was established in the inspected Core interfaces. Cluster completion remains pending the P2 fix and its independent cluster-level review. Public MCP transport, generated-file/scope filtering, and graph handoff rendering remain later integration work.
 - **Gates:** this documentation-only integration review ran no build or tests. The most recent recorded Cluster 5 implementation gates are the 5.6 remediation: focused tests 2/2, build with 0 warnings/errors, FastTests 383/383, integration 12/12, and full suite 395/395. `git diff --check` for this review passed before commit.
+
+## Cluster 5 integration fix round 1 — shared relationship-page completeness
+
+- Scope: close the existing 5.5 `ArePagesComplete` technical debt promoted by cluster integration review 1. This is a fix round, not a fourth point audit.
+- Before-fix repro: synthetic shared-cursor pages contain 101 type edges at offsets 0 and 100 (`PageSize=100`) and one project edge only on offset 0. The focused contract test failed as expected because the merge marked the complete input `IsComplete=false`.
+- `ArePagesComplete` now validates the shared page cursor using each page's `PageSize`, checks the expected number of items for that collection at each shared offset, and considers a short collection exhausted once its declared total is covered. A missing type continuation remains incomplete because type coverage stops before its declared total; skipped shared offsets are rejected.
+- Added `MergeAndTraverse_AcceptsSharedOffsetPagesWhenShortCollectionsAreExhausted`, which checks the complete 101-type/1-project case and a missing-page control. Updated the dependency graph contract documentation with shared-cursor semantics.
+- The 5.5 point audit checkbox and audit count remain unchanged; this fix round does not claim or perform another point audit.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| Before-fix focused repro | Failed as expected: complete shared pages reported incomplete |
+| Focused shared-page contract test after fix | Passed, 1/1 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 384/384 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 396/396 across both test projects |
+| `git diff --check` | Passed before commit |

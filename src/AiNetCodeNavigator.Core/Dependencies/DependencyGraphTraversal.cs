@@ -180,13 +180,22 @@ public static class DependencyGraphTraversal
         {
             var ordered = window.OrderBy(page => page.Offset).ToList();
             var total = totalSelector(ordered[0]);
-            var offset = 0;
+            if (total < 0) return false;
+
+            long expectedPageOffset = 0;
+            var coveredThrough = 0;
             foreach (var page in ordered)
             {
-                if (totalSelector(page) != total || page.Offset != offset) return false;
-                offset += countSelector(page);
+                if (totalSelector(page) != total || page.Offset != expectedPageOffset || page.PageSize < 1)
+                    return false;
+
+                var expectedCount = (int)Math.Min(page.PageSize, Math.Max(0L, (long)total - page.Offset));
+                if (countSelector(page) != expectedCount) return false;
+
+                coveredThrough = Math.Max(coveredThrough, (int)Math.Min(total, (long)page.Offset + page.PageSize));
+                expectedPageOffset = (long)page.Offset + page.PageSize;
             }
-            if (offset != total) return false;
+            if (coveredThrough != total) return false;
         }
         return true;
     }
