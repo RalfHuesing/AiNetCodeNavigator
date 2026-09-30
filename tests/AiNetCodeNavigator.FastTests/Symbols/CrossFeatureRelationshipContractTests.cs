@@ -37,27 +37,31 @@ public sealed class CrossFeatureRelationshipContractTests
 
         var callers = await FindReferencesResolver.FindReferencesAsync(apiRecord, fixture.Solution, maxResults: 50, depth: 3);
         var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(apiRecord, fixture.Solution, maxDepth: 3, maxResults: 50);
+        Assert.Equal(callers.TotalCount, impact.TransitiveImpactCount);
         Assert.False(callers.IsTruncated);
         Assert.False(callers.IsTruncatedByNodeLimit);
         Assert.False(callers.IsDepthClamped);
         Assert.True(callers.IsComplete);
         Assert.Equal(3, callers.EffectiveDepth);
-        Assert.Equal(5, callers.TotalCount);
-        Assert.Equal(5, impact.TransitiveImpactCount);
-        Assert.Equal(2, impact.DirectCallersCount);
+        Assert.Equal(6, callers.TotalCount);
+        Assert.Equal(6, impact.TransitiveImpactCount);
+        Assert.Equal(3, impact.DirectCallersCount);
         Assert.Equal(3, impact.TransitiveCallSitesCount);
         Assert.Equal(3, impact.EffectiveDepth);
         Assert.True(impact.IsComplete);
 
         var callerSites = callers.References
-            .Select(site => (site.ProjectName, site.FilePath, site.Line, site.EnclosingSymbolName, site.EnclosingSymbolHandoffId, site.Depth, site.ReachedFromSymbolHandoffId))
+            .Select(site => (site.ProjectName, site.FilePath, site.Line, site.Column, site.EnclosingSymbolName, site.EnclosingSymbolHandoffId, site.Depth, site.ReachedFromSymbolHandoffId))
             .ToArray();
         var impactSites = impact.CallSites
-            .Select(site => (site.ProjectName, site.FilePath, site.Line, site.CallingMember, site.CallingMemberHandoffId, site.Depth, site.ReachedFromSymbolHandoffId))
+            .Select(site => (site.ProjectName, site.FilePath, site.Line, site.Column, site.CallingMember, site.CallingMemberHandoffId, site.Depth, site.ReachedFromSymbolHandoffId))
             .ToArray();
         Assert.Equal(callerSites, impactSites);
         Assert.Contains(impact.CallSites, site => site.Depth == 1 && site.ProjectName == "Middle" && site.CallingMember == "Handler.Handle");
         Assert.Contains(impact.CallSites, site => site.Depth == 1 && site.ProjectName == "Middle" && site.CallingMember == "AlternateHandler.Handle");
+        var repeatedCalls = impact.CallSites.Where(site => site.Depth == 1 && site.CallingMember == "Handler.Handle").ToList();
+        Assert.Equal(2, repeatedCalls.Count);
+        Assert.Equal(2, repeatedCalls.Select(site => site.Column).Distinct().Count());
         Assert.Equal(2, impact.CallSites.Count(site => site.Depth == 2 && site.ProjectName == "Middle" && site.CallingMember == "Dispatcher.Dispatch"));
         Assert.Contains(impact.CallSites, site => site.Depth == 3 && site.ProjectName == "App" && site.CallingMember == "Entry.Start");
 
@@ -156,10 +160,13 @@ public sealed class CrossFeatureRelationshipContractTests
         Assert.Equal(2, hierarchy.TotalSubtypes);
         Assert.True(references.IsTruncated);
         Assert.False(references.IsComplete);
-        Assert.Equal(5, references.TotalCount);
+        Assert.Equal(6, references.TotalCount);
         Assert.True(impact.IsTruncated);
         Assert.False(impact.IsComplete);
-        Assert.Equal(5, impact.TransitiveImpactCount);
+        Assert.Equal(6, impact.TransitiveImpactCount);
+        Assert.Equal(
+            references.References.Select(site => (site.ProjectName, site.FilePath, site.Line, site.Column, site.EnclosingSymbolHandoffId, site.Depth, site.ReachedFromSymbolHandoffId)),
+            impact.CallSites.Select(site => (site.ProjectName, site.FilePath, site.Line, site.Column, site.CallingMemberHandoffId, site.Depth, site.ReachedFromSymbolHandoffId)));
         Assert.True(callTree.Truncated);
         Assert.True(callTree.HiddenEdgeCount > 0);
     }
@@ -169,7 +176,7 @@ public sealed class CrossFeatureRelationshipContractTests
         new ProjectSpec("Contracts", [
             ("Api.cs", "namespace Contracts; public interface IHandler { void Handle(); } public abstract class HandlerBase : IHandler { public abstract void Handle(); } public static class Api { public static void Record() { } } public static class Telemetry { public static void Touch() { } }")], VirtualProjectDirectory: "src/Contracts"),
         new ProjectSpec("Middle", [
-            ("Handlers.cs", "namespace Middle; public sealed class Handler : Contracts.HandlerBase { public override void Handle() => Contracts.Api.Record(); } public sealed class AlternateHandler : Contracts.HandlerBase { public override void Handle() => Contracts.Api.Record(); }"),
+            ("Handlers.cs", "namespace Middle; public sealed class Handler : Contracts.HandlerBase { public override void Handle() { Contracts.Api.Record(); Contracts.Api.Record(); } } public sealed class AlternateHandler : Contracts.HandlerBase { public override void Handle() => Contracts.Api.Record(); }"),
             ("Dispatcher.cs", "namespace Middle; public sealed class Dispatcher { public void Dispatch(Handler handler) => handler.Handle(); }")], ProjectReferences: ["Contracts"], VirtualProjectDirectory: "src/Middle"),
         new ProjectSpec("App", [
             ("Entry.cs", "namespace App; public sealed class Entry { public void Start(Middle.Dispatcher dispatcher, Middle.Handler handler) { dispatcher.Dispatch(handler); Contracts.Telemetry.Touch(); } }")],

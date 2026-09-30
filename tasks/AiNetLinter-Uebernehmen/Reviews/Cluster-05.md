@@ -452,3 +452,22 @@ The point 5.5 audit checkbox remains unchecked for the final allowed point audit
 
 - Inspected committed Core code, the shared test, and the AiNetLinter `CallGraphTraversal` through read-only MCP navigation. No production files were changed.
 - The documentation diff was inspected and `git diff --check` passed before commit.
+
+### Point 5.6 audit 1 remediation
+
+- Before-fix reproduction: the shared Contracts → Middle → App test added two `Contracts.Api.Record()` calls on the same line in `Handler.Handle`. `FindReferencesResolver` returned six sites while `ImpactAnalyzer` returned five, so the new equality assertion failed as expected (`Expected: 6`, `Actual: 5`).
+- `ImpactCallSiteEntry` now carries the one-based source column. Impact grouping includes column, and ordering uses the same location/provenance keys as references, preserving distinct same-line calls while retaining separate reached-from branches.
+- The shared scenario now asserts six matching reference/impact sites, three direct and three transitive impact sites, unique columns for the two repeated calls, and identical ordered prefixes under `maxResults` truncation.
+- Updated navigation and relationship contract documentation to describe source-column identity. The separate 5.5 multi-page completeness technical debt remains unchanged. The point 5.6 audit checkbox remains open for the final independent audit.
+
+#### Verification
+
+| Gate | Result |
+|---|---|
+| Before-fix focused repro | Failed as expected: reference count 6, impact count 5 |
+| Focused `CrossFeatureRelationshipContractTests` after fix | Passed, 2/2 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 383/383 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 395/395 across both test projects |
+| `git diff --check` | Passed before commit |

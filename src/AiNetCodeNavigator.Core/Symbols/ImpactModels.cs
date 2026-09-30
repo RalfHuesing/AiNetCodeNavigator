@@ -7,6 +7,7 @@ namespace AiNetCodeNavigator.Core.Symbols;
 public sealed record ImpactCallSiteEntry(
     string FilePath,
     int Line,
+    int Column,
     string CallingMember,
     string? CallingMemberHandoffId,
     string ProjectName,

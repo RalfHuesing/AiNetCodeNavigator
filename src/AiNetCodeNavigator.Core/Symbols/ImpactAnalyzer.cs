@@ -86,6 +86,7 @@ public static class ImpactAnalyzer
                     var lineSpan = loc.Location.GetLineSpan();
                     var relPath = PathNormalizer.ToRelative(solutionDir, lineSpan.Path);
                     var line = lineSpan.StartLinePosition.Line + 1;
+                    var column = lineSpan.StartLinePosition.Character + 1;
 
                     var callerName = caller switch
                     {
@@ -99,6 +100,7 @@ public static class ImpactAnalyzer
                     allSites.Add(new ImpactCallSiteEntry(
                         FilePath: relPath,
                         Line: line,
+                        Column: column,
                         CallingMember: callerName,
                         CallingMemberHandoffId: handoff,
                         ProjectName: doc.Project.Name,
@@ -119,6 +121,7 @@ public static class ImpactAnalyzer
                 s.ProjectName,
                 s.FilePath,
                 s.Line,
+                s.Column,
                 s.CallingMember,
                 s.CallingMemberHandoffId,
                 s.Depth,
@@ -134,6 +137,7 @@ public static class ImpactAnalyzer
             .ThenBy(s => s.CallingMemberHandoffId, StringComparer.Ordinal)
             .ThenBy(s => s.ReachedFromSymbolId, StringComparer.Ordinal)
             .ThenBy(s => s.ReachedFromSymbolHandoffId, StringComparer.Ordinal)
+            .ThenBy(s => s.Column)
             .ToList();
 
         var isTruncated = distinctSites.Count > effectiveResultLimit;
