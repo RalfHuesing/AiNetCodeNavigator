@@ -107,6 +107,71 @@ public sealed class GetFileTreeScannerTests
     }
 
     [Fact]
+    public void FindReparsePointAncestor_DetectsIntermediateReparsePoint()
+    {
+        using var tempDir = TestTempDirectory.Create();
+        var root = Path.Combine(tempDir.DirectoryPath, "root");
+        var link = Path.Combine(root, "link");
+        var target = Path.Combine(link, "subdir");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(target);
+
+        var reparseAncestor = GetFileTreeScanner.FindReparsePointAncestor(
+            root,
+            target,
+            candidate => string.Equals(candidate, link, System.OperatingSystem.IsWindows()
+                ? System.StringComparison.OrdinalIgnoreCase
+                : System.StringComparison.Ordinal));
+
+        Assert.Equal(link, reparseAncestor);
+    }
+
+    [Fact]
+    public void Scan_RejectsRelativeRootDirectoryBeforePathNormalization()
+    {
+        var result = GetFileTreeScanner.Scan(new FileTreeScanRequest(".", MaxDepth: 0));
+
+        Assert.NotNull(result.Error);
+        Assert.Contains("absolute", result.Error, System.StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Scan_FilesViewUsesItsResultBudgetOnlyForFileEntries()
+    {
+        using var tempDir = TestTempDirectory.Create();
+        var subdirectory = Path.Combine(tempDir.DirectoryPath, "src");
+        Directory.CreateDirectory(subdirectory);
+        File.WriteAllText(Path.Combine(subdirectory, "Code.cs"), "class Code {}");
+
+        var result = GetFileTreeScanner.Scan(new FileTreeScanRequest(
+            tempDir.DirectoryPath,
+            View: "files",
+            MaxResults: 1));
+
+        Assert.Single(result.Entries);
+        Assert.Empty(result.Summaries);
+        Assert.False(result.IsTruncated);
+    }
+
+    [Fact]
+    public void Scan_TreeViewAppliesOneCombinedBudgetToFilesAndDirectories()
+    {
+        using var tempDir = TestTempDirectory.Create();
+        var subdirectory = Path.Combine(tempDir.DirectoryPath, "src");
+        Directory.CreateDirectory(subdirectory);
+        File.WriteAllText(Path.Combine(tempDir.DirectoryPath, "README.md"), "readme");
+        File.WriteAllText(Path.Combine(subdirectory, "Code.cs"), "class Code {}");
+
+        var result = GetFileTreeScanner.Scan(new FileTreeScanRequest(
+            tempDir.DirectoryPath,
+            View: "tree",
+            MaxResults: 1));
+
+        Assert.True(result.Entries.Count + result.Summaries.Count <= 1);
+        Assert.True(result.IsTruncated);
+    }
+
+    [Fact]
     public void Scan_SummaryRollsUpNestedMatchesAndLimitsReturnedDirectories()
     {
         using var tempDir = TestTempDirectory.Create();

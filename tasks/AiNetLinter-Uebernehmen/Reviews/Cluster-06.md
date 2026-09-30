@@ -27,3 +27,22 @@
 | `pwsh -File ./scripts/test-fast.ps1` | Passed, 393/393 |
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 405/405 across both test projects |
+
+## Point 6.1 audit 1 remediation
+
+- Scope: remediate all three findings from the independent audit at commit `2258e75833c0ba4be1aa3ab304c7025351cb63e5`. The independent 6.1 audit checkbox remains open pending follow-up audit.
+- Before-fix repros: the relative-root test accepted `"."` and returned a successful scan; the files-view contract exposed hidden summary entries; the tree-view contract returned a file and a directory summary for `MaxResults=1`. Those assertions failed as expected. For the reparse-point finding, code inspection confirmed that only the final target was checked. Creating a real symbolic-link fixture failed in this Windows environment because the process lacks the required privilege, so the regression test exercises the exact production path-walk helper with a deterministic predicate that marks an intermediate `link` component as a reparse point.
+- `RootDirectory` is now checked with `Path.IsPathFullyQualified` before `GetFullPath`. The root and each ancestor from `RelativeRoot` up to the analysis root are checked for reparse points before traversal.
+- Result projection now follows the active view. Files view returns only bounded file entries; summary view returns only bounded directory aggregates; tree view uses one combined budget for root files and directory entries. `maxResults` is reported only when the selected view omits an item.
+- Added FastTests for the three findings. Current-state documentation now describes absolute-root validation, reparse-ancestor confinement, and the single selected-view result budget. The three remediation checklist items are complete; the independent audit checkbox remains open.
+
+### Remediation verification
+
+| Gate | Result |
+|---|---|
+| Before-fix relative-root and result-budget repros | Failed as expected; the reparse-point finding is covered by source evidence and a deterministic ancestor-walk test because the OS denied symbolic-link creation |
+| Focused `GetFileTreeScannerTests` after fix | Passed, 16/16 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 397/397 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 409/409 across both test projects |

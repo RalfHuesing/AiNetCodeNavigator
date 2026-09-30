@@ -28,11 +28,12 @@ public static class GetFileTreeScanner
         string targetDir;
         try
         {
-            analysisRoot = Path.GetFullPath(request.RootDirectory);
-            if (!Path.IsPathFullyQualified(analysisRoot))
+            if (!Path.IsPathFullyQualified(request.RootDirectory))
             {
                 return ErrorResult(request, "RootDirectory must be an absolute directory path.");
             }
+
+            analysisRoot = Path.GetFullPath(request.RootDirectory);
 
             var relativeRoot = string.IsNullOrWhiteSpace(request.RelativeRoot) ? "." : request.RelativeRoot.Trim();
             if (Path.IsPathRooted(relativeRoot))
@@ -58,7 +59,11 @@ public static class GetFileTreeScanner
 
         try
         {
-            if (IsReparsePoint(targetDir)) return ErrorResult(request, "RelativeRoot is a reparse point and will not be traversed.");
+            var reparseAncestor = FindReparsePointAncestor(analysisRoot, targetDir, IsReparsePoint);
+            if (reparseAncestor is not null)
+            {
+                return ErrorResult(request, $"RelativeRoot traverses reparse point '{ToRelative(analysisRoot, reparseAncestor)}'.");
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -166,25 +171,34 @@ public static class GetFileTreeScanner
         if (warnings.Count > 0) scanReasons.Add("inaccessibleSubtree");
         var sortedMatches = SortMatches(matches, request.SortBy);
         var isSummary = string.Equals(request.View, "summary", StringComparison.OrdinalIgnoreCase);
-        var shownMatches = isSummary ? [] : sortedMatches.Take(request.MaxResults).ToArray();
-        var summaryEntries = BuildSummaryEntries(directories, rootRelative, effectiveDepth);
-        var shownSummaries = summaryEntries.Take(request.MaxResults).ToArray();
-        if ((!isSummary && sortedMatches.Count > request.MaxResults) || summaryEntries.Count > request.MaxResults)
+        var isFiles = string.Equals(request.View, "files", StringComparison.OrdinalIgnoreCase);
+        IReadOnlyList<FileTreeCandidate> shownMatches;
+        IReadOnlyList<FileTreeSummaryEntry> shownSummaries;
+        if (isSummary)
         {
-            scanReasons.Add("maxResults");
+            shownMatches = [];
+            var summaryEntries = BuildSummaryEntries(directories, rootRelative, effectiveDepth);
+            shownSummaries = summaryEntries.Take(request.MaxResults).ToArray();
+            if (summaryEntries.Count > request.MaxResults) scanReasons.Add("maxResults");
+        }
+        else if (isFiles)
+        {
+            shownMatches = sortedMatches.Take(request.MaxResults).ToArray();
+            shownSummaries = [];
+            if (sortedMatches.Count > request.MaxResults) scanReasons.Add("maxResults");
+        }
+        else
+        {
+            var treeItems = BuildTreeItems(sortedMatches, directories, rootRelative, request.TreeDepth);
+            var visibleTreeItems = treeItems.Take(request.MaxResults).ToArray();
+            shownMatches = visibleTreeItems.Where(item => item.File is not null).Select(item => item.File!).ToArray();
+            shownSummaries = visibleTreeItems.Where(item => item.Directory is not null).Select(item => item.Directory!).ToArray();
+            if (treeItems.Count > request.MaxResults) scanReasons.Add("maxResults");
         }
         if (cancellationToken.IsCancellationRequested) scanReasons.Add("cancellation");
 
-        IReadOnlyList<FileTreeSummaryEntry> resultDirectories = isSummary
-            ? shownSummaries
-            : BuildTreeDirectories(directories, rootRelative, request.TreeDepth);
-        if (!isSummary && resultDirectories.Count > request.MaxResults)
-        {
-            scanReasons.Add("maxResults");
-            resultDirectories = resultDirectories.Take(request.MaxResults).ToArray();
-        }
         var truncatedBy = scanReasons.OrderBy(reason => reason, StringComparer.Ordinal).ToArray();
-        var formatted = FormatOutput(request, shownMatches, resultDirectories, sortedMatches.Count, scannedFiles);
+        var formatted = FormatOutput(request, shownMatches, shownSummaries, sortedMatches.Count, scannedFiles);
 
         return new FileTreeScanResult(
             RootPath: rootRelative,
@@ -240,6 +254,30 @@ public static class GetFileTreeScanner
 
     private static bool IsOneOf(string? value, params string[] expected) =>
         value is not null && expected.Any(item => value.Equals(item, StringComparison.OrdinalIgnoreCase));
+
+    internal static string? FindReparsePointAncestor(string analysisRoot, string targetDirectory, Func<string, bool> isReparsePoint)
+    {
+        var root = Path.GetFullPath(analysisRoot);
+        var current = Path.GetFullPath(targetDirectory);
+        while (true)
+        {
+            if (isReparsePoint(current)) return current;
+            if (PathEquals(current, root)) return null;
+            var parent = Directory.GetParent(current)?.FullName;
+            if (parent is null || !IsWithinRoot(root, parent)) return null;
+            current = parent;
+        }
+    }
+
+    private static bool PathEquals(string left, string right) =>
+        string.Equals(Path.TrimEndingDirectorySeparator(left), Path.TrimEndingDirectorySeparator(right),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    private static bool IsWithinRoot(string root, string candidate)
+    {
+        var relative = Path.GetRelativePath(root, candidate);
+        return relative != ".." && !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) && !Path.IsPathRooted(relative);
+    }
 
     private static FileTreeScanResult ErrorResult(FileTreeScanRequest request, string message) => new(
         request.RelativeRoot,
@@ -330,15 +368,28 @@ public static class GetFileTreeScanner
         .Select(directory => new FileTreeSummaryEntry(directory.Path, directory.FileCount, directory.TotalBytes))
         .ToList();
 
-    private static List<FileTreeSummaryEntry> BuildTreeDirectories(
+    private static List<TreeItem> BuildTreeItems(
+        IReadOnlyList<FileTreeCandidate> matches,
         Dictionary<string, DirectoryAggregate> directories,
         string root,
-        int? treeDepth) => directories.Values
-        .Where(directory => directory.Path.Equals(root, StringComparison.OrdinalIgnoreCase) ||
-            (directory.FileCount > 0 && GetDepth(directory.Path, root) <= (treeDepth ?? 2)))
-        .OrderBy(directory => directory.Path, StringComparer.OrdinalIgnoreCase)
-        .Select(directory => new FileTreeSummaryEntry(directory.Path, directory.FileCount, directory.TotalBytes))
-        .ToList();
+        int? treeDepth)
+    {
+        var directoriesInTree = directories.Values
+            .Where(directory => !directory.Path.Equals(root, StringComparison.OrdinalIgnoreCase)
+                && directory.FileCount > 0
+                && GetDepth(directory.Path, root) <= (treeDepth ?? 2))
+            .Select(directory => new TreeItem(
+                directory.Path,
+                null,
+                new FileTreeSummaryEntry(directory.Path, directory.FileCount, directory.TotalBytes)));
+        var rootFiles = matches
+            .Where(file => (GetParent(file.Path) ?? ".").Equals(root, StringComparison.OrdinalIgnoreCase))
+            .Select(file => new TreeItem(file.Path, file, null));
+        return directoriesInTree.Concat(rootFiles)
+            .OrderBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.File is null ? 0 : 1)
+            .ToList();
+    }
 
     private static List<FileTreeCandidate> SortMatches(IEnumerable<FileTreeCandidate> matches, string sortBy) =>
         sortBy.ToLowerInvariant() switch
@@ -415,4 +466,5 @@ public static class GetFileTreeScanner
     }
 
     private sealed record FileTreeCandidate(string Path, string? Extension, long Size, int? LineCount, int Depth);
+    private sealed record TreeItem(string Path, FileTreeCandidate? File, FileTreeSummaryEntry? Directory);
 }
