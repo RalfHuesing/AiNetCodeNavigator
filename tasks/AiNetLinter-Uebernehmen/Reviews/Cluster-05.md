@@ -263,3 +263,18 @@
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 382/382 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Independent audit 1/3 of point 5.4
+
+- Audited commit: `6d877374c1809483d8e6656d5eb19c929a9163a0` (clean working tree before review edits).
+- Reviewer: `gpt-6-sol`, medium reasoning effort. Read-only comparison covered AiNetLinter's `GetImpactTool` symbol branch, `CallGraphTraversal`, and call-site model. No build or tests were run in this audit; the gates above belong to the implementation turn.
+- Cross-project two-level callers and caller handoff roundtrips, same relative path in distinct projects, direct versus indirect totals, display/depth/node bounds, cycle termination, and null/node-limit errors have relevant Core tests. One provenance/deduplication finding remains; the point 5.4 audit checkbox stays unchecked.
+
+### Finding
+
+1. **P1 — Reconverging impact paths on one line are collapsed.** `src/AiNetCodeNavigator.Core/Symbols/ImpactModels.cs:7-13` has no reached-from symbol, and `ImpactAnalyzer.cs:113-115` deduplicates only by project/path/line/calling member/depth. Consider `Target.A()` called by `B()` and `C()`, then `Top()` calls `B(); C();` on the same source line. At depth two, the two distinct `Top()` relationships get the same key, so `TransitiveCallSitesCount`, `TransitiveImpactCount`, and shown call sites undercount and the caller cannot tell which branch each site reached. AiNetLinter's `CallGraphTraversal.CreateCallSiteEntryAsync` records `ReachedFromSymbolId`, and its traversal result deduplicates the full entry. Acceptance: retain the reached-from source symbol identity/handoff or equivalent stable provenance in each impact site, include it in deduplication and deterministic sorting, and cover a cross-project branching/reconverging graph with two calls on one line. Assert both depth-two relationships and their individually resolvable provenance, plus direct/indirect totals and affected-project summaries under `maxResults` truncation.
+
+### Review verification
+
+- Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
+- The documentation diff was inspected and `git diff --check` passed before commit.

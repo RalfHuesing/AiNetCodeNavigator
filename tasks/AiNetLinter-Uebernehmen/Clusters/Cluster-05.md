@@ -29,6 +29,7 @@
   - [x] Ermittlung des transitiven Blast Radius bei Änderungen an Symbolen
   - [x] FastTests für Impact-Berechnung
   - [x] Cross-project traversal, affected-project scope, source handoffs, and call-site limits/completeness.
+  - [ ] Preserve reached-from provenance for reconverging impact paths on one source line.
   - [ ] Review/Audit zu 5.4 durchführen; Findings ergänzen und umsetzen.
 - [x] 5.5 Projekt- & Namespace-Abhängigkeiten (`dependency_graph`-Engine):
   - [x] `DependencyGraphScanner`: Projektabhängigkeiten und Namespace-Referenzen
