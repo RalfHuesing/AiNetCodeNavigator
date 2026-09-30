@@ -434,3 +434,11 @@ The point 4.8 audit checkbox remains open pending a focused fix and follow-up au
 2. **P2 structured Feature Context result — remains open.** `FeatureContextScanner.ScanAsync` flattens those same candidates into `FeatureContextPayload.Tests`, but `FeatureContextModels.cs:28-48` still has no evidence-mode field on either the test entries or their containing payload. Consumers reading the structured result instead of `RenderMarkdown` cannot see the new disclosure; this is the remaining DTO portion of the first audit finding. **Acceptance:** carry `static-test-candidates-only` on the Feature Context structured result as well, and assert it for both attributed and name-only candidates without changing the scoped totals or handoff behavior.
 
 The point 4.8 audit checkbox remains open for the remaining structured-result contract and one final audit. No product code or external repository was changed in this audit.
+
+### Point 4.8 structured Feature Context audit finding fix
+
+- Added `FeatureContextPayload.EvidenceMode`, initialized to the same public `static-test-candidates-only` value used by `TestContextPayload`, so structured `ScanAsync` consumers receive the static-evidence boundary.
+- Extended the structured scan contract test with an attributed xUnit method and a name-only `Unknown` fixture. It asserts the evidence mode, both candidates and stable total/count, then resolves both candidate handoffs through `SourceSymbolBodyResolver` to verify the method and fixture remain selectable.
+- Before the fix, the focused regression failed because the `FeatureContextPayload.EvidenceMode` property was absent. The red test also confirms both candidates and handoffs were already present.
+- Updated [Get Feature Context](../../../docs/navigation/get-feature-context.md) to document the structured payload field. No markdown behavior or scope/totals behavior changed.
+- Point 4.8 remains open for the final audit; no 4.9 work is included.

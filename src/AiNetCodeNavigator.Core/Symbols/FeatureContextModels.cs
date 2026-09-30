@@ -45,6 +45,9 @@ public sealed record FeatureContextPayload(
     ResultError? Error = null)
 {
     public IReadOnlyList<SymbolResolutionCandidate> ResolutionCandidates { get; init; } = Array.Empty<SymbolResolutionCandidate>();
+
+    /// <summary>Identifies test recommendations as static heuristic candidates, not execution or coverage evidence.</summary>
+    public string EvidenceMode { get; } = TestContextPayload.StaticTestCandidatesOnlyEvidenceMode;
 }
 
 public sealed record FeatureContextRequest(

@@ -409,8 +409,26 @@ public sealed class FeatureContextScannerTests
         var payload = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(handle.Solution, "Sample.Core.Greeter"));
         Assert.NotNull(payload);
         Assert.Equal(2, payload.TotalTests);
-        Assert.Contains(payload.Tests, test => test.Framework == "xUnit" && test.TestMethod == "NameMatch");
-        Assert.Contains(payload.Tests, test => test.Framework == "Unknown" && test.TestMethod == "(all)");
+        Assert.Equal(2, payload.Tests.Count);
+        Assert.Equal(TestContextPayload.StaticTestCandidatesOnlyEvidenceMode, payload.EvidenceMode);
+        var attributedCandidate = Assert.Single(payload.Tests, test => test.Framework == "xUnit" && test.TestMethod == "NameMatch");
+        var nameOnlyCandidate = Assert.Single(payload.Tests, test => test.Framework == "Unknown" && test.TestMethod == "(all)");
+        Assert.StartsWith("h:", attributedCandidate.HandoffId);
+        Assert.StartsWith("h:", nameOnlyCandidate.HandoffId);
+
+        var attributedBody = await SourceSymbolBodyResolver.ResolveAsync(
+            handle.Solution,
+            attributedCandidate.HandoffId!,
+            maxBodyLines: 20);
+        Assert.Null(attributedBody.Error);
+        Assert.Contains("NameMatch", attributedBody.Body?.Body);
+
+        var nameOnlyBody = await SourceSymbolBodyResolver.ResolveAsync(
+            handle.Solution,
+            nameOnlyCandidate.HandoffId!,
+            maxBodyLines: 20);
+        Assert.Null(nameOnlyBody.Error);
+        Assert.Contains("GreeterTest", nameOnlyBody.Body?.Body);
 
         var markdown = FeatureContextScanner.RenderMarkdown(payload);
 
