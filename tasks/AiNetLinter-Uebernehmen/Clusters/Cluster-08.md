@@ -17,16 +17,16 @@
   - [x] Audit 1 P2: Apply response budgets to loading/retry results, including their status and next action.
   - [x] Audit 2 P2: Make the advertised truncated-success byte/token retry executable with the final status projection.
   - [x] Audit 2 P2: Preserve the exact required error envelope when optional context follows multiline correction fields.
-- [ ] 8.3 Langläufer & Paginierung:
+- [x] 8.3 Langläufer & Paginierung:
   - [x] `LongRunningToolCallStore`: Polling- und Fortsetzungs-Tokens (`operationToken`, `continuationToken`)
   - [x] Lifecycle-, Cancellation-, Tokenbindungs-, Capacity- und Pagination-Vertrag dokumentieren und testen.
-  - [ ] Review/Audit zu 8.3 durchführen; Findings ergänzen und umsetzen (audit 2/3 remediation recorded; independent audit 3/3 pending).
+  - [x] Review/Audit zu 8.3 durchführen; Findings ergänzen und umsetzen (accepted in final independent audit 3/3).
   - [x] Audit 1 P2 (accepted in audit 2/3): Keep continuation retry minima executable across token projections and exact budget retries.
   - [x] Audit 1 P2 (accepted in audit 2/3): Replay completed operation pages without allocating new immutable snapshots.
   - [x] Audit 1 P2 (accepted in audit 2/3): Enforce completed retention when background operations finish without a poll.
   - [x] Audit 1 P2 (accepted in audit 2/3): Coordinate expiration cancellation and completion cleanup without disposed-CTS races.
-  - [x] Audit 2 P2 (remediated; audit 3/3 pending): Keep replayed cached final pages consistent with continuation snapshot lifetime.
-  - [x] Audit 2 P2 (remediated; audit 3/3 pending): Preserve delegate loading/retry control semantics instead of projecting complete success.
+  - [x] Audit 2 P2 (accepted in audit 3/3): Keep replayed cached final pages consistent with continuation snapshot lifetime.
+  - [x] Audit 2 P2 (accepted in audit 3/3): Preserve delegate loading/retry control semantics instead of projecting complete success.
 - [ ] 8.4 Argument-Validierung:
   - [ ] `McpArgumentValidationFilter`: Schema- und Eingabevalidierung für alle Tools
   - [ ] FastTests für Budgeting, Formatting und Validierung
