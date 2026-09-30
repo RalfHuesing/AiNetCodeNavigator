@@ -8,4 +8,4 @@ If the first complete unit and its continuation marker do not fit, formatting re
 
 This formatter is an internal host utility. Public MCP tool registration and stdio invocation are not established by this component.
 
-The internal result builder includes its status block in the formatter's byte and token accounting. See [MCP Tool Results](mcp-tool-results.md) for the result classification and structured-content contract.
+The internal result builder includes status blocks in byte and token accounting. Success retry minima are calculated from the success status projection; a separately formatted error envelope preserves those minima while obeying the same requested limits. Required error and retry fields are treated atomically, and optional error context is shortened or omitted after the required fields fit. Loading messages are bounded before formatting so a retry action remains visible. See [MCP Tool Results](mcp-tool-results.md) for the result classification and structured-content contract.

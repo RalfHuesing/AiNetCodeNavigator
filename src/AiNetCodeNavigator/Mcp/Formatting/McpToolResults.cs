@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
 
@@ -8,6 +9,7 @@ internal static class McpToolResults
     internal const string SuccessStatusPrefix = "Status: operation=ok, completeness=complete\n";
     internal const string TruncatedSuccessStatusPrefix = "Status: operation=ok, completeness=truncated\n";
     internal const string ErrorStatusPrefix = "Status: operation=error, completeness=not_applicable\n";
+    internal const string LoadingStatusPrefix = "Status: operation=retry, completeness=not_applicable\n";
 
     internal static CallToolResult Success(
         string text,
@@ -33,12 +35,7 @@ internal static class McpToolResults
 
         if (formatted.ErrorCode is not null)
         {
-            var budgetError = McpResponseFormatter.Format(
-                text,
-                maxResponseBytes,
-                maxResponseTokens,
-                responsePrefix: ErrorStatusPrefix);
-            return BudgetTooSmall(budgetError);
+            return BudgetTooSmall(formatted, maxResponseBytes, maxResponseTokens);
         }
 
         if (formatted.IsTruncated && structuredContent.HasValue)
@@ -62,7 +59,6 @@ internal static class McpToolResults
     {
         ValidateError(code, message);
         var lines = new List<string> { $"[ERROR]: {code}: {message}" };
-        AddOptionalLine(lines, "context", context);
         AddOptionalLine(lines, "fieldPath", fieldPath);
         if (requestedBytes is { } requested) lines.Add($"requestedBytes: {requested}");
         if (minimumResponseBytes is { } minimum)
@@ -78,7 +74,7 @@ internal static class McpToolResults
         }
 
         AddOptionalLine(lines, "nextAction", nextAction);
-        return FormatFailure(string.Join("\n", lines), maxResponseBytes, maxResponseTokens);
+        return FormatFailure(string.Join("\n", lines), context, maxResponseBytes, maxResponseTokens);
     }
 
     internal static CallToolResult Recoverable(
@@ -95,23 +91,43 @@ internal static class McpToolResults
         string message,
         string fieldPath,
         string nextAction,
+        string? context = null,
         int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
         int? maxResponseTokens = null) =>
-        Recoverable("INVALID_ARGUMENT", message, nextAction, fieldPath: fieldPath,
+        Recoverable("INVALID_ARGUMENT", message, nextAction, context: context, fieldPath: fieldPath,
             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
 
     internal static CallToolResult Loading(
         string message = "The server is still loading the workspace.",
-        string nextAction = "Wait briefly and repeat the same call.")
+        string nextAction = "Wait briefly and repeat the same call.",
+        int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
+        int? maxResponseTokens = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
         ArgumentException.ThrowIfNullOrWhiteSpace(nextAction);
-        return Create(
-            $"Status: operation=retry, completeness=not_applicable\n[INFO]: {message}\nnextAction: {nextAction}",
-            isError: false);
+        var visibleMessage = LimitLoadingMessage(message);
+        var formatted = McpResponseFormatter.Format(
+            $"nextAction: {nextAction}\n[INFO]: {visibleMessage}",
+            maxResponseBytes,
+            maxResponseTokens,
+            responsePrefix: LoadingStatusPrefix);
+        if (formatted.ErrorCode is not null)
+        {
+            return BudgetTooSmall(formatted, maxResponseBytes, maxResponseTokens);
+        }
+
+        if (formatted.IsTruncated && !formatted.Text.Contains($"nextAction: {nextAction}", StringComparison.Ordinal))
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxResponseBytes), "The response budget cannot represent the loading retry instruction.");
+        }
+
+        return Create(formatted.Text, isError: false);
     }
 
-    internal static CallToolResult BudgetTooSmall(McpResponseFormatResult result)
+    internal static CallToolResult BudgetTooSmall(
+        McpResponseFormatResult result,
+        int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
+        int? maxResponseTokens = null)
     {
         ArgumentNullException.ThrowIfNull(result);
         if (!string.Equals(result.ErrorCode, "RESPONSE_BUDGET_TOO_SMALL", StringComparison.Ordinal))
@@ -119,24 +135,79 @@ internal static class McpToolResults
             throw new ArgumentException("The response must carry RESPONSE_BUDGET_TOO_SMALL.", nameof(result));
         }
 
-        if (!result.Text.StartsWith(ErrorStatusPrefix, StringComparison.Ordinal))
+        if (result.Text.StartsWith(ErrorStatusPrefix, StringComparison.Ordinal)
+            && result.Utf8Bytes <= maxResponseBytes
+            && (maxResponseTokens is null || result.TokenCount <= maxResponseTokens.Value))
         {
-            throw new ArgumentException("The budget error must contain the standard error status block.", nameof(result));
+            return Create(result.Text, isError: true);
         }
 
-        return Create(result.Text, isError: true);
-    }
-
-    private static CallToolResult FormatFailure(string body, int maxResponseBytes, int? maxResponseTokens)
-    {
-        var formatted = McpResponseFormatter.Format(
+        var body = string.Join("\n",
+            result.ErrorCode,
+            $"minimumResponseBytes: {result.MinimumResponseBytes}",
+            $"minimumResponseTokens: {result.MinimumResponseTokens}",
+            result.RecoveryHint);
+        var error = McpResponseFormatter.Format(
             body,
             maxResponseBytes,
             maxResponseTokens,
             responsePrefix: ErrorStatusPrefix);
-        return formatted.ErrorCode is not null
-            ? BudgetTooSmall(formatted)
-            : Create(formatted.Text, isError: true);
+        if (error.IsTruncated)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxResponseBytes), "The response budget cannot represent the complete budget error envelope.");
+        }
+
+        return Create(error.Text, isError: true);
+    }
+
+    private static CallToolResult FormatFailure(
+        string requiredBody,
+        string? optionalContext,
+        int maxResponseBytes,
+        int? maxResponseTokens)
+    {
+        var required = McpResponseFormatter.Format(
+            requiredBody,
+            maxResponseBytes,
+            maxResponseTokens,
+            responsePrefix: ErrorStatusPrefix);
+        if (required.ErrorCode is not null)
+        {
+            return BudgetTooSmall(required, maxResponseBytes, maxResponseTokens);
+        }
+
+        if (required.IsTruncated)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxResponseBytes), "The response budget cannot represent all required error fields.");
+        }
+
+        if (string.IsNullOrWhiteSpace(optionalContext))
+        {
+            return Create(required.Text, isError: true);
+        }
+
+        var withContext = McpResponseFormatter.Format(
+            $"{requiredBody}\ncontext: {optionalContext}",
+            maxResponseBytes,
+            maxResponseTokens,
+            responsePrefix: ErrorStatusPrefix);
+        var requiredLastLine = requiredBody[(requiredBody.LastIndexOf('\n') + 1)..];
+        if (withContext.ErrorCode is not null
+            || withContext.IsTruncated && !withContext.Text.Contains(requiredLastLine, StringComparison.Ordinal))
+        {
+            return Create(required.Text, isError: true);
+        }
+
+        return Create(withContext.Text, isError: true);
+    }
+
+    private static string LimitLoadingMessage(string message)
+    {
+        const int maxRunes = 64;
+        var runes = message.EnumerateRunes().Take(maxRunes + 1).ToArray();
+        return runes.Length <= maxRunes
+            ? message
+            : string.Concat(runes.Take(maxRunes).Select(static rune => rune.ToString())) + "…";
     }
 
     private static CallToolResult Create(string text, bool isError, JsonElement? structuredContent = null) => new()
