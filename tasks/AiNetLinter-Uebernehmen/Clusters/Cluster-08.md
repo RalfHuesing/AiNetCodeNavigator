@@ -37,4 +37,5 @@
   - [x] Audit 1 P2 (accepted in audit 3/3): Resolve precise safe required-field paths inside inline/reference dictionary values and preserve unsafe-ancestor fallback.
   - [x] Audit 2 P2 (accepted in audit 3/3): Match SDK wire names using SDK parameter semantics through referenced/composed roots without implicit naming-policy renames.
 - [ ] 8.5 Einheitlichen öffentlichen Fehler- und Fortsetzungsvertrag pro Tool testen: `IsError`, Retry bei noch ladendem Target, `RESPONSE_BUDGET_TOO_SMALL`, `minimumResponseBytes`, stabile Pagination und Eingabegrenzen dürfen weder partielle Erfolge vortäuschen noch Daten still verlieren.
-  - [ ] Review/Audit zu 8.5 durchführen; Findings ergänzen und umsetzen.
+  - [ ] Review/Audit zu 8.5 durchführen; Findings ergänzen und umsetzen (audit 1 pending; public per-tool verification depends on Cluster 9.2 registrations).
+  - [ ] After 9.2, verify each registered public tool's success/error status, loading and cancellation retry, response-budget recovery, structured/domain truncation, stable pagination, and input bounds through the actual host path.
