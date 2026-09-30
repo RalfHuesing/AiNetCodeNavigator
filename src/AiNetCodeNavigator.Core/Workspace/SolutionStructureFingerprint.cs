@@ -53,6 +53,11 @@ internal static class SolutionStructureFingerprint
                 AddHashedFile(inputs, importPath);
             }
 
+            foreach (var potentialImportPath in structureInputs.PotentialImportPaths)
+            {
+                AddHashedFile(inputs, potentialImportPath);
+            }
+
             foreach (var globRoot in structureInputs.CompileGlobRoots)
             {
                 AddSourceFilesUnderRoot(inputs, globRoot);

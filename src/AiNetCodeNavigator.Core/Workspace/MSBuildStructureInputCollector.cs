@@ -12,6 +12,7 @@ namespace AiNetCodeNavigator.Core.Workspace;
 
 internal sealed record SolutionStructureInputs(
     IReadOnlyCollection<string> ImportedFiles,
+    IReadOnlyCollection<string> PotentialImportPaths,
     IReadOnlyCollection<string> CompileGlobRoots);
 
 /// <summary>
@@ -23,6 +24,7 @@ internal static class MSBuildStructureInputCollector
     {
         MSBuildSolutionLoader.EnsureMSBuildRegistered();
         var importedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var potentialImportPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var compileGlobRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var projectPaths = solution.Projects
             .Select(project => project.FilePath)
@@ -45,9 +47,10 @@ internal static class MSBuildStructureInputCollector
                 }
             }
 
-            var projectFiles = importedProjectFiles.Append(project.Xml);
+            var projectFiles = importedProjectFiles.Append(project.Xml).Distinct();
             foreach (var projectFile in projectFiles)
             {
+                AddPotentialImportPaths(project, projectFile, potentialImportPaths);
                 AddCompileGlobRoots(project, projectFile, compileGlobRoots);
             }
         }
@@ -55,8 +58,52 @@ internal static class MSBuildStructureInputCollector
         collection.UnloadAllProjects();
         return new SolutionStructureInputs(
             importedFiles.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+            potentialImportPaths.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
             compileGlobRoots.Order(StringComparer.OrdinalIgnoreCase).ToArray());
     }
+
+    private static void AddPotentialImportPaths(
+        Microsoft.Build.Evaluation.Project evaluatedProject,
+        ProjectRootElement projectFile,
+        ISet<string> paths)
+    {
+        foreach (var import in projectFile.Children.OfType<ProjectImportElement>())
+        {
+            var containingDirectory = Path.TrimEndingDirectorySeparator(import.ContainingProject.DirectoryPath);
+            var importExpression = import.Project
+                .Replace("$(MSBuildThisFileDirectory)", containingDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                .Replace("$(MSBuildThisFileFullPath)", import.ContainingProject.FullPath, StringComparison.OrdinalIgnoreCase);
+            var expandedImports = evaluatedProject.ExpandString(importExpression);
+            if (ContainsUnexpandedExpression(expandedImports))
+            {
+                continue;
+            }
+
+            foreach (var importPath in expandedImports.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                // Track exact declared paths. Wildcard imports need a separate bounded pattern strategy;
+                // treating them as a directory scan here could watch unrelated files.
+                if (importPath.IndexOfAny(['*', '?']) >= 0)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    paths.Add(Path.GetFullPath(importPath, containingDirectory));
+                }
+                catch (ArgumentException)
+                {
+                    // An unresolved or invalid optional import must not make an otherwise loaded solution fail.
+                }
+            }
+        }
+    }
+
+    private static bool ContainsUnexpandedExpression(string value) =>
+        value.Contains("$(", StringComparison.Ordinal)
+        || value.Contains("@(", StringComparison.Ordinal)
+        || value.Contains("%(", StringComparison.Ordinal);
 
     private static void AddCompileGlobRoots(
         Microsoft.Build.Evaluation.Project evaluatedProject,
