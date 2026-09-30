@@ -230,3 +230,19 @@ A later FastTests rerun transiently failed in the unrelated `HandoffHandleRegist
 - **P2 — Handle-like input bypasses typed validation in two source consumers.** `HandoffHandleRegistry.RestoreInternalHandoffForInput` recognizes the `h:` prefix without regard to case and rejects an invalid uppercase `H:` handle with `INVALID_HANDOFF` (`src/AiNetCodeNavigator.Core/Symbols/HandoffHandleRegistry.cs:124-136`). `FeatureContextScanner.ResolveSymbolResultAsync` and `ClassStructureScanner.ResolveTypeSymbolResultAsync` only dispatch exact lowercase `h:` or `i:` prefixes to `SourceHandoffResolver` (`src/AiNetCodeNavigator.Core/Symbols/FeatureContextScanner.cs:96-105`; `src/AiNetCodeNavigator.Core/Symbols/ClassStructureScanner.cs:99-108`). An input such as `H:a` therefore enters semantic-name lookup and can return an empty result instead of the registry's typed error. **Reproduction/acceptance:** Pass `H:a` to both scanner consumers and assert `INVALID_HANDOFF`; align prefix routing with registry validation while preserving genuine Windows drive paths such as `H:\\repo\\file.cs`. Also verify normal `h:` source roundtrips still resolve.
 - **P1 existing local blocker — Assembly consumer/session.** `inspect_assembly` advertises canonical Assembly handoffs but has no resident Assembly resolver and follow-up session yet. This remains the Cluster 7 dependency described in the point 3.3 audit, not a new point-audit finding. Keep the point 3.3 implementation checkbox open until the advertised follow-up roundtrips and unknown/foreign/stale errors pass through the Assembly consumer.
 - **Review outcome:** One new P2 integration finding is open. The Assembly P1 remains open as local technical debt. Point-audit counts and closed audit checkboxes stay unchanged. The only gate for this documentation-only review is `git diff --check` before commit; no product gate is claimed.
+
+### Cluster Integration Review 1 Fix
+
+- Base: `244bec9ef6ba8230955b32fdb0191923dbe42d53` (clean working tree). The reproduction test failed before the fix: both source consumers returned `null` for `H:unknown99` instead of a typed handoff error.
+- `InputNormalizer.HasOpaqueHandoffPrefix` now recognizes the registry's case-insensitive `h:` candidate prefix, while excluding drive paths whose third character is `\` or `/`. Feature context and class structure route such candidates through `SourceHandoffResolver`; the registry returns `INVALID_HANDOFF` for uppercase wire prefixes. Genuine Windows paths retain semantic lookup behavior.
+- Regression tests cover `H:unknown99` returning `INVALID_HANDOFF` in both scanners and `H:\repo\file.cs` continuing to return no semantic match without a handoff error. Existing lowercase source-handle roundtrip coverage remains in place.
+- **Review outcome:** The P2 integration finding is resolved. The Cluster 7 Assembly consumer/session blocker remains open, and the 3.3 point-audit count remains at three; this is an integration fix, not a fourth point audit.
+
+| Gate | Result |
+|---|---|
+| Focused uppercase-prefix and drive-path regression tests | Passed, 3/3 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 267/267 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 279/279 across both test projects |
+| `git diff --check` | Passed before commit |

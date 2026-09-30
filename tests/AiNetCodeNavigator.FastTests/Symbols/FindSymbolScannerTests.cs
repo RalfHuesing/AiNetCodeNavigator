@@ -93,6 +93,38 @@ public sealed class FindSymbolScannerTests
     }
 
     [Fact]
+    public async Task FeatureAndClassScanners_RejectUppercaseHandoffPrefixAsMalformed()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+
+        var featureContext = await FeatureContextScanner.ScanAsync(
+            new FeatureContextRequest(fixture.Solution, "H:unknown99"));
+        Assert.NotNull(featureContext);
+        Assert.NotNull(featureContext!.Error);
+        Assert.Equal(NavigationErrorCodes.InvalidHandoff, featureContext.Error!.Value.Code);
+
+        var classStructure = await ClassStructureScanner.ScanAsync(
+            new ClassStructureScanRequest(fixture.Solution, "H:unknown99"));
+        Assert.NotNull(classStructure);
+        Assert.NotNull(classStructure!.Error);
+        Assert.Equal(NavigationErrorCodes.InvalidHandoff, classStructure.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task FeatureAndClassScanners_DoNotTreatWindowsDrivePathsAsHandoffHandles()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+
+        var featureContext = await FeatureContextScanner.ScanAsync(
+            new FeatureContextRequest(fixture.Solution, @"H:\repo\file.cs"));
+        Assert.Null(featureContext);
+
+        var classStructure = await ClassStructureScanner.ScanAsync(
+            new ClassStructureScanRequest(fixture.Solution, @"H:\repo\file.cs"));
+        Assert.Null(classStructure);
+    }
+
+    [Fact]
     public async Task FindMatchesWithDetailsAsync_RejectsPublicSourceIdentityForAnotherTarget()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();

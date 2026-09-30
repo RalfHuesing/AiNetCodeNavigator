@@ -95,7 +95,7 @@ public static class FeatureContextScanner
     {
         var cleanId = InputNormalizer.NormalizeSymbolIdentifier(symbolIdentifier);
 
-        if (cleanId.StartsWith("h:", StringComparison.Ordinal) || cleanId.StartsWith("i:", StringComparison.Ordinal))
+        if (InputNormalizer.HasOpaqueHandoffPrefix(cleanId) || cleanId.StartsWith("i:", StringComparison.Ordinal))
         {
             if (identity is null)
             {
