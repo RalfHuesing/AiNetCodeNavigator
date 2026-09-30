@@ -308,3 +308,22 @@
 
 - Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
 - The documentation diff was inspected and `git diff --check` passed before commit.
+
+## Point 5.5 implementation
+
+- Compared the Core scanner with AiNetLinter's `DependencyGraphScanner`, dependency graph tool/result contract, and scanner tests through read-only symbol/source inspection. AiNetLinter reports source-backed dependencies, distinguishes project/file context, excludes external metadata noise, and communicates bounded/paginated results. The Core scanner remains a solution-wide snapshot without tool-level file/type direction, scope filters, or handoffs.
+- Added a before-fix regression with two project assemblies declaring the same `Shared.Models.Widget`: both consumer edges previously resolved to `ContractsTwo/WidgetTwo.cs` because the scanner keyed declarations by display string. The fixed scanner keys by Roslyn symbol identity and carries source/target project names on namespace and file edges. Partial source types use their lexically first declaration file as their representative.
+- Added coverage for external framework type filtering, independent relationship paging and totals, document limits and completeness, page-size clamping, and invalid offsets. The result now exposes per-collection totals/continuation state, scanned/total document counts, clamp metadata, and recoverable document errors. Hard bounds are 500 relationships per page and 1000 documents per scan.
+- Updated [Dependency Graph Core Scanner](../../../docs/navigation/dependency-graph.md). The 5.5 audit checkbox remains open for independent review.
+
+### Implementation verification
+
+| Gate | Result |
+|---|---|
+| Before-fix same-FQN cross-project regression | Failed as expected: both consumers pointed to ContractsTwo |
+| Focused DependencyGraphScanner FastTests after fix | Passed, 6/6 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 376/376 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 388/388 across both test projects |
+| `git diff --check` | Passed before commit |

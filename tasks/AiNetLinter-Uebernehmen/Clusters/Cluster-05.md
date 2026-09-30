@@ -34,6 +34,9 @@
 - [x] 5.5 Projekt- & Namespace-Abhängigkeiten (`dependency_graph`-Engine):
   - [x] `DependencyGraphScanner`: Projektabhängigkeiten und Namespace-Referenzen
   - [x] FastTests für Dependency-Graphen
+  - [x] Source-Typen über Roslyn-Symbolidentität auflösen und Kanten mit Projektgrenzen ausgeben.
+  - [x] Dokumente begrenzen, Beziehungssammlungen paginieren und unvollständige Scans kenntlich machen.
+  - [x] Validierungs- und Dokumentfehler als dokumentierten Core-Vertrag abbilden.
   - [ ] Review/Audit zu 5.5 durchführen; Findings ergänzen und umsetzen.
 - [ ] 5.6 Beziehungen über ein gemeinsames Test-Szenario prüfen: Aufrufe, Referenzen, Overrides, Interface-Implementierungen und transitive Auswirkungen über mehrere Projekte hinweg mit identischer Semantik und stabilen Handoffs testen; Grenzen und Kürzungen der Ergebnisse ausgeben.
   - [ ] Review/Audit zu 5.6 durchführen; Findings ergänzen und umsetzen.

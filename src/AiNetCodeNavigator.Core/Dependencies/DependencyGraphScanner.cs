@@ -17,132 +17,156 @@ namespace AiNetCodeNavigator.Core.Dependencies;
 /// </summary>
 public static class DependencyGraphScanner
 {
+    public const int MaximumPageSize = 500;
+    public const int MaximumDocuments = 1000;
+
     public static async Task<DependencyGraphPayload> ScanSolutionAsync(
         Solution solution,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        DependencyGraphScanOptions? options = null)
     {
+        ArgumentNullException.ThrowIfNull(solution);
+        options ??= new DependencyGraphScanOptions();
+        if (options.Offset < 0) throw new ArgumentOutOfRangeException(nameof(options), "Offset must be zero or greater.");
+        if (options.PageSize < 1) throw new ArgumentOutOfRangeException(nameof(options), "PageSize must be at least one.");
+        if (options.MaxDocuments < 1) throw new ArgumentOutOfRangeException(nameof(options), "MaxDocuments must be at least one.");
+
+        var pageSize = Math.Min(options.PageSize, MaximumPageSize);
+        var maxDocuments = Math.Min(options.MaxDocuments, MaximumDocuments);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
+        var allDocuments = solution.Projects
+            .OrderBy(project => project.Name, StringComparer.Ordinal)
+            .ThenBy(project => project.Id.Id)
+            .SelectMany(project => project.Documents
+                .OrderBy(document => document.FilePath ?? document.Name, StringComparer.Ordinal)
+                .Select(document => (Project: project, Document: document)))
+            .ToList();
+        var documents = allDocuments.Take(maxDocuments).ToList();
+        var errors = new List<DependencyGraphScanError>();
 
-        // 1. Project Dependencies
-        var projectDeps = new List<ProjectDependency>();
-        foreach (var project in solution.Projects)
-        {
-            foreach (var pref in project.ProjectReferences)
+        var projectDeps = solution.Projects
+            .SelectMany(project => project.ProjectReferences.Select(reference =>
             {
-                var targetProj = solution.GetProject(pref.ProjectId);
-                if (targetProj != null)
-                {
-                    projectDeps.Add(new ProjectDependency(project.Name, targetProj.Name));
-                }
-            }
-        }
+                var target = solution.GetProject(reference.ProjectId);
+                return target is null ? null : new ProjectDependency(project.Name, target.Name);
+            }))
+            .Where(dependency => dependency is not null)
+            .Cast<ProjectDependency>()
+            .Distinct()
+            .OrderBy(dependency => dependency.FromProject, StringComparer.Ordinal)
+            .ThenBy(dependency => dependency.ToProject, StringComparer.Ordinal)
+            .ToList();
 
-        // 2. Namespace & File Dependencies
-        var nsMap = new Dictionary<(string From, string To), HashSet<string>>();
-        var fileMap = new Dictionary<(string From, string To), HashSet<string>>();
+        var nsMap = new Dictionary<(string FromProject, string From, string ToProject, string To), HashSet<string>>();
+        var fileMap = new Dictionary<(string FromProject, string From, string ToProject, string To), HashSet<string>>();
 
-        // Collect all types declared in this solution to exclude BCL noise
-        var solutionTypes = new Dictionary<string, (string Namespace, string FilePath)>(StringComparer.Ordinal);
-        foreach (var project in solution.Projects)
+        // Roslyn symbols retain assembly identity, unlike display strings. This keeps
+        // same-named types from separate project assemblies mapped to their own files.
+        var solutionTypes = new Dictionary<ISymbol, TypeLocation>(SymbolEqualityComparer.Default);
+        foreach (var (project, doc) in documents)
         {
             ct.ThrowIfCancellationRequested();
             var compilation = await project.GetCompilationAsync(ct).ConfigureAwait(false);
-            if (compilation is null) continue;
-
-            foreach (var doc in project.Documents)
+            if (compilation is null)
             {
-                var syntaxTree = await doc.GetSyntaxTreeAsync(ct).ConfigureAwait(false);
-                if (syntaxTree is null) continue;
-                var semanticModel = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false);
-                if (semanticModel is null) continue;
+                errors.Add(new DependencyGraphScanError(project.Name, doc.Name, "Compilation was unavailable."));
+                continue;
+            }
 
-                var root = await syntaxTree.GetRootAsync(ct).ConfigureAwait(false);
-                var relPath = PathNormalizer.ToRelative(solutionDir, doc.FilePath ?? doc.Name);
+            var syntaxTree = await doc.GetSyntaxTreeAsync(ct).ConfigureAwait(false);
+            if (syntaxTree is null)
+            {
+                errors.Add(new DependencyGraphScanError(project.Name, doc.Name, "Source was unavailable."));
+                continue;
+            }
 
-                foreach (var typeDecl in root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>())
+            var model = compilation.GetSemanticModel(syntaxTree);
+            var root = await syntaxTree.GetRootAsync(ct).ConfigureAwait(false);
+            var relPath = PathNormalizer.ToRelative(solutionDir, doc.FilePath ?? doc.Name);
+            foreach (var typeDecl in root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>())
+            {
+                if (model.GetDeclaredSymbol(typeDecl, ct) is not INamedTypeSymbol namedType) continue;
+                var key = namedType.OriginalDefinition;
+                var namespaceName = namedType.ContainingNamespace?.ToDisplayString() ?? string.Empty;
+                var candidate = new TypeLocation(project.Name, namespaceName, relPath);
+                if (!solutionTypes.TryGetValue(key, out var current) ||
+                    string.CompareOrdinal(candidate.FilePath, current.FilePath) < 0)
                 {
-                    var symbol = semanticModel.GetDeclaredSymbol(typeDecl, ct);
-                    if (symbol is INamedTypeSymbol nts)
-                    {
-                        var ns = nts.ContainingNamespace?.ToDisplayString() ?? string.Empty;
-                        solutionTypes[nts.ToDisplayString()] = (ns, relPath);
-                    }
+                    solutionTypes[key] = candidate;
                 }
             }
         }
 
-        // Now scan type usages in documents
-        foreach (var project in solution.Projects)
+        foreach (var (project, doc) in documents)
         {
             ct.ThrowIfCancellationRequested();
-            foreach (var doc in project.Documents)
+            var compilation = await project.GetCompilationAsync(ct).ConfigureAwait(false);
+            var syntaxTree = await doc.GetSyntaxTreeAsync(ct).ConfigureAwait(false);
+            if (compilation is null || syntaxTree is null) continue;
+            var model = compilation.GetSemanticModel(syntaxTree);
+            var root = await syntaxTree.GetRootAsync(ct).ConfigureAwait(false);
+            var currentFilePath = PathNormalizer.ToRelative(solutionDir, doc.FilePath ?? doc.Name);
+
+            foreach (var node in root.DescendantNodes().OfType<IdentifierNameSyntax>())
             {
-                ct.ThrowIfCancellationRequested();
-                var syntaxTree = await doc.GetSyntaxTreeAsync(ct).ConfigureAwait(false);
-                if (syntaxTree is null) continue;
-                var semanticModel = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false);
-                if (semanticModel is null) continue;
+                var typeSymbol = model.GetTypeInfo(node, ct).Type as INamedTypeSymbol;
+                if (typeSymbol is null || !solutionTypes.TryGetValue(typeSymbol.OriginalDefinition, out var targetInfo)) continue;
+                var enclosingSymbol = model.GetEnclosingSymbol(node.SpanStart, ct);
+                var currentNamespace = enclosingSymbol?.ContainingNamespace?.ToDisplayString() ?? string.Empty;
 
-                var root = await syntaxTree.GetRootAsync(ct).ConfigureAwait(false);
-                var currentFilePath = PathNormalizer.ToRelative(solutionDir, doc.FilePath ?? doc.Name);
-
-                foreach (var node in root.DescendantNodes().OfType<IdentifierNameSyntax>())
+                if (!string.IsNullOrEmpty(currentNamespace) && !string.IsNullOrEmpty(targetInfo.Namespace) && currentNamespace != targetInfo.Namespace)
                 {
-                    var typeInfo = semanticModel.GetTypeInfo(node, ct);
-                    var typeSymbol = typeInfo.Type as INamedTypeSymbol;
-                    if (typeSymbol is null) continue;
+                    var key = (project.Name, currentNamespace, targetInfo.ProjectName, targetInfo.Namespace);
+                    if (!nsMap.TryGetValue(key, out var types)) nsMap[key] = types = new HashSet<string>(StringComparer.Ordinal);
+                    types.Add(typeSymbol.Name);
+                }
 
-                    var displayString = typeSymbol.ToDisplayString();
-                    if (!solutionTypes.TryGetValue(displayString, out var targetInfo))
-                    {
-                        continue;
-                    }
-
-                    var enclosingSymbol = semanticModel.GetEnclosingSymbol(node.SpanStart);
-                    var currentNs = enclosingSymbol?.ContainingNamespace?.ToDisplayString() ?? string.Empty;
-
-                    // Namespace edge
-                    if (!string.IsNullOrEmpty(currentNs) && !string.IsNullOrEmpty(targetInfo.Namespace) && currentNs != targetInfo.Namespace)
-                    {
-                        var nsKey = (currentNs, targetInfo.Namespace);
-                        if (!nsMap.TryGetValue(nsKey, out var types))
-                        {
-                            types = new HashSet<string>(StringComparer.Ordinal);
-                            nsMap[nsKey] = types;
-                        }
-                        types.Add(typeSymbol.Name);
-                    }
-
-                    // File edge
-                    if (!string.IsNullOrEmpty(currentFilePath) && !string.IsNullOrEmpty(targetInfo.FilePath) && currentFilePath != targetInfo.FilePath)
-                    {
-                        var fileKey = (currentFilePath, targetInfo.FilePath);
-                        if (!fileMap.TryGetValue(fileKey, out var fileTypes))
-                        {
-                            fileTypes = new HashSet<string>(StringComparer.Ordinal);
-                            fileMap[fileKey] = fileTypes;
-                        }
-                        fileTypes.Add(typeSymbol.Name);
-                    }
+                if (!string.IsNullOrEmpty(currentFilePath) && !string.IsNullOrEmpty(targetInfo.FilePath) &&
+                    (project.Name != targetInfo.ProjectName || currentFilePath != targetInfo.FilePath))
+                {
+                    var key = (project.Name, currentFilePath, targetInfo.ProjectName, targetInfo.FilePath);
+                    if (!fileMap.TryGetValue(key, out var types)) fileMap[key] = types = new HashSet<string>(StringComparer.Ordinal);
+                    types.Add(typeSymbol.Name);
                 }
             }
         }
 
-        var namespaceDeps = nsMap
-            .OrderBy(kv => kv.Key.From, StringComparer.Ordinal)
-            .ThenBy(kv => kv.Key.To, StringComparer.Ordinal)
-            .Select(kv => new NamespaceDependency(kv.Key.From, kv.Key.To, kv.Value.OrderBy(t => t, StringComparer.Ordinal).ToList()))
+        var allNamespaceDeps = nsMap
+            .OrderBy(pair => pair.Key.FromProject, StringComparer.Ordinal).ThenBy(pair => pair.Key.From, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Key.ToProject, StringComparer.Ordinal).ThenBy(pair => pair.Key.To, StringComparer.Ordinal)
+            .Select(pair => new NamespaceDependency(pair.Key.From, pair.Key.To,
+                pair.Value.OrderBy(type => type, StringComparer.Ordinal).ToList(), pair.Key.FromProject, pair.Key.ToProject))
+            .ToList();
+        var allFileDeps = fileMap
+            .OrderBy(pair => pair.Key.FromProject, StringComparer.Ordinal).ThenBy(pair => pair.Key.From, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Key.ToProject, StringComparer.Ordinal).ThenBy(pair => pair.Key.To, StringComparer.Ordinal)
+            .Select(pair => new FileDependency(pair.Key.From, pair.Key.To,
+                pair.Value.OrderBy(type => type, StringComparer.Ordinal).ToList(), pair.Key.FromProject, pair.Key.ToProject))
             .ToList();
 
-        var fileDeps = fileMap
-            .OrderBy(kv => kv.Key.From, StringComparer.Ordinal)
-            .ThenBy(kv => kv.Key.To, StringComparer.Ordinal)
-            .Select(kv => new FileDependency(kv.Key.From, kv.Key.To, kv.Value.OrderBy(t => t, StringComparer.Ordinal).ToList()))
-            .ToList();
-
+        var pagedProjects = Page(projectDeps, options.Offset, pageSize);
+        var pagedNamespaces = Page(allNamespaceDeps, options.Offset, pageSize);
+        var pagedFiles = Page(allFileDeps, options.Offset, pageSize);
+        var documentLimitReached = allDocuments.Count > documents.Count;
         return new DependencyGraphPayload(
-            ProjectDependencies: projectDeps,
-            NamespaceDependencies: namespaceDeps,
-            FileDependencies: fileDeps);
+            ProjectDependencies: pagedProjects,
+            NamespaceDependencies: pagedNamespaces,
+            FileDependencies: pagedFiles,
+            TotalProjectDependencyCount: projectDeps.Count,
+            TotalNamespaceDependencyCount: allNamespaceDeps.Count,
+            TotalFileDependencyCount: allFileDeps.Count,
+            Offset: options.Offset,
+            PageSize: pageSize,
+            ScannedDocumentCount: documents.Count,
+            TotalDocumentCount: allDocuments.Count,
+            DocumentLimitReached: documentLimitReached,
+            PageSizeWasClamped: pageSize != options.PageSize,
+            DocumentLimitWasClamped: maxDocuments != options.MaxDocuments,
+            Errors: errors);
     }
+
+    private static IReadOnlyList<T> Page<T>(IReadOnlyList<T> items, int offset, int pageSize) =>
+        items.Skip(offset).Take(pageSize).ToList();
+
+    private sealed record TypeLocation(string ProjectName, string Namespace, string FilePath);
 }
