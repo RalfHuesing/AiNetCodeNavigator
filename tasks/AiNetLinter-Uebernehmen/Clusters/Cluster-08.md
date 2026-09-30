@@ -30,11 +30,11 @@
 - [ ] 8.4 Argument-Validierung:
   - [x] `McpArgumentValidationFilter`: Schema- und Eingabevalidierung für registrierte SDK-Tools
   - [x] FastTests mit SDK-Stream-Fixture für Schema, Budgeting, Formatting und Validierung
-  - [ ] Review/Audit zu 8.4 durchführen; Findings ergänzen und umsetzen (audit 2/3: two P2 cases remain open).
+  - [ ] Review/Audit zu 8.4 durchführen; Findings ergänzen und umsetzen (audit 3/3 pending after audit-2 remediation).
   - [x] Audit 1 P2 (accepted in audit 2/3): Reject unknown top-level keys for referenced/composed root schemas.
   - [x] Audit 1 P2 (explicit rename accepted in audit 2/3): Match SDK-advertised parameter names in binding compatibility checks.
   - [x] Audit 1 P2 (accepted in audit 2/3): Apply error budgets and protocol fallback to unavailable schema responses.
-  - [ ] Audit 1 P2 (still open after audit 2/3): Resolve precise safe required-field paths inside inline/reference dictionary values and preserve unsafe-ancestor fallback.
-  - [ ] Audit 2 P2: Match SDK wire names through referenced/composed roots without implicit naming-policy renames.
+  - [x] Audit 1 P2 (remediated after audit 2/3; audit 3/3 pending): Resolve precise safe required-field paths inside inline/reference dictionary values and preserve unsafe-ancestor fallback.
+  - [x] Audit 2 P2 (remediated; audit 3/3 pending): Match SDK wire names using SDK parameter semantics through referenced/composed roots without implicit naming-policy renames.
 - [ ] 8.5 Einheitlichen öffentlichen Fehler- und Fortsetzungsvertrag pro Tool testen: `IsError`, Retry bei noch ladendem Target, `RESPONSE_BUDGET_TOO_SMALL`, `minimumResponseBytes`, stabile Pagination und Eingabegrenzen dürfen weder partielle Erfolge vortäuschen noch Daten still verlieren.
   - [ ] Review/Audit zu 8.5 durchführen; Findings ergänzen und umsetzen.

@@ -1,6 +1,7 @@
 using System.IO.Pipelines;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Mcp.Formatting;
@@ -268,13 +269,63 @@ public sealed class McpArgumentValidationFilterTests
         await using var session = await FixtureSession.StartAsync(
             CreateTool((Func<int, string>)ArgumentValidationFixtureTool.Renamed));
 
-        var invalid = await session.CallAsync(new Dictionary<string, object?> { ["sequence_value"] = 2_147_483_648L });
-
-        AssertInvalidArgument(invalid, "$.sequence_value");
-        Assert.Equal(0, ArgumentValidationFixtureTool.InvocationCount);
+        var invalidValues = new object?[]
+        {
+            1.5,
+            JsonDocument.Parse("3.0").RootElement.Clone(),
+            JsonDocument.Parse("1e3").RootElement.Clone(),
+            long.MaxValue,
+        };
+        foreach (var invalidValue in invalidValues)
+        {
+            var invalid = await session.CallAsync(new Dictionary<string, object?> { ["sequence_value"] = invalidValue });
+            AssertInvalidArgument(invalid, "$.sequence_value");
+            Assert.Equal(0, ArgumentValidationFixtureTool.InvocationCount);
+        }
 
         var valid = await session.CallAsync(new Dictionary<string, object?> { ["sequence_value"] = 2_147_483_647 });
         Assert.NotEqual(true, valid.IsError);
+        Assert.Equal(1, ArgumentValidationFixtureTool.InvocationCount);
+    }
+
+    [Fact]
+    public async Task RegisteredSdkTool_UsesClrParameterNameWithCamelCaseSerializerAndReferencedSchemas()
+    {
+        ArgumentValidationFixtureTool.Reset();
+        var serializerOptions = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
+        };
+        var tool = CreateTool(
+            (Func<int, string>)ArgumentValidationFixtureTool.CamelCaseSequence,
+            serializerOptions: serializerOptions);
+        Assert.Contains("Sequence", tool.ProtocolTool.InputSchema.GetRawText(), StringComparison.Ordinal);
+        using (var referencedSchema = JsonDocument.Parse(
+            "{\"type\":\"object\",\"$ref\":\"#/$defs/input\",\"$defs\":{\"input\":{\"type\":\"object\",\"properties\":{\"Sequence\":{\"type\":\"integer\"}},\"required\":[\"Sequence\"]}}}"))
+        {
+            tool.ProtocolTool.InputSchema = referencedSchema.RootElement.Clone();
+        }
+
+        await using (var session = await FixtureSession.StartAsync(tool))
+        {
+            var invalid = await session.CallAsync(new Dictionary<string, object?> { ["Sequence"] = 2_147_483_648L });
+            AssertInvalidArgument(invalid, "$.Sequence");
+            Assert.Equal(0, ArgumentValidationFixtureTool.InvocationCount);
+
+            var valid = await session.CallAsync(new Dictionary<string, object?> { ["Sequence"] = 2_147_483_647 });
+            Assert.NotEqual(true, valid.IsError);
+            Assert.Equal(1, ArgumentValidationFixtureTool.InvocationCount);
+        }
+
+        var composedTool = CreateTool(
+            (Func<int, string>)ArgumentValidationFixtureTool.CamelCaseSequence,
+            "{\"type\":\"object\",\"allOf\":[{\"$ref\":\"#/$defs/input\"}],\"$defs\":{\"input\":{\"type\":\"object\",\"properties\":{\"Sequence\":{\"type\":\"integer\"}},\"required\":[\"Sequence\"]}}}",
+            serializerOptions);
+        await using var composedSession = await FixtureSession.StartAsync(composedTool);
+
+        var composedInvalid = await composedSession.CallAsync(new Dictionary<string, object?> { ["Sequence"] = 2_147_483_648L });
+        AssertInvalidArgument(composedInvalid, "$.Sequence");
         Assert.Equal(1, ArgumentValidationFixtureTool.InvocationCount);
     }
 
@@ -320,6 +371,63 @@ public sealed class McpArgumentValidationFilterTests
     public async Task RegisteredSdkTool_ReportsRequiredPathsInsideDictionaryAndArrayValues()
     {
         ArgumentValidationFixtureTool.Reset();
+        var inlineObjectSchema = """
+            {
+              "type":"object",
+              "properties":{"options":{"type":"object","additionalProperties":{"type":"object","properties":{"label":{"type":"string"}},"required":["label"]}}},
+              "required":["options"]
+            }
+            """;
+        var inlineObjectTool = CreateTool(
+            (Func<Dictionary<string, ArgumentValidationFixtureTool.FixtureOptions>, string>)ArgumentValidationFixtureTool.DictionaryObject,
+            inlineObjectSchema);
+        await using (var inlineObjectSession = await FixtureSession.StartAsync(inlineObjectTool))
+        {
+            var inlineMissingField = await inlineObjectSession.CallAsync(new Dictionary<string, object?>
+            {
+                ["options"] = new Dictionary<string, object?> { ["first"] = new { } },
+            });
+            AssertInvalidArgument(inlineMissingField, "$.options.first.label");
+
+            var repeatedNames = await inlineObjectSession.CallAsync(new Dictionary<string, object?>
+            {
+                ["options"] = new Dictionary<string, object?> { ["label"] = new { } },
+            });
+            AssertInvalidArgument(repeatedNames, "$.options.label.label");
+
+            foreach (var unsafeKeyName in new[] { "a.b", "raw/key", "", "unsafe key" })
+            {
+                var unsafePath = await inlineObjectSession.CallAsync(new Dictionary<string, object?>
+                {
+                    ["options"] = new Dictionary<string, object?> { [unsafeKeyName] = new { } },
+                });
+                AssertInvalidArgument(unsafePath, "$");
+                Assert.DoesNotContain("$.label", TextOf(unsafePath), StringComparison.Ordinal);
+                if (unsafeKeyName.Length > 0)
+                {
+                    Assert.DoesNotContain(unsafeKeyName, TextOf(unsafePath), StringComparison.Ordinal);
+                }
+            }
+        }
+
+        var inlineArrayTool = CreateTool(
+            (Func<Dictionary<string, List<ArgumentValidationFixtureTool.FixtureOptions>>, string>)ArgumentValidationFixtureTool.DictionaryArray,
+            """
+            {
+              "type":"object",
+              "properties":{"options":{"type":"object","additionalProperties":{"type":"array","items":{"type":"object","properties":{"label":{"type":"string"}},"required":["label"]}}}},
+              "required":["options"]
+            }
+            """);
+        await using (var inlineArraySession = await FixtureSession.StartAsync(inlineArrayTool))
+        {
+            var inlineArrayMissingField = await inlineArraySession.CallAsync(new Dictionary<string, object?>
+            {
+                ["options"] = new Dictionary<string, object?> { ["first"] = new object?[] { new { } } },
+            });
+            AssertInvalidArgument(inlineArrayMissingField, "$.options.first[0].label");
+        }
+
         var objectSchema = """
             {
               "type":"object",
@@ -361,13 +469,91 @@ public sealed class McpArgumentValidationFilterTests
         AssertInvalidArgument(ordinaryKey, "$.options.first[0].label");
         Assert.Equal(0, ArgumentValidationFixtureTool.InvocationCount);
 
-        var unsafeKey = await session.CallAsync(new Dictionary<string, object?>
+        foreach (var unsafeKeyName in new[] { "a.b", "raw/key", "", "unsafe key" })
         {
-            ["options"] = new Dictionary<string, object?> { ["raw/key"] = new object?[] { new { } } },
+            var unsafeKey = await session.CallAsync(new Dictionary<string, object?>
+            {
+                ["options"] = new Dictionary<string, object?> { [unsafeKeyName] = new object?[] { new { } } },
+            });
+            AssertInvalidArgument(unsafeKey, "$");
+            if (unsafeKeyName.Length > 0)
+            {
+                Assert.DoesNotContain(unsafeKeyName, TextOf(unsafeKey), StringComparison.Ordinal);
+            }
+
+            Assert.DoesNotContain("$.label", TextOf(unsafeKey), StringComparison.Ordinal);
+            Assert.Equal(0, ArgumentValidationFixtureTool.InvocationCount);
+        }
+    }
+
+    [Fact]
+    public async Task RegisteredSdkTool_UsesExactInlineDictionaryRequiredPath()
+    {
+        ArgumentValidationFixtureTool.Reset();
+        var tool = CreateTool(
+            (Func<Dictionary<string, Dictionary<string, string>>, string>)ArgumentValidationFixtureTool.StringMap,
+            """
+            {"type":"object","properties":{"options":{"type":"object","additionalProperties":{"type":"object","properties":{"label":{"type":"string"}},"required":["label"]}}},"required":["options"]}
+            """);
+        await using var session = await FixtureSession.StartAsync(tool);
+
+        var result = await session.CallAsync(new Dictionary<string, object?>
+        {
+            ["options"] = new Dictionary<string, object?> { ["first"] = new { } },
         });
-        Assert.True(unsafeKey.IsError);
-        Assert.Contains("fieldPath: $", TextOf(unsafeKey), StringComparison.Ordinal);
-        Assert.DoesNotContain("raw/key", TextOf(unsafeKey), StringComparison.Ordinal);
+
+        AssertInvalidArgument(result, "$.options.first.label");
+        Assert.Equal(0, ArgumentValidationFixtureTool.InvocationCount);
+    }
+
+    [Fact]
+    public async Task RegisteredSdkTool_DoesNotRestartUnsafeInlineDictionaryPathAtRoot()
+    {
+        ArgumentValidationFixtureTool.Reset();
+        var tool = CreateTool(
+            (Func<Dictionary<string, Dictionary<string, string>>, string>)ArgumentValidationFixtureTool.StringMap,
+            """
+            {"type":"object","properties":{"options":{"type":"object","additionalProperties":{"type":"object","properties":{"label":{"type":"string"}},"required":["label"]}}},"required":["options"]}
+            """);
+        await using var session = await FixtureSession.StartAsync(tool);
+
+        var result = await session.CallAsync(new Dictionary<string, object?>
+        {
+            ["options"] = new Dictionary<string, object?> { ["a.b"] = new { } },
+        });
+
+        AssertInvalidArgument(result, "$");
+        Assert.DoesNotContain("a.b", TextOf(result), StringComparison.Ordinal);
+        Assert.DoesNotContain("$.label", TextOf(result), StringComparison.Ordinal);
+        Assert.Equal(0, ArgumentValidationFixtureTool.InvocationCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RegisteredSdkTool_SkipsUnrelatedUnsafeInlineDictionaryPath(bool unsafeKeyFirst)
+    {
+        ArgumentValidationFixtureTool.Reset();
+        var tool = CreateTool(
+            (Func<Dictionary<string, Dictionary<string, string>>, string>)ArgumentValidationFixtureTool.StringMap,
+            """
+            {"type":"object","properties":{"options":{"type":"object","additionalProperties":{"type":"object","properties":{"label":{"type":"string"}},"required":["label"]}}},"required":["options"]}
+            """);
+        await using var session = await FixtureSession.StartAsync(tool);
+        var unsafeEntry = new KeyValuePair<string, object?>(
+            "a.b",
+            new Dictionary<string, object?> { ["label"] = "present" });
+        var missingEntry = new KeyValuePair<string, object?>("first", new { });
+        var options = new Dictionary<string, object?>();
+        foreach (var entry in unsafeKeyFirst ? new[] { unsafeEntry, missingEntry } : new[] { missingEntry, unsafeEntry })
+        {
+            options.Add(entry.Key, entry.Value);
+        }
+
+        var result = await session.CallAsync(new Dictionary<string, object?> { ["options"] = options });
+
+        AssertInvalidArgument(result, "$.options.first.label");
+        Assert.DoesNotContain("a.b", TextOf(result), StringComparison.Ordinal);
         Assert.Equal(0, ArgumentValidationFixtureTool.InvocationCount);
     }
 
@@ -385,16 +571,26 @@ public sealed class McpArgumentValidationFilterTests
     {
         Assert.True(result.IsError);
         Assert.Contains("INVALID_ARGUMENT", TextOf(result), StringComparison.Ordinal);
-        Assert.True(TextOf(result).Contains($"fieldPath: {fieldPath}", StringComparison.Ordinal), TextOf(result));
+        var fieldPathLine = TextOf(result)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(static line => line.TrimEnd('\r'))
+            .SingleOrDefault(static line => line.StartsWith("fieldPath:", StringComparison.Ordinal));
+        Assert.Equal($"fieldPath: {fieldPath}", fieldPathLine);
         Assert.Contains("nextAction:", TextOf(result), StringComparison.Ordinal);
     }
 
     private static string TextOf(CallToolResult result) =>
         Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
 
-    private static McpServerTool CreateTool(Delegate handler, string? inputSchema = null)
+    private static McpServerTool CreateTool(Delegate handler, string? inputSchema = null, JsonSerializerOptions? serializerOptions = null)
     {
-        var tool = McpServerTool.Create(handler, new McpServerToolCreateOptions { Name = "argument_validation_fixture" });
+        var options = new McpServerToolCreateOptions { Name = "argument_validation_fixture" };
+        if (serializerOptions is not null)
+        {
+            options.SerializerOptions = serializerOptions;
+        }
+
+        var tool = McpServerTool.Create(handler, options);
         if (inputSchema is not null)
         {
             using var schema = JsonDocument.Parse(inputSchema);
@@ -441,6 +637,12 @@ public sealed class McpArgumentValidationFilterTests
             return count.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
+        public static string CamelCaseSequence(int Sequence)
+        {
+            Interlocked.Increment(ref _invocationCount);
+            return Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
 #pragma warning disable MEAI001 // The SDK marks this wire-name attribute as test-only; it is required to exercise the documented binder edge case.
         public static string Renamed([AIParameterName("sequence_value")] int sequence)
         {
@@ -456,6 +658,12 @@ public sealed class McpArgumentValidationFilterTests
         }
 
         public static string DictionaryObject(Dictionary<string, FixtureOptions> options)
+        {
+            Interlocked.Increment(ref _invocationCount);
+            return options.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        public static string StringMap(Dictionary<string, Dictionary<string, string>> options)
         {
             Interlocked.Increment(ref _invocationCount);
             return options.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);

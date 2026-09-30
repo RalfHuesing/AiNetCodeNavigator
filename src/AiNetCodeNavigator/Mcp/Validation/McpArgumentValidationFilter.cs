@@ -97,7 +97,7 @@ internal static class McpArgumentValidationFilter
             {
                 if (parameter.ParameterType == typeof(CancellationToken)
                     || parameter.Name is null
-                    || !arguments.TryGetValue(GetWireParameterName(parameter, serializerOptions, inputSchema), out var value))
+                    || !arguments.TryGetValue(GetWireParameterName(parameter), out var value))
                 {
                     continue;
                 }
@@ -108,7 +108,7 @@ internal static class McpArgumentValidationFilter
                 }
                 catch (Exception exception) when (exception is JsonException or NotSupportedException or OverflowException)
                 {
-                    return CreateInvalidArgument(AppendPropertyPath("$", GetWireParameterName(parameter, serializerOptions, inputSchema)), "The value cannot be bound to the registered tool parameter.", arguments);
+                    return CreateInvalidArgument(AppendPropertyPath("$", GetWireParameterName(parameter)), "The value cannot be bound to the registered tool parameter.", arguments);
                 }
             }
         }
@@ -165,12 +165,6 @@ internal static class McpArgumentValidationFilter
         var path = NormalizePath(rawPath);
         if (error.Kind == ValidationErrorKind.PropertyRequired)
         {
-            if (path != "$")
-            {
-                var nestedPath = string.IsNullOrWhiteSpace(error.Property) ? "$" : AppendPropertyPath(path, error.Property);
-                if (nestedPath != "$") return nestedPath;
-            }
-
             using var argumentsDocument = JsonDocument.Parse(JsonSerializer.Serialize(arguments));
             var locatedPath = FindMissingRequiredPath(
                 inputSchema,
@@ -179,7 +173,17 @@ internal static class McpArgumentValidationFilter
                 "$",
                 error.Property,
                 0);
-            if (locatedPath is not null) return locatedPath;
+            if (locatedPath is not null) return locatedPath.Length == 0 ? "$" : locatedPath;
+
+            if (path != "$")
+            {
+                if (TryGetExistingValue(argumentsDocument.RootElement, path, out _))
+                {
+                    return string.IsNullOrWhiteSpace(error.Property) ? path : AppendPropertyPath(path, error.Property);
+                }
+
+                return path;
+            }
         }
 
         return IsSafePath(path) ? path : "$";
@@ -214,7 +218,9 @@ internal static class McpArgumentValidationFilter
                     && string.Equals(name, missingName, StringComparison.Ordinal)
                     && !value.TryGetProperty(name, out _))
                 {
-                    return AppendPropertyPath(valuePath, name);
+                    return valuePath.Length > 0 && IsSafePathSegment(name)
+                        ? AppendPropertyPath(valuePath, name)
+                        : string.Empty;
                 }
             }
         }
@@ -226,7 +232,9 @@ internal static class McpArgumentValidationFilter
             foreach (var propertySchema in properties.EnumerateObject())
             {
                 if (!value.TryGetProperty(propertySchema.Name, out var propertyValue)) continue;
-                var nestedPath = AppendPropertyPath(valuePath, propertySchema.Name);
+                var nestedPath = valuePath.Length > 0 && IsSafePathSegment(propertySchema.Name)
+                    ? AppendPropertyPath(valuePath, propertySchema.Name)
+                    : string.Empty;
                 var result = FindMissingRequiredPath(rootSchema, propertySchema.Value, propertyValue, nestedPath, missingName, depth + 1);
                 if (result is not null) return result;
             }
@@ -237,7 +245,9 @@ internal static class McpArgumentValidationFilter
                 foreach (var propertyValue in value.EnumerateObject())
                 {
                     if (properties.TryGetProperty(propertyValue.Name, out _)) continue;
-                    var nestedPath = AppendPropertyPath(valuePath, propertyValue.Name);
+                    var nestedPath = valuePath.Length > 0 && IsSafePathSegment(propertyValue.Name)
+                        ? AppendPropertyPath(valuePath, propertyValue.Name)
+                        : string.Empty;
                     var result = FindMissingRequiredPath(rootSchema, additionalProperties, propertyValue.Value, nestedPath, missingName, depth + 1);
                     if (result is not null) return result;
                 }
@@ -249,7 +259,9 @@ internal static class McpArgumentValidationFilter
         {
             foreach (var propertyValue in value.EnumerateObject())
             {
-                var nestedPath = AppendPropertyPath(valuePath, propertyValue.Name);
+                var nestedPath = valuePath.Length > 0 && IsSafePathSegment(propertyValue.Name)
+                    ? AppendPropertyPath(valuePath, propertyValue.Name)
+                    : string.Empty;
                 var result = FindMissingRequiredPath(rootSchema, onlyAdditionalProperties, propertyValue.Value, nestedPath, missingName, depth + 1);
                 if (result is not null) return result;
             }
@@ -260,7 +272,8 @@ internal static class McpArgumentValidationFilter
             var index = 0;
             foreach (var item in value.EnumerateArray())
             {
-                var result = FindMissingRequiredPath(rootSchema, items, item, $"{valuePath}[{index}]", missingName, depth + 1);
+                var itemPath = valuePath.Length > 0 ? $"{valuePath}[{index}]" : string.Empty;
+                var result = FindMissingRequiredPath(rootSchema, items, item, itemPath, missingName, depth + 1);
                 if (result is not null) return result;
                 index++;
             }
@@ -344,6 +357,44 @@ internal static class McpArgumentValidationFilter
 
     private static bool IsSafePathSegment(string value) => value.Length > 0
         && value.All(static character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-');
+
+    private static bool TryGetExistingValue(JsonElement root, string path, out JsonElement value)
+    {
+        value = root;
+        if (path == "$") return true;
+        if (!path.StartsWith("$.", StringComparison.Ordinal)) return false;
+
+        var index = 2;
+        while (index < path.Length)
+        {
+            var segmentStart = index;
+            while (index < path.Length && path[index] is not '.' and not '[') index++;
+            if (segmentStart < index)
+            {
+                if (value.ValueKind != JsonValueKind.Object
+                    || !value.TryGetProperty(path[segmentStart..index], out var propertyValue)) return false;
+                value = propertyValue;
+            }
+
+            if (index < path.Length && path[index] == '[')
+            {
+                var close = path.IndexOf(']', index + 1);
+                if (close < 0 || !int.TryParse(path[(index + 1)..close], System.Globalization.NumberStyles.None,
+                        System.Globalization.CultureInfo.InvariantCulture, out var arrayIndex)
+                    || value.ValueKind != JsonValueKind.Array || arrayIndex < 0 || arrayIndex >= value.GetArrayLength())
+                {
+                    return false;
+                }
+
+                value = value[arrayIndex];
+                index = close + 1;
+            }
+
+            if (index < path.Length && path[index] == '.') index++;
+        }
+
+        return true;
+    }
 
     private static bool IsSafePath(string path) => path.StartsWith('$')
         && path.All(static character => char.IsAsciiLetterOrDigit(character) || character is '$' or '.' or '_' or '-' or '[' or ']');
@@ -465,7 +516,7 @@ internal static class McpArgumentValidationFilter
         return false;
     }
 
-    private static string GetWireParameterName(ParameterInfo parameter, JsonSerializerOptions? options, JsonElement inputSchema)
+    private static string GetWireParameterName(ParameterInfo parameter)
     {
         const string parameterNameAttribute = "Microsoft.Extensions.AI.AIParameterNameAttribute";
         var renamedAttribute = parameter.GetCustomAttributesData()
@@ -475,14 +526,10 @@ internal static class McpArgumentValidationFilter
             return explicitName;
         }
 
-        var serializedName = options?.PropertyNamingPolicy?.ConvertName(parameter.Name!);
-        if (inputSchema.TryGetProperty("properties", out var properties) && properties.ValueKind == JsonValueKind.Object)
-        {
-            if (serializedName is not null && properties.TryGetProperty(serializedName, out _)) return serializedName;
-            if (properties.TryGetProperty(parameter.Name!, out _)) return parameter.Name!;
-        }
-
-        return serializedName ?? parameter.Name!;
+        // MCP binds method parameters by their CLR parameter name unless AIParameterNameAttribute explicitly
+        // changes the function parameter name. JsonSerializerOptions.PropertyNamingPolicy applies to object
+        // members; it does not rename the SDK's method-parameter keys.
+        return parameter.Name!;
     }
 
     private static bool TryGetBindingMetadata(
