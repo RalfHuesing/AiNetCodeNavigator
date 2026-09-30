@@ -219,3 +219,17 @@ Point 4.3 is accepted after the third and final audit; no open finding or techni
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 312/312 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Independent audit 1/3 of point 4.4
+
+- Reviewed commit: `71d14ba9bcb5faa7e23703778a899f35facba2ab` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Read-only comparison: AiNetLinter `GetClassStructureTool` member extraction, primary record parameters, kind filters, constant formatting, and Markdown table output; inspected the local Core scanner, models, tests, and current-state page. The implementation slice's gates are recorded above. This audit did not run a build or tests.
+- Member kinds, declared visibility, record class/struct distinctions, primary constructor rows, invariant constant literals, filter order, truncation counts, opaque member handoffs, and the covered null/unknown-handoff cases agree with the stated Core contract. The outstanding common short-name ambiguity is already point 4.7 and is not counted again here.
+
+### Open findings
+
+1. **P2 — Partial-type Markdown loses the file for each member.** `CreateMemberEntry` retains `FilePath` (`ClassStructureScanner.cs:290-321`), but `RenderMarkdown` (`ClassStructureScanner.cs:450-457`) always prints only kind, name, visibility, lines, signature, and handoff. Two partial declarations can have methods at the same local line number, leaving their Markdown rows indistinguishable by source file. AiNetLinter's `AppendMemberRows` adds a `File` column when the payload spans multiple files. The local tests use single-file types only. **Acceptance:** include each member's declaring file in the Markdown table for multi-file types (or always), preserve DTO file paths, and test partial declarations with members at overlapping line numbers.
+2. **P2 — Unescaped member signatures can break the Markdown table.** `RenderMarkdown` interpolates `m.Signature` and `m.Name` directly into pipe-delimited rows (`ClassStructureScanner.cs:453-457`). A valid `operator |` signature or a constant string containing `|` adds an unintended column; a newline in a literal can split the row. The reference uses `MarkdownTableBuilder.EscapeCell`, which removes line breaks and escapes pipes. **Acceptance:** escape dynamic table cells without losing the signature content or handoff, and assert a stable column count for an operator signature and a constant string containing a pipe (plus line-break handling).
+
+The point 4.4 audit checkbox remains open pending fixes and a follow-up audit. No product code or external repository was changed in this audit.
