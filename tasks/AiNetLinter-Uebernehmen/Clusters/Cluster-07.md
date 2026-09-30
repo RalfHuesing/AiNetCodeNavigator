@@ -21,4 +21,7 @@
   - [x] Handoff-Resolver mit Assembly-/Target-/Snapshot-Bindung und `get_symbol_body`-Consumer für Typen und Member.
   - [x] Folge-Tool-Werbung für Assembly-Handoffs auf `get_symbol_body` begrenzen; source-only Structure- und Relationship-Scanner nicht als Assembly-Follow-ups ausgeben.
   - [x] FastTests für Roundtrips, Cache-Session-Wiederverwendung, unbekannte/fremde/veraltete Handles, fehlende Referenzen und native Dateien.
+  - [ ] Reject a failed refresh of an already resident target instead of exposing the previous generation through a new inspect call.
+  - [ ] Refresh the reference set when dependencies change without changing the target DLL, and cover the resulting handoff/body behavior.
+  - [ ] Enforce the 32-target resident limit when all existing sessions have active accesses.
   - [ ] Review/Audit zu 7.3 durchführen; Findings ergänzen und umsetzen.
