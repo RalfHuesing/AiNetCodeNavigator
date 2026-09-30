@@ -57,3 +57,19 @@
 
 - Inspected the fixed commit and AiNetLinter source; no production files were changed.
 - The documentation diff was inspected and `git diff --check` passed before commit.
+
+## Independent audit 2/3 of point 5.1
+
+- Audited commit: `6b13f078b672f5575e4e4182d2d7477ccb18ca9b` (clean working tree before review edits).
+- Reviewer: `gpt-6-sol`, medium reasoning effort. Reviewed the implementation diff, the four new call-tree regression tests, the ASCII/Mermaid pending-node output, and AiNetLinter's `OutgoingCallScanner.AddOutgoingSymbol` and `IsBclSymbol` behavior. No build or tests were run in this audit; the gate results above belong to the implementation turn.
+- The three audit-1 findings are resolved on this commit: metadata callees from a third-party assembly remain visible with default `IncludeBcl`; `Both` consumes one combined fan-out budget; and an exact, completed 250-node graph is not truncated while queued expansion is reported separately from known hidden edges. Each case has a targeted FastTest; the pending count is rendered in both formats.
+- One new BCL-filter finding remains. The 5.1 audit checkbox stays unchecked pending the fix and the final allowed point audit.
+
+### Finding
+
+1. **P2 — Source symbols in framework-named namespaces are filtered as BCL.** `src/AiNetCodeNavigator.Core/CallTree/CallTreeBuilder.cs:169` calls `IsBclSymbol` for every callee. `:248-269` classifies by namespace even when `target.Locations` has a source location. Thus a workspace method such as `System.Local.Call()` disappears from a default outgoing graph. AiNetLinter's `OutgoingCallScanner.AddOutgoingSymbol` first checks `isExternal` and only excludes an external symbol that is BCL. Acceptance: retain every source-backed callee irrespective of its namespace/assembly name, while still excluding external BCL metadata and retaining non-BCL metadata by default; add a source-backed `System` namespace regression alongside the existing metadata test.
+
+### Review verification
+
+- Inspected only committed source/tests and the AiNetLinter read-only reference; no production files were changed.
+- The documentation diff was inspected and `git diff --check` passed before commit.
