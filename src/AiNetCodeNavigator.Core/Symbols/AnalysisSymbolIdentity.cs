@@ -17,7 +17,7 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
     public bool IsAssembly { get; init; } = true;
     public IReadOnlyDictionary<ProjectId, string>? SourceProjectMarkers { get; init; }
 
-    public string? Format(string? symbolId) =>
+    private string? Format(string? symbolId) =>
         symbolId is not null
         && SymbolHandoffIdentifier.TryCreate(
             new SymbolHandoffCreationRequest(
@@ -29,10 +29,12 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
             ? identifier.Format()
             : null;
 
-    public string? Format(string? symbolId, ProjectId projectId) =>
-        symbolId is null
-            ? null
-            : Format($"{symbolId}~p:{(SourceProjectMarkers?.GetValueOrDefault(projectId) ?? projectId.Id.ToString("N"))}");
+    private string? Format(string? symbolId, ProjectId projectId) =>
+        symbolId is not null
+        && SourceProjectMarkers is not null
+        && SourceProjectMarkers.TryGetValue(projectId, out var projectMarker)
+            ? Format($"{symbolId}~p:{projectMarker}")
+            : null;
 
     public string? FormatHandoff(ISymbol symbol)
     {
@@ -47,8 +49,15 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
             : null;
     }
 
-    public string? FormatHandoff(ISymbol symbol, ProjectId projectId)
+    private string? FormatHandoff(ISymbol symbol, ProjectId projectId)
     {
+        if (IsAssembly
+            || SourceProjectMarkers is null
+            || !SourceProjectMarkers.ContainsKey(projectId))
+        {
+            return null;
+        }
+
         var declarationId = DocumentationCommentId.CreateDeclarationId(symbol);
         return IsCanonicalHandoffSymbol(symbol, declarationId)
             ? Format(declarationId, projectId)
@@ -81,11 +90,63 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
         && !string.IsNullOrWhiteSpace(declarationId)
         && HasKnownDocumentationCommentIdPrefix(declarationId!);
 
+    /// <summary>
+    /// Creates a stable source identity from a declaration ID, or from its unique source location
+    /// when Roslyn does not provide a documentation comment ID (for example, a local function).
+    /// </summary>
+    public static string? CreateCanonicalSymbolIdentifier(ISymbol symbol)
+    {
+        ArgumentNullException.ThrowIfNull(symbol);
+        var declarationId = DocumentationCommentId.CreateDeclarationId(symbol);
+        if (symbol is not IMethodSymbol { MethodKind: MethodKind.LocalFunction }
+            && HasKnownDocumentationCommentIdPrefix(declarationId ?? string.Empty))
+        {
+            return declarationId;
+        }
+
+        var locations = symbol.Locations
+            .Where(location => location.IsInSource && location.SourceTree is not null)
+            .Take(2)
+            .ToArray();
+        if (locations.Length != 1)
+        {
+            return null;
+        }
+
+        var location = locations[0];
+        var filePath = location.SourceTree!.FilePath;
+        if (string.IsNullOrWhiteSpace(filePath) || !Path.IsPathFullyQualified(filePath))
+        {
+            return null;
+        }
+
+        string canonicalPath;
+        try
+        {
+            canonicalPath = Path.GetFullPath(filePath);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            canonicalPath = canonicalPath.ToUpperInvariant();
+        }
+
+        var linePosition = location.SourceTree.GetLineSpan(location.SourceSpan).StartLinePosition;
+        return $"L:{canonicalPath}:{linePosition.Line + 1}:{linePosition.Character + 1}";
+    }
+
     public bool Matches(AnalysisSymbolIdentity other) =>
         IsAssembly == other.IsAssembly
-        && (string.IsNullOrEmpty(CanonicalPath)
-            || string.IsNullOrEmpty(other.CanonicalPath)
-            || string.Equals(CanonicalPath, other.CanonicalPath, StringComparison.OrdinalIgnoreCase))
+        && TryNormalizeTargetPath(CanonicalPath, out var canonicalPath)
+        && TryNormalizeTargetPath(other.CanonicalPath, out var otherCanonicalPath)
+        && string.Equals(
+            canonicalPath,
+            otherCanonicalPath,
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
         && string.Equals(ContentHash, other.ContentHash, StringComparison.OrdinalIgnoreCase);
 
     public static AnalysisSymbolIdentity ForAssembly(string canonicalPath, string contentHash, long generation = 0) =>
@@ -100,14 +161,16 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
         {
             CanonicalPath = canonicalPath,
             IsAssembly = false,
-            SourceProjectMarkers = solution?.Projects.ToDictionary(project => project.Id, GetStableProjectMarker),
+            SourceProjectMarkers = solution?.Projects
+                .Where(project => project.FilePath is { Length: > 0 } projectPath && Path.IsPathFullyQualified(projectPath))
+                .ToDictionary(project => project.Id, GetStableProjectMarker),
         };
 
     public static string GetStableProjectMarker(Project project)
     {
-        if (project.FilePath is not { Length: > 0 } projectPath)
+        if (project.FilePath is not { Length: > 0 } projectPath || !Path.IsPathFullyQualified(projectPath))
         {
-            return project.Id.Id.ToString("N");
+            throw new ArgumentException("A stable project marker requires an absolute project file path.", nameof(project));
         }
 
         var canonicalPath = Path.GetFullPath(projectPath);
@@ -140,4 +203,23 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
 
     private static void Append(IncrementalHash hash, string value) =>
         hash.AppendData(Encoding.UTF8.GetBytes(value));
+
+    private static bool TryNormalizeTargetPath(string? path, out string normalizedPath)
+    {
+        normalizedPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
+        {
+            return false;
+        }
+
+        try
+        {
+            normalizedPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+            return normalizedPath.Length > 0;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
 }

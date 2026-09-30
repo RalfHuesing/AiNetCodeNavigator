@@ -2,6 +2,8 @@
 
 [Zurück zum Konzept](../Konzept.md)
 
+[Implementierungsreview 3.1](../Reviews/Cluster-03.md)
+
 - [x] 3.1 Symbol-Identität (`AiNetCodeNavigator.Core.Symbols`):
   - [x] `AnalysisSymbolIdentity`: Normalisierung von `ISymbol` zu kanonischen Identifikatoren (Doc-Comment-ID, File/Line)
   - [x] FastTests für Symbol-Identitätsabbildung
