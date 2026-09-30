@@ -4,6 +4,25 @@ status: draft
 
 # Agent Interaction Lab
 
+## Umsetzungssperre und verpflichtender Konzeptreview
+
+**Reviewstatus: ausstehend. Roadmap und Umsetzung sind gesperrt.** Dieses Vorhaben folgt auf den Abschluss von [AiNetLinter-Uebernehmen](../AiNetLinter-Uebernehmen/). Der bisherige Verständnisreview ersetzt den anschließend erforderlichen Abgleich mit dessen tatsächlich implementiertem Stand nicht. Auch eine allgemeine Aufforderung wie „setze diesen Task um“ hebt diese Sperre nicht auf; der Agent weist darauf hin und bleibt bei der vorbereitenden Konzeptprüfung.
+
+Ein sinngemäßer Auftrag **„schärfe das Konzept“** für diesen Task bedeutet:
+
+1. Den Abschluss von AiNetLinter-Uebernehmen anhand seiner Abschlussnachweise prüfen. Solange der Vorgängertask nicht abgeschlossen ist, die Voraussetzung als ausstehend dokumentieren; ein Zwischenabgleich hebt die Sperre nicht auf.
+2. Den geprüften Produktstand mit Commit-SHA, Arbeitsbaumzustand und Datum festhalten. Konzeptannahmen gegen tatsächlichen Code, Tests und verifizierte docs/ prüfen; geplante Spezifikationen sind kein Implementierungsnachweis.
+3. Insbesondere alle 22 Toolregistrierungen samt Beschreibungen/Schemas, Argumentvalidierung und SDK-Bindung, Runtime/DI, Ergebnis- und Fehlerformate, Budgets, Handoffs/Operationen/Fortsetzungen, Assembly-Referenzauflösung sowie vorhandene Testzugänge abgleichen. Bestehende Mechanismen wiederverwenden und konkrete Integrationsstellen mit Code-/Testankern benennen. Überholte Annahmen ersetzen; Widersprüche und fehlende Entscheidungen sichtbar machen. Ziel und vereinbarte Produktgrenzen bleiben maßgeblich.
+4. Konzept und diesen Reviewnachweis aktualisieren: geprüfter Stand, geprüfte Bereiche, wesentliche Anpassungen, Code-/Testbelege und verbleibende Blocker. Gelesene Tests und vorhandene Testergebnisse von selbst ausgeführten Prüfungen unterscheiden. Keine Implementierungsbehauptung ohne Beleg.
+5. Danach einen frischen Luna-Subagenten mit Reasoning high ohne geerbte Gesprächshistorie als Verständnisprüfer einsetzen. Er erklärt den vorgesehenen Ablauf und meldet Unklarheiten, Widersprüche und Entscheidungen, die ein Implementierer erraten müsste. Belegte Lücken im Konzept schließen; ein gezielter Nachcheck prüft die Korrekturen. Dieser Verständnisreview ergänzt den technischen Abgleich.
+6. Das geschärfte Konzept zur ausdrücklichen Freigabe vorlegen und danach stoppen. Dieser Auftrag erlaubt nur Konzeptarbeit im Taskverzeichnis, keine Roadmap und keinen Produkt-/Lab-Code.
+
+Die Sperre wird erst aufgehoben, wenn der Vorgängertask abgeschlossen, der technische Abgleich und Verständnisreview mit Nachweisen erledigt, keine entscheidungsrelevanten Blocker offen und das **danach geschärfte Gesamtkonzept ausdrücklich vom Nutzer freigegeben** ist. Erst dann status auf ready und den Reviewstatus auf abgeschlossen setzen; den Nachweis in diesem Abschnitt erhalten. Roadmap und Umsetzung benötigen anschließend weiterhin ihren jeweiligen getrennten Nutzerauftrag. Eine vorgezogene Konzeptfreigabe ersetzt keinen ausstehenden Review.
+
+Ändern sich nach dem Review relevante produktive Verträge, wird das Konzept wieder draft und der betroffene Abgleich erneut fällig. Der bloße Wechsel der Commit-SHA ohne relevante Vertragsänderung verlangt keinen vollständigen Wiederholungsreview.
+
+Aktueller Nachweis: Der Abgleich nach Abschluss von AiNetLinter-Uebernehmen und der darauf folgende Verständnisreview wurden noch nicht durchgeführt. Die technischen Festlegungen unten sind bis dahin ein überprüfbarer Entwurf.
+
 ## Intention
 
 Ein Agent soll anhand der echten öffentlichen Tooldefinitionen konkrete Navigationsaufgaben auf definierten Repositories lösen. Wir untersuchen, ob Beschreibungen und Parameter verständlich sind und ob Antworten korrekt, nutzbringend, möglichst rauscharm und tokeneffizient sind.
@@ -32,7 +51,7 @@ Gelesener und durch den Verständnisreview erneut geprüfter Stand am 2026-09-30
 - [Formatierung](../../src/AiNetCodeNavigator/Mcp/Formatting/McpResponseFormatter.cs), [Ergebnisbau](../../src/AiNetCodeNavigator/Mcp/Formatting/McpToolResults.cs) und [Operations-/Fortsetzungsspeicher](../../src/AiNetCodeNavigator/Mcp/LongRunningToolCallStore.cs) sind vorhandene Bausteine; gezählt wird mit cl100k_base.
 - [SDK-Streamtests](../../tests/AiNetCodeNavigator.FastTests/Mcp/McpArgumentValidationFilterTests.cs) bieten Vorarbeiten für separate Paritätsprüfungen. Sie sind keine transportlosen Agentenläufe.
 
-Die produktiven Registrierungen müssen für alle 22 Tools vor der vollständigen Lab-Abnahme existieren. Dieses Vorhaben implementiert deren Navigationssemantik nicht. Bis dahin darf Lab-Infrastruktur mit ausdrücklich als solchen bezeichneten Fixture-Tools geprüft werden; ein realer Lab-Lauf mit unvollständigem Katalog startet nicht.
+Die produktiven Registrierungen müssen für alle 22 Tools vor der vollständigen Lab-Abnahme existieren. Dieses Vorhaben implementiert deren Navigationssemantik nicht. Nach Aufhebung der Umsetzungssperre wird Lab-Infrastruktur zusätzlich mit ausdrücklich als solchen bezeichneten Fixture-Tools geprüft; ein realer Lab-Lauf mit unvollständigem Katalog startet nicht.
 
 ## Gemeinsamer produktiver Aufrufpfad
 
@@ -256,7 +275,7 @@ Kürzer gilt nur bei erhaltener Korrektheit und Aufgabenlösung als besser. Ein 
 
 Die bestehende Testinfrastruktur wird erweitert; kein zusätzliches Testprojekt. FastTests erhalten eine Referenz auf das Lab für Renderer, Metadatenvalidierung und Protokollzustände; IntegrationTests für Prozess-/Named-Pipe-Lifecycle und gemeinsame Aufrufparität. Das Lab erhält Zugriff für diese Testassemblies. Es wird in die Solution und damit die offiziellen Build-/Testgates aufgenommen.
 
-Dieses Gate darf vor Abschluss von Cluster 9 mit internen Fixture-Katalogen erfüllt werden. Es belegt die Infrastruktur und repräsentative gemeinsame Vertragsfälle, nicht die Vollständigkeit oder Qualität aller Produkttools. Der reguläre Lab-Start bleibt trotzdem an den vollständigen 22er-Katalog gebunden. Für Tests wird die Katalogquelle intern injiziert; kein öffentlicher Fixture-Schalter und kein alternativer Produktionskatalog.
+Dieses Gate verwendet interne Fixture-Kataloge, um Infrastruktur und repräsentative gemeinsame Vertragsfälle unabhängig von der fachlichen Produktqualität zu prüfen. Es belegt nicht die Vollständigkeit oder Qualität aller Produkttools und erlaubt keinen vorgezogenen Umsetzungsbeginn: Die oben festgelegte Umsetzungssperre gilt auch für Fixture-Infrastruktur. Der reguläre Lab-Start bleibt an den vollständigen 22er-Katalog gebunden. Für Tests wird die Katalogquelle intern injiziert; kein öffentlicher Fixture-Schalter und kein alternativer Produktionskatalog.
 
 Verbindliche Nachweise:
 
@@ -299,4 +318,4 @@ Die Sachentscheidungen sind getroffen: separate .NET-Lab-Exe, AiNetCodeNavigator
 
 Der Verständnisreview mit gpt-6-luna/high gegen 90adbfc hat sieben Vertragslücken belegt. Sie sind konkretisiert: BindingMetadata/Fixtureadapter, Abschluss-/Crashdaten, Referenzbaseline, Busy-/Zählerregeln, Raw-/Envelope-Versionierung, Protokollfehlerausgabe und zwei getrennte Abschlussgates. Im Nachcheck bestätigte Luna diese sieben Klärungen und benannte zwei verbleibende Textwidersprüche: not_observed als Lücke versus Blocker und Vorübertragungsfehler versus Call-Artefakte. Beide Stellen sind entsprechend präzisiert.
 
-Offen ist ausschließlich die ausdrückliche Freigabe dieses konkretisierten Gesamtkonzepts. Danach wird status auf ready gesetzt und dieser Abschnitt entfernt. Dies startet weder Roadmap noch Umsetzung; der Nutzer ruft den nächsten Workflow-Schritt selbst auf.
+Ausstehend sind der verpflichtende Abgleich nach Abschluss von AiNetLinter-Uebernehmen, der anschließende frische Verständnisreview und die ausdrückliche Freigabe des danach geschärften Gesamtkonzepts. Erst nach Erfüllung dieser Bedingungen wird status auf ready gesetzt und dieser Draftabschnitt entfernt; der Reviewnachweis und die Bedingungen für den Umsetzungsbeginn bleiben erhalten. Dies startet weder Roadmap noch Umsetzung; der Nutzer ruft den nächsten Workflow-Schritt selbst auf.
