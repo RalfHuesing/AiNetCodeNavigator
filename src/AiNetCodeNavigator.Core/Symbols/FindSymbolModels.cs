@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using Microsoft.CodeAnalysis;
+using AiNetCodeNavigator.Core.Models;
 
 namespace AiNetCodeNavigator.Core.Symbols;
 
@@ -61,4 +62,5 @@ public sealed record FindSymbolScanResult(
     int ReturnedMatches,
     bool IsTruncated,
     IReadOnlyList<string> TruncatedBy,
-    IReadOnlyList<string> KindAlternatives);
+    IReadOnlyList<string> KindAlternatives,
+    ResultError? Error = null);

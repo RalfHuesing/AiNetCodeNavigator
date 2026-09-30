@@ -219,6 +219,7 @@ public static class InspectAssemblyScanner
             .Take(maxMembers)
             .ToList();
 
+        var stableId = StableId(type, handoffIdentity);
         return new AssemblyTypeDto(
             type.ContainingNamespace.ToDisplayString(),
             TypeName(type),
@@ -229,9 +230,9 @@ public static class InspectAssemblyScanner
             matchingMembers.Count,
             members.Count < matchingMembers.Count,
             members.Count < matchingMembers.Count ? ["maxMembers"] : [],
-            StableId(type, handoffIdentity),
-            Handoff: true,
-            AllowedFollowUpTools: HandoffFollowUpTools.For(type));
+            stableId,
+            Handoff: stableId is not null,
+            AllowedFollowUpTools: stableId is null ? Array.Empty<string>() : HandoffFollowUpTools.For(type));
     }
 
     private static AssemblyMemberDto ToMemberDto(ISymbol member, AnalysisSymbolIdentity handoffIdentity)
@@ -244,6 +245,7 @@ public static class InspectAssemblyScanner
             _ => Array.Empty<AssemblyParameterDto>(),
         };
 
+        var stableId = StableId(member, handoffIdentity);
         return new AssemblyMemberDto(
             MemberKind(member),
             member.Name,
@@ -253,15 +255,13 @@ public static class InspectAssemblyScanner
             method is null ? Array.Empty<string>() : GenericParameters(method),
             method is null ? Array.Empty<string>() : Constraints(method.TypeParameters),
             Attributes(member),
-            StableId(member, handoffIdentity),
-            Handoff: true,
-            AllowedFollowUpTools: HandoffFollowUpTools.For(member));
+            stableId,
+            Handoff: stableId is not null,
+            AllowedFollowUpTools: stableId is null ? Array.Empty<string>() : HandoffFollowUpTools.For(member));
     }
 
-    private static string StableId(ISymbol symbol, AnalysisSymbolIdentity? handoffIdentity) =>
-        handoffIdentity?.FormatHandoff(symbol)
-        ?? symbol.GetDocumentationCommentId()
-        ?? $"{symbol.Kind}:{symbol.ContainingType?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.{symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)}";
+    private static string? StableId(ISymbol symbol, AnalysisSymbolIdentity? handoffIdentity) =>
+        handoffIdentity?.FormatHandoff(symbol);
 
     private static string MethodSignature(IMethodSymbol method)
     {

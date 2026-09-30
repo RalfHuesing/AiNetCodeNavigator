@@ -3,6 +3,7 @@
 using System.Linq;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Workspace;
+using AiNetCodeNavigator.TestKit.Builders;
 using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.TestKit.Fixtures;
 using Xunit;
@@ -88,6 +89,50 @@ public sealed class FindSymbolScannerTests
         var stale = await SourceHandoffResolver.ResolveAsync(fixture.Solution, staleHandle, identity);
         Assert.False(stale.IsSuccess);
         Assert.Equal(NavigationErrorCodes.StaleSnapshot, stale.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task FindMatchesWithDetailsAsync_RejectsPublicSourceIdentityForAnotherTarget()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var canonicalIdentity = await AnalysisSymbolIdentity.ForSourceAsync(fixture.Solution);
+        Assert.NotNull(canonicalIdentity);
+        var suppliedIdentity = AnalysisSymbolIdentity.ForSource(
+            @"C:\ForeignRepo\Other.slnx",
+            canonicalIdentity!.ContentHash,
+            fixture.Solution);
+
+        var result = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(fixture.Solution, "Greeter", SourceIdentity: suppliedIdentity));
+        Assert.Empty(result.Entries);
+        Assert.Equal(NavigationErrorCodes.TargetMismatch, result.Error!.Value.Code);
+
+        var staleIdentity = AnalysisSymbolIdentity.ForSource(
+            fixture.Solution.FilePath!,
+            new string('f', 64),
+            fixture.Solution);
+        var staleResult = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(fixture.Solution, "Greeter", SourceIdentity: staleIdentity));
+        Assert.Empty(staleResult.Entries);
+        Assert.Equal(NavigationErrorCodes.StaleSnapshot, staleResult.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task SourceSnapshotIdentity_CaseVariantSolutionPathsHaveSameHash()
+    {
+        using var upper = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\Sample.slnx",
+            new ProjectSpec("Sample", [("Sample.cs", "public class SampleType { }")], VirtualProjectDirectory: "src/Sample"));
+        using var lower = TestWorkspaceBuilder.CreateSolution(
+            @"c:\virtualrepo\sample.slnx",
+            new ProjectSpec("Sample", [("Sample.cs", "public class SampleType { }")], VirtualProjectDirectory: "src/Sample"));
+
+        var original = await AnalysisSymbolIdentity.ForSourceAsync(upper.Solution);
+        var variant = await AnalysisSymbolIdentity.ForSourceAsync(lower.Solution);
+
+        Assert.NotNull(original);
+        Assert.NotNull(variant);
+        Assert.Equal(original!.ContentHash, variant!.ContentHash);
     }
 
     [Fact]

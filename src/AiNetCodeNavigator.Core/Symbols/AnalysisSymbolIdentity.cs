@@ -170,7 +170,7 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
     public static async Task<AnalysisSymbolIdentity?> ForSourceAsync(Solution solution, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(solution);
-        if (string.IsNullOrWhiteSpace(solution.FilePath) || !Path.IsPathFullyQualified(solution.FilePath))
+        if (!SymbolHandoffToken.TryNormalizeTargetPath(solution.FilePath, out var canonicalPath))
         {
             return null;
         }
@@ -201,14 +201,14 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
         }
 
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        Append(hash, solution.FilePath);
+        Append(hash, canonicalPath);
         foreach (var document in documents.OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase))
         {
             Append(hash, document.Key);
             Append(hash, document.Hash);
         }
 
-        return ForSource(solution.FilePath, Convert.ToHexString(hash.GetHashAndReset()), solution);
+        return ForSource(canonicalPath, Convert.ToHexString(hash.GetHashAndReset()), solution);
     }
 
     private static IReadOnlyDictionary<ProjectId, string> BuildSourceProjectMarkers(Solution solution)

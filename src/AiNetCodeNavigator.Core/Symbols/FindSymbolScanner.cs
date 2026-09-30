@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Common;
+using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
 
@@ -23,6 +24,30 @@ public static class FindSymbolScanner
         FindSymbolScanRequest request,
         CancellationToken ct = default)
     {
+        var currentSourceIdentity = await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
+        if (request.SourceIdentity is not null
+            && (currentSourceIdentity is null || !request.SourceIdentity.Matches(currentSourceIdentity)))
+        {
+            var sameTarget = currentSourceIdentity is not null
+                && !request.SourceIdentity.IsAssembly
+                && SymbolHandoffToken.TryCreateTarget(request.SourceIdentity.CanonicalPath, out var suppliedTarget)
+                && SymbolHandoffToken.TryCreateTarget(request.Solution.FilePath ?? string.Empty, out var actualTarget)
+                && string.Equals(suppliedTarget, actualTarget, StringComparison.Ordinal);
+            var code = sameTarget ? NavigationErrorCodes.StaleSnapshot : NavigationErrorCodes.TargetMismatch;
+            var message = sameTarget
+                ? "The supplied source identity does not match the current solution snapshot."
+                : "The supplied source identity belongs to a different analysis target.";
+            return new FindSymbolScanResult(
+                message,
+                Array.Empty<SymbolLocationEntry>(),
+                0,
+                0,
+                false,
+                Array.Empty<string>(),
+                Array.Empty<string>(),
+                new AiNetCodeNavigator.Core.Models.ResultError(code, message));
+        }
+
         var nameFilter = SymbolNameMatcher.CreateDeclarationNameFilter(request.NamePattern);
         var symbols = await SymbolFinder.FindSourceDeclarationsAsync(
             request.Solution,
@@ -44,8 +69,7 @@ public static class FindSymbolScanner
         }
 
         var outputRoot = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
-        var sourceIdentity = request.SourceIdentity
-            ?? await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
+        var sourceIdentity = request.SourceIdentity ?? currentSourceIdentity;
         var allEntries = (await BuildVisibleEntriesAsync(request, filtered, outputRoot, sourceIdentity, ct).ConfigureAwait(false))
             .OrderBy(entry => GetMatchRank(entry, request.NamePattern))
             .ThenBy(entry => GetScopeRank(entry))

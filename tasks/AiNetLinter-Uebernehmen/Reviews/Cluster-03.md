@@ -166,6 +166,25 @@ A later FastTests rerun transiently failed in the unrelated `HandoffHandleRegist
 
 ### Independent audit 1/3 of point 3.3
 
+- Reviewed commit: `63ad1e5604e8bc265de4437f0aea00e75a77d3b6` (clean working tree before audit). Reproduction tests failed before the fixes below.
+- **P2 — Solution path casing changed the source snapshot hash.** `ForSourceAsync` hashed `Solution.FilePath` in its original casing, so equivalent Windows solution paths produced different content tokens. The solution target is now normalized before it enters the snapshot hash. A test builds equivalent workspace snapshots using differently cased solution paths and requires identical hashes.
+- **P2 — A public producer identity was trusted without validation.** `FindSymbolScanRequest.SourceIdentity` could name another target or stale snapshot, and `FindSymbolScanner` emitted handoffs using it. The scanner now compares supplied identities to the current normalized solution target and snapshot and returns `TARGET_MISMATCH` or `STALE_SNAPSHOT` without entries on disagreement. Tests cover both cases.
+- **P1 — Assembly fallback IDs were labeled as handoffs.** `InspectAssemblyScanner.StableId` fell back to a raw DocumentationCommentId or display string while DTOs unconditionally set `Handoff=true` and exposed follow-up tools. It now returns only a canonical identity; DTO handoff flags and follow-up lists depend on a non-null ID. A malformed identity regression verifies no raw ID, false handoff flag, and no follow-up tools.
+- Assembly follow-up resolution/session lifecycle remains the Cluster 7 blocker described above. The point 3.3 audit checkbox remains open for follow-up audit.
+
+### Audit 1 Fix Verification
+
+| Gate | Result |
+|---|---|
+| Focused audit regression tests | Passed, 3/3 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 261/261 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 273/273 across both test projects |
+| `git diff --check` | Passed before commit |
+
+### Independent audit 1/3 of point 3.3
+
 - Reviewed commit: `caa849e24ebfe42ee0bb621f5945205881e52108` (clean working tree before review). AiNetLinter's symbol identifier resolver and assembly session/tool boundaries were inspected read-only through its MCP `find_symbol`/`get_symbol_body` tools. This audit did not run a build or tests; the verification table above records the implementation slice's reported runs, and its `git diff --check` row is not an independent gate.
 - **P1 — Assembly handoffs are advertised before a consumer/session exists (local blocker).** `InspectAssemblyScanner` sets `Handoff: true` and follow-up tools for type/member DTOs (`src/AiNetCodeNavigator.Core/Assemblies/InspectAssemblyScanner.cs:222-258`), and the formatter registers visible `h:` handles (`src/AiNetCodeNavigator.Core/Assemblies/InspectAssemblyFormatter.cs:156-159`). There is no Assembly handoff resolver or resident session follow-up path in this slice; the test only restores the registry value and parses its Assembly origin (`tests/AiNetCodeNavigator.FastTests/Assemblies/InspectAssemblyScannerTests.cs:64-81`). The implementation review already identifies the Cluster 7 dependency. **Impact:** `inspect_assembly` cannot roundtrip to an allowed follow-up tool. **Acceptance/next step:** Build the Cluster 7 assembly session and target/content-aware resolver, then test `inspect_assembly` output through each advertised follow-up, including unknown, foreign, and stale handles. Keep point 3.3 open until this passes.
 - **P1 — Assembly fallback values are still exposed as handoffs.** `StableId` falls back from `FormatHandoff` to a raw DocumentationCommentId or display string (`InspectAssemblyScanner.cs:261-264`), while type/member DTOs unconditionally set `Handoff: true` (`:232-258`) and `InspectAssemblyFormatter` wraps any nonempty ID in an opaque `h:` (`InspectAssemblyFormatter.cs:156-159`). Thus a symbol for which `FormatHandoff` returns null is advertised with an `h:` whose registry value is not a canonical `i:` identifier; any canonical consumer must reject it. **Reproduction/acceptance:** Exercise an assembly DTO symbol without a canonical declaration ID (or force that branch in a focused test); retain its display identity but omit `handoffId`, set `Handoff` false, and omit follow-up claims unless a canonical identifier exists. Assert every emitted `h:` restores to a parseable Assembly-origin identifier.

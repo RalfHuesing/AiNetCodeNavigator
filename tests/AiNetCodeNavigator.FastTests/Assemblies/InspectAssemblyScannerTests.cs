@@ -5,9 +5,12 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Core.Assemblies;
 using AiNetCodeNavigator.Core.Workspace;
 using AiNetCodeNavigator.TestKit;
+using AiNetCodeNavigator.TestKit.Fixtures;
+using Microsoft.CodeAnalysis;
 using Xunit;
 
 namespace AiNetCodeNavigator.FastTests.Assemblies;
@@ -88,6 +91,39 @@ public sealed class InspectAssemblyScannerTests
         Assert.DoesNotContain("set_Name", text, StringComparison.Ordinal);
         Assert.DoesNotContain("add_Changed", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Hidden", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StableId_InvalidAssemblyIdentityDoesNotExposeRawSymbolIdAsHandoff()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var compilation = await fixture.Solution.Projects.First().GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var symbol = compilation.GetTypeByMetadataName("SampleNamespace.Greeter");
+        Assert.NotNull(symbol);
+
+        var stableId = typeof(InspectAssemblyScanner).GetMethod(
+            "StableId",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(stableId);
+        var id = (string?)stableId!.Invoke(null, [symbol, AnalysisSymbolIdentity.ForAssembly(string.Empty, "invalid")]);
+
+        Assert.Null(id);
+
+        var toTypeDto = typeof(InspectAssemblyScanner).GetMethod(
+            "ToTypeDto",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(toTypeDto);
+        var dto = Assert.IsType<AssemblyTypeDto>(toTypeDto!.Invoke(null,
+        [
+            symbol,
+            new InspectAssemblyRequest(@"C:\invalid.dll", PublicOnly: false),
+            50,
+            AnalysisSymbolIdentity.ForAssembly(string.Empty, "invalid"),
+        ]));
+        Assert.False(dto.Handoff);
+        Assert.Null(dto.Id);
+        Assert.Empty(dto.AllowedFollowUpTools!);
     }
 
     [Fact]
