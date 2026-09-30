@@ -3,12 +3,14 @@ using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using AiNetCodeNavigator.Mcp.Formatting;
 using AiNetCodeNavigator.Mcp.Validation;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Microsoft.Extensions.AI;
 
 namespace AiNetCodeNavigator.FastTests.Mcp;
 
@@ -208,7 +210,6 @@ public sealed class McpArgumentValidationFilterTests
 
         Assert.Empty(schema.Validate("{\"options\":{\"label\":\"source\",\"extra\":2}}"));
         Assert.NotEmpty(schema.Validate("{\"options\":{\"label\":\"source\",\"extra\":\"wrong\"}}"));
-        Assert.NotEmpty(schema.Validate("{\"options\":{\"label\":\"source\"},\"unknown\":true}"));
     }
 
     [Fact]
@@ -218,6 +219,156 @@ public sealed class McpArgumentValidationFilterTests
 
         await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await McpArgumentValidationFilter.ParseInputSchemaAsync(schemaDocument.RootElement));
+    }
+
+    [Fact]
+    public async Task RegisteredSdkTool_ClosesRootPropertiesThroughLocalReference()
+    {
+        ArgumentValidationFixtureTool.Reset();
+        var tool = CreateTool(
+            (Func<int, string>)ArgumentValidationFixtureTool.Referenced,
+            """
+            {"type":"object","$ref":"#/$defs/input","$defs":{"input":{"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]}}}
+            """);
+        await using var session = await FixtureSession.StartAsync(tool);
+
+        var invalid = await session.CallAsync(new Dictionary<string, object?> { ["count"] = 1, ["unknown"] = true });
+        AssertInvalidArgument(invalid, "$.unknown");
+        Assert.Equal(0, ArgumentValidationFixtureTool.InvocationCount);
+
+        var valid = await session.CallAsync(new Dictionary<string, object?> { ["count"] = 1 });
+        Assert.NotEqual(true, valid.IsError);
+        Assert.Equal(1, ArgumentValidationFixtureTool.InvocationCount);
+    }
+
+    [Fact]
+    public async Task RegisteredSdkTool_ClosesComposedRootWithoutLosingDeclaredProperties()
+    {
+        ArgumentValidationFixtureTool.Reset();
+        var tool = CreateTool(
+            (Func<int, string, string>)ArgumentValidationFixtureTool.RootProperties,
+            """
+            {"type":"object","allOf":[{"$ref":"#/$defs/input"},{"type":"object","properties":{"label":{"type":"string"}},"required":["label"]}],"$defs":{"input":{"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]}}}
+            """);
+        await using var session = await FixtureSession.StartAsync(tool);
+
+        var invalid = await session.CallAsync(new Dictionary<string, object?> { ["count"] = 1, ["label"] = "ok", ["unknown"] = true });
+        AssertInvalidArgument(invalid, "$.unknown");
+        Assert.Equal(0, ArgumentValidationFixtureTool.InvocationCount);
+
+        var valid = await session.CallAsync(new Dictionary<string, object?> { ["count"] = 1, ["label"] = "ok" });
+        Assert.True(valid.IsError is not true, TextOf(valid));
+        Assert.Equal(1, ArgumentValidationFixtureTool.InvocationCount);
+    }
+
+    [Fact]
+    public async Task RegisteredSdkTool_UsesAdvertisedParameterNameForBindingChecks()
+    {
+        ArgumentValidationFixtureTool.Reset();
+        await using var session = await FixtureSession.StartAsync(
+            CreateTool((Func<int, string>)ArgumentValidationFixtureTool.Renamed));
+
+        var invalid = await session.CallAsync(new Dictionary<string, object?> { ["sequence_value"] = 2_147_483_648L });
+
+        AssertInvalidArgument(invalid, "$.sequence_value");
+        Assert.Equal(0, ArgumentValidationFixtureTool.InvocationCount);
+
+        var valid = await session.CallAsync(new Dictionary<string, object?> { ["sequence_value"] = 2_147_483_647 });
+        Assert.NotEqual(true, valid.IsError);
+        Assert.Equal(1, ArgumentValidationFixtureTool.InvocationCount);
+    }
+
+    [Fact]
+    public async Task RegisteredSdkTool_AppliesTokenBudgetToSchemaUnavailableErrors()
+    {
+        ArgumentValidationFixtureTool.Reset();
+        var tool = CreateTool(
+            (Func<int, string>)ArgumentValidationFixtureTool.Referenced,
+            "{\"type\":\"object\",\"$ref\":\"https://example.invalid/schema.json\"}");
+        await using var session = await FixtureSession.StartAsync(tool);
+
+        var defaultEnvelope = McpToolResults.Recoverable(
+            "TOOL_SCHEMA_UNAVAILABLE",
+            "The registered tool input schema could not be validated.",
+            "Retry the call later or use another available tool.",
+            maxResponseBytes: 512);
+        var requiredTokens = McpResponseFormatter.CountTokens(TextOf(defaultEnvelope));
+        var exactBudget = await session.CallAsync(new Dictionary<string, object?>
+        {
+            ["count"] = 1,
+            ["maxResponseBytes"] = 512,
+            ["maxResponseTokens"] = requiredTokens,
+        });
+        Assert.True(exactBudget.IsError);
+        Assert.True(McpResponseFormatter.CountTokens(TextOf(exactBudget)) <= requiredTokens);
+
+        var exception = await Assert.ThrowsAsync<McpProtocolException>(async () =>
+            await session.CallAsync(new Dictionary<string, object?>
+            {
+                ["count"] = 1,
+                ["maxResponseBytes"] = 512,
+                ["maxResponseTokens"] = requiredTokens - 1,
+            }));
+
+        Assert.Equal(McpErrorCode.InvalidParams, exception.ErrorCode);
+        Assert.Contains("token budget is too small", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("example.invalid", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, ArgumentValidationFixtureTool.InvocationCount);
+    }
+
+    [Fact]
+    public async Task RegisteredSdkTool_ReportsRequiredPathsInsideDictionaryAndArrayValues()
+    {
+        ArgumentValidationFixtureTool.Reset();
+        var objectSchema = """
+            {
+              "type":"object",
+              "properties":{"options":{"type":"object","additionalProperties":{"$ref":"#/$defs/item"}}},
+              "required":["options"],
+              "$defs":{"item":{"type":"object","properties":{"label":{"type":"string"}},"required":["label"]}}
+            }
+            """;
+        var objectTool = CreateTool(
+            (Func<Dictionary<string, ArgumentValidationFixtureTool.FixtureOptions>, string>)ArgumentValidationFixtureTool.DictionaryObject,
+            objectSchema);
+        await using (var objectSession = await FixtureSession.StartAsync(objectTool))
+        {
+            var missingDictionaryField = await objectSession.CallAsync(new Dictionary<string, object?>
+            {
+                ["options"] = new Dictionary<string, object?> { ["first"] = new { } },
+            });
+            AssertInvalidArgument(missingDictionaryField, "$.options.first.label");
+            Assert.Equal(0, ArgumentValidationFixtureTool.InvocationCount);
+        }
+
+        var schema = """
+            {
+              "type":"object",
+              "properties":{"options":{"type":"object","additionalProperties":{"type":"array","items":{"$ref":"#/$defs/item"}}}},
+              "required":["options"],
+              "$defs":{"item":{"type":"object","properties":{"label":{"type":"string"}},"required":["label"]}}
+            }
+            """;
+        var tool = CreateTool(
+            (Func<Dictionary<string, List<ArgumentValidationFixtureTool.FixtureOptions>>, string>)ArgumentValidationFixtureTool.DictionaryArray,
+            schema);
+        await using var session = await FixtureSession.StartAsync(tool);
+
+        var ordinaryKey = await session.CallAsync(new Dictionary<string, object?>
+        {
+            ["options"] = new Dictionary<string, object?> { ["first"] = new object?[] { new { } } },
+        });
+        AssertInvalidArgument(ordinaryKey, "$.options.first[0].label");
+        Assert.Equal(0, ArgumentValidationFixtureTool.InvocationCount);
+
+        var unsafeKey = await session.CallAsync(new Dictionary<string, object?>
+        {
+            ["options"] = new Dictionary<string, object?> { ["raw/key"] = new object?[] { new { } } },
+        });
+        Assert.True(unsafeKey.IsError);
+        Assert.Contains("fieldPath: $", TextOf(unsafeKey), StringComparison.Ordinal);
+        Assert.DoesNotContain("raw/key", TextOf(unsafeKey), StringComparison.Ordinal);
+        Assert.Equal(0, ArgumentValidationFixtureTool.InvocationCount);
     }
 
     private static Dictionary<string, object?> ValidArguments() => new()
@@ -240,6 +391,18 @@ public sealed class McpArgumentValidationFilterTests
 
     private static string TextOf(CallToolResult result) =>
         Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
+
+    private static McpServerTool CreateTool(Delegate handler, string? inputSchema = null)
+    {
+        var tool = McpServerTool.Create(handler, new McpServerToolCreateOptions { Name = "argument_validation_fixture" });
+        if (inputSchema is not null)
+        {
+            using var schema = JsonDocument.Parse(inputSchema);
+            tool.ProtocolTool.InputSchema = schema.RootElement.Clone();
+        }
+
+        return tool;
+    }
 
     [McpServerToolType]
     public sealed class ArgumentValidationFixtureTool
@@ -272,6 +435,38 @@ public sealed class McpArgumentValidationFilterTests
             return $"{count}:{names.Length}:{mode}:{sequence}:{note}:{options?.Label}:{maxResponseBytes}:{maxResponseTokens}";
         }
 
+        public static string Referenced(int count)
+        {
+            Interlocked.Increment(ref _invocationCount);
+            return count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+#pragma warning disable MEAI001 // The SDK marks this wire-name attribute as test-only; it is required to exercise the documented binder edge case.
+        public static string Renamed([AIParameterName("sequence_value")] int sequence)
+        {
+            Interlocked.Increment(ref _invocationCount);
+            return sequence.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+#pragma warning restore MEAI001
+
+        public static string DictionaryArray(Dictionary<string, List<FixtureOptions>> options)
+        {
+            Interlocked.Increment(ref _invocationCount);
+            return options.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        public static string DictionaryObject(Dictionary<string, FixtureOptions> options)
+        {
+            Interlocked.Increment(ref _invocationCount);
+            return options.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        public static string RootProperties(int count, string label)
+        {
+            Interlocked.Increment(ref _invocationCount);
+            return $"{count}:{label}";
+        }
+
         public sealed class FixtureOptions
         {
             public required string Label { get; init; }
@@ -299,15 +494,18 @@ public sealed class McpArgumentValidationFilterTests
             _shutdown = shutdown;
         }
 
-        internal static async Task<FixtureSession> StartAsync()
+        internal static async Task<FixtureSession> StartAsync(McpServerTool? tool = null)
         {
             var clientToServer = new Pipe();
             var serverToClient = new Pipe();
             var shutdown = new CancellationTokenSource();
-            var services = new ServiceCollection()
+            var builder = new ServiceCollection()
                 .AddMcpServer()
-                .WithRequestFilters(McpArgumentValidationFilter.Configure)
-                .WithTools<ArgumentValidationFixtureTool>()
+                .WithRequestFilters(McpArgumentValidationFilter.Configure);
+            builder = tool is null
+                ? builder.WithTools<ArgumentValidationFixtureTool>()
+                : builder.WithTools(new[] { tool });
+            var services = builder
                 .WithStreamServerTransport(clientToServer.Reader.AsStream(), serverToClient.Writer.AsStream())
                 .Services
                 .BuildServiceProvider();

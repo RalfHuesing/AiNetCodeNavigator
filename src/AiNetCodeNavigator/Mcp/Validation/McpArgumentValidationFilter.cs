@@ -46,10 +46,11 @@ internal static class McpArgumentValidationFilter
             return null;
         }
 
+        var arguments = context.Params?.Arguments ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal);
         var inputSchema = tool.ProtocolTool.InputSchema;
         if (inputSchema.ValueKind != JsonValueKind.Object)
         {
-            return SchemaUnavailable();
+            return SchemaUnavailable(arguments);
         }
 
         JsonSchema schema;
@@ -57,7 +58,7 @@ internal static class McpArgumentValidationFilter
         {
             if (HasExternalReference(inputSchema))
             {
-                return SchemaUnavailable();
+                return SchemaUnavailable(arguments);
             }
 
             schema = await Schemas.GetValue(
@@ -74,11 +75,16 @@ internal static class McpArgumentValidationFilter
         {
             // A registered tool schema is trusted metadata. If it cannot be parsed, do not invoke the tool or
             // expose schema/parser details to the caller.
-            return SchemaUnavailable();
+            return SchemaUnavailable(arguments);
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        var arguments = context.Params?.Arguments ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        var unknownArgument = arguments.Keys.FirstOrDefault(key => !HasRootProperty(inputSchema, inputSchema, key, new HashSet<string>(StringComparer.Ordinal), 0));
+        if (unknownArgument is not null)
+        {
+            return CreateInvalidArgument(AppendPropertyPath("$", unknownArgument), "The supplied argument is not declared by the registered tool input schema.", arguments);
+        }
+
         var validationErrors = schema.Validate(JsonSerializer.Serialize(arguments));
         if (validationErrors.Count > 0)
         {
@@ -91,7 +97,7 @@ internal static class McpArgumentValidationFilter
             {
                 if (parameter.ParameterType == typeof(CancellationToken)
                     || parameter.Name is null
-                    || !arguments.TryGetValue(parameter.Name, out var value))
+                    || !arguments.TryGetValue(GetWireParameterName(parameter, serializerOptions, inputSchema), out var value))
                 {
                     continue;
                 }
@@ -102,7 +108,7 @@ internal static class McpArgumentValidationFilter
                 }
                 catch (Exception exception) when (exception is JsonException or NotSupportedException or OverflowException)
                 {
-                    return CreateInvalidArgument(AppendPropertyPath("$", parameter.Name), "The value cannot be bound to the registered tool parameter.", arguments);
+                    return CreateInvalidArgument(AppendPropertyPath("$", GetWireParameterName(parameter, serializerOptions, inputSchema)), "The value cannot be bound to the registered tool parameter.", arguments);
                 }
             }
         }
@@ -146,10 +152,25 @@ internal static class McpArgumentValidationFilter
         JsonElement inputSchema,
         IDictionary<string, JsonElement> arguments)
     {
+        if (error is ChildSchemaValidationError childSchemaError)
+        {
+            foreach (var nestedError in childSchemaError.Errors.Values.SelectMany(static errors => errors))
+            {
+                var nestedPath = ResolveFieldPath(nestedError, inputSchema, arguments);
+                if (nestedPath != "$") return nestedPath;
+            }
+        }
+
         var rawPath = string.IsNullOrWhiteSpace(error.Path) ? "$" : error.Path;
         var path = NormalizePath(rawPath);
-        if (error.Kind == ValidationErrorKind.PropertyRequired && path == "$")
+        if (error.Kind == ValidationErrorKind.PropertyRequired)
         {
+            if (path != "$")
+            {
+                var nestedPath = string.IsNullOrWhiteSpace(error.Property) ? "$" : AppendPropertyPath(path, error.Property);
+                if (nestedPath != "$") return nestedPath;
+            }
+
             using var argumentsDocument = JsonDocument.Parse(JsonSerializer.Serialize(arguments));
             var locatedPath = FindMissingRequiredPath(
                 inputSchema,
@@ -159,15 +180,6 @@ internal static class McpArgumentValidationFilter
                 error.Property,
                 0);
             if (locatedPath is not null) return locatedPath;
-        }
-
-        if (error.Kind == ValidationErrorKind.PropertyRequired && !string.IsNullOrWhiteSpace(error.Property))
-        {
-            var propertySuffix = $".{error.Property}";
-            if (!path.EndsWith(propertySuffix, StringComparison.Ordinal))
-            {
-                return AppendPropertyPath(path, error.Property);
-            }
         }
 
         return IsSafePath(path) ? path : "$";
@@ -216,6 +228,29 @@ internal static class McpArgumentValidationFilter
                 if (!value.TryGetProperty(propertySchema.Name, out var propertyValue)) continue;
                 var nestedPath = AppendPropertyPath(valuePath, propertySchema.Name);
                 var result = FindMissingRequiredPath(rootSchema, propertySchema.Value, propertyValue, nestedPath, missingName, depth + 1);
+                if (result is not null) return result;
+            }
+
+            if (schema.TryGetProperty("additionalProperties", out var additionalProperties)
+                && additionalProperties.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var propertyValue in value.EnumerateObject())
+                {
+                    if (properties.TryGetProperty(propertyValue.Name, out _)) continue;
+                    var nestedPath = AppendPropertyPath(valuePath, propertyValue.Name);
+                    var result = FindMissingRequiredPath(rootSchema, additionalProperties, propertyValue.Value, nestedPath, missingName, depth + 1);
+                    if (result is not null) return result;
+                }
+            }
+        }
+        else if (value.ValueKind == JsonValueKind.Object
+            && schema.TryGetProperty("additionalProperties", out var onlyAdditionalProperties)
+            && onlyAdditionalProperties.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var propertyValue in value.EnumerateObject())
+            {
+                var nestedPath = AppendPropertyPath(valuePath, propertyValue.Name);
+                var result = FindMissingRequiredPath(rootSchema, onlyAdditionalProperties, propertyValue.Value, nestedPath, missingName, depth + 1);
                 if (result is not null) return result;
             }
         }
@@ -270,28 +305,32 @@ internal static class McpArgumentValidationFilter
         {
             var segment = rawSegment.Replace("~1", "/", StringComparison.Ordinal)
                 .Replace("~0", "~", StringComparison.Ordinal);
-            var bracket = segment.IndexOf('[', StringComparison.Ordinal);
-            if (bracket > 0 && segment.EndsWith(']')
-                && segment[..bracket].All(static character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-')
-                && int.TryParse(segment[(bracket + 1)..^1], System.Globalization.NumberStyles.None,
-                    System.Globalization.CultureInfo.InvariantCulture, out var arrayIndex))
+            foreach (var pathPart in segment.Split('.', StringSplitOptions.None))
             {
-                normalized += $".{segment[..bracket]}[{arrayIndex}]";
-                continue;
-            }
+                if (pathPart.Length == 0) return "$";
+                var bracket = pathPart.IndexOf('[', StringComparison.Ordinal);
+                if (bracket > 0 && pathPart.EndsWith(']')
+                    && IsSafePathSegment(pathPart[..bracket])
+                    && int.TryParse(pathPart[(bracket + 1)..^1], System.Globalization.NumberStyles.None,
+                        System.Globalization.CultureInfo.InvariantCulture, out var arrayIndex))
+                {
+                    normalized += $".{pathPart[..bracket]}[{arrayIndex}]";
+                    continue;
+                }
 
-            if (int.TryParse(segment, System.Globalization.NumberStyles.None,
-                    System.Globalization.CultureInfo.InvariantCulture, out var index))
-            {
-                normalized += $"[{index}]";
-            }
-            else if (segment.All(static character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-'))
-            {
-                normalized += $".{segment}";
-            }
-            else
-            {
-                return "$";
+                if (int.TryParse(pathPart, System.Globalization.NumberStyles.None,
+                        System.Globalization.CultureInfo.InvariantCulture, out var index))
+                {
+                    normalized += $"[{index}]";
+                }
+                else if (IsSafePathSegment(pathPart))
+                {
+                    normalized += $".{pathPart}";
+                }
+                else
+                {
+                    return "$";
+                }
             }
         }
 
@@ -299,9 +338,12 @@ internal static class McpArgumentValidationFilter
     }
 
     private static string AppendPropertyPath(string path, string propertyName) =>
-        propertyName.All(static character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-')
+        IsSafePathSegment(propertyName)
             ? $"{path}.{propertyName}"
             : "$";
+
+    private static bool IsSafePathSegment(string value) => value.Length > 0
+        && value.All(static character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-');
 
     private static bool IsSafePath(string path) => path.StartsWith('$')
         && path.All(static character => char.IsAsciiLetterOrDigit(character) || character is '$' or '.' or '_' or '-' or '[' or ']');
@@ -355,10 +397,26 @@ internal static class McpArgumentValidationFilter
     }
 
 
-    private static CallToolResult SchemaUnavailable() => McpToolResults.Recoverable(
-        "TOOL_SCHEMA_UNAVAILABLE",
-        "The registered tool input schema could not be validated.",
-        "Retry the call later or use another available tool.");
+    private static CallToolResult SchemaUnavailable(IDictionary<string, JsonElement> arguments)
+    {
+        var (maxResponseBytes, maxResponseTokens) = ReadErrorBudgets(arguments);
+        try
+        {
+            return McpToolResults.Recoverable(
+                "TOOL_SCHEMA_UNAVAILABLE",
+                "The registered tool input schema could not be validated.",
+                "Retry the call later or use another available tool.",
+                maxResponseBytes: maxResponseBytes,
+                maxResponseTokens: maxResponseTokens);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            throw new McpProtocolException(
+                "The response token budget is too small to return the required schema error.",
+                null,
+                McpErrorCode.InvalidParams);
+        }
+    }
 
     internal static async Task<JsonSchema> ParseInputSchemaAsync(JsonElement inputSchema)
     {
@@ -367,15 +425,64 @@ internal static class McpArgumentValidationFilter
             throw new NotSupportedException("External schema references are not allowed for registered tool inputs.");
         }
 
-        var parsed = await JsonSchema.FromJsonAsync(inputSchema.GetRawText()).ConfigureAwait(false);
-        // MCP tool inputs are named argument objects. Close that top-level object even when the SDK's generated
-        // schema omits additionalProperties; nested objects follow their declared schema, including explicit maps.
-        if (parsed.Type.HasFlag(JsonObjectType.Object) || parsed.Properties.Count > 0)
+        return await JsonSchema.FromJsonAsync(inputSchema.GetRawText()).ConfigureAwait(false);
+    }
+
+    private static bool HasRootProperty(
+        JsonElement rootSchema,
+        JsonElement schema,
+        string name,
+        HashSet<string> visitedReferences,
+        int depth)
+    {
+        if (depth > 64 || schema.ValueKind != JsonValueKind.Object) return false;
+
+        if (schema.TryGetProperty("properties", out var properties)
+            && properties.ValueKind == JsonValueKind.Object
+            && properties.TryGetProperty(name, out _))
         {
-            parsed.AllowAdditionalProperties = false;
+            return true;
         }
 
-        return parsed;
+        if (schema.TryGetProperty("$ref", out var reference)
+            && reference.ValueKind == JsonValueKind.String
+            && visitedReferences.Add(reference.GetString()!)
+            && TryResolveLocalReference(rootSchema, reference.GetString()!, out var referencedSchema)
+            && HasRootProperty(rootSchema, referencedSchema, name, visitedReferences, depth + 1))
+        {
+            return true;
+        }
+
+        foreach (var composition in new[] { "allOf", "anyOf", "oneOf" })
+        {
+            if (!schema.TryGetProperty(composition, out var schemas) || schemas.ValueKind != JsonValueKind.Array) continue;
+            foreach (var alternative in schemas.EnumerateArray())
+            {
+                if (HasRootProperty(rootSchema, alternative, name, visitedReferences, depth + 1)) return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string GetWireParameterName(ParameterInfo parameter, JsonSerializerOptions? options, JsonElement inputSchema)
+    {
+        const string parameterNameAttribute = "Microsoft.Extensions.AI.AIParameterNameAttribute";
+        var renamedAttribute = parameter.GetCustomAttributesData()
+            .FirstOrDefault(attribute => attribute.AttributeType.FullName == parameterNameAttribute);
+        if (renamedAttribute?.ConstructorArguments is [{ Value: string explicitName }])
+        {
+            return explicitName;
+        }
+
+        var serializedName = options?.PropertyNamingPolicy?.ConvertName(parameter.Name!);
+        if (inputSchema.TryGetProperty("properties", out var properties) && properties.ValueKind == JsonValueKind.Object)
+        {
+            if (serializedName is not null && properties.TryGetProperty(serializedName, out _)) return serializedName;
+            if (properties.TryGetProperty(parameter.Name!, out _)) return parameter.Name!;
+        }
+
+        return serializedName ?? parameter.Name!;
     }
 
     private static bool TryGetBindingMetadata(
