@@ -8,7 +8,10 @@
   - [x] JSON-Konfiguration validieren und unterstützte Einstellungen atomar reloaden
   - [x] Health-Abfrage für globalen oder bereits residenten Zustand ohne Target-Load
   - [x] Prozessintegration: Initialize, Toolliste, Maintenance-Aufrufe, stderr/stdout und EOF
-  - [ ] Review/Audit zu 9.1 durchführen; Findings ergänzen und umsetzen.
+  - [ ] Review/Audit zu 9.1 durchführen; Findings ergänzen und umsetzen (audit 1/3: three P2 findings; two point audits remain).
+  - [ ] Audit 1 P2: Replace health's unsupported offset continuation with executable atomic budget recovery or a supported continuation contract.
+  - [ ] Audit 1 P2: Preserve settings/version when reload cannot represent its required acknowledgement within the requested response budget.
+  - [ ] Audit 1 P2: Align reload's public idempotent annotation with its observed settings-version behavior.
 - [ ] 9.2 Tool-Registrierungen:
   - [ ] Symbol-Tools: `find_symbol`, `get_symbol_body`
   - [ ] Struktur-Tools: `get_file_skeleton`, `get_class_structure`, `get_file_tree`, `get_namespace_tree`, `get_index_scope`
