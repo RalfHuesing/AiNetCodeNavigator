@@ -28,15 +28,25 @@ public readonly record struct SymbolHandoffIdentifier(
     private const char SourceOriginCode = '0';
     private const char AssemblyOriginCode = '1';
 
-    public string Format() =>
-        $"{InternalPrefix}{(Origin == SymbolHandoffOrigin.Source ? SourceOriginCode : AssemblyOriginCode)}:{TargetToken}:{ContentToken}:{DocumentationCommentId}";
+    public string Format()
+    {
+        var originCode = Origin switch
+        {
+            SymbolHandoffOrigin.Source => SourceOriginCode,
+            SymbolHandoffOrigin.Assembly => AssemblyOriginCode,
+            _ => throw new InvalidOperationException("The handoff origin is not supported."),
+        };
+
+        return $"{InternalPrefix}{originCode}:{TargetToken}:{ContentToken}:{DocumentationCommentId}";
+    }
 
     public static bool TryCreate(
         SymbolHandoffCreationRequest request,
         out SymbolHandoffIdentifier identifier)
     {
         identifier = default;
-        if (!IsCanonicalDocumentationCommentId(request.DocumentationCommentId)
+        if (request.Origin is not (SymbolHandoffOrigin.Source or SymbolHandoffOrigin.Assembly)
+            || !IsCanonicalDocumentationCommentId(request.DocumentationCommentId)
             || !SymbolHandoffToken.TryCreateTarget(request.CanonicalPath, out var targetToken)
             || !SymbolHandoffToken.TryCreateContent(request.ContentHash, out var contentToken))
         {

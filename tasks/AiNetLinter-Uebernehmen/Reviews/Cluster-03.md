@@ -88,3 +88,25 @@ A later FastTests rerun transiently failed in the unrelated `HandoffHandleRegist
 - **P1 resolved within point 3.1.** `BuildSourceProjectMarkers` suppresses duplicate marker values (`src/AiNetCodeNavigator.Core/Symbols/AnalysisSymbolIdentity.cs:168-191`). Stable markers now incorporate metadata-reference paths, module version IDs, aliases, kind, interop settings, and the transitive project-reference graph (`:242-381`). The tests vary metadata references and project references independently for same-path projects with identical declarations, check stable distinct handoffs across recreated solutions, and check suppression when contexts cannot be distinguished (`tests/AiNetCodeNavigator.FastTests/Symbols/AnalysisSymbolIdentityTests.cs:96-130`, `:380-498`). This satisfies audit 2's distinguish-or-suppress condition. The original multi-target marker and Windows path-normalization fixes remain intact.
 - **P3 resolved.** Source and assembly path-variant tests now require non-null, parseable handoffs of the expected origin before comparing equality (`AnalysisSymbolIdentityTests.cs:170-179`).
 - No point 3.1 finding remains open after the third audit. The point 3.1 audit checkbox is closed. Public handoff producer/consumer roundtrips, typed lookup errors, and File/Line integration remain point 3.3 and were not audited here.
+
+## Point 3.2: Handoff Tokensystem
+
+- Implementation base: `ca61142e0e4891520666ef53a55f6eb634c2c4ca`; working tree was clean before this slice.
+- Reference review: AiNetLinter's `HandoffCounterAlphabet`, `HandoffCounterStore`, `HandoffHandleRegistry`, `SymbolHandoffIdentifier`, and their FastTests were inspected read-only through AiNetLinter MCP (`find_symbol` and `get_symbol_body`). The counter sequence, lock-file reservation strategy, volatile bijection, and identifier wire format broadly match the reference. No AiNetLinter files or tests were changed or run.
+- **P2 — Invalid values could be formatted as valid handles/identifiers.** `FormatHandle` prefixed any input, while `SymbolHandoffIdentifier.TryCreate` accepted unknown origin enum values and `Format` silently mapped every non-source value to the assembly code. Regression tests were run first and failed for each case. Formatting now rejects invalid counters and origins; `TryCreate` returns false for an unsupported origin.
+- **P2 — Token validator threw for null input.** `SymbolHandoffToken.IsValid(null)` threw `NullReferenceException`. The regression test failed before the fix; the validator now returns false for null or empty input.
+- **P2 — Counter-store failures escaped the Result contract and used the wrong code.** Creating a counter under a path whose parent was a file caused `Next` to throw `IOException` from lock-directory creation instead of returning a failure. It now catches directory-creation failures and returns `HANDOFF_COUNTER_UNAVAILABLE`; the counter persistence path uses the same error code. This distinguishes unavailable counter state from an unknown user handle.
+- **P3 — Registry concurrency test was stochastic.** The existing test generated 100 random requests across 20 IDs, so some IDs were occasionally never requested. Repeated pre-fix runs failed 4/30 times. The test now schedules five concurrent requests per ID, checks every result, verifies per-key deduplication and handle uniqueness, and resolves each returned handle. Ten post-fix repeated runs passed.
+- Added two-store parallel allocation coverage and corrupt-file preservation tests. Current-state documentation updated in [build-and-tests.md](../../../docs/development/build-and-tests.md).
+- The point 3.2 audit checkbox remains open pending independent review. Producer/consumer composition, stale-snapshot checks, and public MCP roundtrips remain point 3.3 and were not changed.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| Focused handoff tests | Passed, 81/81 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 252/252 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 264/264 across both test projects |
+| `git diff --check` | Passed before commit |

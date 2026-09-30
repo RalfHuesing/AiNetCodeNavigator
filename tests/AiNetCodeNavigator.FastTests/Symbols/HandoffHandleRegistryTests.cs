@@ -1,6 +1,5 @@
 #nullable enable
 
-using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Models;
@@ -18,7 +17,7 @@ public sealed class HandoffHandleRegistryTests
     {
         public Result<string> Next() =>
             Result<string>.Failure(
-                NavigationErrorCodes.HandoffUnknown,
+                NavigationErrorCodes.HandoffCounterUnavailable,
                 "Counter-Speicher absichtlich nicht verfügbar.");
     }
 
@@ -67,6 +66,17 @@ public sealed class HandoffHandleRegistryTests
     }
 
     [Fact]
+    public void GetOrCreateOpaqueHandleForOutput_PropagatesCounterStoreFailure()
+    {
+        var registry = new HandoffHandleRegistry(new FailingCounterStore());
+
+        var result = registry.GetOrCreateOpaqueHandleForOutput("internal-id");
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.HandoffCounterUnavailable, result.Error!.Value.Code);
+    }
+
+    [Fact]
     public void RestoreInternalHandoffForInput_PassesSemanticInputUnchanged()
     {
         using var temp = TestTempDirectory.Create("registry-");
@@ -106,20 +116,27 @@ public sealed class HandoffHandleRegistryTests
             .Select(i => $"i:0:target:content:M:Class.Method{i}")
             .ToArray();
 
-        var handles = new ConcurrentBag<string>();
-
-        Parallel.For(0, 100, _ =>
+        const int requestsPerId = 5;
+        var results = new (string InternalId, string Handle)[internalIds.Length * requestsPerId];
+        Parallel.For(0, results.Length, index =>
         {
-            var id = internalIds[Random.Shared.Next(internalIds.Length)];
+            var id = internalIds[index % internalIds.Length];
             var handleResult = registry.GetOrCreateOpaqueHandleForOutput(id);
-            if (handleResult.IsSuccess)
-            {
-                handles.Add(handleResult.Value!);
-            }
+            Assert.True(handleResult.IsSuccess);
+            results[index] = (id, handleResult.Value!);
         });
 
-        // Exactly 20 distinct handles issued for 20 distinct IDs
-        Assert.Equal(20, handles.Distinct().Count());
-        Assert.Equal(20, registry.Count);
+        var handlesById = results.GroupBy(result => result.InternalId).ToArray();
+        Assert.Equal(internalIds.Length, handlesById.Length);
+        Assert.All(handlesById, group => Assert.Single(group.Select(result => result.Handle).Distinct()));
+        Assert.Equal(internalIds.Length, handlesById.Select(group => group.First().Handle).Distinct().Count());
+        Assert.Equal(internalIds.Length, registry.Count);
+
+        foreach (var result in handlesById.Select(group => group.First()))
+        {
+            var restored = registry.RestoreInternalHandoffForInput(result.Handle);
+            Assert.True(restored.IsSuccess);
+            Assert.Equal(result.InternalId, restored.Value);
+        }
     }
 }

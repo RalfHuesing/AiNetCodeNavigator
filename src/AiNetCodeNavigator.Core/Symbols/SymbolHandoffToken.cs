@@ -75,9 +75,9 @@ public static class SymbolHandoffToken
         return true;
     }
 
-    public static bool IsValid(string token)
+    public static bool IsValid(string? token)
     {
-        if (token.Length != EncodedLength)
+        if (string.IsNullOrEmpty(token) || token.Length != EncodedLength)
         {
             return false;
         }

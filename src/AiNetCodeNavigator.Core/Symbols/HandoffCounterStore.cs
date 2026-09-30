@@ -99,8 +99,8 @@ public sealed class HandoffCounterStore : IHandoffCounterStore
         if (lockStream is null)
         {
             return Result<string>.Failure(
-                NavigationErrorCodes.HandoffUnknown,
-                "Die High-Water-Mark-Datei ist durch einen anderen Prozess gesperrt.");
+                NavigationErrorCodes.HandoffCounterUnavailable,
+                "Die High-Water-Mark-Datei konnte nicht für die Zuteilung eines Handles gesperrt werden.");
         }
 
         var batchResult = GenerateNextBatch(batchSize);
@@ -145,7 +145,7 @@ public sealed class HandoffCounterStore : IHandoffCounterStore
             if (string.IsNullOrWhiteSpace(json))
             {
                 return Result<IReadOnlyList<string>>.Failure(
-                    NavigationErrorCodes.HandoffUnknown,
+                    NavigationErrorCodes.HandoffCounterUnavailable,
                     "Die Handoff-Counter-Datei ist leer oder beschädigt.");
             }
 
@@ -157,14 +157,14 @@ public sealed class HandoffCounterStore : IHandoffCounterStore
             catch (JsonException)
             {
                 return Result<IReadOnlyList<string>>.Failure(
-                    NavigationErrorCodes.HandoffUnknown,
+                    NavigationErrorCodes.HandoffCounterUnavailable,
                     "Die Handoff-Counter-Datei enthält kein gültiges JSON.");
             }
 
             if (state is null || state.FormatVersion != 1 || !HandoffCounterAlphabet.IsValidCounter(state.LastIssued))
             {
                 return Result<IReadOnlyList<string>>.Failure(
-                    NavigationErrorCodes.HandoffUnknown,
+                    NavigationErrorCodes.HandoffCounterUnavailable,
                     "Die Handoff-Counter-Datei enthält eine ungültige Formatversion oder einen inkonsistenten Zählerwert.");
             }
 
@@ -181,7 +181,7 @@ public sealed class HandoffCounterStore : IHandoffCounterStore
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return Result<IReadOnlyList<string>>.Failure(
-                NavigationErrorCodes.HandoffUnknown,
+                NavigationErrorCodes.HandoffCounterUnavailable,
                 $"Fehler beim Lesen der High-Water-Mark-Datei: {ex.Message}");
         }
     }
@@ -189,17 +189,17 @@ public sealed class HandoffCounterStore : IHandoffCounterStore
     private Result<string> PersistCounterAtomically(string nextCounter)
     {
         var directory = Path.GetDirectoryName(filePath);
-        if (!string.IsNullOrEmpty(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        var updatedState = new HandoffCounterState(1, nextCounter);
-        var updatedJson = JsonSerializer.Serialize(updatedState, new JsonSerializerOptions { WriteIndented = true });
         var tempFilePath = filePath + ".tmp-" + Guid.NewGuid().ToString("N");
 
         try
         {
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var updatedState = new HandoffCounterState(1, nextCounter);
+            var updatedJson = JsonSerializer.Serialize(updatedState, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(tempFilePath, updatedJson);
             File.Move(tempFilePath, filePath, overwrite: true);
             return Result<string>.Success(nextCounter);
@@ -207,7 +207,7 @@ public sealed class HandoffCounterStore : IHandoffCounterStore
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return Result<string>.Failure(
-                NavigationErrorCodes.HandoffUnknown,
+                NavigationErrorCodes.HandoffCounterUnavailable,
                 $"Fehler beim Schreiben der High-Water-Mark-Datei: {ex.Message}");
         }
         finally
@@ -219,9 +219,17 @@ public sealed class HandoffCounterStore : IHandoffCounterStore
     private FileStream? AcquireCrossProcessLock(TimeSpan timeout)
     {
         var directory = Path.GetDirectoryName(lockFilePath);
-        if (!string.IsNullOrEmpty(directory))
+        try
         {
-            Directory.CreateDirectory(directory);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _ = ex;
+            return null;
         }
 
         var start = Environment.TickCount64;

@@ -32,6 +32,36 @@ public sealed class SymbolHandoffIdentifierTests
         Assert.Equal(docCommentId, parsed.DocumentationCommentId);
     }
 
+    [Fact]
+    public void TryCreate_RejectsUnknownOrigin()
+    {
+        var request = new SymbolHandoffCreationRequest(
+            (SymbolHandoffOrigin)42,
+            @"C:\work\app.sln",
+            new string('a', 64),
+            "T:Probe.Type");
+
+        Assert.False(SymbolHandoffIdentifier.TryCreate(request, out _));
+    }
+
+    [Fact]
+    public void Format_RejectsUnknownOrigin()
+    {
+        var identifier = new SymbolHandoffIdentifier(
+            (SymbolHandoffOrigin)42,
+            new string('a', SymbolHandoffToken.EncodedLength),
+            new string('b', SymbolHandoffToken.EncodedLength),
+            "T:Probe.Type");
+
+        Assert.Throws<System.InvalidOperationException>(() => identifier.Format());
+    }
+
+    [Fact]
+    public void TokenValidator_RejectsNull()
+    {
+        Assert.False(SymbolHandoffToken.IsValid(null!));
+    }
+
     [Theory]
     [InlineData("M:Namespace.Class.Method")]
     [InlineData("T:Namespace.Class")]

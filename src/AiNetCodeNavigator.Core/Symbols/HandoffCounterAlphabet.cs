@@ -63,7 +63,15 @@ public static class HandoffCounterAlphabet
             && (value[2] == '\\' || value[2] == '/');
     }
 
-    public static string FormatHandle(string counter) => HandlePrefix + counter;
+    public static string FormatHandle(string counter)
+    {
+        if (!IsValidCounter(counter))
+        {
+            throw new ArgumentException("Der Handoff-Zähler enthält ungültige Zeichen oder ist leer.", nameof(counter));
+        }
+
+        return HandlePrefix + counter;
+    }
 
     public static bool TryExtractCounter(string? handle, out string counter)
     {

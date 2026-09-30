@@ -91,6 +91,17 @@ public sealed class HandoffCounterAlphabetTests
         Assert.Equal("h:Z9", HandoffCounterAlphabet.FormatHandle("Z9"));
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("a-b")]
+    [InlineData("a_b")]
+    [InlineData("h:a")]
+    [InlineData(null)]
+    public void FormatHandle_RejectsInvalidCounters(string? counter)
+    {
+        Assert.Throws<System.ArgumentException>(() => HandoffCounterAlphabet.FormatHandle(counter!));
+    }
+
     [Fact]
     public void TryExtractCounter_ExtractsValidCounters()
     {
