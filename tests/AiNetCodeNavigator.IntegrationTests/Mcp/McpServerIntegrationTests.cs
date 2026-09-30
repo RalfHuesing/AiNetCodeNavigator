@@ -305,6 +305,41 @@ public sealed class McpServerIntegrationTests
             var sourceHandle = ExtractHandoff(sourceText);
             Assert.StartsWith("h:", sourceHandle, StringComparison.Ordinal);
 
+            await SendRequestAsync(process, 30, "tools/call", new
+            {
+                name = "resolve_type_origin",
+                arguments = new { targetPath = solutionPath, symbolIdentifier = sourceHandle },
+            }, timeout.Token);
+            var sourceTypeOrigin = await ReadResponseAsync(process, 30, timeout.Token);
+            Assert.False(sourceTypeOrigin.GetProperty("result").GetProperty("isError").GetBoolean());
+            var sourceOriginText = GetFirstText(sourceTypeOrigin);
+            Assert.Contains("NavigationFixture.Counter", sourceOriginText, StringComparison.Ordinal);
+            Assert.Contains("\"projectName\": \"NavigationFixture\"", sourceOriginText, StringComparison.Ordinal);
+            Assert.Contains("NavigationFixture.cs", sourceOriginText, StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 31, "tools/call", new
+            {
+                name = "resolve_type_origin",
+                arguments = new { targetPath = solutionPath, typeName = "System.String" },
+            }, timeout.Token);
+            var metadataTypeOrigin = await ReadResponseAsync(process, 31, timeout.Token);
+            Assert.False(metadataTypeOrigin.GetProperty("result").GetProperty("isError").GetBoolean());
+            var metadataOriginText = GetFirstText(metadataTypeOrigin);
+            Assert.Contains("\"found\": true", metadataOriginText, StringComparison.Ordinal);
+            Assert.Contains("\"assemblyOrigin\": \"reference\"", metadataOriginText, StringComparison.Ordinal);
+            Assert.Contains("\"outputAssembly\": \"", metadataOriginText, StringComparison.Ordinal);
+            Assert.Contains("Microsoft.NETCore.App.Ref", metadataOriginText, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("\"searchedAssemblies\": [", metadataOriginText, StringComparison.Ordinal);
+            Assert.Contains("\"assemblyOrigin\": \"source\"", sourceOriginText, StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 32, "tools/call", new
+            {
+                name = "resolve_type_origin",
+                arguments = new { targetPath = solutionPath, typeName = string.Empty },
+            }, timeout.Token);
+            var invalidTypeOrigin = await ReadResponseAsync(process, 32, timeout.Token);
+            Assert.True(invalidTypeOrigin.GetProperty("result").GetProperty("isError").GetBoolean());
+
             await SendRequestAsync(process, 4, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -439,6 +474,23 @@ public sealed class McpServerIntegrationTests
             Assert.False(assemblyFind.GetProperty("result").GetProperty("isError").GetBoolean());
             var assemblyHandle = ExtractHandoff(GetFirstText(assemblyFind));
             Assert.StartsWith("h:", assemblyHandle, StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 33, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = hostAssemblyPath, pattern = "NavigatorHostRuntime", maxResults = 5 },
+            }, timeout.Token);
+            var foreignAssemblyFind = await ReadResponseAsync(process, 33, timeout.Token);
+            Assert.False(foreignAssemblyFind.GetProperty("result").GetProperty("isError").GetBoolean());
+            var foreignAssemblyHandle = ExtractHandoff(GetFirstText(foreignAssemblyFind));
+            await SendRequestAsync(process, 34, "tools/call", new
+            {
+                name = "resolve_type_origin",
+                arguments = new { targetPath = fixtureAssemblyPath, symbolIdentifier = foreignAssemblyHandle },
+            }, timeout.Token);
+            var foreignAssemblyOrigin = await ReadResponseAsync(process, 34, timeout.Token);
+            Assert.True(foreignAssemblyOrigin.GetProperty("result").GetProperty("isError").GetBoolean());
+            Assert.Contains("INVALID_ARGUMENT", GetFirstText(foreignAssemblyOrigin), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 17, "tools/call", new
             {

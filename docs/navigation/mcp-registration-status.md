@@ -4,7 +4,7 @@ The production catalog exposes all twenty navigation tool names and two maintena
 
 ## Exercised handler paths
 
-The source fixture exercises `get_call_tree`, `find_references`, `get_type_hierarchy`, `find_implementations`, symbol-mode `get_impact`, Git `change-context`, file-mode `dependency_graph`, `get_feature_context`, and `get_test_context`. It uses production, test, and generated documents in Core tests to verify filter-before-limit behavior and that filtered source handoffs resolve to bodies against the original solution identity.
+The source fixture exercises `get_call_tree`, `find_references`, `get_type_hierarchy`, `find_implementations`, symbol-mode `get_impact`, Git `change-context`, file-mode `dependency_graph`, source-handoff and SDK reference-pack `resolve_type_origin`, `get_feature_context`, and `get_test_context`. Core tests verify exact source project ownership for same-named declarations, plus production/test/generated filter-before-limit behavior and original-identity handoff roundtrips.
 
 The managed fixture exercises `get_assembly_context` with a symbol and body, `inspect_assembly`, `search_assembly`, `find_assembly_extensions`, assembly `resolve_type_origin`, assembly symbol `get_impact`, and the established `get_symbol_body` follow-up. The source Git fixture is a linked worktree whose root contains a `.git` file. The Assembly inspection consumer follows response-window pages and retries a line-safe page with its advertised minimum byte budget when 512 bytes cannot contain the next complete line.
 

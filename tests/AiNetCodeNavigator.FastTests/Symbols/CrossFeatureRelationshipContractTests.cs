@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.CallTree;
 using AiNetCodeNavigator.Core.Hierarchy;
+using AiNetCodeNavigator.Core.Assemblies;
 using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.TestKit.Builders;
 using Microsoft.CodeAnalysis;
@@ -258,6 +259,34 @@ public sealed class CrossFeatureRelationshipContractTests
         Assert.True(featureAll.TestsTruncated);
         Assert.Equal(2, featureProduction.TotalCallers);
         Assert.Equal(0, featureProduction.TotalTests);
+    }
+
+    [Fact]
+    public async Task SourceTypeOriginPreservesOwningProjectAndFindsMetadataReferences()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\TypeOrigins.slnx",
+            new ProjectSpec("First", [("Worker.cs", "namespace Shared; public sealed class Worker { }")]),
+            new ProjectSpec("Second", [("Worker.cs", "namespace Shared; public sealed class Worker { }")]));
+        var second = fixture.Solution.Projects.Single(project => project.Name == "Second");
+        var compilation = await second.GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var worker = compilation.GetTypeByMetadataName("Shared.Worker");
+        Assert.NotNull(worker);
+
+        var local = await SourceTypeOriginScanner.ResolveAsync(fixture.Solution, fixture.Solution.FilePath!, worker, null);
+        Assert.True(local.IsSuccess);
+        Assert.True(local.Value!.Found);
+        Assert.Equal("Second", local.Value.ProjectName);
+        Assert.Equal("source", local.Value.AssemblyOrigin);
+        Assert.All(local.Value.SourceLocations, location => Assert.Contains("Second", location.FilePath, StringComparison.Ordinal));
+
+        var metadata = await SourceTypeOriginScanner.ResolveAsync(fixture.Solution, fixture.Solution.FilePath!, null, "System.String");
+        Assert.True(metadata.IsSuccess);
+        Assert.True(metadata.Value!.Found);
+        Assert.Equal("reference", metadata.Value.AssemblyOrigin);
+        Assert.False(string.IsNullOrWhiteSpace(metadata.Value.OutputAssembly));
+        Assert.Contains("System.Private.CoreLib", metadata.Value.SearchedAssemblies);
     }
 
     private static TestSolutionHandle CreateRelationshipSolution() => TestWorkspaceBuilder.CreateSolution(

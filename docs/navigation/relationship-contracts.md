@@ -15,3 +15,5 @@ Each payload keeps its own result limits and reports them in its own terms:
 - Implementation results and type hierarchies report pre-limit `TotalCount` values and `IsTruncated` for their displayed implementation or subtype lists.
 
 The Core APIs take resolved symbols rather than handoff strings. Identifier ambiguity and stale or invalid handoff errors are handled by shared symbol resolution before a relationship engine runs.
+
+The public `resolve_type_origin` handler accepts one non-empty `symbolIdentifier` or `typeName`. In source mode it preserves the exact source-owning project and all declaration locations; if no source declaration matches, it searches resolved metadata references and reports unique or ambiguous origins. Assembly mode validates that symbol handoffs belong to the requested binary. See [Resolve Type Origin](resolve-type-origin.md) for the result shape and current evidence.

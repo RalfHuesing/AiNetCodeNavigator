@@ -88,3 +88,18 @@ public sealed record ResolveTypeOriginPayload(
     bool IsAmbiguous,
     IReadOnlyList<string> CandidatePaths,
     IReadOnlyList<string> Diagnostics);
+
+public sealed record SourceTypeOriginLocation(string FilePath, int Line, int Column);
+
+public sealed record SourceTypeOriginPayload(
+    string TypeName,
+    bool Found,
+    string TargetPath,
+    string? ProjectName,
+    IReadOnlyList<SourceTypeOriginLocation> SourceLocations,
+    string? AssemblyOrigin,
+    string? OutputAssembly,
+    string Namespace,
+    IReadOnlyList<string> SearchedAssemblies,
+    bool IsAmbiguous = false,
+    IReadOnlyList<string>? CandidatePaths = null);

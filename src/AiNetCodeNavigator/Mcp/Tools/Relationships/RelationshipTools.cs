@@ -201,13 +201,14 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "resolve_type_origin", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     public async Task<CallToolResult> ResolveTypeOrigin([Required] string targetPath, string? symbolIdentifier = null,
-        string? typeName = null, bool includeReferences = true, [Range(512, 65536)] int maxResponseBytes = 16384,
+        string? typeName = null, [Range(512, 65536)] int maxResponseBytes = 16384,
         [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
         string? continuationToken = null, CancellationToken cancellationToken = default)
     {
-        if ((symbolIdentifier is null) == (typeName is null)) return Invalid("symbolIdentifier", "Specify exactly one of symbolIdentifier or typeName.");
+        if (string.IsNullOrWhiteSpace(symbolIdentifier) == string.IsNullOrWhiteSpace(typeName))
+            return Invalid("symbolIdentifier", "Specify exactly one non-empty symbolIdentifier or typeName.");
         return await NavigationToolSupport.RouteAsync(runtime, "resolve_type_origin", targetPath,
-            new { symbolIdentifier, typeName, includeReferences }, operationToken, continuationToken, maxResponseBytes, maxResponseTokens,
+            new { symbolIdentifier, typeName }, operationToken, continuationToken, maxResponseBytes, maxResponseTokens,
             async (target, ct) =>
             {
                 if (target.TargetType == AnalysisTargetType.Assembly)
@@ -218,22 +219,28 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         var access = await AssemblySymbolHandoffResolver.ResolveAsync(symbolIdentifier, ct).ConfigureAwait(false);
                         if (!access.IsSuccess) return NavigationToolSupport.Failure(access.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                         await using var lease = access.Value!;
+                        if (!string.Equals(Path.GetFullPath(lease.Origin.CanonicalPath), target.CanonicalPath, StringComparison.OrdinalIgnoreCase))
+                            return Invalid("symbolIdentifier", "Use a handoff produced by this targetPath.");
                         input = lease.Symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
                     }
-                    var result = await ResolveTypeOriginScanner.ResolveAsync(new ResolveTypeOriginRequest(target.CanonicalPath, input, includeReferences), ct).ConfigureAwait(false);
-                    return result.IsSuccess ? NavigationToolSupport.Success(result.Value!) : NavigationToolSupport.Failure(result.Error!.Value, maxResponseBytes, maxResponseTokens, "$.typeName");
+                    var result = await ResolveTypeOriginScanner.ResolveAsync(new ResolveTypeOriginRequest(target.CanonicalPath, input), ct).ConfigureAwait(false);
+                    return result.IsSuccess ? NavigationToolSupport.Success(result.Value!) : NavigationToolSupport.Failure(result.Error!.Value, maxResponseBytes, maxResponseTokens,
+                        symbolIdentifier is null ? "$.typeName" : "$.symbolIdentifier");
                 }
                 return await WithSource(target, async solution =>
                 {
-                    var resolved = symbolIdentifier is not null
-                        ? await Resolve(solution, symbolIdentifier, ct).ConfigureAwait(false)
-                        : await Resolve(solution, typeName!, ct).ConfigureAwait(false);
-                    if (resolved.Error is not null) return NavigationToolSupport.Failure(resolved.Error.Value, maxResponseBytes, maxResponseTokens, symbolIdentifier is null ? "$.typeName" : "$.symbolIdentifier");
-                    var symbol = resolved.Symbol as INamedTypeSymbol ?? resolved.Symbol?.ContainingType;
-                    if (symbol is null) return McpToolResults.InvalidArgument("The identifier does not resolve to a type.", "$.symbolIdentifier", "Resolve a named type or a member declared by one.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-                    var sourcePath = symbol.Locations.FirstOrDefault(location => location.IsInSource)?.SourceTree?.FilePath;
-                    var payload = new { typeName = symbol.ToDisplayString(), originKind = "source", projectName = symbol.ContainingAssembly?.Name, filePath = sourcePath };
-                    return NavigationToolSupport.Success(payload);
+                    var identifier = symbolIdentifier ?? typeName!;
+                    var resolved = await Resolve(solution, identifier, ct).ConfigureAwait(false);
+                    if (resolved.Error is { } resolutionError && resolutionError.Code != NavigationErrorCodes.SymbolNotFound)
+                        return NavigationToolSupport.Failure(resolutionError, maxResponseBytes, maxResponseTokens,
+                            symbolIdentifier is null ? "$.typeName" : "$.symbolIdentifier");
+                    var result = await SourceTypeOriginScanner.ResolveAsync(solution, target.CanonicalPath,
+                        resolved.Error is null ? resolved.Symbol : null,
+                        resolved.Error is null ? null : identifier, ct).ConfigureAwait(false);
+                    return result.IsSuccess
+                        ? NavigationToolSupport.Success(result.Value!)
+                        : NavigationToolSupport.Failure(result.Error!.Value, maxResponseBytes, maxResponseTokens,
+                            symbolIdentifier is null ? "$.typeName" : "$.symbolIdentifier");
                 }, maxResponseBytes, maxResponseTokens, ct);
             }, null, cancellationToken);
 

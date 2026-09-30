@@ -1,0 +1,9 @@
+# Resolve Type Origin
+
+The public `resolve_type_origin` tool accepts exactly one non-empty `symbolIdentifier` or `typeName` and routes by the target: a `.sln`/`.slnx` source solution or a managed `.dll`/`.exe` assembly. A source identifier is resolved through the shared symbol resolver, so a source handoff retains its exact owning project and ambiguous names return a typed resolution error.
+
+For a source type, the result reports its full type name, `assemblyOrigin: source`, owning `projectName`, project output assembly path when available, namespace, target solution path, and all source declaration locations with one-based line and column. If no source declaration matches, the scanner searches each project's resolved metadata references and reports the unique reference assembly path with `assemblyOrigin: reference`. Multiple same-named metadata types or an unproven assembly path are reported as ambiguous with candidate paths; no match returns `found: false` together with the searched assembly names. Source metadata lookup is always enabled.
+
+For an assembly target, `ResolveTypeOriginScanner` searches the target assembly and its resolved references. It reports local, reference, framework, package, or ambiguous origins and uses a metadata reference path only when its assembly identity matches the resolved type. A `symbolIdentifier` handoff must belong to the requested target assembly. Missing assembly types return `SYMBOL_NOT_FOUND`.
+
+The public source and assembly paths are exercised through real stdio calls; a Core regression covers identical source type names in separate projects and a framework reference lookup. Complete reference closure, continuation behavior, and the full parameter/error budget matrix remain open in [MCP navigation registration status](mcp-registration-status.md).
