@@ -25,4 +25,4 @@
   - [x] Refresh the reference set when dependencies change without changing the target DLL, and cover the resulting handoff/body behavior.
   - [x] Enforce the 32-target resident limit when all existing sessions have active accesses.
   - [x] Recover a resident session after a failed refresh when the original valid target and reference snapshot return.
-  - [ ] Review/Audit zu 7.3 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 7.3 durchführen; Findings ergänzen und umsetzen.

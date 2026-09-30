@@ -4,6 +4,4 @@ The Cluster 3 point 3.3 Assembly session/consumer blocker was addressed by the C
 
 Resolved integration findings and closure are recorded in [Cluster 6 integration review 3](Reviews/Cluster-06.md#cluster-6-integration-review-3-after-fix-round-2).
 
-Point 7.3 audit 1/3 found three Assembly session lifecycle issues (one P1, two P2): stale API after a failed refresh, reference changes ignored by resident reuse, and a soft 32-target bound when every entry is active. All three fixes and red/green regression evidence are recorded in [Cluster 7 point 7.3 audit 1 remediation](Reviews/Cluster-07.md#point-73-audit-13-remediation). The independent point audit remains open for follow-up; this implementation does not perform or close an audit.
-
-Point 7.3 audit 2/3 accepted the prior fixes but found a P1 resident-session recovery failure when the original valid DLL returns after a failed refresh. The session now restores the retained matching generation's status and diagnostics on an exact target/reference snapshot match; the red/green restore regression is recorded in [Cluster 7 point 7.3 audit 2 remediation](Reviews/Cluster-07.md#point-73-audit-23-remediation). Independent follow-up remains open.
+Point 7.3's three audits are complete with no open point findings. The three audit-1 lifecycle issues and audit-2 recovery issue were fixed and accepted; evidence is recorded in the [Cluster 7 point 7.3 review](Reviews/Cluster-07.md#point-73-assembly-handoffs-and-session-lifecycle). MCP stdio dispatch remains a later host and end-to-end acceptance gate.
