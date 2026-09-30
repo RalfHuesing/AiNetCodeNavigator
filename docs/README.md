@@ -6,6 +6,7 @@
 
 ## Navigation
 
+- [Get File Tree Core Scanner](navigation/get-file-tree.md): Physical tree traversal, summary aggregates, filters, bounds, and read-only behavior.
 - [Shared Symbol Resolution](navigation/symbol-resolution.md): Identifier forms, ambiguity candidates, handoff roundtrips, and recoverable errors for follow-up scanners.
 - [Find Symbol](navigation/find-symbol.md): Name and pattern matching, kind filters, and source scope behavior for the Core symbol scanner.
 - [Get Symbol Body](navigation/get-symbol-body.md): AST declaration extraction, batching, line windows, and unavailable-source cases.

@@ -1,0 +1,9 @@
+# Get File Tree Core Scanner
+
+`GetFileTreeScanner.Scan` reads the physical directory tree rooted at `RootDirectory` and returns relative file paths, optional metadata, and per-directory aggregates. The scanner never writes to the analyzed tree. It skips generated and repository-internal directories, including `bin`, `obj`, `.git`, `node_modules`, `TestResults`, and `temp`; it also skips reparse-point directories so links cannot escape the requested tree or create traversal cycles.
+
+`RelativeRoot` must resolve inside `RootDirectory`. Missing roots, invalid options, and inaccessible paths return an error or warning state instead of silently reporting a complete scan. Cancellation and depth limits are represented in `ScanCompleted`, `IsTruncated`, and `TruncatedBy`. The maximum depth is 32 and the maximum returned result count is 2,000. `MaxResults` bounds displayed file or directory entries; it does not stop aggregation early, so totals remain based on every matched file reached within the scan depth.
+
+Supported views are `tree`, `files`, and `summary`. The tree view shows directory aggregates and files directly under the selected root; the files view lists matching paths. The summary view returns no file entries and shows the root and top-level directory aggregates, including files found in nested directories. Extension filters and relative glob filters combine with AND semantics; requested exclusion patterns remove matching paths. Results use deterministic path ordering by default, with optional size or extension ordering. Line counts are read only when requested.
+
+The Core result reports truncation and warnings and includes one `Next` action that suggests how to refine or repeat a bounded scan. This scanner does not retain continuation state or expose offset-based pages; `MaxResults` is a display limit, not a cursor.

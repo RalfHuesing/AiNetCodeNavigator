@@ -8,8 +8,10 @@ public sealed record FileTreeEntry(
     string RelativePath,
     string Name,
     bool IsDirectory,
-    long Size,
-    string Extension);
+    long? Size,
+    string? Extension,
+    int? LineCount = null,
+    int Depth = 0);
 
 public sealed record FileTreeSummaryEntry(
     string DirectoryPath,
@@ -19,11 +21,17 @@ public sealed record FileTreeSummaryEntry(
 public sealed record FileTreeScanRequest(
     string RootDirectory,
     string RelativeRoot = ".",
-    string View = "tree", // "tree", "files", "summary"
+    string View = "tree",
     string? FileFilter = null,
     string? FolderFilter = null,
-    int? MaxDepth = 3,
-    int MaxResults = 100);
+    int? MaxDepth = null,
+    int MaxResults = 100,
+    IReadOnlyList<string>? IncludeExtensions = null,
+    IReadOnlyList<string>? ExcludePatterns = null,
+    int? TreeDepth = 2,
+    string SortBy = "path",
+    bool IncludeMetadata = true,
+    bool IncludeLineCount = false);
 
 public sealed record FileTreeScanResult(
     string RootPath,
@@ -32,4 +40,14 @@ public sealed record FileTreeScanResult(
     int TotalFiles,
     int TotalDirectories,
     bool IsTruncated,
-    string FormattedText);
+    string FormattedText,
+    bool ScanCompleted = true,
+    IReadOnlyList<string>? TruncatedBy = null,
+    IReadOnlyList<string>? Warnings = null,
+    int ExcludedFileCount = 0,
+    int ScannedFileCount = 0,
+    long TotalBytes = 0,
+    string? Error = null,
+    FileTreeNext? Next = null);
+
+public sealed record FileTreeNext(string Kind, string Action);
