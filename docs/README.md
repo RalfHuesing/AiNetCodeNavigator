@@ -16,5 +16,6 @@
 - [Symbol Impact Core Engine](navigation/impact-analysis.md): Transitive caller traversal, affected project summaries, limits, completeness, and handoffs.
 - [Get Type Hierarchy Core Engine](navigation/get-type-hierarchy.md): Base chains, interfaces, transitive cross-project subtypes, source handoffs, and subtype limits.
 - [Dependency Graph Core Scanner](navigation/dependency-graph.md): Project and source type dependencies, project-qualified edges, paging, scan bounds, and recoverable document errors.
+- [Cross-Feature Relationship Contract](navigation/relationship-contracts.md): Shared source handoffs, caller-site identity, cross-project relationship behavior, and per-engine result limits.
 - [Test Context](navigation/test-context.md): Test project/file/class detection and heuristic fixture and method recommendations.
 - [Get Feature Context](navigation/get-feature-context.md): Combined declaration, caller and test candidate context, scope, handoffs, errors, and result limits.

@@ -419,3 +419,24 @@ The point 5.5 audit checkbox remains unchecked for the final allowed point audit
 
 - Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
 - The documentation diff was inspected and `git diff --check` passed before commit.
+
+## Point 5.6 — shared cross-project relationship contract
+
+- Implementation baseline: `013d2b0` with a clean working tree. Read-only AiNetLinter MCP inspection found per-tool opaque-handoff roundtrip coverage in `Group2StructureHandoffTests.GetTypeHierarchy_To_FindImplementations_Roundtrip_WithOpaqueHandle`, `Group3ContextAndCallTreeHandoffTests.GetCallTree_ConsumesOpaqueHandle`, and `GetImpact_ConsumesOpaqueHandle`. The shared scenario below extends that precedent across all Core relationship engines in one solution.
+- Before-fix repro: the new three-project test reached the same five reference/impact sites but returned same-line sites in different orders: references depended on Roslyn enumeration, while impact sorted by caller and reached-from identity. The test also showed outgoing call-tree traversal omitted `Dispatcher.Dispatch`'s expression-bodied `handler.Handle()` call; the graph stopped before `Handler.Handle` and `Api.Record`.
+- `FindReferencesResolver` now sorts sites by the shared depth/project/path/caller/reached-from identity keys used by `ImpactAnalyzer`, including a stable source-symbol key rather than opaque handle order. The same-line converging reference and impact sequences now compare exactly, including each reached-from handoff.
+- `CallTreeBuilder.GetBodyNode` now returns expression-body syntax nodes for methods, constructors, properties, and accessors, so descendant traversal includes a root invocation or member access in an expression body.
+- Added `CrossFeatureRelationshipContractTests` over Contracts → Middle → App. It checks outgoing and incoming call trees, a five-site transitive reference/impact chain (two direct override sites and three transitive sites, including both reached-from paths at one dispatcher line), interface method implementation discovery, abstract overrides, hierarchy edges, and successful project-specific handoff resolution. The limit test asserts display truncation and counts for references, impact, overrides, and hierarchy plus fan-out truncation and hidden edges for a call tree.
+- Updated the references/implementations, impact, and call-tree current-state pages, and added the shared contract page to the docs index. The 5.6 independent point audit remains open.
+
+### Point 5.6 verification
+
+| Gate | Result |
+|---|---|
+| Before-fix cross-feature ordering and expression-body repro | Failed as expected: ordered caller sites differed and the outgoing graph stopped at the expression-bodied caller |
+| Focused `CrossFeatureRelationshipContractTests` after fixes | Passed, 2/2 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 383/383 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 395/395 across both test projects |
+| `git diff --check` | Passed before commit |

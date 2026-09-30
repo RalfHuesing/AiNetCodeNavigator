@@ -1,6 +1,6 @@
 # Call Tree Core Engine
 
-The Core call tree engine builds a bounded graph around a Roslyn symbol. Incoming traversal groups source references by caller. Outgoing traversal resolves invocations, explicit and target-typed object creation, and non-invoked member access from the symbol's declaration bodies. A type seed returns the type and up to five method hints without expanding a graph.
+The Core call tree engine builds a bounded graph around a Roslyn symbol. Incoming traversal groups source references by caller. Outgoing traversal resolves invocations, explicit and target-typed object creation, and non-invoked member access from block-bodied and expression-bodied declarations. A type seed returns the type and up to five method hints without expanding a graph.
 
 `RequestedDepth` is clamped to 1–5. `TopN` is clamped to at least one edge per expanded symbol; in `Both` mode the incoming groups are considered first, then outgoing groups use the remaining budget. The builder stops at 250 distinct nodes. `Truncated` is true when known edges were omitted or queued nodes remain unexpanded. `HiddenEdgeCount` counts only discovered groups omitted by `TopN` or the hard node cap; `PendingNodeCount` counts queued nodes whose outgoing or incoming relationships were not scanned. Reaching exactly 250 fully expanded terminal nodes does not by itself mark the graph truncated. Symbols are deduplicated with Roslyn symbol equality, call sites for the same edge are combined, and node IDs are local `n1`, `n2`, ... labels.
 

@@ -54,7 +54,7 @@ public static class FindReferencesResolver
         var effectiveNodeLimit = Math.Min(maxNodes, DefaultMaxVisitedSymbols);
         var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
-        var entries = new List<ReferenceLocationEntry>();
+        var entries = new List<(ReferenceLocationEntry Entry, string ReachedFromSymbolId)>();
         var queue = new Queue<(ISymbol Symbol, int Depth)>();
         var visited = new HashSet<ISymbol>(SymbolEqualityComparer.Default) { targetSymbol };
         queue.Enqueue((targetSymbol, 1));
@@ -112,17 +112,18 @@ public static class FindReferencesResolver
                     };
                     var reachedFromHandoff = SourceHandoffFormatter.Format(currentSymbol, solution, handoffIdentity);
 
-                    entries.Add(new ReferenceLocationEntry(
-                        FilePath: relPath,
-                        Line: line,
-                        Column: column,
-                        Snippet: snippet,
-                        EnclosingSymbolName: callerName,
-                        EnclosingSymbolHandoffId: callerHandoff,
-                        ProjectName: doc.Project.Name,
-                        Depth: currentDepth,
-                        ReachedFromSymbolName: reachedFromName,
-                        ReachedFromSymbolHandoffId: reachedFromHandoff));
+                    entries.Add((new ReferenceLocationEntry(
+                            FilePath: relPath,
+                            Line: line,
+                            Column: column,
+                            Snippet: snippet,
+                            EnclosingSymbolName: callerName,
+                            EnclosingSymbolHandoffId: callerHandoff,
+                            ProjectName: doc.Project.Name,
+                            Depth: currentDepth,
+                            ReachedFromSymbolName: reachedFromName,
+                            ReachedFromSymbolHandoffId: reachedFromHandoff),
+                        RelationshipSymbolIdentity.GetStableId(currentSymbol)));
 
                     if (currentDepth >= effectiveDepth || enclosing is null) continue;
                     var caller = NormalizeToOwningMember(enclosing);
@@ -140,11 +141,19 @@ public static class FindReferencesResolver
         }
 
         var sorted = entries
-            .Distinct()
-            .OrderBy(e => e.Depth)
-            .ThenBy(e => e.FilePath, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(e => e.Line)
-            .ThenBy(e => e.Column)
+            .GroupBy(item => item.Entry)
+            .Select(group => group.First())
+            .OrderBy(item => item.Entry.Depth)
+            .ThenBy(item => item.Entry.ProjectName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Entry.FilePath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Entry.FilePath, StringComparer.Ordinal)
+            .ThenBy(item => item.Entry.Line)
+            .ThenBy(item => item.Entry.EnclosingSymbolName, StringComparer.Ordinal)
+            .ThenBy(item => item.Entry.EnclosingSymbolHandoffId, StringComparer.Ordinal)
+            .ThenBy(item => item.ReachedFromSymbolId, StringComparer.Ordinal)
+            .ThenBy(item => item.Entry.ReachedFromSymbolHandoffId, StringComparer.Ordinal)
+            .ThenBy(item => item.Entry.Column)
+            .Select(item => item.Entry)
             .ToList();
 
         var isTruncated = sorted.Count > normalizedMaxResults;

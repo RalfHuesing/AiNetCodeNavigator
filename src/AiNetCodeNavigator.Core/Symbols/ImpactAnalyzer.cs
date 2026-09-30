@@ -61,7 +61,7 @@ public static class ImpactAnalyzer
             }
 
             var references = await SymbolFinder.FindReferencesAsync(currentSymbol, solution, ct).ConfigureAwait(false);
-            var reachedFromSymbolId = GetStableSymbolId(currentSymbol);
+            var reachedFromSymbolId = RelationshipSymbolIdentity.GetStableId(currentSymbol);
             var reachedFromSymbolHandoffId = SourceHandoffFormatter.Format(currentSymbol, solution, handoffIdentity);
 
             foreach (var reference in references)
@@ -171,25 +171,4 @@ public static class ImpactAnalyzer
             TransitiveCallSitesCount: distinctSites.Count(site => site.Depth > 1));
     }
 
-    private static string GetStableSymbolId(ISymbol symbol)
-    {
-        if (symbol is IMethodSymbol { MethodKind: MethodKind.LocalFunction } localFunction)
-        {
-            var container = localFunction.ContainingSymbol;
-            while (container is IMethodSymbol { MethodKind: MethodKind.LocalFunction })
-            {
-                container = container.ContainingSymbol;
-            }
-
-            var location = localFunction.Locations.FirstOrDefault(candidate => candidate.IsInSource);
-            if (location is not null)
-            {
-                var start = location.GetLineSpan().StartLinePosition;
-                return $"{GetStableSymbolId(container!)}#lf:{localFunction.Name}@{start.Line + 1}:{start.Character + 1}";
-            }
-        }
-
-        return DocumentationCommentId.CreateDeclarationId(symbol)
-            ?? symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-    }
 }

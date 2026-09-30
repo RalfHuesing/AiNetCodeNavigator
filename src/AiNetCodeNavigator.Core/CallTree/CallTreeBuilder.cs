@@ -279,10 +279,10 @@ public static class CallTreeBuilder
     private static SyntaxNode? GetBodyNode(SyntaxNode node) =>
         node switch
         {
-            MethodDeclarationSyntax m => (SyntaxNode?)m.Body ?? m.ExpressionBody?.Expression,
-            ConstructorDeclarationSyntax c => (SyntaxNode?)c.Body ?? c.ExpressionBody?.Expression,
-            PropertyDeclarationSyntax p => (SyntaxNode?)p.AccessorList ?? p.ExpressionBody?.Expression,
-            AccessorDeclarationSyntax a => (SyntaxNode?)a.Body ?? a.ExpressionBody?.Expression,
+            MethodDeclarationSyntax m => (SyntaxNode?)m.Body ?? m.ExpressionBody,
+            ConstructorDeclarationSyntax c => (SyntaxNode?)c.Body ?? c.ExpressionBody,
+            PropertyDeclarationSyntax p => (SyntaxNode?)p.AccessorList ?? p.ExpressionBody,
+            AccessorDeclarationSyntax a => (SyntaxNode?)a.Body ?? a.ExpressionBody,
             _ => node
         };
 

@@ -42,5 +42,8 @@
   - [x] Collect cross-project generic named-type dependencies without external noise.
   - [ ] Correct merged completeness for shared relationship-page offsets when one collection is exhausted early.
   - [x] Review/Audit zu 5.5 durchführen; Findings ergänzen und umsetzen.
-- [ ] 5.6 Beziehungen über ein gemeinsames Test-Szenario prüfen: Aufrufe, Referenzen, Overrides, Interface-Implementierungen und transitive Auswirkungen über mehrere Projekte hinweg mit identischer Semantik und stabilen Handoffs testen; Grenzen und Kürzungen der Ergebnisse ausgeben.
+- [x] 5.6 Beziehungen über ein gemeinsames Test-Szenario prüfen: Aufrufe, Referenzen, Overrides, Interface-Implementierungen und transitive Auswirkungen über mehrere Projekte hinweg mit identischer Semantik und stabilen Handoffs testen; Grenzen und Kürzungen der Ergebnisse ausgeben.
+  - [x] Compare the ordered caller sites and reached-from handoffs from references and impact across a three-project chain.
+  - [x] Cover outgoing/incoming calls, interface implementation, abstract overrides, transitive hierarchy, and handoff roundtrips in the same solution.
+  - [x] Verify call-tree, reference, impact, implementation, and hierarchy payloads report their respective limits and truncation state.
   - [ ] Review/Audit zu 5.6 durchführen; Findings ergänzen und umsetzen.
