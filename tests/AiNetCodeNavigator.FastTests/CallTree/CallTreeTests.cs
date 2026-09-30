@@ -1,11 +1,13 @@
 #nullable enable
 
 using System.Linq;
+using System.IO;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.CallTree;
 using AiNetCodeNavigator.TestKit.Builders;
 using AiNetCodeNavigator.TestKit.Fixtures;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 
 namespace AiNetCodeNavigator.FastTests.CallTree;
@@ -163,6 +165,117 @@ public sealed class CallTreeTests
 
         Assert.Contains(graph.Nodes, node => node.Name == "Caller.Invoke");
         Assert.DoesNotContain(graph.Nodes, node => node.Name == "Derived.Run");
+    }
+
+    [Fact]
+    public async Task BuildGraphAsync_OutgoingCalls_ExcludesBclButKeepsThirdPartyMetadataByDefault()
+    {
+        var thirdPartyCompilation = CSharpCompilation.Create(
+            "ThirdParty.Library",
+            [CSharpSyntaxTree.ParseText("namespace ThirdParty; public static class Client { public static void Send() { } }")],
+            TestWorkspaceBuilder.CoreReferences,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        using var assemblyImage = new MemoryStream();
+        var emitResult = thirdPartyCompilation.Emit(assemblyImage);
+        Assert.True(emitResult.Success, string.Join(Environment.NewLine, emitResult.Diagnostics));
+
+        using var fixture = TestWorkspaceBuilder.CreateSolution(new ProjectSpec(
+            "App",
+            [("Calls.cs", "namespace Calls; public sealed class Caller { public void Run() { ThirdParty.Client.Send(); System.Console.WriteLine(\"sent\"); } }")],
+            AdditionalReferences: [
+                MetadataReference.CreateFromImage(assemblyImage.ToArray()),
+                MetadataReference.CreateFromFile(typeof(Console).Assembly.Location)]));
+        var compilation = await fixture.Solution.Projects.Single().GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var caller = compilation.GetTypeByMetadataName("Calls.Caller");
+        Assert.NotNull(caller);
+        var run = caller.GetMembers("Run").OfType<IMethodSymbol>().Single();
+
+        var defaultGraph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
+            fixture.Solution, run, Direction: CallTreeDirection.Outgoing));
+        var includeBclGraph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
+            fixture.Solution, run, Direction: CallTreeDirection.Outgoing, IncludeBcl: true));
+
+        Assert.Contains(defaultGraph.Nodes, node => node.Name == "Client.Send");
+        Assert.DoesNotContain(defaultGraph.Nodes, node => node.Name.Contains("Console.WriteLine", System.StringComparison.Ordinal));
+        Assert.Contains(includeBclGraph.Nodes, node => node.Name == "Client.Send");
+        Assert.Contains(includeBclGraph.Nodes, node => node.Name.Contains("Console.WriteLine", System.StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task BuildGraphAsync_BothDirection_TopNLimitsCombinedIncidentEdges()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution("""
+            namespace Calls;
+            public sealed class Target { public void Run() { new Helper().Work(); } }
+            public sealed class Helper { public void Work() { } }
+            public sealed class Caller { public void Invoke(Target target) { target.Run(); } }
+            """);
+        var compilation = await fixture.Solution.Projects.Single().GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var target = compilation.GetTypeByMetadataName("Calls.Target");
+        Assert.NotNull(target);
+        var run = target.GetMembers("Run").OfType<IMethodSymbol>().Single();
+
+        var graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
+            fixture.Solution, run, TopN: 1, Direction: CallTreeDirection.Both));
+
+        var incidentEdges = graph.Edges.Where(edge => edge.FromNodeId == graph.RootNodeId || edge.ToNodeId == graph.RootNodeId).ToList();
+        Assert.Single(incidentEdges);
+        Assert.Equal("Caller.Invoke", graph.Nodes.Single(node => node.NodeId == incidentEdges[0].FromNodeId).Name);
+        Assert.True(graph.Truncated);
+    }
+
+    [Fact]
+    public async Task BuildGraphAsync_Exactly250CompletedNodesAreNotTruncated()
+    {
+        var callers = string.Join("\n", Enumerable.Range(0, CallTreeBuilder.MaxCallTreeNodes - 1)
+            .Select(index => $"public sealed class Caller{index} {{ public void Invoke(Target target) => target.Run(); }}"));
+        using var fixture = TestWorkspaceBuilder.CreateSolution($$"""
+            namespace Calls;
+            public sealed class Target { public void Run() { } }
+            {{callers}}
+            """);
+        var compilation = await fixture.Solution.Projects.Single().GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var target = compilation.GetTypeByMetadataName("Calls.Target");
+        Assert.NotNull(target);
+        var run = target.GetMembers("Run").OfType<IMethodSymbol>().Single();
+
+        var graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
+            fixture.Solution, run, RequestedDepth: 1, TopN: CallTreeBuilder.MaxCallTreeNodes, Direction: CallTreeDirection.Incoming));
+
+        Assert.Equal(CallTreeBuilder.MaxCallTreeNodes, graph.Nodes.Count);
+        Assert.False(graph.Truncated);
+        Assert.Equal(0, graph.HiddenEdgeCount);
+        Assert.Equal(0, graph.PendingNodeCount);
+    }
+
+    [Fact]
+    public async Task BuildGraphAsync_NodeCapReportsQueuedUnexpandedNodesWithoutGuessingHiddenEdges()
+    {
+        var callers = string.Join("\n", Enumerable.Range(0, CallTreeBuilder.MaxCallTreeNodes - 1)
+            .Select(index => $"public sealed class Caller{index} {{ public void Invoke(Target target) => target.Run(); }}"));
+        using var fixture = TestWorkspaceBuilder.CreateSolution($$"""
+            namespace Calls;
+            public sealed class Target { public void Run() { } }
+            {{callers}}
+            """);
+        var compilation = await fixture.Solution.Projects.Single().GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var target = compilation.GetTypeByMetadataName("Calls.Target");
+        Assert.NotNull(target);
+        var run = target.GetMembers("Run").OfType<IMethodSymbol>().Single();
+
+        var graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
+            fixture.Solution, run, RequestedDepth: 2, TopN: CallTreeBuilder.MaxCallTreeNodes, Direction: CallTreeDirection.Incoming));
+
+        Assert.Equal(CallTreeBuilder.MaxCallTreeNodes, graph.Nodes.Count);
+        Assert.True(graph.Truncated);
+        Assert.Equal(0, graph.HiddenEdgeCount);
+        Assert.Equal(CallTreeBuilder.MaxCallTreeNodes - 1, graph.PendingNodeCount);
+        Assert.Contains("249 Knoten noch nicht untersucht", CallGraphTextRenderer.RenderAscii(graph));
+        Assert.Contains("249 Knoten nicht untersucht", CallTreeMermaidRenderer.RenderMermaid(graph));
     }
 
     [Fact]

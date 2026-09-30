@@ -50,24 +50,26 @@ public static class CallTreeBuilder
             var (currentSymbol, currentLevel) = state.Dequeue();
             if (currentLevel > depth) continue;
 
+            var remainingFanOut = state.TopN;
             if (request.Direction is CallTreeDirection.Incoming or CallTreeDirection.Both)
             {
-                await ExpandIncomingAsync(state, currentSymbol, currentLevel, ct).ConfigureAwait(false);
+                remainingFanOut -= await ExpandIncomingAsync(state, currentSymbol, currentLevel, remainingFanOut, ct).ConfigureAwait(false);
             }
 
             if (request.Direction is CallTreeDirection.Outgoing or CallTreeDirection.Both)
             {
-                await ExpandOutgoingAsync(state, currentSymbol, currentLevel, ct).ConfigureAwait(false);
+                await ExpandOutgoingAsync(state, currentSymbol, currentLevel, remainingFanOut, ct).ConfigureAwait(false);
             }
         }
 
         return state.CreatePayload();
     }
 
-    private static async Task ExpandIncomingAsync(
+    private static async Task<int> ExpandIncomingAsync(
         BuilderState state,
         ISymbol targetSymbol,
         int level,
+        int fanOutBudget,
         CancellationToken ct)
     {
         var references = await SymbolFinder.FindReferencesAsync(targetSymbol, state.Solution, ct).ConfigureAwait(false);
@@ -115,7 +117,7 @@ public static class CallTreeBuilder
             .ThenBy(g => g.Value.FirstOrDefault()?.Line ?? 0)
             .ToList();
 
-        var shown = sortedCallers.Take(state.TopN).ToList();
+        var shown = sortedCallers.Take(fanOutBudget).ToList();
         if (sortedCallers.Count > shown.Count)
         {
             state.AddHiddenEdges(sortedCallers.Count - shown.Count);
@@ -137,12 +139,15 @@ public static class CallTreeBuilder
                 state.Enqueue(caller, level + 1);
             }
         }
+
+        return shown.Count;
     }
 
-    private static async Task ExpandOutgoingAsync(
+    private static async Task<int> ExpandOutgoingAsync(
         BuilderState state,
         ISymbol sourceSymbol,
         int level,
+        int fanOutBudget,
         CancellationToken ct)
     {
         var calleeGroups = new Dictionary<ISymbol, List<CallSiteInfo>>(SymbolEqualityComparer.Default);
@@ -164,7 +169,7 @@ public static class CallTreeBuilder
             {
                 if (target is null) return;
 
-                if (!state.IncludeBcl && !target.Locations.Any(l => l.IsInSource)) return;
+                if (!state.IncludeBcl && IsBclSymbol(target)) return;
 
                 var lineSpan = callSite.GetLocation().GetLineSpan();
                 var relPath = PathNormalizer.ToRelative(state.SolutionDir, lineSpan.Path);
@@ -216,7 +221,7 @@ public static class CallTreeBuilder
             .ThenBy(g => g.Value.FirstOrDefault()?.Line ?? 0)
             .ToList();
 
-        var shown = sortedCallees.Take(state.TopN).ToList();
+        var shown = sortedCallees.Take(fanOutBudget).ToList();
         if (sortedCallees.Count > shown.Count)
         {
             state.AddHiddenEdges(sortedCallees.Count - shown.Count);
@@ -238,6 +243,28 @@ public static class CallTreeBuilder
                 state.Enqueue(callee, level + 1);
             }
         }
+
+        return shown.Count;
+    }
+
+    private static bool IsBclSymbol(ISymbol symbol)
+    {
+        var assemblyName = symbol.ContainingAssembly?.Name;
+        if (!string.IsNullOrEmpty(assemblyName)
+            && (string.Equals(assemblyName, "System", StringComparison.OrdinalIgnoreCase)
+                || assemblyName.StartsWith("System.", StringComparison.OrdinalIgnoreCase)
+                || assemblyName.StartsWith("Microsoft.NETCore.", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(assemblyName, "mscorlib", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(assemblyName, "netstandard", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        var namespaceName = symbol.ContainingNamespace?.ToDisplayString();
+        return !string.IsNullOrEmpty(namespaceName)
+            && (string.Equals(namespaceName, "System", StringComparison.Ordinal)
+                || namespaceName.StartsWith("System.", StringComparison.Ordinal)
+                || namespaceName.StartsWith("Microsoft.Win32", StringComparison.Ordinal));
     }
 
     private static ISymbol? ResolveMemberAccess(MemberAccessExpressionSyntax memberAccess, SemanticModel semanticModel, CancellationToken ct)
@@ -349,8 +376,9 @@ public static class CallTreeBuilder
                 RootNodeId: _nodes.Count > 0 ? _nodes[0].NodeId : string.Empty,
                 Nodes: _nodes,
                 Edges: _edges,
-                Truncated: IsAtNodeCap || _hiddenEdgeCount > 0,
-                HiddenEdgeCount: _hiddenEdgeCount);
+                Truncated: _queue.Count > 0 || _hiddenEdgeCount > 0,
+                HiddenEdgeCount: _hiddenEdgeCount,
+                PendingNodeCount: _queue.Count);
 
         public CallGraphPayload CreateTypeSeedPayload(INamedTypeSymbol namedType)
         {

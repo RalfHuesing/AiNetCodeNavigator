@@ -41,7 +41,8 @@ public sealed record CallGraphPayload(
     IReadOnlyList<CallGraphEdge> Edges,
     IReadOnlyList<CallGraphMethodHint>? MethodHints = null,
     bool Truncated = false,
-    int HiddenEdgeCount = 0);
+    int HiddenEdgeCount = 0,
+    int PendingNodeCount = 0);
 
 public sealed record CallTreeBuildRequest(
     Solution Solution,

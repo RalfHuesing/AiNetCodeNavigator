@@ -35,6 +35,12 @@ public static class CallTreeMermaidRenderer
             sb.AppendLine($"    {graph.RootNodeId} --> overflow");
         }
 
+        if (graph.PendingNodeCount > 0 && !string.IsNullOrEmpty(graph.RootNodeId))
+        {
+            sb.AppendLine($"    pending[\"... {graph.PendingNodeCount} Knoten nicht untersucht\"]");
+            sb.AppendLine($"    {graph.RootNodeId} --> pending");
+        }
+
         var withHandoff = graph.Nodes.Where(n => !string.IsNullOrEmpty(n.HandoffId)).ToList();
         if (withHandoff.Count > 0)
         {

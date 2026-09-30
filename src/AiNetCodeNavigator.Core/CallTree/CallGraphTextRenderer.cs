@@ -49,6 +49,11 @@ public static class CallGraphTextRenderer
             sb.AppendLine($"└── ... und {graph.HiddenEdgeCount} weitere Aufrufe");
         }
 
+        if (graph.PendingNodeCount > 0)
+        {
+            sb.AppendLine($"└── ... {graph.PendingNodeCount} Knoten noch nicht untersucht");
+        }
+
         AppendNodeHandoffs(sb, graph.Nodes);
         AppendMethodHints(sb, graph.MethodHints);
 
