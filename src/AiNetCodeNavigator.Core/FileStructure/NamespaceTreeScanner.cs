@@ -38,7 +38,7 @@ public static class NamespaceTreeScanner
 
         if (!string.IsNullOrWhiteSpace(projectName) && projects.Count == 0)
         {
-            var error = $"Projekt '{projectName}' wurde nicht gefunden.";
+            var error = $"Project '{projectName}' was not found.";
             return CreatePayload(solutionName, projectName, [], 0, 0, false, [], error,
                 requestedOptions, effectiveDepth, effectiveResults, boundsWereClamped);
         }
@@ -55,7 +55,7 @@ public static class NamespaceTreeScanner
                 var compilation = await project.GetCompilationAsync(ct).ConfigureAwait(false);
                 if (compilation is null)
                 {
-                    var error = $"Projekt '{project.Name}' konnte nicht kompiliert werden.";
+                    var error = $"Project '{project.Name}' could not be compiled.";
                     return CreatePayload(solutionName, projectName, [], 0, 0, false, [], error,
                         requestedOptions, effectiveDepth, effectiveResults, boundsWereClamped);
                 }
@@ -74,7 +74,7 @@ public static class NamespaceTreeScanner
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            var error = $"Namespace-Baum konnte nicht gescannt werden: {ex.Message}";
+            var error = $"Namespace tree scan failed: {ex.Message}";
             return CreatePayload(solutionName, projectName, [], 0, 0, false, [], error,
                 requestedOptions, effectiveDepth, effectiveResults, boundsWereClamped);
         }
@@ -151,11 +151,13 @@ public static class NamespaceTreeScanner
             ct.ThrowIfCancellationRequested();
             if (!ns.IsGlobalNamespace && path.Count >= maxDepth)
             {
-                if (ContainsProjectSourceTypesInHierarchy(childNs, sourceTrees, ct))
+                var typesBelowDepth = CountProjectSourceTypesInHierarchy(childNs, sourceTrees, ct);
+                if (typesBelowDepth > 0)
                 {
                     depthWasTruncated = true;
                     var visiblePrefix = string.Join('.', path);
                     nsTypeCounts.TryAdd(visiblePrefix, 0);
+                    totalTypes += typesBelowDepth;
                 }
                 continue;
             }
@@ -164,16 +166,14 @@ public static class NamespaceTreeScanner
         }
     }
 
-    private static bool ContainsProjectSourceTypesInHierarchy(INamespaceSymbol ns, HashSet<SyntaxTree> sourceTrees, CancellationToken ct)
+    private static int CountProjectSourceTypesInHierarchy(INamespaceSymbol ns, HashSet<SyntaxTree> sourceTrees, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        if (ns.GetTypeMembers().Any(type => type.Locations.Any(location =>
-            location.IsInSource && location.SourceTree is not null && sourceTrees.Contains(location.SourceTree))))
-        {
-            return true;
-        }
+        var count = ns.GetTypeMembers().Count(type => type.Locations.Any(location =>
+            location.IsInSource && location.SourceTree is not null && sourceTrees.Contains(location.SourceTree)));
+        foreach (var child in ns.GetNamespaceMembers()) count += CountProjectSourceTypesInHierarchy(child, sourceTrees, ct);
 
-        return ns.GetNamespaceMembers().Any(child => ContainsProjectSourceTypesInHierarchy(child, sourceTrees, ct));
+        return count;
     }
 
     private static List<NamespaceNode> BuildTree(Dictionary<string, int> nsTypeCounts)
@@ -279,10 +279,10 @@ public static class NamespaceTreeScanner
         if (truncatedBy.Count == 0) return null;
         if (truncatedBy.Contains("maxResults", StringComparer.Ordinal))
         {
-            return $"MaxResults erhöhen (bis {MaxResultsCap}) oder ein einzelnes Projekt auswählen.";
+            return $"Increase MaxResults (up to {MaxResultsCap}) or select a single project.";
         }
 
-        return "Ein einzelnes Projekt auswählen, um den Namespace-Baum einzugrenzen.";
+        return "Select a single project to narrow the namespace tree.";
     }
 
     private static string FormatError(string solutionName, string? projectName, string error)
@@ -309,11 +309,11 @@ public static class NamespaceTreeScanner
             : $"# Namespace Tree: {projectName} ({solutionName})";
 
         sb.AppendLine(title);
-        sb.AppendLine($"> {totalNamespaces} Namespaces gesamt, {shownNamespaces} gezeigt | {totalTypes} Typen");
+        sb.AppendLine($"> {totalNamespaces} namespaces total, {shownNamespaces} shown | {totalTypes} types");
         if (truncatedBy.Count > 0)
         {
-            sb.AppendLine($"> Gekürzt durch: {string.Join(", ", truncatedBy)}");
-            sb.AppendLine($"> Nächster Schritt: {nextAction}");
+            sb.AppendLine($"> Truncated by: {string.Join(", ", truncatedBy)}");
+            sb.AppendLine($"> Next step: {nextAction}");
         }
         sb.AppendLine();
 
@@ -324,7 +324,7 @@ public static class NamespaceTreeScanner
     private static void AppendNode(StringBuilder sb, NamespaceNode node, int indent)
     {
         var indentStr = new string(' ', indent * 2);
-        var typeInfo = node.TypeCount > 0 ? $" ({node.TypeCount} Typen)" : "";
+        var typeInfo = node.TypeCount > 0 ? $" ({node.TypeCount} types)" : "";
         sb.AppendLine($"{indentStr}- {node.Name}{typeInfo}");
         foreach (var child in node.Children.OrderBy(item => item.Name, StringComparer.Ordinal))
         {

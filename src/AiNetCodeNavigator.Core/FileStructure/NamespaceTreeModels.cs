@@ -32,8 +32,8 @@ public sealed record NamespaceTreePayload(
     string? Error = null,
     int RequestedMaxDepth = 32,
     int EffectiveMaxDepth = 32,
-    int RequestedMaxResults = 200,
-    int EffectiveMaxResults = 200,
+    int RequestedMaxResults = NamespaceTreeScanner.DefaultMaxResults,
+    int EffectiveMaxResults = NamespaceTreeScanner.DefaultMaxResults,
     bool BoundsWereClamped = false,
     string? NextAction = null);
 

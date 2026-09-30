@@ -81,3 +81,22 @@
 - **P2 — Public output is still German.** `src/AiNetCodeNavigator.Core/FileStructure/NamespaceTreeScanner.cs:41,58,77,282-328` emits German errors, `NextAction`, summary labels, truncation guidance, and type counts. The public payload exposes these strings through `Error`, `FormattedText`, and `NextAction`, contrary to the English-output requirement in `Konzept.md`. The FastTests at `tests/AiNetCodeNavigator.FastTests/FileStructure/NamespaceTreeScannerTests.cs:69,91-92,113` currently assert German strings. Acceptance: make every scanner-authored public string English and update tests for success, truncation, and error paths.
 - **P2 — `TotalTypes` becomes a partial total under depth truncation.** `NamespaceTreeScanner.cs:139-160` counts types in the current namespace but, at the effective depth, only checks whether descendants contain source types; it does not add those types to `totalTypes`. For `namespace A.B; public class T {}` with `MaxDepth=1`, the visible `A` node is retained and `maxDepth` is reported, while `TotalTypes` and the formatted summary report zero types. `docs/navigation/get-namespace-tree.md` qualifies `TotalNamespaces` as depth-limited but leaves `TotalTypes` unqualified. The existing deep-tree test at `NamespaceTreeScannerTests.cs:118-135` checks only displayed depth and truncation. Acceptance: define whether `TotalTypes` covers all matched source types or only represented levels, implement/report that meaning consistently, and test a type below the depth cap; keep the summary and documentation aligned.
 - The 6.2 audit checkbox remains open pending these two fixes. No finding is raised for 6.1 or 6.3 in this point audit.
+
+## Point 6.2 audit 1 remediation
+
+- Scope: remediate the two P2 findings from the independent audit at commit `f7dd16a4d84bdb0bf285b593484d59a7c19d2f39`. The 6.2 audit checkbox remains open for follow-up; 6.3 was not changed.
+- Before-fix focused repros: five of nine `NamespaceTreeScannerTests` failed. Assertions for success text, truncation guidance, node type labels, and unknown-project errors found German scanner output where English text was required. For `namespace A.B; public class T {}` with `MaxDepth=1`, the structured tree retained `A` and reported `maxDepth`, but `TotalTypes` and the formatted summary reported zero.
+- All scanner-authored product strings are now English: compile and project errors, exception summaries, formatted totals, direct type labels, truncation guidance, and `NextAction`. Output contains no German scanner labels.
+- `TotalTypes` now counts all named-namespace source types for the selected target, including types deeper than `MaxDepth` and namespaces hidden by the `MaxResults` projection. `NamespaceNode.TypeCount` continues to count only types declared directly in each returned namespace; therefore an ancestor can have `TypeCount=0` while its descendants contribute to the solution-wide `TotalTypes`. The current-state documentation states this distinction. FastTests cover the depth-1 `A.B` case, assert total types is one while direct `A.TypeCount` is zero, and verify English success, truncation, and error output.
+- Follow-up independent audit has not been performed. The 6.2 audit checkbox remains open.
+
+### Audit 1 remediation verification
+
+| Gate | Result |
+|---|---|
+| Before-fix focused `NamespaceTreeScannerTests` | 5 expected failures, 4 passed |
+| Focused `NamespaceTreeScannerTests` after fix | Passed, 9/9 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 405/405 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 417/417 across both test projects |

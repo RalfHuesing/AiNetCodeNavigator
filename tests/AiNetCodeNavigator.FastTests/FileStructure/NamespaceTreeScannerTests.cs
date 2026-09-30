@@ -66,7 +66,7 @@ public sealed class NamespaceTreeScannerTests
         Assert.Equal("Company.Product.Other", product.Children[0].FullName);
         Assert.Equal(3, payload.TotalNamespaces); // Includes the synthesized parent namespaces.
         Assert.Equal(2, payload.TotalTypes);
-        Assert.Contains("- Product (1 Typen)", payload.FormattedText);
+        Assert.Contains("- Product (1 types)", payload.FormattedText);
     }
 
     [Fact]
@@ -88,8 +88,10 @@ public sealed class NamespaceTreeScannerTests
         Assert.True(defaultPayload.Truncated);
         Assert.Equal(50, defaultPayload.ShownNamespaces);
         Assert.Contains("maxResults", defaultPayload.TruncatedBy!);
-        Assert.Contains("MaxResults erhöhen", defaultPayload.NextAction);
-        Assert.Contains("Nächster Schritt", defaultPayload.FormattedText);
+        Assert.Contains("Increase MaxResults", defaultPayload.NextAction);
+        Assert.Contains("Truncated by: maxResults", defaultPayload.FormattedText);
+        Assert.Contains("Next step:", defaultPayload.FormattedText);
+        Assert.DoesNotContain("Gekürzt", defaultPayload.FormattedText);
 
         var payload = await NamespaceTreeScanner.ScanSolutionAsync(
             fixture.Solution,
@@ -98,8 +100,8 @@ public sealed class NamespaceTreeScannerTests
         Assert.True(payload.TotalNamespaces == 206, payload.FormattedText);
         Assert.Equal(205, payload.TotalTypes);
         Assert.Equal(200, CountNodes(payload.RootNamespaces));
-        Assert.Contains("206 Namespaces", payload.FormattedText);
-        Assert.Contains("200 gezeigt", payload.FormattedText);
+        Assert.Contains("206 namespaces", payload.FormattedText);
+        Assert.Contains("200 shown", payload.FormattedText);
     }
 
     [Fact]
@@ -110,7 +112,7 @@ public sealed class NamespaceTreeScannerTests
         var payload = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution, "Missing.Project");
 
         Assert.Contains("Missing.Project", payload.Error);
-        Assert.Contains("Projekt 'Missing.Project' wurde nicht gefunden", payload.FormattedText);
+        Assert.Contains("Project 'Missing.Project' was not found", payload.FormattedText);
         Assert.Empty(payload.RootNamespaces);
     }
 
@@ -132,6 +134,43 @@ public sealed class NamespaceTreeScannerTests
 
         Assert.True(MaxDepth(payload.RootNamespaces) == 32, payload.FormattedText);
         Assert.Contains("maxDepth", payload.FormattedText);
+        Assert.Equal("Select a single project to narrow the namespace tree.", payload.NextAction);
+    }
+
+    [Fact]
+    public async Task ScanSolutionAsync_CountsTypesBelowDepthLimitWithoutChangingDirectNodeCounts()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\virtual\DepthLimitedTypeSolution.slnx",
+            new ProjectSpec("DepthLimited", [("DeepType.cs", "namespace A.B; public class T {}") ]));
+
+        var payload = await NamespaceTreeScanner.ScanSolutionAsync(
+            fixture.Solution,
+            options: new NamespaceTreeScanOptions(MaxDepth: 1));
+
+        var root = Assert.Single(payload.RootNamespaces);
+        Assert.Equal("A", root.FullName);
+        Assert.Equal(0, root.TypeCount); // T belongs to the omitted child namespace B.
+        Assert.Equal(1, payload.TotalTypes); // The target-wide type total includes deeper namespaces.
+        Assert.Contains("1 types", payload.FormattedText);
+        Assert.Contains("maxDepth", payload.TruncatedBy!);
+    }
+
+    [Fact]
+    public async Task ScanSolutionAsync_FormatsSuccessTruncationAndErrorsInEnglish()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\virtual\EnglishNamespaceSolution.slnx",
+            new ProjectSpec("English", [("Type.cs", "namespace English; public class TypeOne {}") ]));
+
+        var success = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution);
+        var error = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution, "Missing.Project");
+
+        Assert.Contains("1 namespaces total, 1 shown | 1 types", success.FormattedText);
+        Assert.Equal("Project 'Missing.Project' was not found.", error.Error);
+        Assert.Contains("Project 'Missing.Project' was not found.", error.FormattedText);
+        Assert.DoesNotContain("Typen", success.FormattedText);
+        Assert.DoesNotContain("Gekürzt", success.FormattedText);
     }
 
     [Fact]
