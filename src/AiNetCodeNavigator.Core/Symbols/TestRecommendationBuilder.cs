@@ -13,7 +13,8 @@ using Microsoft.CodeAnalysis.FindSymbols;
 namespace AiNetCodeNavigator.Core.Symbols;
 
 /// <summary>
-/// Ermittelt passende Test-Fixtures und Testmethoden für eine gegebene Produktionsklasse oder Methode.
+/// Finds static heuristic test-fixture candidates and attributed test methods for a production type or member.
+/// Name and project evidence does not prove that a candidate tests, runs, or covers the target.
 /// </summary>
 public static class TestRecommendationBuilder
 {
@@ -38,38 +39,37 @@ public static class TestRecommendationBuilder
         var candidateNames = BuildCandidateTestClassNames(targetTypeName);
         var fixtures = new List<TestFixtureMatch>();
 
-        foreach (var project in solution.Projects)
+        ct.ThrowIfCancellationRequested();
+        var symbols = await SymbolFinder.FindSourceDeclarationsAsync(
+            solution,
+            name => candidateNames.Contains(name),
+            SymbolFilter.Type,
+            ct).ConfigureAwait(false);
+        var seenSymbols = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+
+        foreach (var symbol in symbols.OfType<INamedTypeSymbol>())
         {
             ct.ThrowIfCancellationRequested();
-            var compilation = await project.GetCompilationAsync(ct).ConfigureAwait(false);
-            if (compilation is null) continue;
+            if (!seenSymbols.Add(symbol)) continue;
 
-            // Search by candidate names
-            foreach (var candidate in candidateNames)
+            var sourceDocument = symbol.DeclaringSyntaxReferences
+                .Select(reference => solution.GetDocument(reference.SyntaxTree))
+                .FirstOrDefault(document => document is not null);
+            var sourceProject = sourceDocument?.Project;
+            if (sourceProject is null ||
+                (!TestDetector.IsTestClass(symbol) && !TestDetector.IsTestProject(sourceProject)))
             {
-                ct.ThrowIfCancellationRequested();
-                var symbols = await SymbolFinder.FindSourceDeclarationsAsync(
-                    solution,
-                    name => string.Equals(name, candidate, StringComparison.OrdinalIgnoreCase),
-                    SymbolFilter.Type,
-                    ct).ConfigureAwait(false);
-
-                foreach (var symbol in symbols.OfType<INamedTypeSymbol>())
-                {
-                    if (fixtures.Any(f => f.ClassName == symbol.Name)) continue;
-                    if (!TestDetector.IsTestClass(symbol) && !TestDetector.IsTestProject(symbol.ContainingAssembly is null ? project : solution.GetProject(symbol.ContainingAssembly) ?? project))
-                    {
-                        continue;
-                    }
-
-                    var fixture = CreateFixtureMatch(symbol, solution, solutionDir, handoffIdentity);
-                    if (fixture != null)
-                    {
-                        fixtures.Add(fixture);
-                    }
-                }
+                continue;
             }
+
+            var fixture = CreateFixtureMatch(symbol, solution, solutionDir, handoffIdentity);
+            if (fixture is not null) fixtures.Add(fixture);
         }
+
+        fixtures = fixtures
+            .OrderBy(fixture => PathNormalizer.NormalizeSeparators(fixture.FilePath), StringComparer.OrdinalIgnoreCase)
+            .ThenBy(fixture => fixture.ClassName, StringComparer.Ordinal)
+            .ToList();
 
         var totalMethods = fixtures.Sum(f => f.Methods.Count);
         return new TestContextPayload(
@@ -127,7 +127,8 @@ public static class TestRecommendationBuilder
             Line: line,
             Framework: framework,
             Methods: methods,
-            HandoffId: classHandoff)
+            HandoffId: classHandoff,
+            ProjectName: solution.GetDocument(syntaxRef.SyntaxTree)?.Project.Name)
         {
             SourceProjectId = solution.GetDocument(syntaxRef.SyntaxTree)?.Project.Id
         };

@@ -49,5 +49,9 @@
   - [x] Source-only Grenzfälle abdecken: keine Metadata-only Treffer wie `System.String`, und Literal-/Punctuation-Positionen nicht über umgebende Deklarationen auflösen.
   - [x] AiNetLinter read-only vergleichen und den gemeinsamen Resolver-Vertrag in der Current-State-Dokumentation festhalten.
   - [x] Review/Audit zu 4.7 durchführen; Findings ergänzen und umsetzen.
-- [ ] 4.8 Test-Kontext fachlich absichern: gleichnamige Testklassen in verschiedenen Projekten getrennt erhalten, xUnit/NUnit/MSTest korrekt klassifizieren und Empfehlungen als Heuristik ausweisen; Tests für Mehrprojektfälle und `TestMethodAttribute` ergänzen.
+- [x] 4.8 Test-Kontext fachlich absichern: gleichnamige Testklassen in verschiedenen Projekten getrennt erhalten, xUnit/NUnit/MSTest korrekt klassifizieren und Empfehlungen als Heuristik ausweisen; Tests für Mehrprojektfälle und `TestMethodAttribute` ergänzen.
+  - [x] Fixture-Kandidaten genau einmal solutionweit sammeln, gleichnamige Typen projektbezogen getrennt halten und Projektname/Pfad/Handoff als Auswahlkontext ausgeben.
+  - [x] xUnit-/NUnit-/MSTest-Attribute über getrennte Projekte klassifizieren; `TestMethodAttribute` auch in Methodenliste und Handoff-Vertrag prüfen.
+  - [x] Name-only Treffer ohne Framework-Attribut ausdrücklich als `Unknown`/Heuristik dokumentieren und mit Core-Vertragstest belegen.
+  - [x] AiNetLinter read-only mit der projekt-/dateibezogenen Kandidatenausgabe und dem `static-test-candidates-only`-Vertrag vergleichen.
   - [ ] Review/Audit zu 4.8 durchführen; Findings ergänzen und umsetzen.

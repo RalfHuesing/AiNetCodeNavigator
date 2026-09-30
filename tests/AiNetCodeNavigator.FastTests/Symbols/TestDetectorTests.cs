@@ -114,7 +114,8 @@ public sealed class TestDetectorTests
                 namespace Sample.MstestSuite { public class TestOrderService { [Microsoft.VisualStudio.TestTools.UnitTesting.TestMethod] public void PlacesOrder() { } } }
                 """)]);
 
-        using var handle = TestWorkspaceBuilder.CreateSolution(production, xunit, nunit, mstest);
+        using var handle = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\FrameworkResolution.slnx", production, xunit, nunit, mstest);
         var compilation = await handle.Solution.Projects.Single(project => project.Name == "Sample.Core").GetCompilationAsync();
         Assert.NotNull(compilation);
         var target = compilation.GetTypeByMetadataName("Sample.Core.OrderService");
@@ -128,6 +129,43 @@ public sealed class TestDetectorTests
             fixture => Assert.Equal(("OrderServiceSpecs", "NUnit"), (fixture.ClassName, fixture.Framework)),
             fixture => Assert.Equal(("OrderServiceTests", "xUnit"), (fixture.ClassName, fixture.Framework)),
             fixture => Assert.Equal(("TestOrderService", "MSTest"), (fixture.ClassName, fixture.Framework)));
+
+        var mstestFixture = Assert.Single(recommendation.TestFixtures, fixture => fixture.ClassName == "TestOrderService");
+        var mstestMethod = Assert.Single(mstestFixture.Methods);
+        Assert.Equal("PlacesOrder", mstestMethod.MethodName);
+        Assert.NotNull(mstestMethod.HandoffId);
+    }
+
+    [Fact]
+    public async Task TestRecommendationBuilder_PreservesSameNamedFixturesAcrossProjects()
+    {
+        var production = new ProjectSpec(
+            "Sample.Core",
+            [("OrderService.cs", "namespace Sample.Core; public class OrderService { }")]);
+        var xunit = new ProjectSpec(
+            "Sample.XunitSuite",
+            [("OrderServiceTests.cs", "using System; namespace Xunit { public sealed class FactAttribute : Attribute { } } namespace Sample.XunitSuite { public class OrderServiceTests { [Xunit.Fact] public void PlacesOrder() { } } }")],
+            VirtualProjectDirectory: "tests/xunit");
+        var nunit = new ProjectSpec(
+            "Sample.NunitSuite",
+            [("OrderServiceTests.cs", "using System; namespace NUnit.Framework { public sealed class TestCaseAttribute : Attribute { } } namespace Sample.NunitSuite { public class OrderServiceTests { [NUnit.Framework.TestCase] public void CancelsOrder() { } } }")],
+            VirtualProjectDirectory: "tests/nunit");
+        using var handle = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\DuplicateTestFixtures.slnx", production, xunit, nunit);
+        var compilation = await handle.Solution.Projects.Single(project => project.Name == "Sample.Core").GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var target = compilation.GetTypeByMetadataName("Sample.Core.OrderService");
+        Assert.NotNull(target);
+
+        var recommendation = await TestRecommendationBuilder.BuildAsync(target, handle.Solution);
+
+        Assert.Equal(2, recommendation.TotalTestFixtures);
+        Assert.All(recommendation.TestFixtures, fixture => Assert.Equal("OrderServiceTests", fixture.ClassName));
+        Assert.Equal(2, recommendation.TestFixtures.Select(fixture => fixture.FilePath).Distinct(System.StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Equal(2, recommendation.TestFixtures.Select(fixture => fixture.ProjectName).Distinct(System.StringComparer.Ordinal).Count());
+        Assert.Equal(2, recommendation.TestFixtures.Select(fixture => fixture.HandoffId).Distinct().Count());
+        Assert.Contains(recommendation.TestFixtures, fixture => fixture.Framework == "xUnit" && fixture.Methods.Single().MethodName == "PlacesOrder");
+        Assert.Contains(recommendation.TestFixtures, fixture => fixture.Framework == "NUnit" && fixture.Methods.Single().MethodName == "CancelsOrder");
     }
 
     [Fact]

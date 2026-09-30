@@ -19,7 +19,8 @@ public sealed record TestFixtureMatch(
     int Line,
     string Framework,
     IReadOnlyList<TestMethodMatch> Methods,
-    string? HandoffId = null)
+    string? HandoffId = null,
+    string? ProjectName = null)
 {
     internal ProjectId? SourceProjectId { get; init; }
 }
