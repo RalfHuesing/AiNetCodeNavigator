@@ -57,7 +57,7 @@ public static class TypeHierarchyScanner
                 : [];
 
         var subtypeEntries = subtypesSymbols
-            .Select(s => CreateEntry(s, solution, solutionDir, handoffIdentity))
+            .Select(s => CreateEntries(s, solution, solutionDir, handoffIdentity).First())
             .OrderBy(e => e.FilePath, StringComparer.OrdinalIgnoreCase)
             .ThenBy(e => e.FilePath, StringComparer.Ordinal)
             .ThenBy(e => e.Line)
@@ -86,7 +86,7 @@ public static class TypeHierarchyScanner
         while (current != null && visited.Add(current.OriginalDefinition))
         {
             ct.ThrowIfCancellationRequested();
-            list.Add(CreateEntry(current, solution, solutionDir, identity));
+            list.AddRange(CreateEntries(current, solution, solutionDir, identity));
             current = current.BaseType;
         }
 
@@ -97,34 +97,50 @@ public static class TypeHierarchyScanner
     {
         return type.AllInterfaces
             .OrderBy(i => i.ToDisplayString(), StringComparer.Ordinal)
-            .Select(i => CreateEntry(i, solution, solutionDir, identity))
+            .SelectMany(i => CreateEntries(i, solution, solutionDir, identity))
             .ToList();
     }
 
-    private static TypeHierarchyEntry CreateEntry(INamedTypeSymbol symbol, Solution solution, string solutionDir, AnalysisSymbolIdentity? identity)
+    private static IEnumerable<TypeHierarchyEntry> CreateEntries(
+        INamedTypeSymbol symbol,
+        Solution solution,
+        string solutionDir,
+        AnalysisSymbolIdentity? identity)
     {
-        var loc = symbol.Locations
+        var locations = symbol.Locations
             .Where(location => location.IsInSource)
             .OrderBy(location => location.SourceTree?.FilePath, StringComparer.OrdinalIgnoreCase)
             .ThenBy(location => location.SourceTree?.FilePath, StringComparer.Ordinal)
             .ThenBy(location => location.GetLineSpan().StartLinePosition.Line)
-            .FirstOrDefault();
-        var filePath = loc?.SourceTree?.FilePath is not null
-            ? PathNormalizer.ToRelative(solutionDir, loc.SourceTree.FilePath)
-            : string.Empty;
-
-        var line = loc?.GetLineSpan().StartLinePosition.Line + 1 ?? 0;
+            .ToList();
         var handoff = SourceHandoffFormatter.Format(symbol, solution, identity);
-
         var kind = symbol.IsRecord
             ? (symbol.TypeKind == TypeKind.Struct ? "record struct" : "record")
             : symbol.TypeKind.ToString().ToLowerInvariant();
 
-        return new TypeHierarchyEntry(
-            Name: symbol.ToDisplayString(),
-            Kind: kind,
-            FilePath: filePath,
-            Line: line,
-            HandoffId: handoff);
+        if (locations.Count == 0)
+        {
+            yield return new TypeHierarchyEntry(
+                Name: symbol.ToDisplayString(),
+                Kind: kind,
+                FilePath: string.Empty,
+                Line: 0,
+                HandoffId: handoff);
+            yield break;
+        }
+
+        foreach (var location in locations)
+        {
+            var filePath = location.SourceTree?.FilePath is not null
+                ? PathNormalizer.ToRelative(solutionDir, location.SourceTree.FilePath)
+                : string.Empty;
+            var line = location.GetLineSpan().StartLinePosition.Line + 1;
+            yield return new TypeHierarchyEntry(
+                Name: symbol.ToDisplayString(),
+                Kind: kind,
+                FilePath: filePath,
+                Line: line,
+                HandoffId: handoff);
+        }
     }
 }

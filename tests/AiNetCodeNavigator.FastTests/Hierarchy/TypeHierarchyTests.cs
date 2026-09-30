@@ -1,5 +1,6 @@
 #nullable enable
 
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Hierarchy;
@@ -135,6 +136,53 @@ public sealed class TypeHierarchyTests
 
         Assert.Contains("Application", resolvedProjects);
         Assert.Contains("Extension", resolvedProjects);
+    }
+
+    [Fact]
+    public async Task ScanAsync_PartialBaseAndInterfaceReturnEverySourceLocationAcrossProjects()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\PartialHierarchy.slnx",
+            new ProjectSpec("Contracts", [
+                ("Base.First.cs", "namespace Contracts; public partial class BaseType { }"),
+                ("Base.Second.cs", "namespace Contracts; public partial class BaseType { }"),
+                ("IContract.First.cs", "namespace Contracts; public partial interface IContract { }"),
+                ("IContract.Second.cs", "namespace Contracts; public partial interface IContract { }")],
+                VirtualProjectDirectory: "src/Contracts"),
+            new ProjectSpec("App", [
+                ("Derived.First.cs", "namespace App; public partial class Derived : Contracts.BaseType, Contracts.IContract { }"),
+                ("Derived.Second.cs", "namespace App; public partial class Derived { }")],
+                ProjectReferences: ["Contracts"],
+                VirtualProjectDirectory: "src/App"));
+        var contracts = await fixture.Solution.Projects.Single(project => project.Name == "Contracts").GetCompilationAsync();
+        var app = await fixture.Solution.Projects.Single(project => project.Name == "App").GetCompilationAsync();
+        Assert.NotNull(contracts);
+        Assert.NotNull(app);
+        var baseType = contracts.GetTypeByMetadataName("Contracts.BaseType");
+        var derived = app.GetTypeByMetadataName("App.Derived");
+        Assert.NotNull(baseType);
+        Assert.NotNull(derived);
+
+        var baseHierarchy = await TypeHierarchyScanner.ScanAsync(baseType, fixture.Solution);
+        var derivedHierarchy = await TypeHierarchyScanner.ScanAsync(derived, fixture.Solution);
+
+        Assert.Equal(1, baseHierarchy.TotalSubtypes);
+        Assert.Single(baseHierarchy.Subtypes);
+        var baseLocations = derivedHierarchy.BaseTypes.Where(entry => entry.Name == "Contracts.BaseType").ToList();
+        var interfaceLocations = derivedHierarchy.Interfaces.Where(entry => entry.Name == "Contracts.IContract").ToList();
+        Assert.Equal(2, baseLocations.Count);
+        Assert.Equal(2, interfaceLocations.Count);
+        Assert.Equal(new[] { "Base.First.cs", "Base.Second.cs" }, baseLocations.Select(entry => Path.GetFileName(entry.FilePath)).OrderBy(name => name, System.StringComparer.Ordinal).ToArray());
+        Assert.Equal(new[] { "IContract.First.cs", "IContract.Second.cs" }, interfaceLocations.Select(entry => Path.GetFileName(entry.FilePath)).OrderBy(name => name, System.StringComparer.Ordinal).ToArray());
+
+        foreach (var entry in baseLocations.Concat(interfaceLocations))
+        {
+            Assert.StartsWith("h:", entry.HandoffId);
+            var resolved = await SourceSymbolResolver.ResolveAsync(fixture.Solution, entry.HandoffId!);
+            Assert.True(resolved.IsSuccess);
+            Assert.Equal("Contracts", resolved.Symbol!.ContainingAssembly!.Name);
+            Assert.Contains(resolved.Symbol.Name, new[] { "BaseType", "IContract" });
+        }
     }
 
     [Theory]

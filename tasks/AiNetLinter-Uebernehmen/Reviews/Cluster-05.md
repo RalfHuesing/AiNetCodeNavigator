@@ -213,3 +213,21 @@
 
 - Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
 - The documentation diff was inspected and `git diff --check` passed before commit.
+
+### Audit 1 remediation
+
+- Added a before-fix regression using Contracts and App projects. The test failed as expected because a partial `Contracts.BaseType` declared in two files produced only one BaseTypes entry. It also covers a two-file partial interface, project-bound handoff roundtrips, and a partial subtype counted once.
+- Base type and interface projections now emit one entry per source location with the same project-bound symbol handoff; metadata-only types still emit one pathless entry. Derived/implementing subtype projection continues to select one deterministic source location per type, so `TotalSubtypes` and `maxResults` stay type-based.
+- Updated the hierarchy current-state page to document partial type location behavior. The point 5.3 audit checkbox remains unchecked pending independent review.
+
+### Remediation verification
+
+| Gate | Result |
+|---|---|
+| Before-fix partial base/interface source-location test | Failed as expected: 1 base location returned where 2 were declared |
+| Focused TypeHierarchy FastTests after fix | Passed, 11/11 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 363/363 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 375/375 across both test projects |
+| `git diff --check` | Passed before commit |
