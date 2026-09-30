@@ -27,6 +27,9 @@ public static class TestRecommendationBuilder
         Solution solution,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(targetSymbol);
+        ArgumentNullException.ThrowIfNull(solution);
+
         var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var targetType = targetSymbol as INamedTypeSymbol ?? targetSymbol.ContainingType;
         var targetTypeName = targetType?.Name ?? targetSymbol.Name;
@@ -134,21 +137,34 @@ public static class TestRecommendationBuilder
             foreach (var attr in member.GetAttributes())
             {
                 var name = attr.AttributeClass?.Name ?? "";
-                if (name.StartsWith("Fact", StringComparison.OrdinalIgnoreCase) || name.StartsWith("Theory", StringComparison.OrdinalIgnoreCase))
+                if (name.Equals("Fact", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("FactAttribute", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("Theory", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("TheoryAttribute", StringComparison.OrdinalIgnoreCase))
                 {
                     return "xUnit";
                 }
-                if (name.StartsWith("Test", StringComparison.OrdinalIgnoreCase) || name.StartsWith("TestCase", StringComparison.OrdinalIgnoreCase))
-                {
-                    return "NUnit";
-                }
-                if (name.StartsWith("TestMethod", StringComparison.OrdinalIgnoreCase))
+
+                if (name.Equals("TestMethod", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("TestMethodAttribute", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("DataTestMethod", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("DataTestMethodAttribute", StringComparison.OrdinalIgnoreCase))
                 {
                     return "MSTest";
+                }
+
+                if (name.Equals("Test", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("TestAttribute", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("TestCase", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("TestCaseAttribute", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("TestCaseSource", StringComparison.OrdinalIgnoreCase) ||
+                    name.Equals("TestCaseSourceAttribute", StringComparison.OrdinalIgnoreCase))
+                {
+                    return "NUnit";
                 }
             }
         }
 
-        return "xUnit";
+        return "Unknown";
     }
 }

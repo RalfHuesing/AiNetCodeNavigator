@@ -243,6 +243,18 @@ The point 4.4 audit checkbox remains open pending fixes and a follow-up audit. N
 - Verification: focused ClassStructureScanner FastTests passed 15/15; `pwsh -File ./scripts/build.ps1` passed with 0 warnings/errors; `pwsh -File ./scripts/test-fast.ps1` passed 303/303; `pwsh -File ./scripts/test-integration.ps1` passed 12/12; `pwsh -File ./scripts/test.ps1` passed 315/315; `git diff --check` passed.
 - The point 4.4 audit checkbox remains open for independent follow-up.
 
+## Point 4.5 implementation
+
+- Base commit: `41ca1ac76f666de53596944c457898481c5b523b`; the working tree was clean before this slice.
+- Read-only AiNetLinter MCP inspection covered `GetTestContextTool` and `TestCoverageScanner`. Its test-context result explicitly describes static candidates from heuristics and disclaims runtime execution evidence; the Core contract documents the same boundary.
+- **P2 — Ordinary identifiers were classified as tests by suffix substring.** Before the fix, `Latest.cs`, `Contest.cs`, type `Latest`, and project `Contest` all matched a case-insensitive `Test` suffix. File, class, and project detection now require a name boundary or an uppercase affix start. Added regressions for all four cases.
+- **P2 — Helper libraries alone caused test-project classification.** Before the fix, a production project with only a `Moq.dll` metadata reference was classified as a test project because mocking/assertion packages were in the framework keyword list. Framework detection now uses test-runner/framework references only; the synthetic `Moq.dll` regression failed before and passes after the fix.
+- **P2 — MSTest was reported as NUnit.** Before the fix, a three-project repro found xUnit, NUnit, and MSTest fixtures, but `[TestMethod]` was categorized as NUnit because the broad `Test*` check ran first. Framework detection now uses exact recognized attribute names and checks MSTest attributes explicitly; the repro asserts all three framework results across projects.
+- **P2 — A name-only fixture was labeled xUnit.** A fixture matched by naming convention but containing no recognized framework attribute previously received an unsupported `xUnit` label. It now reports `Unknown`; a pre-fix regression failed with the old label. Model XML docs and the current-state page identify these results as heuristic candidates, not test execution or coverage evidence.
+- **P2 — Null builder arguments leaked a null dereference.** `TestRecommendationBuilder.BuildAsync` now validates the symbol and solution and throws `ArgumentNullException`; a pre-fix regression observed `NullReferenceException` for a null symbol.
+- Added [Test Context](../../../docs/navigation/test-context.md) and indexed it in the current-state docs. Point 4.8 remains responsible for the later deeper multi-project/equal-name and recommendation-strength audit.
+- Verification: focused `TestDetectorTests` passed 16/16; `pwsh -File ./scripts/build.ps1` passed with 0 warnings/errors; `pwsh -File ./scripts/test-fast.ps1` passed 311/311; `pwsh -File ./scripts/test-integration.ps1` passed 12/12; `pwsh -File ./scripts/test.ps1` passed 323/323; `git diff --check` passed. The independent point 4.5 audit checkbox remains `[ ]`.
+
 ## Independent audit 2/3 of point 4.4
 
 - Reviewed commit: `069656674556331552182025af02a4c9d9ba6036` (clean working tree before audit).

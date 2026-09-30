@@ -28,8 +28,10 @@
   - [x] Review/Audit zu 4.4 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.5 Test-Erkennung & Test-Kontext (`get_test_context`-Engine):
   - [x] `TestDetector`: Erkennung von Testprojekten und Testframeworks (xUnit, NUnit, MSTest)
-  - [x] `TestRecommendationBuilder`: Verknüpfung von Produktionscode mit abdeckenden Tests
+  - [x] `TestRecommendationBuilder`: Verknüpfung von Produktionssymbolen mit statischen Testkandidaten
   - [x] FastTests für Test-Kontext
+  - [x] Detect xUnit, NUnit, and MSTest attributes across separate projects, without mistaking ordinary names or mocking references for test evidence.
+  - [x] Document fixture matches as static heuristic candidates and report `Unknown` when no framework attribute identifies them.
   - [ ] Review/Audit zu 4.5 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.6 Feature-Kontext (`get_feature_context`-Engine):
   - [x] `FeatureContextScanner`: Bündelung von Symbol, Signatur, Aufrufern und Tests *(ohne Linter-Violations!)*

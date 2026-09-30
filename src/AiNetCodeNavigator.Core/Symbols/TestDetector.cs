@@ -28,8 +28,7 @@ public static class TestDetector
 
     private static readonly string[] TestKeywords =
     [
-        "xunit", "nunit", "testplatform", "unittesting", "mstest",
-        "fluentassertions", "shouldly", "moq", "nsubstitute", "bogus"
+        "xunit", "nunit", "testplatform", "unittesting", "mstest"
     ];
 
     private static readonly string[] DefaultTestProjectNameSuffixes =
@@ -44,7 +43,9 @@ public static class TestDetector
         "Theory", "TheoryAttribute",
         "Test", "TestAttribute",
         "TestMethod", "TestMethodAttribute",
-        "TestCase", "TestCaseAttribute"
+        "DataTestMethod", "DataTestMethodAttribute",
+        "TestCase", "TestCaseAttribute",
+        "TestCaseSource", "TestCaseSourceAttribute"
     };
 
     private static readonly string[] ClassNameAffixes =
@@ -112,7 +113,7 @@ public static class TestDetector
 
         foreach (var suffix in TestFileSuffixes)
         {
-            if (normalized.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            if (EndsWithNamedAffix(normalized, suffix))
             {
                 return true;
             }
@@ -133,7 +134,7 @@ public static class TestDetector
     {
         if (typeSymbol.TypeKind != TypeKind.Class) return false;
 
-        if (ClassNameAffixes.Any(affix => typeSymbol.Name.EndsWith(affix, StringComparison.OrdinalIgnoreCase)))
+        if (ClassNameAffixes.Any(affix => EndsWithNamedAffix(typeSymbol.Name, affix)))
         {
             return true;
         }
@@ -203,8 +204,20 @@ public static class TestDetector
     private static bool HasTestProjectNameSuffix(string projectName, IReadOnlyList<string> suffixes)
     {
         return suffixes.Any(suffix =>
-            projectName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) ||
-            projectName.Contains($".{suffix}.", StringComparison.OrdinalIgnoreCase) ||
-            projectName.EndsWith($".{suffix}", StringComparison.OrdinalIgnoreCase));
+            EndsWithNamedAffix(projectName, suffix) ||
+            projectName.Contains($".{suffix}.", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool EndsWithNamedAffix(string value, string affix)
+    {
+        if (!value.EndsWith(affix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var affixStart = value.Length - affix.Length;
+        return affixStart == 0 ||
+               char.IsUpper(value[affixStart]) ||
+               value[affixStart - 1] is '.' or '_' or '-' or '/' or '\\';
     }
 }

@@ -9,6 +9,9 @@ public sealed record TestMethodMatch(
     int Line,
     string? HandoffId = null);
 
+/// <summary>
+/// A statically inferred test fixture candidate. The match is heuristic evidence, not proof of execution or coverage.
+/// </summary>
 public sealed record TestFixtureMatch(
     string ClassName,
     string FilePath,
@@ -17,6 +20,9 @@ public sealed record TestFixtureMatch(
     IReadOnlyList<TestMethodMatch> Methods,
     string? HandoffId = null);
 
+/// <summary>
+/// Statically inferred test candidates for a symbol; this payload is not evidence of test execution or coverage.
+/// </summary>
 public sealed record TestContextPayload(
     string TargetSymbol,
     string TargetKind,
