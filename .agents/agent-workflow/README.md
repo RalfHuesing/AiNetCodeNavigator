@@ -1,6 +1,6 @@
 # Agent-Workflow
 
-Portables Kit: Konzept, Roadmap, Umsetzung. Drei getrennte Schritte, jeder nur wenn der Nutzer ihn startet. Kein Prompt startet den nächsten.
+Portables Kit: Konzept, Prüfung/Freigabe, Roadmap, Umsetzung. Vier getrennte Schritte, jeder nur wenn der Nutzer ihn startet. Kein Prompt startet den nächsten.
 
 Kopierbar. Projektwissen steht nicht hier, sondern in `AGENTS.md` und den Rules des jeweiligen Repos.
 
@@ -8,8 +8,9 @@ Kopierbar. Projektwissen steht nicht hier, sondern in `AGENTS.md` und den Rules 
 
 ```text
 Führe 01-konzept-planung.md aus. Task: tasks/<name>
-Führe 02-roadmap-erstellung.md aus. Task: tasks/<name>
-Führe 03-orchestrierte-umsetzung.md aus. Task: tasks/<name>
+Führe 02-konzept-pruefung-und-freigabe.md aus. Task: tasks/<name>
+Führe 03-roadmap-erstellung.md aus. Task: tasks/<name>
+Führe 04-orchestrierte-umsetzung.md aus. Task: tasks/<name>
 ```
 
 `@.cursor/agent-workflow/<datei>.md` plus Taskpfad ist gleichwertig. Ohne Taskverzeichnis: nur danach fragen.
@@ -17,8 +18,9 @@ Führe 03-orchestrierte-umsetzung.md aus. Task: tasks/<name>
 | Datei | Schritt | Tut | Tut nicht |
 |---|---|---|---|
 | [01-konzept-planung.md](01-konzept-planung.md) | 1 | Sparring, Konzept persistieren | Roadmap, Code, Schritt 2 |
-| [02-roadmap-erstellung.md](02-roadmap-erstellung.md) | 2 | Konzept in Checkboxen zerlegen | Umsetzen, Schritt 3 |
-| [03-orchestrierte-umsetzung.md](03-orchestrierte-umsetzung.md) | 3 | Leafs sequenziell delegieren, Audit je Milestone | Selbst implementieren, anderen Workflow starten |
+| [02-konzept-pruefung-und-freigabe.md](02-konzept-pruefung-und-freigabe.md) | 2 | Unabhängig prüfen, korrigieren, bei erfüllten Kriterien freigeben | Scope nachentscheiden, Roadmap, Code, Schritt 3 |
+| [03-roadmap-erstellung.md](03-roadmap-erstellung.md) | 3 | Konzept in Checkboxen zerlegen | Umsetzen, Schritt 4 |
+| [04-orchestrierte-umsetzung.md](04-orchestrierte-umsetzung.md) | 4 | Leafs sequenziell delegieren, Audit je Milestone | Selbst implementieren, anderen Workflow starten |
 
 ## Artefakte
 
@@ -59,7 +61,7 @@ status: draft
 ### Nicht
 ```
 
-`status: ready` nur nach ausdrücklicher Freigabe, und nur wenn keine Entscheidung mehr offen ist. Offene Punkte und Arbeitsgedächtnis gehören nicht in `ready`.
+Planung endet bei `status: draft`. Der Aufruf von [Schritt 2](02-konzept-pruefung-und-freigabe.md) autorisiert die Freigabe bei erfüllten Kriterien. Offene Punkte und Arbeitsgedächtnis gehören nicht in `ready`.
 
 **Roadmap, Minimum:** geordnete Checkboxen, ausführbar ohne zu raten. Konzept nicht nachentscheiden. Parent-Checkboxen sind Aggregate: `[x]` erst wenn Kinder und Abnahme stimmen.
 
@@ -97,7 +99,7 @@ status: draft
 
 Haken nur setzen, was selbst geprüft wurde.
 
-## Rollen in Schritt 3
+## Rollen in Schritt 4
 
 - **Orchestrator:** Reihenfolge, ein Sub-Agent nach dem anderen, Diff/Checkbox-Stichprobe. Kein Produktionscode.
 - **Leaf-Agent:** genau einen Punkt, Selbstprüfung gegen Checkboxen + Konzept + Anwendung, `[x]`, Commit des Slices.

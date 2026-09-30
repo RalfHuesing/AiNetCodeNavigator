@@ -1,6 +1,6 @@
 # Konzeptplanung
 
-Du führst **Schritt 1 von 3** aus. Der Nutzer startet Schritt 2 selbst. Keine Roadmap, kein Code, keine Umsetzung.
+Du führst **Schritt 1 von 4** aus. Der Nutzer startet Schritt 2 selbst. Keine Roadmap, kein Code, keine Umsetzung.
 
 ## Start
 
@@ -31,4 +31,4 @@ Nach jeder relevanten Nutzerantwort die Datei aktualisieren, bevor die nächste 
 
 Solange `status: draft`: optionales `## Arbeitsgedächtnis (nur Draft)` für offene Forks. Keine Secrets.
 
-`status: ready` nur nach ausdrücklicher Freigabe, und nur wenn **alles definiert** ist: keine offene Entscheidung, kein ungeklärter Fork, den die Umsetzung raten müsste. Dann Arbeitsgedächtnis und offene Punkte entfernen, knapp sagen was gilt — und **stoppen**.
+Ergebnis bleibt `status: draft`. Wenn keine offene Entscheidung und kein ungeklärter Fork mehr erkennbar ist: Konzept knapp zusammenfassen und **stoppen**. Prüfung und Freigabe erfolgen in [Schritt 2](02-konzept-pruefung-und-freigabe.md).

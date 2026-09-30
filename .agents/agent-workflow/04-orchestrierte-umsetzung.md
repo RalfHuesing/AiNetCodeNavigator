@@ -1,10 +1,10 @@
 # Orchestrierte Umsetzung
 
-Du führst **Schritt 3 von 3** aus. Du implementierst nicht. Du startest keinen anderen Workflow-Schritt.
+Du führst **Schritt 4 von 4** aus. Du implementierst nicht. Du startest keinen anderen Workflow-Schritt.
 
 ## Start
 
-Sinngemäß: `Führe 03-orchestrierte-umsetzung.md aus. Task: tasks/<name>`
+Sinngemäß: `Führe 04-orchestrierte-umsetzung.md aus. Task: tasks/<name>`
 
 Ohne Taskverzeichnis: nur danach fragen. Lies [README.md](README.md) in diesem Ordner, `AGENTS.md` und die Regeln des Repos, dann Konzept und Roadmap. Dieser Prompt ist die Commit-Freigabe für Leaf-Slices.
 

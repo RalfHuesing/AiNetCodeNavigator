@@ -1,14 +1,14 @@
 # Roadmap erstellen
 
-Du führst **Schritt 2 von 3** aus. Der Nutzer startet Schritt 3 selbst. Nicht implementieren, nicht orchestrieren.
+Du führst **Schritt 3 von 4** aus. Der Nutzer startet Schritt 4 selbst. Nicht implementieren, nicht orchestrieren.
 
 ## Start
 
-Sinngemäß: `Führe 02-roadmap-erstellung.md aus. Task: tasks/<name>`
+Sinngemäß: `Führe 03-roadmap-erstellung.md aus. Task: tasks/<name>`
 
 Ohne Taskverzeichnis: nur danach fragen. Lies [README.md](README.md) in diesem Ordner, Projektregeln, dann das Konzept im Taskverzeichnis.
 
-Ohne `status: ready` nicht zerlegen, außer der Nutzer fordert es ausdrücklich. Taucht beim Zerlegen ein unentschiedener Fork auf, war Schritt 1 nicht ready: stoppen, nicht nachentscheiden.
+Ohne `status: ready` nicht zerlegen, außer der Nutzer fordert es ausdrücklich. Taucht beim Zerlegen ein unentschiedener Fork auf, war das Konzept nicht ready: stoppen, nicht nachentscheiden.
 
 ## Zerlegen
 
