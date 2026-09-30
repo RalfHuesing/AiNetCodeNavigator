@@ -16,6 +16,9 @@ public static class SkeletonMarkdownRenderer
         IReadOnlyList<SkeletonTypeInfo> types,
         string solutionPath)
     {
+        ArgumentNullException.ThrowIfNull(types);
+        ArgumentNullException.ThrowIfNull(solutionPath);
+
         var sb = new StringBuilder();
         sb.AppendLine("# AiNetCodeNavigator — Skeleton Map");
         sb.AppendLine();

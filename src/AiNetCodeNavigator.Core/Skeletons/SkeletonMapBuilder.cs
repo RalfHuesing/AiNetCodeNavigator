@@ -22,6 +22,9 @@ public static class SkeletonMapBuilder
         Func<ISymbol, string?>? formatSymbol = null,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(solutionDir);
+
         var syntaxTree = await document.GetSyntaxTreeAsync(ct).ConfigureAwait(false);
         if (syntaxTree is null) return Array.Empty<SkeletonTypeInfo>();
 
@@ -44,6 +47,9 @@ public static class SkeletonMapBuilder
         Func<ISymbol, string?>? formatSymbol = null,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(solutionDir);
+
         var result = new List<SkeletonTypeInfo>();
         foreach (var doc in project.Documents)
         {

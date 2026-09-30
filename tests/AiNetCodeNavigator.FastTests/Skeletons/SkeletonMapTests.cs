@@ -56,6 +56,65 @@ public sealed class SkeletonMapTests
     }
 
     [Fact]
+    public async Task BuildForDocumentAsync_ComposesNestedNamespaceNames()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var project = fixture.Solution.Projects.Single(p => p.Name == "Sample.Core");
+        var document = project.AddDocument(
+            "NestedNamespace.cs",
+            "namespace Outer { namespace Inner { public class NestedType { } } }");
+
+        var types = await SkeletonMapBuilder.BuildForDocumentAsync(document, Path.GetDirectoryName(fixture.Solution.FilePath) ?? "");
+
+        var type = Assert.Single(types);
+        Assert.Equal("Outer.Inner", type.Namespace);
+        Assert.Equal("NestedType", type.Name);
+    }
+
+    [Fact]
+    public async Task BuildForDocumentAsync_OmitsMethodAndConstructorBodies()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var project = fixture.Solution.Projects.Single(p => p.Name == "Sample.Core");
+        var document = project.AddDocument("Bodies.cs", """
+            public class BodySample
+            {
+                public BodySample() { System.Console.WriteLine("BODY_MARKER"); }
+                public string Compute(string value) { return "BODY_MARKER"; }
+                public string ComputeExpression(string value) => "BODY_MARKER";
+                public string ComputedProperty => "BODY_MARKER";
+            }
+            """);
+
+        var types = await SkeletonMapBuilder.BuildForDocumentAsync(document, Path.GetDirectoryName(fixture.Solution.FilePath) ?? "");
+        var type = Assert.Single(types);
+
+        Assert.Contains(type.Members, member => member.Kind == SkeletonMemberKind.Constructor);
+        Assert.Contains(type.Members, member => member.Signature.Contains("Compute(string value)"));
+        Assert.DoesNotContain(type.Members, member => member.Signature.Contains("BODY_MARKER", System.StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task BuildForDocumentAsync_RejectsNullDocument()
+    {
+        await Assert.ThrowsAsync<System.ArgumentNullException>(
+            () => SkeletonMapBuilder.BuildForDocumentAsync(null!, "."));
+    }
+
+    [Fact]
+    public async Task BuildForProjectAsync_RejectsNullProject()
+    {
+        await Assert.ThrowsAsync<System.ArgumentNullException>(
+            () => SkeletonMapBuilder.BuildForProjectAsync(null!, "."));
+    }
+
+    [Fact]
+    public void SkeletonSyntaxWalker_RejectsNullSemanticModel()
+    {
+        Assert.Throws<System.ArgumentNullException>(() => new SkeletonSyntaxWalker(null!, "file.cs"));
+    }
+
+    [Fact]
     public async Task MarkdownRenderer_RendersValidMarkdown()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
@@ -88,5 +147,37 @@ public sealed class SkeletonMapTests
         Assert.NotNull(context);
         Assert.Null(context.Error);
         Assert.Equal("Greeter", context.Declaration.SymbolName);
+    }
+
+    [Fact]
+    public async Task MarkdownRenderer_MemberHandoffRoundTripsToFeatureContext()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var project = fixture.Solution.Projects.Single(p => p.Name == "Sample.Core");
+        var document = project.Documents.Single(d => d.Name == "Greeter.cs");
+        var markdown = await FileSkeletonBuilder.BuildMarkdownForDocumentAsync(document, fixture.Solution.FilePath ?? "");
+        var match = Regex.Match(
+            markdown,
+            @"public string Greet\(string name\).*handoffId: `(?<id>h:[A-Za-z0-9_-]+)`",
+            RegexOptions.CultureInvariant,
+            System.TimeSpan.FromSeconds(1));
+        Assert.True(match.Success, markdown);
+
+        var context = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(fixture.Solution, match.Groups["id"].Value));
+        Assert.NotNull(context);
+        Assert.Null(context.Error);
+        Assert.Equal("Greet", context.Declaration.SymbolName);
+    }
+
+    [Fact]
+    public void MarkdownRenderer_RejectsNullTypes()
+    {
+        Assert.Throws<System.ArgumentNullException>(() => SkeletonMarkdownRenderer.Render(null!, "solution.slnx"));
+    }
+
+    [Fact]
+    public void MarkdownRenderer_RejectsNullSolutionPath()
+    {
+        Assert.Throws<System.ArgumentNullException>(() => SkeletonMarkdownRenderer.Render([], null!));
     }
 }

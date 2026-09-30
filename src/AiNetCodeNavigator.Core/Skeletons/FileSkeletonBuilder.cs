@@ -20,6 +20,9 @@ public static class FileSkeletonBuilder
         Func<string?, string?>? formatSymbolId = null,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(solutionPath);
+
         var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
         Func<ISymbol, string?>? formatSymbol = null;
         if (formatSymbolId is null)

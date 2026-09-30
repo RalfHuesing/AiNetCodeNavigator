@@ -34,8 +34,8 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
         Func<ISymbol, string?>? formatSymbol = null)
         : base(SyntaxWalkerDepth.Node)
     {
-        _semanticModel = semanticModel;
-        _relativePath = relativePath;
+        _semanticModel = semanticModel ?? throw new ArgumentNullException(nameof(semanticModel));
+        _relativePath = relativePath ?? throw new ArgumentNullException(nameof(relativePath));
         _formatSymbolId = formatSymbolId;
         _formatSymbol = formatSymbol;
     }
@@ -43,14 +43,16 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
     public override void VisitNamespaceDeclaration(NamespaceDeclarationSyntax node)
     {
         var previous = _currentNamespace;
-        _currentNamespace = node.Name.ToString();
+        var namespaceName = node.Name.ToString();
+        _currentNamespace = string.IsNullOrEmpty(previous) ? namespaceName : $"{previous}.{namespaceName}";
         base.VisitNamespaceDeclaration(node);
         _currentNamespace = previous;
     }
 
     public override void VisitFileScopedNamespaceDeclaration(FileScopedNamespaceDeclarationSyntax node)
     {
-        _currentNamespace = node.Name.ToString();
+        var namespaceName = node.Name.ToString();
+        _currentNamespace = string.IsNullOrEmpty(_currentNamespace) ? namespaceName : $"{_currentNamespace}.{namespaceName}";
         base.VisitFileScopedNamespaceDeclaration(node);
     }
 

@@ -14,9 +14,9 @@
   - [x] FastTests für Symbol-Body-Lesen (Partials, Zeilenfenster, Metadaten-Symbole und Batch-Fehlerfälle)
   - [x] Review/Audit zu 4.2 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.3 File-Skeletons (`get_file_skeleton`-Engine):
-  - [x] `SkeletonSyntaxWalker` & `SkeletonMapBuilder`: Syntax-Knoten ohne Methodenrümpfe erfassen
-  - [x] `SkeletonMarkdownRenderer`: Formatierte Markdown-Ausgabe mit Handoff-IDs
-  - [x] FastTests für File-Skeletons
+  - [x] `SkeletonSyntaxWalker` & `SkeletonMapBuilder`: top-level Typ- und Member-Deklarationen aus AST/`SemanticModel` erfassen, Bodies auslassen, verschachtelte Namespaces zusammensetzen
+  - [x] `SkeletonMarkdownRenderer`: sortierte Markdown-Ausgabe mit verfügbaren Handoff-IDs
+  - [x] FastTests für deklarative Struktur, Handoff-Roundtrips und wichtige Fehlerfälle
   - [ ] Review/Audit zu 4.3 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.4 Klassen-Struktur (`get_class_structure`-Engine):
   - [x] `ClassStructureScanner`: Vollständige Member-Übersicht (Properties, Methoden, Konstruktoren, Sichtbarkeiten)

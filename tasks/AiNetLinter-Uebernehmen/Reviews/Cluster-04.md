@@ -101,3 +101,23 @@ No open finding remains for point 4.1 on this reviewed Core implementation. The 
 - The future MCP tool contract, identifier resolution, and real transport remain subject to their later roadmap points and Cluster 11 end-to-end verification.
 
 The point 4.2 audit checkbox is complete after one audit. No product code or external repository was changed in this audit.
+
+## Point 4.3 implementation
+
+- Base commit: `0477f10b6af936ecea10070ad0f3defc37775421`; the working tree was clean before this slice.
+- Read-only AiNetLinter MCP inspection covered its `SkeletonSyntaxWalker`, `SkeletonMapBuilder`, `SkeletonMarkdownRenderer`, and walker tests. The reference walks declarations from Roslyn, deliberately ignores nested types, excludes executable method metadata from the rendered signature, and attaches handoff IDs to type/member entries.
+- **P2 — Nested block namespaces lost their containing namespace.** A regression using `namespace Outer { namespace Inner { public class NestedType { } } }` failed before the fix: the produced namespace was `Inner`, while the symbol is in `Outer.Inner`. The walker now composes namespace segments and restores the enclosing namespace after each block.
+- **P2 — Public Core entry points leaked null dereferences.** Focused regressions failed before the fix for null document/project/render inputs: they raised `NullReferenceException` instead of identifying the invalid argument. The file and project builders, Markdown renderer, and syntax walker now reject null required arguments with `ArgumentNullException`.
+- Added the current-state page [Get File Skeleton](../../../docs/navigation/get-file-skeleton.md), indexed it in `docs/README.md`, and expanded FastTests for nested namespaces, null inputs, signature/body separation, Markdown output, and a type handoff roundtrip. The independent 4.3 audit checkbox remains `[ ]`; this implementation record is not an independent audit.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| Nested namespace and null-argument regressions before fix | Failed as expected: namespace dropped outer segment; invalid arguments raised `NullReferenceException` |
+| Focused Skeleton FastTests after fix | Passed, 14/14 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 289/289 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 301/301 across both test projects |
+| `git diff --check` | Passed before commit |
