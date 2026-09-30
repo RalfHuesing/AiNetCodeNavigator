@@ -1,5 +1,6 @@
 #nullable enable
 
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
@@ -17,6 +18,8 @@ public static class TypeHierarchyService
         int maxResults = 50,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(type);
+        ArgumentNullException.ThrowIfNull(solution);
         var payload = await TypeHierarchyScanner.ScanAsync(type, solution, maxResults, ct).ConfigureAwait(false);
         return GetTypeHierarchyFormatter.FormatText(payload);
     }

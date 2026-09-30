@@ -1,5 +1,6 @@
 #nullable enable
 
+using System;
 using System.Text;
 
 namespace AiNetCodeNavigator.Core.Hierarchy;
@@ -11,6 +12,9 @@ public static class GetTypeHierarchyFormatter
 {
     public static string FormatText(TypeHierarchyPayload payload)
     {
+        ArgumentNullException.ThrowIfNull(payload);
+        if (!payload.IsSuccess) return payload.ErrorMessage!;
+
         var sb = new StringBuilder();
         sb.AppendLine($"# Typ-Hierarchie für {payload.TypeName}");
         sb.AppendLine();

@@ -177,3 +177,24 @@
 
 - Inspected committed Core source/tests and the AiNetLinter reference; no production files were changed in this audit.
 - The documentation diff was inspected and `git diff --check` passed before commit.
+
+## Point 5.3 implementation
+
+- Base commit: `e8136f7d4798831b7421d52724ba69e8da116ba2`; the working tree was clean before this slice.
+- Read-only AiNetLinter comparison inspected `GetTypeHierarchyTool`, `GetTypeHierarchyFormatter`, its project/type hierarchy tests, and the read-only MCP result for `GetTypeHierarchyFormatter` (`h:gxa9`). The reference searches direct and indirect subtypes solution-wide, keeps metadata-only bases/interfaces visible, bounds subtype results to at least one, emits selectable source handoffs, and rejects unsupported named type kinds at its tool boundary.
+- Before-fix FastTests reproduced two defects: `maxResults=0` and `-1` returned no subtypes despite matches, and a null type failed with `NullReferenceException` rather than `ArgumentNullException`. Cross-project base/interface/derived searches and Handoff resolution passed before the fix; they are recorded as preserved contracts.
+- `TypeHierarchyScanner` now explicitly searches transitive derived classes and implementers, normalizes subtype limits, guards malformed base cycles by original type definition, sorts interface and partial source locations deterministically, and checks cancellation during the base walk. It accepts classes, interfaces, and structs; other named type kinds return a typed unsuccessful payload. Source-backed cross-project entries retain project-bound handoffs; metadata-only entries stay visible without fake paths or handoffs.
+- `TypeHierarchyService` and `GetTypeHierarchyFormatter` validate null inputs; formatter output reports unsupported-type errors and preserves the subtype count/truncation summary. Added [Get Type Hierarchy Core Engine](../../../docs/navigation/get-type-hierarchy.md) and its docs index entry. Point 5.3 audit remains open.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| Before-fix nonpositive-limit and null-type reproductions | Failed as expected: empty subtype lists; `NullReferenceException` |
+| Cross-project base/interface/derived Handoff contracts before fix | Passed; preserved by post-fix tests |
+| Focused TypeHierarchy FastTests after fix | Passed, 10/10 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 362/362 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 374/374 across both test projects |
+| `git diff --check` | Passed before commit |

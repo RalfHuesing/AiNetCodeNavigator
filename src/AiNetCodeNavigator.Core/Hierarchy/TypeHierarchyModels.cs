@@ -18,4 +18,8 @@ public sealed record TypeHierarchyPayload(
     string SubtypesHeading,
     IReadOnlyList<TypeHierarchyEntry> Subtypes,
     int TotalSubtypes,
-    bool IsTruncated);
+    bool IsTruncated,
+    string? ErrorMessage = null)
+{
+    public bool IsSuccess => ErrorMessage is null;
+}
