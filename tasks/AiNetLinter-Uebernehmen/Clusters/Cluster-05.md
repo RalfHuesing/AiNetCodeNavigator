@@ -40,7 +40,7 @@
   - [x] Provide full-solution file/type-targeted traversal across document windows with a bounded visited-node cap.
   - [x] Verify document continuation reaches real dependencies after the first window and beyond document 1000.
   - [x] Collect cross-project generic named-type dependencies without external noise.
-  - [ ] Correct merged completeness for shared relationship-page offsets when one collection is exhausted early.
+  - [x] Correct merged completeness for shared relationship-page offsets when one collection is exhausted early.
   - [x] Review/Audit zu 5.5 durchführen; Findings ergänzen und umsetzen.
 - [x] 5.6 Beziehungen über ein gemeinsames Test-Szenario prüfen: Aufrufe, Referenzen, Overrides, Interface-Implementierungen und transitive Auswirkungen über mehrere Projekte hinweg mit identischer Semantik und stabilen Handoffs testen; Grenzen und Kürzungen der Ergebnisse ausgeben.
   - [x] Compare the ordered caller sites and reached-from handoffs from references and impact across a three-project chain.

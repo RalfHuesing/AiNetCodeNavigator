@@ -511,3 +511,10 @@ The point 5.5 audit checkbox remains unchecked for the final allowed point audit
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 396/396 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Cluster 5 integration review 2 — fix round 1
+
+- Reviewed commit: `1a23aaf4fec1eaa5645fc38b851491648be24d21` (clean working tree before review edits). Reviewer: `gpt-6-sol`, medium reasoning effort. Scope was only the promoted shared-offset completeness finding and its interaction with merged traversal; this is not a fourth point 5.5 audit. No independent build or tests were run.
+- **P2 closed — complete 101/1 shared pages:** `DependencyGraphTraversal.cs:174-199` now advances by each supplied page's shared `PageSize`, checks the expected collection count at that offset, and allows an exhausted short collection to return zero on later pages. The new regression (`DependencyGraphScannerTests.cs:307-356`) supplies 100 then one type edge at offsets 0 and 100, with a single project edge only at offset 0. `MergeAndTraverse` returns all 101 traversed type edges and the project edge, with `ContinuationInputIncomplete=false` and `IsComplete=true`. Omitting the offset-100 page leaves the declared type total uncovered and yields `ContinuationInputIncomplete=true` and `IsComplete=false`. Existing document-window continuation and node-cap paths remain separate and unchanged.
+- **Cluster status:** no open Cluster 5 Core finding remains after this fix. The point 5.5 audit count stays at 3/3; its separate shared-offset checklist item is now complete. Public MCP transport, production/test scope and generated-file filtering, and graph handoff rendering remain later integration work.
+- **Gates:** this documentation-only review did not rerun gates. The fix-round record above reports its before-fix failure, focused test 1/1, build with 0 warnings/errors, FastTests 384/384, integration 12/12, and full suite 396/396. `git diff --check` for this review passed before commit.
