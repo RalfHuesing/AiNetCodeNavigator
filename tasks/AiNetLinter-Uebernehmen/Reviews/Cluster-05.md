@@ -296,3 +296,15 @@
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 383/383 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Independent audit 2/3 of point 5.4
+
+- Audited commit: `4dcaf08e3a91591b53f471600b19dd49845893cd` (clean working tree before review edits).
+- Reviewer: `gpt-6-sol`, medium reasoning effort. Scope was limited to the audit-1 convergence/provenance finding and its related code, test, and documentation. No build or tests were run in this audit; the remediation gates above belong to the implementation turn.
+- **Accepted:** `ImpactAnalyzer.cs:63-66` captures the reached-from symbol identity and source handoff for each BFS expansion; `:99-107` puts both on the call-site entry; `:116-139` includes caller and reached-from identity in deduplication and stable sorting before result limits and totals are computed. The regression at `ImpactAnalyzerTests.cs:186-232` exercises BranchB and BranchC calling the target, with Top invoking both branch methods on one line. It asserts two distinct depth-two sites and origin handoffs resolving to the correct projects, direct and transitive counts, and all affected projects under `maxResults=3` truncation.
+- No point-5.4 findings remain open. The point audit checkbox is complete at audit 2/3; public MCP formatting remains later integration work.
+
+### Review verification
+
+- Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
+- The documentation diff was inspected and `git diff --check` passed before commit.
