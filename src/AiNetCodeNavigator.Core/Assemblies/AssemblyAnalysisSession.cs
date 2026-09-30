@@ -229,7 +229,10 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
                     status,
                     diagnostics,
                     referenceSnapshotHash,
-                    new AssemblyCachePublishRequest(fingerprint, key, decompilationOptions, references, decompilation, status, stagingDirectory),
+                    new AssemblyCachePublishRequest(fingerprint, key, decompilationOptions, references, decompilation, status, stagingDirectory)
+                    {
+                        ReferenceSnapshotHash = referenceSnapshotHash,
+                    },
                     decompilation.ProjectFilePath),
                 cancellationToken).ConfigureAwait(false);
         }

@@ -191,6 +191,47 @@ public sealed class AssemblySymbolHandoffResolverTests
     }
 
     [Fact]
+    public async Task ReferenceReplacement_InvalidatesCachedDecompilerOutputAcrossInspectSearchAndBody()
+    {
+        using var temp = TestTempDirectory.Create("assembly-reference-cache-refresh-");
+        var dependency = AssemblyTestHelper.EmitAssembly(temp, "CacheSensitiveDependency", "namespace Probe.Reference; public enum State { OriginalValue = 1 }\n[System.AttributeUsage(System.AttributeTargets.All)] public sealed class MarkerAttribute : System.Attribute { public MarkerAttribute(State value) { } }");
+        var consumer = AssemblyTestHelper.EmitAssembly(temp, "CacheSensitiveConsumer", "[Probe.Reference.Marker(Probe.Reference.State.OriginalValue)] public static class Consumer { public static Probe.Reference.State Get() => Probe.Reference.State.OriginalValue; }", dependency);
+        var originalConsumerBytes = await File.ReadAllBytesAsync(consumer);
+        var initial = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(consumer, TypeName: "Consumer"));
+        Assert.True(initial.IsSuccess, initial.Error?.ToString());
+        var consumerType = Assert.Single(initial.Value!.Types);
+        var getHandle = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(Assert.Single(consumerType.Members.Where(member => member.Name == "Get")).Id!);
+        var initialSearch = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(consumer, Query: "OriginalValue"));
+        Assert.True(initialSearch.IsSuccess, initialSearch.Error?.ToString());
+        Assert.NotEmpty(initialSearch.Value!.Results);
+
+        using var replacementTemp = TestTempDirectory.Create("assembly-reference-cache-replacement-");
+        var replacement = AssemblyTestHelper.EmitAssembly(replacementTemp, "CacheSensitiveDependency", "namespace Probe.Reference; public enum State { ReplacementValue = 1 }\n[System.AttributeUsage(System.AttributeTargets.All)] public sealed class MarkerAttribute : System.Attribute { public MarkerAttribute(State value) { } }");
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        File.Copy(replacement, dependency, overwrite: true);
+
+        var refreshed = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(consumer, TypeName: "Consumer"));
+        var refreshedSearch = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(consumer, Query: "ReplacementValue"));
+        var staleSearch = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(consumer, Query: "OriginalValue"));
+        var refreshedBody = await AssemblySymbolBodyScanner.GetAsync(getHandle);
+
+        Assert.True(refreshed.IsSuccess, refreshed.Error?.ToString());
+        Assert.True(refreshed.Value!.Generation > initial.Value.Generation);
+        Assert.DoesNotContain(refreshed.Value.Diagnostics, diagnostic => diagnostic.Contains("CS0117", StringComparison.Ordinal));
+        Assert.True(refreshedSearch.IsSuccess, refreshedSearch.Error?.ToString());
+        Assert.NotEmpty(refreshedSearch.Value!.Results);
+        Assert.True(refreshedSearch.Value.TotalCount > 0);
+        Assert.True(staleSearch.IsSuccess, staleSearch.Error?.ToString());
+        Assert.Empty(staleSearch.Value!.Results);
+        Assert.Equal(0, staleSearch.Value.TotalCount);
+        Assert.Null(refreshedBody.Error);
+        Assert.Contains("ReplacementValue", refreshedBody.Body!.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("OriginalValue", refreshedBody.Body.Body, StringComparison.Ordinal);
+        Assert.Equal(originalConsumerBytes, await File.ReadAllBytesAsync(consumer));
+    }
+
+    [Fact]
     public async Task HandoffResolver_AllowsSymbolsWhenReferencesAreMissing()
     {
         using var temp = TestTempDirectory.Create("assembly-handoff-missing-reference-");

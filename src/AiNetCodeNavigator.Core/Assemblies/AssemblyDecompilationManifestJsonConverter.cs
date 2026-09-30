@@ -20,6 +20,7 @@ internal sealed class AssemblyDecompilationManifestJsonConverter : JsonConverter
         JsonPropertyName(nameof(AssemblyManifestInput.Sha256)),
         JsonPropertyName(nameof(AssemblyManifestReferences.AssemblyIdentity)),
         JsonPropertyName(nameof(AssemblyManifestReferences.References)),
+        JsonPropertyName(nameof(AssemblyManifestReferences.ReferenceSnapshotHash)),
         JsonPropertyName(nameof(AssemblyManifestFormat.DecompilerVersion)),
         JsonPropertyName(nameof(AssemblyManifestFormat.OptionsIdentity)),
         JsonPropertyName(nameof(AssemblyManifestFormat.CacheSchemaVersion)),
@@ -57,6 +58,7 @@ internal sealed class AssemblyDecompilationManifestJsonConverter : JsonConverter
             {
                 AssemblyIdentity = ReadIdentity(properties, JsonPropertyName(nameof(AssemblyManifestReferences.AssemblyIdentity))),
                 References = ReadReferences(properties, JsonPropertyName(nameof(AssemblyManifestReferences.References))),
+                ReferenceSnapshotHash = ReadString(properties, JsonPropertyName(nameof(AssemblyManifestReferences.ReferenceSnapshotHash))),
             },
             Format = new AssemblyManifestFormat
             {
@@ -96,6 +98,7 @@ internal sealed class AssemblyDecompilationManifestJsonConverter : JsonConverter
         writer.WriteString(JsonPropertyName(nameof(AssemblyManifestInput.MtimeUtc)), value.Input.MtimeUtc);
         writer.WriteString(JsonPropertyName(nameof(AssemblyManifestInput.Sha256)), value.Input.Sha256);
         WriteIdentity(writer, JsonPropertyName(nameof(AssemblyManifestReferences.AssemblyIdentity)), value.References.AssemblyIdentity);
+        writer.WriteString(JsonPropertyName(nameof(AssemblyManifestReferences.ReferenceSnapshotHash)), value.References.ReferenceSnapshotHash);
         WriteReferences(writer, value.References.References);
         writer.WriteString(JsonPropertyName(nameof(AssemblyManifestFormat.DecompilerVersion)), value.Format.DecompilerVersion);
         writer.WriteString(JsonPropertyName(nameof(AssemblyManifestFormat.OptionsIdentity)), value.Format.OptionsIdentity);

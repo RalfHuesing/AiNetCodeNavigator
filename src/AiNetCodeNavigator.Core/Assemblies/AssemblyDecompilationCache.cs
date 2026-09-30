@@ -166,7 +166,13 @@ internal sealed partial class AssemblyDecompilationCache
         AssemblyCachePublishRequest request,
         string entryDirectory)
     {
-        var effectiveRequest = PreparePublishRequest(request, entryDirectory);
+        var effectiveRequest = PreparePublishRequest(
+            request with
+            {
+                ReferenceSnapshotHash = request.ReferenceSnapshotHash
+                    ?? AssemblyReferenceSnapshotFingerprint.Create(request.References),
+            },
+            entryDirectory);
         var stagingDirectory = effectiveRequest.StagingDirectory
             ?? throw new InvalidDataException("Cache publishing requires a staging directory.");
         string? generationDirectory = null;
@@ -378,6 +384,7 @@ internal sealed partial class AssemblyDecompilationCache
             {
                 AssemblyIdentity = request.References.Identity,
                 References = request.References.References,
+                ReferenceSnapshotHash = request.ReferenceSnapshotHash!,
             },
             Format = new AssemblyManifestFormat
             {

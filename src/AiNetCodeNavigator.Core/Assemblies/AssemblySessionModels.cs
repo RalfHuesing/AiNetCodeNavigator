@@ -293,7 +293,10 @@ internal sealed record AssemblyCachePublishRequest(
     AssemblyReferenceResolution References,
     DecompilationResult Decompilation,
     AssemblySessionStatus Status,
-    string? StagingDirectory = null);
+    string? StagingDirectory = null)
+{
+    internal string? ReferenceSnapshotHash { get; init; }
+}
 
 internal sealed record AssemblyCachePublishResult(
     bool Succeeded,
@@ -355,6 +358,7 @@ internal sealed record AssemblyManifestReferences
 {
     internal required AssemblyIdentityDto? AssemblyIdentity { get; init; }
     internal required IReadOnlyList<AssemblyReferenceDto> References { get; init; }
+    internal required string ReferenceSnapshotHash { get; init; }
 }
 
 internal sealed record AssemblyManifestFormat

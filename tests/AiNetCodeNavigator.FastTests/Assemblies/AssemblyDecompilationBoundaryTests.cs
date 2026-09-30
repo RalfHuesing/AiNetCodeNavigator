@@ -264,6 +264,86 @@ public sealed class AssemblyDecompilationBoundaryTests
     }
 
     [Fact]
+    public async Task CacheCompatibility_BindsPublishedSourceToReferenceContentDuringConcurrentPublish()
+    {
+        using var temp = TestTempDirectory.Create("assembly-cache-reference-content-");
+        var dependency = AssemblyTestHelper.EmitAssembly(temp, "CacheReferenceDependency", "namespace Probe.Reference; public sealed class Dependency { public int Version => 1; }");
+        var target = AssemblyTestHelper.EmitAssembly(temp, "CacheReferenceTarget", "public sealed class Consumer { public Probe.Reference.Dependency? Value; }", dependency);
+        var originalTargetBytes = await File.ReadAllBytesAsync(target);
+        var fingerprint = AssemblyFingerprintCalculator.Create(target);
+        var options = AssemblyDecompilationOptions.Default;
+        var key = AssemblyFingerprintCalculator.CreateCacheKey(fingerprint, options);
+        var resolver = new AssemblyReferenceResolver();
+        var originalReferences = resolver.Resolve(target);
+        var originalReferenceHash = AssemblyReferenceSnapshotFingerprint.Create(originalReferences);
+        var cache = new AssemblyDecompilationCache(temp.GetPath("cache"));
+        var originalRequest = new AssemblyCachePublishRequest(
+            fingerprint,
+            key,
+            options,
+            originalReferences,
+            new DecompilationResult(
+                [new DecompiledDocument("Consumer.cs", "Consumer", "public sealed class Consumer { public int Version => 1; }")],
+                [],
+                true),
+            AssemblySessionStatus.Complete)
+        {
+            ReferenceSnapshotHash = originalReferenceHash,
+        };
+        Assert.True((await cache.PublishAsync(originalRequest)).Succeeded);
+        Assert.True(cache.TryRead(
+            new AssemblyCacheReadRequest(key, fingerprint, originalReferences),
+            out var originalHit,
+            out _));
+        Assert.Contains("Version => 1", Assert.Single(originalHit!.Documents).CSharpSource, StringComparison.Ordinal);
+
+        using var replacementTemp = TestTempDirectory.Create("assembly-cache-reference-replacement-");
+        var replacement = AssemblyTestHelper.EmitAssembly(replacementTemp, "CacheReferenceDependency", "namespace Probe.Reference; public sealed class Dependency { public int Version => 2; }");
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        File.Copy(replacement, dependency, overwrite: true);
+        var replacementReferences = resolver.Resolve(target);
+        var replacementReferenceHash = AssemblyReferenceSnapshotFingerprint.Create(replacementReferences);
+        Assert.Equal(originalReferences.References, replacementReferences.References);
+        Assert.NotEqual(originalReferenceHash, replacementReferenceHash);
+        Assert.False(cache.TryRead(
+            new AssemblyCacheReadRequest(key, fingerprint, replacementReferences),
+            out _,
+            out _));
+
+        var replacementRequest = originalRequest with
+        {
+            References = replacementReferences,
+            ReferenceSnapshotHash = replacementReferenceHash,
+            Decompilation = originalRequest.Decompilation with
+            {
+                Documents = [new DecompiledDocument("Consumer.cs", "Consumer", "public sealed class Consumer { public int Version => 2; }")],
+            },
+        };
+        using var barrier = new Barrier(2);
+        var stalePublish = Task.Run(async () =>
+        {
+            barrier.SignalAndWait(TimeSpan.FromSeconds(10));
+            return await cache.PublishAsync(originalRequest);
+        });
+        var currentPublish = Task.Run(async () =>
+        {
+            barrier.SignalAndWait(TimeSpan.FromSeconds(10));
+            return await cache.PublishAsync(replacementRequest);
+        });
+        var publishResults = await Task.WhenAll(stalePublish, currentPublish);
+
+        Assert.False(publishResults[0].Succeeded);
+        Assert.True(publishResults[1].Succeeded, publishResults[1].Diagnostic?.Message);
+        Assert.True(cache.TryRead(
+            new AssemblyCacheReadRequest(key, fingerprint, replacementReferences),
+            out var replacementHit,
+            out var diagnostic), diagnostic?.Message);
+        Assert.Contains("Version => 2", Assert.Single(replacementHit!.Documents).CSharpSource, StringComparison.Ordinal);
+        Assert.Equal(originalTargetBytes, await File.ReadAllBytesAsync(target));
+    }
+
+    [Fact]
     public async Task CreateAsync_RejectsEmptyDocumentsAndCancelledRequests()
     {
         using var temp = TestTempDirectory.Create("assembly-roslyn-empty-snapshot-");

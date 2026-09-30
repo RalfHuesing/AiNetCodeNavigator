@@ -130,7 +130,11 @@ internal static class AssemblyCacheGenerationStorage
         AssemblyManifestReferences manifestReferences,
         AssemblyManifestDiagnostics diagnostics,
         AssemblyReferenceResolution references) =>
-        diagnostics.UnresolvedReferences.SequenceEqual(
+        string.Equals(
+            manifestReferences.ReferenceSnapshotHash,
+            AssemblyReferenceSnapshotFingerprint.Create(references),
+            StringComparison.OrdinalIgnoreCase)
+        && diagnostics.UnresolvedReferences.SequenceEqual(
             references.References.Where(reference => !reference.Resolved).Select(reference => reference.Name),
             StringComparer.Ordinal)
         && manifestReferences.AssemblyIdentity is not null
