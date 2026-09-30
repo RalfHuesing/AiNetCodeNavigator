@@ -18,6 +18,10 @@ public sealed record ProjectRegistryOptions(
     TimeSpan IdleTtl = default,
     TimeSpan TickInterval = default)
 {
+    public static ProjectRegistryOptions ForMSBuild(TimeProvider? clock = null) => new(
+        definition => ResidentSolutionCreation.Resident(MSBuildSolutionLoader.CreateResidentSolution(definition.SolutionPath)),
+        clock ?? TimeProvider.System);
+
     internal Action? BeforeLeaseRelease { get; init; }
 
     internal Action? BeforeCreationReservation { get; init; }

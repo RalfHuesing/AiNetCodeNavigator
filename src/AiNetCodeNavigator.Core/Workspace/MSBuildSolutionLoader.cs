@@ -1,8 +1,10 @@
 #nullable enable
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Build.Locator;
@@ -76,9 +78,24 @@ public static class MSBuildSolutionLoader
         }
 
         var workspace = CreateWorkspace();
+        var failures = new ConcurrentQueue<string>();
+        workspace.RegisterWorkspaceFailedHandler(args =>
+        {
+            if (args.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
+            {
+                    failures.Enqueue(args.Diagnostic.Message);
+            }
+        });
+
         try
         {
             var solution = await workspace.OpenSolutionAsync(solutionPath, cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (failures.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    $"MSBuild reported failures while loading '{solutionPath}': {string.Join(" | ", failures.Distinct(StringComparer.Ordinal))}");
+            }
+
             return (solution, workspace);
         }
         catch
@@ -86,5 +103,21 @@ public static class MSBuildSolutionLoader
             workspace.Dispose();
             throw;
         }
+    }
+
+    /// <summary>
+    /// Creates a resident instance that loads and later reloads the given solution through MSBuildWorkspace.
+    /// </summary>
+    public static ResidentSolution CreateResidentSolution(string solutionPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(solutionPath);
+        var canonicalPath = Path.GetFullPath(solutionPath);
+        return new ResidentSolution(
+            async cancellationToken =>
+            {
+                var (solution, workspace) = await LoadSolutionAsync(canonicalPath, cancellationToken).ConfigureAwait(false);
+                return new ResidentLoadedState(solution, workspace);
+            },
+            canonicalPath);
     }
 }

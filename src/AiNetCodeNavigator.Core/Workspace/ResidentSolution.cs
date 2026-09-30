@@ -33,20 +33,29 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
     private readonly Lock syncLock = new();
     private readonly Dictionary<string, DocumentFileState> fileStates = new(StringComparer.OrdinalIgnoreCase);
     private readonly CancellationTokenSource loadCancellation = new();
+    private readonly SemaphoreSlim reloadGate = new(1, 1);
     private readonly Task<ResidentLoadedState?>? loadTask;
+    private readonly string? solutionPath;
     private Solution? currentSolution;
     private Microsoft.CodeAnalysis.Workspace? currentWorkspace;
+    private string? structureFingerprint;
+    private ResidentSolutionLoadError? loadFailure;
     private int disposed;
 
     /// <summary>
     /// Erzeugt eine synchrone residente Instanz aus einem bereits geladenen Snapshot.
     /// </summary>
-    public ResidentSolution(Solution solution, Microsoft.CodeAnalysis.Workspace? workspace = null)
+    public ResidentSolution(Solution solution, Microsoft.CodeAnalysis.Workspace? workspace = null, string? solutionPath = null)
     {
         ArgumentNullException.ThrowIfNull(solution);
         currentSolution = solution;
         currentWorkspace = workspace;
+        this.solutionPath = solutionPath;
         InitializeFileStates(solution);
+        if (!string.IsNullOrEmpty(solutionPath))
+        {
+            structureFingerprint = SolutionStructureFingerprint.Create(solution, solutionPath);
+        }
     }
 
     /// <summary>
@@ -64,9 +73,10 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
     /// <summary>
     /// Erzeugt eine asynchrone residente Instanz mit Hintergrund-Laden inkl. Workspace-Besitz.
     /// </summary>
-    public ResidentSolution(Func<CancellationToken, Task<ResidentLoadedState?>> loadFunc)
+    public ResidentSolution(Func<CancellationToken, Task<ResidentLoadedState?>> loadFunc, string? solutionPath = null)
     {
         ArgumentNullException.ThrowIfNull(loadFunc);
+        this.solutionPath = solutionPath;
         loadTask = Task.Run(async () =>
         {
             try
@@ -79,6 +89,12 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
                         currentSolution = result.Solution;
                         currentWorkspace = result.Workspace;
                         InitializeFileStates(result.Solution);
+                        if (!string.IsNullOrEmpty(this.solutionPath))
+                        {
+                            structureFingerprint = SolutionStructureFingerprint.Create(result.Solution, this.solutionPath);
+                        }
+
+                        loadFailure = null;
                     }
 
                     return result;
@@ -90,8 +106,13 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
             {
                 return null;
             }
-            catch
+            catch (Exception ex)
             {
+                lock (syncLock)
+                {
+                    loadFailure = CreateLoadError(ex);
+                }
+
                 return null;
             }
         });
@@ -125,7 +146,22 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
     public Task<ResidentLoadedState?>? LoadTask => loadTask;
 
     /// <summary>
-    /// Liefert die aktuelle Solution mit automatischer Staleness-Prüfung auf modifizierte oder gelöschte Dateien.
+    /// The last initial-load or reload failure. A later snapshot request retries the load.
+    /// </summary>
+    public ResidentSolutionLoadError? LoadFailure
+    {
+        get
+        {
+            lock (syncLock)
+            {
+                return loadFailure;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Liefert die geladene Solution mit automatischer Prüfung auf geänderte Datei-Inhalte.
+    /// Für Änderungen an Dateien, Projekten oder Referenzen die asynchrone Snapshot-Methode verwenden.
     /// </summary>
     public Solution? GetCurrentSolution()
     {
@@ -138,6 +174,139 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
 
             RefreshStalenessUnderLock();
             return currentSolution;
+        }
+    }
+
+    /// <summary>
+    /// Returns the latest solution snapshot, rebuilding it through MSBuildWorkspace when solution,
+    /// project, or source-file structure has changed. Failed reloads retain the last good internal
+    /// snapshot and return a structured error so callers can report it and retry on a later request.
+    /// </summary>
+    public async Task<ResidentSolutionSnapshot> GetCurrentSnapshotAsync(CancellationToken cancellationToken = default)
+    {
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, loadCancellation.Token);
+        var refreshToken = linkedCancellation.Token;
+        if (loadTask is not null)
+        {
+            try
+            {
+                await loadTask.WaitAsync(refreshToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (refreshToken.IsCancellationRequested)
+            {
+                throw;
+            }
+        }
+
+        await reloadGate.WaitAsync(refreshToken).ConfigureAwait(false);
+        try
+        {
+            Solution? current;
+            string? expectedFingerprint;
+            lock (syncLock)
+            {
+                current = currentSolution;
+                expectedFingerprint = structureFingerprint;
+            }
+
+            if (string.IsNullOrEmpty(solutionPath))
+            {
+                lock (syncLock)
+                {
+                    RefreshStalenessUnderLock();
+                    return new ResidentSolutionSnapshot(currentSolution, loadFailure);
+                }
+            }
+
+            if (current is null)
+            {
+                if (!await TryReloadAsync(solutionPath, refreshToken).ConfigureAwait(false))
+                {
+                    return new ResidentSolutionSnapshot(null, LoadFailure);
+                }
+            }
+            else
+            {
+                try
+                {
+                    var observedFingerprint = SolutionStructureFingerprint.Create(current, solutionPath);
+                    var retryFailedLoad = LoadFailure is not null;
+                    if ((retryFailedLoad || !StringComparer.Ordinal.Equals(expectedFingerprint, observedFingerprint))
+                        && !await TryReloadAsync(solutionPath, refreshToken).ConfigureAwait(false))
+                    {
+                        return new ResidentSolutionSnapshot(null, LoadFailure);
+                    }
+                }
+                catch (OperationCanceledException) when (refreshToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    SetLoadFailure(ex);
+                    return new ResidentSolutionSnapshot(null, LoadFailure);
+                }
+            }
+
+            lock (syncLock)
+            {
+                RefreshStalenessUnderLock();
+                return new ResidentSolutionSnapshot(currentSolution, loadFailure);
+            }
+        }
+        finally
+        {
+            reloadGate.Release();
+        }
+    }
+
+    private async Task<bool> TryReloadAsync(string path, CancellationToken cancellationToken)
+    {
+        Microsoft.CodeAnalysis.Workspace? newlyLoadedWorkspace = null;
+        try
+        {
+            var (newSolution, newWorkspace) = await MSBuildSolutionLoader.LoadSolutionAsync(path, cancellationToken).ConfigureAwait(false);
+            newlyLoadedWorkspace = newWorkspace;
+            var newStructureFingerprint = SolutionStructureFingerprint.Create(newSolution, path);
+            Microsoft.CodeAnalysis.Workspace? oldWorkspace;
+            lock (syncLock)
+            {
+                oldWorkspace = currentWorkspace;
+                currentSolution = newSolution;
+                currentWorkspace = newWorkspace;
+                newlyLoadedWorkspace = null;
+                fileStates.Clear();
+                InitializeFileStates(newSolution);
+                structureFingerprint = newStructureFingerprint;
+                loadFailure = null;
+            }
+
+            oldWorkspace?.Dispose();
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            newlyLoadedWorkspace?.Dispose();
+            SetLoadFailure(ex);
+            return false;
+        }
+    }
+
+    private ResidentSolutionLoadError CreateLoadError(Exception exception) => new(
+        ProjectErrorCodes.ProjectLoadFailed,
+        solutionPath,
+        $"Unable to load solution '{solutionPath ?? "unknown path"}': {exception.Message}",
+        Retryable: true);
+
+    private void SetLoadFailure(Exception exception)
+    {
+        lock (syncLock)
+        {
+            loadFailure = CreateLoadError(exception);
         }
     }
 
@@ -246,7 +415,24 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
         {
         }
 
-        currentWorkspace?.Dispose();
+        reloadGate.Wait();
+        try
+        {
+            Microsoft.CodeAnalysis.Workspace? workspace;
+            lock (syncLock)
+            {
+                workspace = currentWorkspace;
+                currentWorkspace = null;
+            }
+
+            workspace?.Dispose();
+        }
+        finally
+        {
+            reloadGate.Release();
+            reloadGate.Dispose();
+        }
+
         loadCancellation.Dispose();
     }
 
@@ -269,7 +455,24 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
             }
         }
 
-        currentWorkspace?.Dispose();
+        await reloadGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            Microsoft.CodeAnalysis.Workspace? workspace;
+            lock (syncLock)
+            {
+                workspace = currentWorkspace;
+                currentWorkspace = null;
+            }
+
+            workspace?.Dispose();
+        }
+        finally
+        {
+            reloadGate.Release();
+            reloadGate.Dispose();
+        }
+
         loadCancellation.Dispose();
     }
 }
