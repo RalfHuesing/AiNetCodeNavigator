@@ -246,3 +246,10 @@ A later FastTests rerun transiently failed in the unrelated `HandoffHandleRegist
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 279/279 across both test projects |
 | `git diff --check` | Passed before commit |
+
+### Cluster Integration Review 2
+
+- Reviewed commit: `fe0696e688a17ae58f1fc3886b8a6d9e4100507a` (clean working tree before review). Reviewer: independent audit agent, `gpt-6-sol` with medium reasoning. Scope was the integration review 1 `H:` finding and its regression coverage; this is not a fourth point 3.3 audit. Code and tests were inspected, but this reviewer did not run a build or tests. The preceding gate table records the fix author's runs.
+- **P2 resolved.** `InputNormalizer.HasOpaqueHandoffPrefix` now recognizes `h:` candidates case-insensitively and excludes drive paths with `\\` or `/` as the third character (`src/AiNetCodeNavigator.Core/Common/InputNormalizer.cs:57-64`). Feature Context and Class Structure call it before semantic lookup (`src/AiNetCodeNavigator.Core/Symbols/FeatureContextScanner.cs:96-105`; `src/AiNetCodeNavigator.Core/Symbols/ClassStructureScanner.cs:99-108`). For `H:unknown99`, both consumers therefore reach `SourceHandoffResolver`, whose registry path returns `INVALID_HANDOFF`. The new test asserts that error in both consumers and confirms `H:\\repo\\file.cs` remains outside handoff routing (`tests/AiNetCodeNavigator.FastTests/Symbols/FindSymbolScannerTests.cs:94-129`). The existing `find_symbol` to both consumers test covers ordinary lowercase `h:` resolution (`:18-47`). The cluster integration checkbox is closed and the P2 entry was removed from open findings.
+- **P1 existing local blocker unchanged.** The Assembly consumer/session and advertised follow-up roundtrips remain pending in Cluster 7. Point 3.3 remains open; its completed 3/3 audit count is unchanged.
+- **Review gate:** Documentation-only `git diff --check` passed before commit. No product build or test result is claimed for this review.
