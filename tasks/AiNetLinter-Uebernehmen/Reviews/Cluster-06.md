@@ -19,6 +19,12 @@
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 424/424 across both test projects |
 
+## Point 6.3 independent audit 1 of 3
+
+- Reviewed commit: `0a5a18c863cd0aef0e4130af4ad699c9cef5935b` (`gpt-6-sol`, medium), with a clean working tree before this documentation edit. Inspected `IndexScopeScanner`, models, eight FastTests, current-state documentation, and AiNetLinter's read-only `GetIndexScopeScanner`. The solution/project document and extension counts are taken before the separate project and file-type presentation limits, unknown project and cancellation paths are explicit, scanner-authored text is English, and the scanner only reads Roslyn metadata. The deliberate Roslyn-document scope is documented; AiNetLinter's additional physical non-C# asset inventory is outside this Core inventory. No product gates were run by the auditor; the implementation record above reports the earlier gates.
+- **P2 — Test and generated document populations are missing.** `src/AiNetCodeNavigator.Core/FileStructure/IndexScopeScanner.cs:53-88,130-151` reports `TestProjectCount`, but never counts documents belonging to those test projects or documents classified as generated. Neither count exists in `IndexScopeModels.cs:19-41` or the formatted report at `IndexScopeScanner.cs:223-256`. AiNetLinter's `GetIndexScopeScanner.cs:57-67,125-128` reports both generated and test-project document counts as part of its index-scope population. For a test project with multiple documents and an indexed `.g.cs` document, the current payload cannot answer either document-level question; `IndexScopeScannerTests.cs:99-118` checks read-only behavior but asserts neither count. Acceptance: add explicit generated-document and test-project-document totals for the selected Roslyn document scope, define generated classification consistently with navigation, keep totals complete when either list is truncated, and test mixed production/test/generated documents plus project filtering.
+- The 6.3 audit checkbox remains open pending this finding. No finding is raised for 6.1 or 6.2 in this point audit.
+
 ## Point 6.1 implementation record
 
 - Starting commit: `4068706a60cd00c9d13137384a572db196bb10a6`, clean working tree.

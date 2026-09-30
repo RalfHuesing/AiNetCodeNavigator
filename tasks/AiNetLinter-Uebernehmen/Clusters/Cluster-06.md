@@ -26,4 +26,5 @@
   - [x] Project-/Solution-Scope, vollständige Gesamtsummen und begrenzte Projekt-/Dateityplisten mit Truncation-Metadaten abdecken.
   - [x] Unbekannte Projekte als Fehler behandeln, Cancellation weiterreichen und den Dokumentbestand unverändert lassen.
   - [x] Current-State-Dokumentation zu Roslyn-Dokumentumfang, Grenzen und AiNetLinter-Unterschieden ergänzen.
+  - [ ] Report generated-document and test-project-document counts over the selected Roslyn scope, independent of presentation limits; cover them in FastTests and documentation.
   - [ ] Review/Audit zu 6.3 durchführen; Findings ergänzen und umsetzen.
