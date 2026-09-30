@@ -9,7 +9,7 @@
   - [x] Reject relative `RootDirectory` values before normalizing them; cover the failure contract in a FastTest.
   - [x] Confine `RelativeRoot` through every ancestor reparse point so a nested link cannot expose files outside `RootDirectory`; cover the case in a FastTest.
   - [x] Apply `MaxResults` consistently across returned file and directory entries, and base `maxResults` truncation on the active view; cover both cases in FastTests.
-  - [ ] Review/Audit zu 6.1 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 6.1 durchführen; Findings ergänzen und umsetzen.
 - [x] 6.2 Namespace-Baum (`get_namespace_tree`-Engine):
   - [x] `NamespaceTreeScanner`: Deklarierte Namespaces hierarchisch strukturieren
   - [x] FastTests für Namespace-Trees

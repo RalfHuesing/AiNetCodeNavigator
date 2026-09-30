@@ -46,3 +46,11 @@
 | `pwsh -File ./scripts/test-fast.ps1` | Passed, 397/397 |
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 409/409 across both test projects |
+
+## Point 6.1 independent audit 2 of 3
+
+- Reviewed commit: `68dd255a4ad4a6ebb54f6235389c96b480789ee8` (`gpt-6-sol`, medium). The working tree was clean before this documentation edit. This follow-up inspected the remediation diff, current scanner and regression tests, and the reported gate results above. No build or product test was run by the auditor.
+- **P1 ancestor reparse-point confinement — accepted.** `GetFileTreeScanner.cs:59-66` invokes `FindReparsePointAncestor` before enumeration. The helper at lines 258-280 checks the final target and then each parent through the analysis root, so a `RelativeRoot` such as `link/subdir` reaches the intermediate `link` check. `GetFileTreeScannerTests.cs:108-128` deterministically tests that walk with a predicate identifying the intermediate component. The test does not exercise an actual filesystem symbolic link or junction because the implementation environment denied link creation; this is a documented platform test limit, not evidence of a remaining implementation gap. Production calls the same helper with `IsReparsePoint`.
+- **P2 absolute-root validation — accepted.** `GetFileTreeScanner.cs:31-36` now checks the original `RootDirectory` with `Path.IsPathFullyQualified` before normalization; `GetFileTreeScannerTests.cs:129-137` covers a relative `"."` root and its recoverable error.
+- **P2 selected-view result budget — accepted.** `GetFileTreeScanner.cs:174-207` projects only entries for the selected view. Files and summary views use their respective counts for truncation; tree view builds one sorted item list and applies a single `MaxResults` limit before splitting the returned files and directories. `GetFileTreeScannerTests.cs:138-174` covers both the prior false truncation and the combined tree budget. The summary limit also remains covered by the existing recursive summary test.
+- All three audit-1 findings meet their acceptance conditions. The 6.1 audit checkbox is marked complete. No new finding was identified within this targeted follow-up; 6.2 and 6.3 were outside its scope.
