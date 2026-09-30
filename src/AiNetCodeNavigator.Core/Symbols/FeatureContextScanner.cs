@@ -22,10 +22,17 @@ namespace AiNetCodeNavigator.Core.Symbols;
 /// </summary>
 public static class FeatureContextScanner
 {
+    private const int MaxCallersLimit = 50;
+    private const int MaxTestsLimit = 50;
+
     public static async Task<FeatureContextPayload?> ScanAsync(
         FeatureContextRequest request,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Solution);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.SymbolIdentifier);
+
         AnalysisSymbolIdentity? identity;
         if (request.HandoffIdentity is not null)
         {
@@ -58,14 +65,26 @@ public static class FeatureContextScanner
         var declaration = ExtractDeclaration(symbol, solutionDir, identity, request.Solution);
 
         var allCallers = await CollectCallersAsync(symbol, request.Solution, solutionDir, identity, ct).ConfigureAwait(false);
-        var scopedCallers = FilterCallersByScope(allCallers, request.Scope);
-        var callersTruncated = scopedCallers.Count > request.MaxCallers;
-        var shownCallers = scopedCallers.Take(request.MaxCallers).ToList();
+        var scopedCallers = FilterCallersByScope(allCallers, request.Scope)
+            .OrderBy(c => PathNormalizer.NormalizeSeparators(c.FilePath), StringComparer.OrdinalIgnoreCase)
+            .ThenBy(c => c.Line)
+            .ThenBy(c => c.ProjectName, StringComparer.Ordinal)
+            .ThenBy(c => c.CallerName, StringComparer.Ordinal)
+            .ToList();
+        var maxCallers = Math.Clamp(request.MaxCallers, 1, MaxCallersLimit);
+        var callersTruncated = scopedCallers.Count > maxCallers;
+        var shownCallers = scopedCallers.Take(maxCallers).ToList();
 
         var testContext = await TestRecommendationBuilder.BuildAsync(symbol, request.Solution, ct).ConfigureAwait(false);
-        var allTests = FlattenTestRecommendations(testContext);
-        var testsTruncated = allTests.Count > request.MaxTests;
-        var shownTests = allTests.Take(request.MaxTests).ToList();
+        var allTests = FlattenTestRecommendations(testContext)
+            .OrderBy(t => PathNormalizer.NormalizeSeparators(t.FilePath), StringComparer.OrdinalIgnoreCase)
+            .ThenBy(t => t.Line)
+            .ThenBy(t => t.FixtureName, StringComparer.Ordinal)
+            .ThenBy(t => t.TestMethod, StringComparer.Ordinal)
+            .ToList();
+        var maxTests = Math.Clamp(request.MaxTests, 1, MaxTestsLimit);
+        var testsTruncated = allTests.Count > maxTests;
+        var shownTests = allTests.Take(maxTests).ToList();
 
         return new FeatureContextPayload(
             Declaration: declaration,
@@ -82,6 +101,9 @@ public static class FeatureContextScanner
         string symbolIdentifier,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(solution);
+        ArgumentException.ThrowIfNullOrWhiteSpace(symbolIdentifier);
+
         var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var result = await ResolveSymbolResultAsync(solution, symbolIdentifier, identity, ct).ConfigureAwait(false);
         return result.IsSuccess ? result.Value : null;
@@ -93,6 +115,9 @@ public static class FeatureContextScanner
         AnalysisSymbolIdentity? identity,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(solution);
+        ArgumentException.ThrowIfNullOrWhiteSpace(symbolIdentifier);
+
         var cleanId = InputNormalizer.NormalizeSymbolIdentifier(symbolIdentifier);
 
         if (InputNormalizer.HasOpaqueHandoffPrefix(cleanId) || cleanId.StartsWith("i:", StringComparison.Ordinal))
@@ -289,6 +314,8 @@ public static class FeatureContextScanner
 
     public static string RenderMarkdown(FeatureContextPayload p)
     {
+        ArgumentNullException.ThrowIfNull(p);
+
         var sb = new StringBuilder();
         if (p.Error is { } error)
         {

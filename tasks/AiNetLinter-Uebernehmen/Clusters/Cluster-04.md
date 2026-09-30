@@ -37,6 +37,9 @@
 - [x] 4.6 Feature-Kontext (`get_feature_context`-Engine):
   - [x] `FeatureContextScanner`: Bündelung von Symbol, Signatur, Aufrufern und Tests *(ohne Linter-Violations!)*
   - [x] FastTests für Feature-Kontext
+  - [x] Handoff-Roundtrips für Deklaration, Aufrufer und Testmethode sowie `production`-/`tests`-Scope der Aufrufer prüfen.
+  - [x] Null-/Leer-Eingaben, auflösbare Fehler, Ergebnislimits 1–50 und Trunkierungsangaben prüfen.
+  - [x] Feature-Kontext bleibt frei von Linter-Violations und Qualitätsmetriken.
   - [ ] Review/Audit zu 4.6 durchführen; Findings ergänzen und umsetzen.
 - [ ] 4.7 Gemeinsame Symbolauflösung für Folge-Tools fertigstellen: eindeutige qualifizierte Namen, Doc-IDs, Positionen und `h:...`-IDs unterstützen; bei mehrdeutigen Kurznamen auswählbare Treffer statt eines zufälligen ersten Symbols liefern. Die Tool-Verträge und Fehlerfälle mit FastTests belegen.
   - [ ] Review/Audit zu 4.7 durchführen; Findings ergänzen und umsetzen.

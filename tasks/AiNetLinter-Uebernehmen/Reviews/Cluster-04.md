@@ -297,3 +297,14 @@ The point 4.5 audit checkbox remains open pending the focused fix and follow-up 
 - **P2 root-relative test paths — closed.** `TestDetector.IsTestFile` now checks normalized paths for anchored `tests/` and `test/` prefixes before existing suffix and embedded-segment checks, matching the AiNetLinter reference. Direct tests cover both prefixes and the negative `contest/Helpers.cs` case. A Roslyn solution test assigns exact root-relative document paths and verifies both declarations enter the `tests` scope while an ordinary `Contest.cs` declaration stays in `production`. No broader name-classification regression was found in the reviewed paths.
 
 No open finding remains for point 4.5. The audit checkbox is complete after two audits. The equal-name multi-project and recommendation-depth work remains explicitly assigned to point 4.8. No product code or external repository was changed in this audit.
+
+## Point 4.6 implementation
+
+- Base commit: `68a9d67fdde4f4317a9220db106b2fac10bf4ba3`; the working tree was clean before this slice.
+- Read-only AiNetLinter MCP comparison inspected `FeatureContextScanner`, its formatter, `get_test_context`, caller/test scoping and cap behavior. The local implementation keeps Linter violations and quality metrics out of the feature-context payload.
+- **P2 — Invalid limits were not safely bounded.** Before the fix, `MaxCallers=0` yielded no callers when 60 references existed. The scanner now clamps requested caller and test counts to 1–50, sorts before truncating, and preserves scoped totals/truncation flags. A temporary pre-fix cap repro disabled the test clamp and failed with 55 returned recommendations instead of 50.
+- **P2 — Public null/blank inputs leaked runtime failures or lacked a contract.** Before the fix, null Scan requests and null Markdown payloads threw `NullReferenceException`. Public entry points now validate null solutions and blank identifiers, while unresolved ordinary names return `null` and invalid handoffs remain structured navigation errors.
+- Added Core contract coverage for declaration, caller and test-method Handoff round-trips, `production`/`tests` caller scopes, 60-call and 55-test truncation, recoverable resolution errors, argument validation, and Markdown null handling. Existing renderer coverage asserts the absence of violations and metrics.
+- Added [Get Feature Context](../../../docs/navigation/get-feature-context.md) to the current-state documentation index. Test recommendations remain static heuristic candidates and are not runtime coverage evidence.
+- Verification: focused `FeatureContextScannerTests` passed 8/8; `pwsh -File ./scripts/build.ps1` passed with 0 warnings/errors; `pwsh -File ./scripts/test-fast.ps1` passed 321/321; `pwsh -File ./scripts/test-integration.ps1` passed 12/12; `pwsh -File ./scripts/test.ps1` passed 333/333; `git diff --check` passed.
+- The independent point 4.6 audit checkbox remains `[ ]` for follow-up.
