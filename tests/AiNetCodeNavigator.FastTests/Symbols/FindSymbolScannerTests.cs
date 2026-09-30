@@ -432,6 +432,39 @@ public sealed class FindSymbolScannerTests
     }
 
     [Fact]
+    public async Task FindMatchesWithDetailsAsync_ClassifiesRootRelativeTestDirectoriesByScope()
+    {
+        using var handle = TestWorkspaceBuilder.CreateSolution(
+            new ProjectSpec(
+                "App",
+                [
+                    ("TestsProbe.cs", "namespace ScopeChecks; public class RootTestsDirectoryProbe { }"),
+                    ("TestProbe.cs", "namespace ScopeChecks; public class RootTestDirectoryProbe { }"),
+                    ("Contest.cs", "namespace ScopeChecks; public class Contest { }")
+                ]));
+        var project = handle.Solution.Projects.Single();
+        var documents = project.Documents.ToDictionary(document => document.Name, document => document.Id);
+        var solution = handle.Solution
+            .WithDocumentFilePath(documents["TestsProbe.cs"], "tests/TestsProbe.cs")
+            .WithDocumentFilePath(documents["TestProbe.cs"], "test/TestProbe.cs")
+            .WithDocumentFilePath(documents["Contest.cs"], "Contest.cs");
+
+        var rootTestsDirectory = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(solution, "RootTestsDirectoryProbe", ScopeType: SymbolScopeType.Tests));
+        var rootTestDirectory = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(solution, "RootTestDirectoryProbe", ScopeType: SymbolScopeType.Tests));
+        var ordinaryNameInProductionScope = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(solution, "Contest", ScopeType: SymbolScopeType.Production));
+        var ordinaryNameInTestScope = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(solution, "Contest", ScopeType: SymbolScopeType.Tests));
+
+        Assert.Single(rootTestsDirectory.Entries);
+        Assert.Single(rootTestDirectory.Entries);
+        Assert.Single(ordinaryNameInProductionScope.Entries);
+        Assert.Empty(ordinaryNameInTestScope.Entries);
+    }
+
+    [Fact]
     public async Task FindMatchesWithDetailsAsync_WildcardSearch_ReturnsMatchingSymbols()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();

@@ -1,6 +1,6 @@
 # Test Context
 
-`TestDetector` classifies test projects, files, classes, and methods from test-framework references, project/file naming patterns, source paths, and recognized test attributes. Framework metadata recognizes xUnit, NUnit, MSTest, and the test platform; assertion and mocking libraries alone do not make a project a test project. Suffix matching respects identifier boundaries so ordinary names such as `Latest.cs` and `Contest` are not classified from the substring `Test`.
+`TestDetector` classifies test projects, files, classes, and methods from test-framework references, project/file naming patterns, source paths, and recognized test attributes. Relative source paths rooted at `test/` or `tests/` count as test files, along with matching segments inside longer paths. Framework metadata recognizes xUnit, NUnit, MSTest, and the test platform; assertion and mocking libraries alone do not make a project a test project. Suffix matching respects identifier boundaries so ordinary names such as `Latest.cs` and `Contest` are not classified from the substring `Test`.
 
 `TestRecommendationBuilder.BuildAsync` searches solution projects for fixture names formed from the target type name and common test prefixes or suffixes. It returns matching fixture and attributed test-method locations with optional source handoffs. Recognized method attributes identify xUnit (`Fact`/`Theory`), NUnit (`Test`/`TestCase`), and MSTest (`TestMethod`/`DataTestMethod`); a name-only match without a recognized framework attribute reports `Unknown`.
 

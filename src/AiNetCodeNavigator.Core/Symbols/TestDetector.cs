@@ -26,6 +26,11 @@ public static class TestDetector
         "Tests.cs", "Test.cs", "Spec.cs", "Specs.cs"
     ];
 
+    private static readonly string[] TestPathPrefixes =
+    [
+        "tests/", "test/"
+    ];
+
     private static readonly string[] TestKeywords =
     [
         "xunit", "nunit", "testplatform", "unittesting", "mstest"
@@ -110,6 +115,11 @@ public static class TestDetector
         if (string.IsNullOrWhiteSpace(path)) return false;
 
         var normalized = PathNormalizer.NormalizeSeparators(path);
+
+        if (TestPathPrefixes.Any(prefix => normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
 
         foreach (var suffix in TestFileSuffixes)
         {
