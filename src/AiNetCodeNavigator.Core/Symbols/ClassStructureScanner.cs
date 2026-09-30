@@ -11,6 +11,8 @@ using AiNetCodeNavigator.Core.Common;
 using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
 
 namespace AiNetCodeNavigator.Core.Symbols;
@@ -22,6 +24,8 @@ namespace AiNetCodeNavigator.Core.Symbols;
 /// </summary>
 public static class ClassStructureScanner
 {
+    private const string PrimaryConstructorParameterKind = "PrimaryCtor-Param";
+
     public const int DefaultMaxMembers = 50;
     public const int MaxMembersCap = 200;
 
@@ -29,6 +33,10 @@ public static class ClassStructureScanner
         ClassStructureScanRequest request,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Solution);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.SymbolIdentifier);
+
         AnalysisSymbolIdentity? identity;
         if (request.HandoffIdentity is not null)
         {
@@ -85,6 +93,9 @@ public static class ClassStructureScanner
         string symbolIdentifier,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(solution);
+        ArgumentException.ThrowIfNullOrWhiteSpace(symbolIdentifier);
+
         var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var result = await ResolveTypeSymbolResultAsync(solution, symbolIdentifier, identity, ct).ConfigureAwait(false);
         return result.IsSuccess ? result.Value : null;
@@ -96,6 +107,9 @@ public static class ClassStructureScanner
         AnalysisSymbolIdentity? identity,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(solution);
+        ArgumentException.ThrowIfNullOrWhiteSpace(symbolIdentifier);
+
         var cleanId = InputNormalizer.NormalizeSymbolIdentifier(symbolIdentifier);
 
         if (InputNormalizer.HasOpaqueHandoffPrefix(cleanId) || cleanId.StartsWith("i:", StringComparison.Ordinal))
@@ -182,6 +196,10 @@ public static class ClassStructureScanner
         AnalysisSymbolIdentity? handoffIdentity)
     {
         var result = new List<ClassStructureMemberEntry>();
+        if (namedType.IsRecord)
+        {
+            result.AddRange(ExtractRecordPrimaryConstructorParameters(namedType, solutionDir));
+        }
 
         foreach (var m in namedType.GetMembers())
         {
@@ -190,6 +208,49 @@ public static class ClassStructureScanner
         }
 
         return result;
+    }
+
+    private static IEnumerable<ClassStructureMemberEntry> ExtractRecordPrimaryConstructorParameters(
+        INamedTypeSymbol namedType,
+        string solutionDir)
+    {
+        var primaryConstructor = namedType.InstanceConstructors
+            .FirstOrDefault(constructor => constructor.DeclaringSyntaxReferences
+                .Any(reference => reference.GetSyntax() is RecordDeclarationSyntax { ParameterList: not null }));
+        if (primaryConstructor is null || primaryConstructor.Parameters.Length == 0)
+        {
+            yield break;
+        }
+
+        foreach (var parameter in primaryConstructor.Parameters)
+        {
+            var syntax = parameter.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
+            var location = syntax?.GetLocation() ?? parameter.Locations.FirstOrDefault(location => location.IsInSource);
+            var startLine = 0;
+            var endLine = 0;
+            var filePath = string.Empty;
+            if (location is not null && location.IsInSource)
+            {
+                var span = location.GetLineSpan();
+                startLine = span.StartLinePosition.Line + 1;
+                endLine = span.EndLinePosition.Line + 1;
+                if (location.SourceTree?.FilePath is { } sourcePath)
+                {
+                    filePath = PathNormalizer.ToRelative(solutionDir, sourcePath);
+                }
+            }
+
+            yield return new ClassStructureMemberEntry(
+                Kind: PrimaryConstructorParameterKind,
+                Name: parameter.Name,
+                Visibility: "public",
+                StartLine: startLine,
+                EndLine: endLine,
+                LineCount: 0,
+                Signature: $"{parameter.Name} : {parameter.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}",
+                FilePath: filePath,
+                HandoffId: null);
+        }
     }
 
     private static bool ShouldSkipMember(ISymbol m)
@@ -243,7 +304,9 @@ public static class ClassStructureScanner
             lineCount = endLine - startLine + 1;
         }
 
-        var signature = m.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+        var signature = m is IFieldSymbol { HasConstantValue: true } constantField
+            ? $"{m.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)} = {FormatLiteral(constantField.ConstantValue)}"
+            : m.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
         var handoffId = FormatMemberHandoff(m, handoffIdentity, solution);
 
         return new ClassStructureMemberEntry(
@@ -298,7 +361,7 @@ public static class ClassStructureScanner
     {
         if (nts.IsRecord)
         {
-            return nts.TypeKind == TypeKind.Struct ? "Record Struct" : "Record";
+            return nts.TypeKind == TypeKind.Struct ? "Record Struct" : "Record Class";
         }
 
         return nts.TypeKind switch
@@ -339,7 +402,8 @@ public static class ClassStructureScanner
             "method" or "methods" => string.Equals(memberKind, "Method", StringComparison.OrdinalIgnoreCase),
             "property" or "properties" => string.Equals(memberKind, "Property", StringComparison.OrdinalIgnoreCase),
             "field" or "fields" => string.Equals(memberKind, "Field", StringComparison.OrdinalIgnoreCase),
-            "constructor" or "constructors" => string.Equals(memberKind, "Constructor", StringComparison.OrdinalIgnoreCase),
+            "constructor" or "constructors" => string.Equals(memberKind, "Constructor", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(memberKind, PrimaryConstructorParameterKind, StringComparison.OrdinalIgnoreCase),
             _ => false,
         };
     }
@@ -358,6 +422,8 @@ public static class ClassStructureScanner
 
     public static string RenderMarkdown(ClassStructurePayload p)
     {
+        ArgumentNullException.ThrowIfNull(p);
+
         var sb = new StringBuilder();
         if (p.Error is { } error)
         {
@@ -399,4 +465,10 @@ public static class ClassStructureScanner
 
         return sb.ToString().TrimEnd();
     }
+
+    private static string FormatLiteral(object? value) => value is null
+        ? "null"
+        : SymbolDisplay.FormatPrimitive(value, quoteStrings: true, useHexadecimalNumbers: false)
+            ?? Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture)
+            ?? string.Empty;
 }

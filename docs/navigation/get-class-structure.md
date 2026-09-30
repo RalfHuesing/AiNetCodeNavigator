@@ -1,0 +1,7 @@
+# Get Class Structure
+
+`ClassStructureScanner.ScanAsync` resolves a type or a member to its containing type and returns the type kind, declaring files, source line total, and a member list. It includes declared fields, constants, events, properties, methods, and constructors across partial declarations. It reports declared accessibility separately from each member signature, omits compiler-generated members other than constructors, and includes invariant literal values for constants.
+
+Type kinds distinguish `Class`, `Record Class`, `Record Struct`, `Interface`, `Struct`, and `Enum`. A record's positional primary-constructor parameters appear as `PrimaryCtor-Param` entries in addition to the record's declared members. Kind and name filters and `SortBy` apply before the `MaxMembers` limit. The limit is clamped to 1–200; the payload reports total and shown counts and whether it was truncated.
+
+Source members carry opaque `h:...` handoffs when an identity can be created. Compiler-generated constructors and synthetic record-parameter rows do not have handoffs. A handoff from a member resolves to that member's containing type for another class-structure query. A missing type returns `null`; an unknown or stale handoff returns a payload with a recoverable error. Null requests or solutions and blank symbol identifiers throw argument exceptions. `RenderMarkdown` rejects a null payload with `ArgumentNullException`.

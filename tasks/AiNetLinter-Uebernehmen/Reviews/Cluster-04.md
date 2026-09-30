@@ -196,3 +196,26 @@ The point 4.3 audit checkbox remains open for the residual DTO test obligation. 
 - **P3 DTO handoff test gap — closed.** `BuildForDocumentAsync_FormatsDistinctHandoffsForEachFieldAndEventVariable` supplies a formatter and asserts four separate DTO member IDs matching the Roslyn documentation IDs for `_first`, `_second`, `Changed`, and `Closed`. It also asserts four distinct IDs. The earlier Markdown test still follows all four opaque IDs through `FeatureContextScanner` to their own symbols. Together they cover the DTO association and navigable text roundtrip required by the second audit.
 
 Point 4.3 is accepted after the third and final audit; no open finding or technical debt remains for this point. The audit checkbox is complete. No product code or external repository was changed in this audit.
+
+## Point 4.4 implementation
+
+- Base commit: `75ba20e061dd1b99161c9d5bbe8fe17501d2bca2`; the working tree was clean before this slice.
+- Read-only AiNetLinter MCP comparison covered `GetClassStructureTool`, its class-structure tests, record primary-constructor extraction, constant literal formatting, visibility/member handling, filters, and member-handoff reuse.
+- **P2 — Record kind and primary-constructor parameters were incomplete.** A regression with a record class and record struct failed before the fix: the record class reported only `Record` and the primary constructor parameters were absent. The scanner now distinguishes `Record Class` from `Record Struct` and emits each positional record parameter as a `PrimaryCtor-Param` entry. The `Constructor` kind filter includes these parameter entries.
+- **P2 — Constant fields omitted their literal values.** A regression covering floating-point, negative integer, string, null, character, and boolean constants failed before the fix because the signatures contained only field names and types. Constant signatures now append Roslyn's invariant primitive formatting.
+- **P2 — Null inputs leaked a null dereference.** `ScanAsync(null!)` failed before the fix with `NullReferenceException`. Public scan and resolver entry points now validate required solution/identifier inputs, and `RenderMarkdown` validates its payload. A bad `h:` handoff already returned the recoverable `HANDOFF_UNKNOWN` payload before changes; this behavior remains covered. Member handoff roundtrip to `FeatureContextScanner` passed before and after the changes.
+- Added the current-state page [Get Class Structure](../../../docs/navigation/get-class-structure.md), indexed it in `docs/README.md`, and expanded Core contract tests for member kinds/visibility, records/interfaces, invariant constants, truncation behavior, handoffs, and errors. The independent 4.4 audit checkbox remains `[ ]`.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| Pre-fix record/primary-parameter regression | Failed as expected: `Record` kind and no `PrimaryCtor-Param` entries |
+| Pre-fix constant-literal regression | Failed as expected: constant signatures omitted literal values |
+| Pre-fix null-request regression | Failed as expected: `NullReferenceException` |
+| Focused `ClassStructureScannerTests` after fix | Passed, 12/12 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 300/300 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 312/312 across both test projects |
+| `git diff --check` | Passed before commit |

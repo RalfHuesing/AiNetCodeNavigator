@@ -21,8 +21,8 @@
   - [x] Give every variable in a multi-variable field or event declaration an unambiguous own entry and handoff; test DTO formatter associations and Markdown roundtrips for later variables.
   - [x] Review/Audit zu 4.3 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.4 Klassen-Struktur (`get_class_structure`-Engine):
-  - [x] `ClassStructureScanner`: Vollständige Member-Übersicht (Properties, Methoden, Konstruktoren, Sichtbarkeiten)
-  - [x] FastTests für Class-Structure
+  - [x] `ClassStructureScanner`: vollständige deklarierte Member-Übersicht (Felder, Konstanten, Events, Properties, Methoden, Konstruktoren und Sichtbarkeiten), einschließlich Record-Primärkonstruktorparametern
+  - [x] Class/Record-Kinds, Handoffs, Filter, Trunkierung und wichtige Fehlerfälle mit FastTests abdecken
   - [ ] Review/Audit zu 4.4 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.5 Test-Erkennung & Test-Kontext (`get_test_context`-Engine):
   - [x] `TestDetector`: Erkennung von Testprojekten und Testframeworks (xUnit, NUnit, MSTest)
