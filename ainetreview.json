@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "solution": "AiNetCodeNavigator.slnx",
+  "outputDirectory": "audit-reporting",
+  "analyses": {
+    "method-control-flow-outliers": {
+      "enabled": true,
+      "percentile": 90
+    },
+    "dead-code-candidates": {
+      "enabled": true,
+      "apiSurface": "external_library",
+      "entryPointAttributes": []
+    },
+    "duplicate-code-candidates": {
+      "enabled": true,
+      "minTokens": 30,
+      "minimumSimilarity": "exact"
+    },
+    "indirection-drift-candidates": {
+      "enabled": true
+    },
+    "missing-test-evidence-candidates": {
+      "enabled": true,
+      "minDecisionCount": 3,
+      "minDecisionNesting": 2,
+      "minIndirectDecisionCount": 5,
+      "minIndirectDecisionNesting": 3
+    },
+    "code-size-candidates": {
+      "enabled": true,
+      "percentile": 90,
+      "minMemberCodeLines": 80,
+      "extremeMemberCodeLines": 300,
+      "minTypeCodeLines": 300,
+      "extremeTypeCodeLines": 800,
+      "extremeFileLines": 1000,
+      "extremeFileUtf8Bytes": 131072
+    },
+    "non-ascii-identifiers": {
+      "enabled": true
+    },
+    "structural-duplication-candidates": {
+      "enabled": true
+    }
+  }
+}

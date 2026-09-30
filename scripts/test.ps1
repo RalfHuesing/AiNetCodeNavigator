@@ -52,6 +52,8 @@ Write-Host "[HINWEIS] Agenten können den vollständigen Output unter folgendem 
 $testArgs = @(
     'test',
     $solutionPath,
+    # Keep repository snapshot checks isolated from other suites' generated files.
+    '-m:1',
     '--results-directory', $resultsDir
 )
 if ($Filter) {

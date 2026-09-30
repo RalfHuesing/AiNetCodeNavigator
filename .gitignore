@@ -58,3 +58,6 @@ nunit-*.xml
 
 # Temporary build and test log output
 temp/
+
+# AiNetReview reports retained for manual review and cleanup
+/audit-reporting/

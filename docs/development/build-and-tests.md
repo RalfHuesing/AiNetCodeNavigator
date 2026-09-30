@@ -76,4 +76,14 @@ pwsh -File ./scripts/test.ps1
 
 Agents and automation tools should inspect the static log files under `temp/*.log` whenever diagnosing build or test outcomes.
 
+The full solution script runs test projects sequentially (`-m:1`) so IntegrationTests workspace snapshot checks are isolated from FastTests cache and audit report generation. Parallelism within each test assembly follows its existing runner settings.
+
+### Automatic audit reports
+
+`RepositoryAuditReportTests` runs as an ordinary FastTests case, including in `scripts/test-fast.ps1` and the full solution test suite. It launches `C:\Daten\Tools\AiNetReview-win-x64\AiNetReview.exe review <repository-root>` without a window and captures both process streams, so successful report generation produces no additional console output. The executable must exist at that path. Missing tools, process errors, missing report indexes, cancellation, or a ten-minute timeout fail the test; findings never fail it.
+
+The versioned [`ainetreview.json`](../../ainetreview.json) selects `AiNetCodeNavigator.slnx`, enables all eight current analyses with their defaults, and publishes to the Git-ignored `audit-reporting/` directory. Each review creates its own timestamped run directory with a root `index.md` and the `changed-files/` and `all-findings/` views. No baseline is created or updated. Because AiNetReview automatically reads an existing baseline, the test rejects `audit-reporting/baseline.json` if one has been added manually. Without a baseline, both views include all current findings.
+
+Published reports remain available across test runs and are deleted only manually. For a later agent review, select a run and explicitly request an audit/review using its `index.md`; report generation itself does not start an agent review or modify code. AiNetReview may include baseline instructions in its generated index, but this test only invokes `review`. AiNetReview's own executable logs are stored beside that external tool under `logs/`.
+
 The MCP stream fixture in FastTests verifies SDK schema exposure and request-filter behavior over the real SDK client/server transport. The production stdio host registers two maintenance tools and seven navigation tools; IntegrationTests perform initialize, tool listing, selected source/assembly calls, and clean EOF shutdown against the child process. The other thirteen public navigation registrations and full public contracts are still pending. A cold source integration test snapshots files and directories before the first public call and confirms MSBuild design-time analysis does not write into the analyzed workspace. The loader redirects intermediate/output files to a per-host, per-workspace scratch directory under the system temp directory and removes that scratch on host disposal. See [MCP Argument Validation](../mcp-argument-validation.md) and [MCP Host](../mcp-host.md).
