@@ -308,3 +308,17 @@ No open finding remains for point 4.5. The audit checkbox is complete after two 
 - Added [Get Feature Context](../../../docs/navigation/get-feature-context.md) to the current-state documentation index. Test recommendations remain static heuristic candidates and are not runtime coverage evidence.
 - Verification: focused `FeatureContextScannerTests` passed 8/8; `pwsh -File ./scripts/build.ps1` passed with 0 warnings/errors; `pwsh -File ./scripts/test-fast.ps1` passed 321/321; `pwsh -File ./scripts/test-integration.ps1` passed 12/12; `pwsh -File ./scripts/test.ps1` passed 333/333; `git diff --check` passed.
 - The independent point 4.6 audit checkbox remains `[ ]` for follow-up.
+
+## Independent audit 1/3 of point 4.6
+
+- Reviewed commit: `6b3e8bf4ede7ed3957e12933f920d3b33b7d33f8` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Read-only comparison: AiNetLinter `FeatureContextScanner.CollectCallersAsync`, `FilterCallersAsync`, `CollectTestsAsync`, and `FilterTestFilesAsync`; inspected local scanner, models, FastTests, and current-state page. The implementation slice's gate results are recorded above. This audit did not run a build or tests.
+- The local payload contains declaration/signature, incoming reference locations, static test candidates, bounded and sorted result lists, and structured handoffs/errors. It contains no Linter violations or quality metrics. Existing tests cover ordinary caller and test-method handoff roundtrips, basic path-based caller scopes, caps/truncation, and null/unknown-handoff cases. The shared ambiguous-name resolver remains point 4.7; equal-name test-fixture behavior remains point 4.8.
+
+### Open findings
+
+1. **P2 — Caller scope ignores the declaring project.** `CollectCallersAsync` retains the Roslyn `Document` and `ProjectName` (`FeatureContextScanner.cs:220-257`), but `FilterCallersByScope` (`264-280`) classifies only `TestDetector.IsTestFile(c.FilePath)`. A caller in project `App.Tests` at a neutral path such as `src/TestHost/Shared.cs` enters `production` and is omitted from `tests`. The current scope test (`FeatureContextScannerTests.cs:99-120`) uses a test-named file and project, so it cannot distinguish the two classifiers. AiNetLinter classifies caller documents through `McpScopeClassifier`, which considers project and file. **Acceptance:** apply scope using the originating Roslyn document/project before totals and limits, and test a neutral-name test-project caller against `all`, `production`, and `tests` with correct totals.
+2. **P2 — The request scope does not filter test recommendations.** `ScanAsync` applies `request.Scope` to callers, then flattens every test candidate from `TestRecommendationBuilder` without scope filtering (`FeatureContextScanner.cs:78-96`). Thus `Scope=Production` can still return test-project entries in `Tests`, with `TotalTests` and truncation calculated over excluded candidates. AiNetLinter filters test files with the same scope classifier before its test totals and limits. The local test scope case asserts only `Callers`; the recommendation test uses default `all`. **Acceptance:** scope recommendations by their source document/project before sorting, totals, and `MaxTests`; test `all`, `production`, and `tests` with project-based and path-based test evidence, including a count/truncation assertion after filtering.
+
+The point 4.6 audit checkbox remains open pending fixes and a follow-up audit. No product code or external repository was changed in this audit.
