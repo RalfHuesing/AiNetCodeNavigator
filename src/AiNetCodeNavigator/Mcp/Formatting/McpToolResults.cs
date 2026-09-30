@@ -10,6 +10,7 @@ internal static class McpToolResults
     internal const string TruncatedSuccessStatusPrefix = "Status: operation=ok, completeness=truncated\n";
     internal const string ErrorStatusPrefix = "Status: operation=error, completeness=not_applicable\n";
     internal const string LoadingStatusPrefix = "Status: operation=retry, completeness=not_applicable\n";
+    internal const string RunningStatusPrefix = "Status: operation=running, completeness=not_applicable\n";
 
     internal static CallToolResult Success(
         string text,
@@ -175,7 +176,7 @@ internal static class McpToolResults
             $"operationToken={operationToken}\nretry: repeat the same tool call with this operationToken.",
             maxResponseBytes,
             maxResponseTokens,
-            responsePrefix: "Status: operation=running, completeness=not_applicable\n");
+            responsePrefix: RunningStatusPrefix);
         return formatted.ErrorCode is null
             ? Create(formatted.Text, isError: false)
             : BudgetTooSmall(formatted, maxResponseBytes, maxResponseTokens);

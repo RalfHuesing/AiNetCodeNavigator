@@ -230,7 +230,13 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         lock (entry.ResponseGate)
         {
             var budgetKey = (request.MaxResponseBytes, request.MaxResponseTokens);
-            if (entry.FinalResponses.TryGetValue(budgetKey, out var cached)) return cached;
+            if (entry.FinalResponses.TryGetValue(budgetKey, out var cached))
+            {
+                if (_continuations.RefreshCachedContinuation(cached, request)) return cached;
+                var refreshed = _continuations.CreateFirstPage(result, request, entry.SnapshotId);
+                if (refreshed.IsError != true) entry.FinalResponses[budgetKey] = refreshed;
+                return refreshed;
+            }
             if (entry.FinalResponses.Count >= _maxFinalResponseVariants)
             {
                 return McpToolResults.Recoverable("OPERATION_RESPONSE_CAPACITY", "This operation reached its response-budget variant limit.",
@@ -238,10 +244,14 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
             }
 
             var response = _continuations.CreateFirstPage(result, request, entry.SnapshotId);
-            entry.FinalResponses.Add(budgetKey, response);
+            if (response.IsError != true && !IsTransientRetryResponse(response)) entry.FinalResponses.Add(budgetKey, response);
             return response;
         }
     }
+
+    private static bool IsTransientRetryResponse(CallToolResult response) =>
+        response.IsError != true
+        && McpToolResults.NormalizeExistingResult(response).StartsWith(McpToolResults.LoadingStatusPrefix, StringComparison.Ordinal);
 
     private async Task ExpireEntriesAsync()
     {
@@ -396,18 +406,41 @@ internal sealed class McpResponseContinuationStore : IDisposable
                 return McpToolResults.Recoverable("CONTINUATION_ARGUMENT_MISMATCH", "The continuation token belongs to a different tool request.", "Repeat the continuation with the original target and arguments.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
             page.LastAccess = DateTimeOffset.UtcNow;
             var budgetKey = (request.MaxResponseBytes, request.MaxResponseTokens);
-            if (page.Results.TryGetValue(budgetKey, out var cached)) return cached;
+            if (page.Results.TryGetValue(budgetKey, out var cached))
+            {
+                if (HasLiveContinuation(cached, request)) return cached;
+                var refreshed = CreatePage(page.SnapshotId, page.Snapshot, page.Offset, request);
+                if (refreshed.IsError != true) page.Results[budgetKey] = refreshed;
+                return refreshed;
+            }
             if (page.Results.Count >= _maxBudgetVariants)
                 return McpToolResults.Recoverable("CONTINUATION_CAPACITY", "This continuation token reached its response-budget variant limit.", "Reuse a previously used budget pair or start a narrower query.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
             var result = CreatePage(page.SnapshotId, page.Snapshot, page.Offset, request);
-            page.Results.Add(budgetKey, result);
+            if (result.IsError != true) page.Results.Add(budgetKey, result);
             return result;
         }
     }
 
+    internal bool RefreshCachedContinuation(CallToolResult response, LongRunningToolCallRequest request)
+    {
+        lock (_gate) return HasLiveContinuation(response, request);
+    }
+
+    private bool HasLiveContinuation(CallToolResult response, LongRunningToolCallRequest request)
+    {
+        var text = McpToolResults.NormalizeExistingResult(response);
+        if (!text.StartsWith(McpToolResults.TruncatedSuccessStatusPrefix, StringComparison.Ordinal)) return true;
+        var tokenLine = text.Split('\n').FirstOrDefault(static line => line.StartsWith("continuationToken=", StringComparison.Ordinal));
+        if (tokenLine is null) return true;
+        var token = tokenLine["continuationToken=".Length..];
+        Expire();
+        if (!_pages.TryGetValue(token, out var page) || !page.Matches(request)) return false;
+        page.LastAccess = DateTimeOffset.UtcNow;
+        return true;
+    }
+
     internal CallToolResult CreateFirstPage(CallToolResult result, LongRunningToolCallRequest request, string snapshotId)
     {
-        var source = ExtractText(result);
         if (result.IsError == true)
         {
             var errorText = McpToolResults.NormalizeExistingResult(result);
@@ -416,6 +449,38 @@ internal sealed class McpResponseContinuationStore : IDisposable
             if (bytes <= request.MaxResponseBytes && (request.MaxResponseTokens is null || tokens <= request.MaxResponseTokens.Value)) return result;
             return McpToolResults.Recoverable("TOOL_ERROR_TOO_LARGE", "The tool error exceeded the requested response budget.", "Retry with a larger response budget.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
         }
+
+        var returnedText = McpToolResults.NormalizeExistingResult(result);
+        if (returnedText.StartsWith(McpToolResults.LoadingStatusPrefix, StringComparison.Ordinal))
+        {
+            if (result.StructuredContent.HasValue)
+                return McpToolResults.Recoverable("INVALID_CONTROL_RESULT", "A loading control cannot include structured content.", "Return a text-only loading result.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
+            var loadingBody = returnedText[McpToolResults.LoadingStatusPrefix.Length..];
+            var firstLineEnd = loadingBody.IndexOf('\n');
+            var firstLine = firstLineEnd < 0 ? loadingBody : loadingBody[..firstLineEnd];
+            if (!firstLine.StartsWith("nextAction: ", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(firstLine["nextAction: ".Length..]))
+                return McpToolResults.Recoverable("INVALID_CONTROL_RESULT", "A loading control must include its complete nextAction instruction.", "Return a text-only loading result with nextAction.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
+            var bytes = Encoding.UTF8.GetByteCount(returnedText);
+            var tokens = McpResponseFormatter.CountTokens(returnedText);
+            if (bytes <= request.MaxResponseBytes && (request.MaxResponseTokens is null || tokens <= request.MaxResponseTokens.Value)) return result;
+            var canRetryWithBytes = bytes > request.MaxResponseBytes && bytes <= McpResponseBudgetLimits.MaximumBytes;
+            var retryHint = bytes > McpResponseBudgetLimits.MaximumBytes
+                ? $"recovery: retry the loading call after reducing its message/action to fit within {McpResponseBudgetLimits.MaximumBytes} bytes."
+                : canRetryWithBytes
+                    ? $"retry: repeat with maxResponseBytes={bytes} and maxResponseTokens at least {tokens}."
+                    : $"recovery: repeat with maxResponseTokens at least {tokens}.";
+            return McpToolResults.BudgetTooSmall(new McpResponseFormatResult(
+                string.Empty, 0, 0, IsTruncated: false, ErrorCode: "RESPONSE_BUDGET_TOO_SMALL",
+                MinimumResponseBytes: bytes, MinimumResponseTokens: tokens, NextOffset: null, OmittedUtf8Bytes: 0,
+                ContinuationHint: null, CanRetryWithLargerResponseBudget: canRetryWithBytes, RecoveryHint: retryHint),
+                request.MaxResponseBytes, request.MaxResponseTokens);
+        }
+
+        if (returnedText.StartsWith(McpToolResults.RunningStatusPrefix, StringComparison.Ordinal))
+            return McpToolResults.Recoverable("OPERATION_CONTROL_UNSUPPORTED", "A delegate cannot return a running token owned by another operation store.",
+                "Return a loading/retry result, or complete this operation with its result.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
+
+        var source = ExtractText(result);
         if (result.StructuredContent.HasValue)
         {
             var complete = McpResponseFormatter.Format(source, request.MaxResponseBytes, request.MaxResponseTokens,

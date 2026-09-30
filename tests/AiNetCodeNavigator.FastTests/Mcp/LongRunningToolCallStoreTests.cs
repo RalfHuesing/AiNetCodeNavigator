@@ -386,6 +386,26 @@ public sealed class LongRunningToolCallStoreTests
     }
 
     [Fact]
+    public async Task BudgetFailureDoesNotConsumeTheOnlyContinuationBudgetVariant()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1), maxContinuationBudgetVariants: 1);
+        var source = $"short row\n{new string('x', 600)}\n{new string('y', 1_000)}\ntail row\n";
+        Task<CallToolResult> Work(CancellationToken _) => Task.FromResult(new CallToolResult { Content = [new TextContentBlock { Text = source }] });
+        var first = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", Work, maxResponseBytes: 512, maxResponseTokens: 120));
+        var continuation = TokenOf(first, "continuationToken");
+        var tooSmall = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", Work,
+            continuationToken: continuation, maxResponseBytes: 512, maxResponseTokens: 120));
+        var retry = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", Work,
+            continuationToken: continuation, maxResponseBytes: IntField(tooSmall, "minimumResponseBytes"),
+            maxResponseTokens: IntField(tooSmall, "minimumResponseTokens")));
+
+        Assert.True(tooSmall.IsError);
+        Assert.Contains("RESPONSE_BUDGET_TOO_SMALL", TextOf(tooSmall), StringComparison.Ordinal);
+        Assert.False(retry.IsError ?? false);
+        Assert.DoesNotContain("CONTINUATION_CAPACITY", TextOf(retry), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void OpaqueContinuationTokensHaveStableBudgetProjection()
     {
         var prefixCosts = new HashSet<int>();
@@ -431,6 +451,159 @@ public sealed class LongRunningToolCallStoreTests
             operationToken: operationToken, maxResponseBytes: 513));
         Assert.False(changedBudget.IsError ?? false);
         Assert.Contains("continuationToken=", TextOf(changedBudget), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReplayedFinalPageRenewsExpiredContinuationWithoutRebindingOldToken()
+    {
+        await using var store = new LongRunningToolCallStore(
+            TimeSpan.FromMilliseconds(10), completedIdleTtl: TimeSpan.FromMinutes(5), continuationIdleTtl: TimeSpan.FromSeconds(1));
+        var release = new TaskCompletionSource<CallToolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var source = string.Join("\n", Enumerable.Range(0, 100).Select(index => $"row-{index:D3}: {new string('x', 70)}"));
+        var work = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", _ => release.Task, maxResponseBytes: 512));
+        var operationToken = TokenOf(work, "operationToken");
+        release.SetResult(new CallToolResult { Content = [new TextContentBlock { Text = source }] });
+        var poll = Request("get_call_tree", "target", "symbol=Foo", _ => release.Task, operationToken: operationToken, maxResponseBytes: 512);
+        var original = await store.RunAsync(poll);
+        var expiredContinuation = TokenOf(original, "continuationToken");
+        ExpireContinuationPage(store, expiredContinuation);
+
+        var changedBudget = await store.RunAsync(poll with { MaxResponseBytes = 513 });
+        var changedBudgetContinuation = TokenOf(changedBudget, "continuationToken");
+        var replay = await store.RunAsync(poll);
+        var renewedContinuation = TokenOf(replay, "continuationToken");
+        var oldPage = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", _ => release.Task,
+            continuationToken: expiredContinuation, maxResponseBytes: 512));
+        var newPage = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", _ => release.Task,
+            continuationToken: renewedContinuation, maxResponseBytes: 512));
+
+        Assert.False(replay.IsError ?? false);
+        Assert.NotEqual(expiredContinuation, renewedContinuation);
+        Assert.NotEqual(expiredContinuation, changedBudgetContinuation);
+        Assert.Contains("completeness=truncated", TextOf(replay), StringComparison.Ordinal);
+        Assert.Contains("CONTINUATION_EXPIRED", TextOf(oldPage), StringComparison.Ordinal);
+        Assert.False(newPage.IsError ?? false);
+        Assert.False((await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", _ => release.Task,
+            continuationToken: changedBudgetContinuation, maxResponseBytes: 513))).IsError ?? false);
+    }
+
+    [Fact]
+    public async Task ReplayedContinuationPageDoesNotReturnExpiredSuccessorToken()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1), continuationIdleTtl: TimeSpan.FromMinutes(5));
+        var source = string.Join("\n", Enumerable.Range(0, 150).Select(index => $"row-{index:D3}: {new string('x', 70)}"));
+        Task<CallToolResult> Work(CancellationToken _) => Task.FromResult(new CallToolResult { Content = [new TextContentBlock { Text = source }] });
+        var first = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", Work, maxResponseBytes: 512));
+        var firstToken = TokenOf(first, "continuationToken");
+        var pageTwo = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", Work,
+            continuationToken: firstToken, maxResponseBytes: 512));
+        var expiredSuccessor = TokenOf(pageTwo, "continuationToken");
+        ExpireContinuationPage(store, expiredSuccessor);
+
+        var changedBudgetPage = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", Work,
+            continuationToken: firstToken, maxResponseBytes: 513));
+        var changedBudgetSuccessor = TokenOf(changedBudgetPage, "continuationToken");
+        var replay = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", Work,
+            continuationToken: firstToken, maxResponseBytes: 512));
+        var renewedSuccessor = TokenOf(replay, "continuationToken");
+        var oldPage = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", Work,
+            continuationToken: expiredSuccessor, maxResponseBytes: 512));
+        var nextPage = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", Work,
+            continuationToken: renewedSuccessor, maxResponseBytes: 512));
+
+        Assert.False(replay.IsError ?? false);
+        Assert.NotEqual(expiredSuccessor, renewedSuccessor);
+        Assert.NotEqual(expiredSuccessor, changedBudgetSuccessor);
+        Assert.Equal(BodyOf(pageTwo), BodyOf(replay));
+        Assert.Contains("CONTINUATION_EXPIRED", TextOf(oldPage), StringComparison.Ordinal);
+        Assert.False(nextPage.IsError ?? false);
+        Assert.False((await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", Work,
+            continuationToken: changedBudgetSuccessor, maxResponseBytes: 513))).IsError ?? false);
+        var lastReplayedRow = int.Parse(BodyOf(replay).Split('\n').Last(static line => line.Length > 0).AsSpan(4, 3));
+        Assert.StartsWith($"row-{lastReplayedRow + 1:D3}:", BodyOf(nextPage), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DelegateLoadingControlsRemainRetryResultsWithinRequestedBudgets()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
+        var loading = McpToolResults.Loading();
+        var direct = await store.RunAsync(Request("load_workspace", "target", "query=Foo", _ => Task.FromResult(loading),
+            maxResponseBytes: 512, maxResponseTokens: 100));
+
+        var customLoading = McpToolResults.Loading("Still indexing the workspace.", "Wait for the index and retry.", 512, 100);
+        var custom = await store.RunAsync(Request("load_workspace", "target", "query=Bar", _ => Task.FromResult(customLoading),
+            maxResponseBytes: 512, maxResponseTokens: 100));
+
+        Assert.False(direct.IsError ?? false);
+        Assert.Equal(TextOf(loading), TextOf(direct));
+        Assert.StartsWith(McpToolResults.LoadingStatusPrefix, TextOf(direct), StringComparison.Ordinal);
+        Assert.Contains("nextAction: Wait briefly and repeat the same call.", TextOf(direct), StringComparison.Ordinal);
+        Assert.DoesNotContain("operation=ok", TextOf(direct), StringComparison.Ordinal);
+        Assert.False(custom.IsError ?? false);
+        Assert.Equal(TextOf(customLoading), TextOf(custom));
+        Assert.StartsWith(McpToolResults.LoadingStatusPrefix, TextOf(custom), StringComparison.Ordinal);
+        Assert.Contains("nextAction: Wait for the index and retry.", TextOf(custom), StringComparison.Ordinal);
+        Assert.True(Encoding.UTF8.GetByteCount(TextOf(custom)) <= 512);
+        Assert.True(McpResponseFormatter.CountTokens(TextOf(custom)) <= 100);
+    }
+
+    [Fact]
+    public async Task OversizedDelegateLoadingControlsReturnAtomicBudgetErrors()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
+        var longAction = new string('R', 450);
+        var oversized = McpToolResults.Loading("Still loading.", longAction, 1_024, 500);
+        var byteLimited = await store.RunAsync(Request("load_workspace", "target", "bytes", _ => Task.FromResult(oversized),
+            maxResponseBytes: 512, maxResponseTokens: 500));
+        var tokenLimited = await store.RunAsync(Request("load_workspace", "target", "tokens", _ => Task.FromResult(oversized),
+            maxResponseBytes: 1_024, maxResponseTokens: 80));
+
+        Assert.True(byteLimited.IsError);
+        Assert.Contains("RESPONSE_BUDGET_TOO_SMALL", TextOf(byteLimited), StringComparison.Ordinal);
+        Assert.DoesNotContain(McpToolResults.LoadingStatusPrefix, TextOf(byteLimited), StringComparison.Ordinal);
+        Assert.True(IntField(byteLimited, "minimumResponseBytes") > 512);
+        Assert.True(tokenLimited.IsError);
+        Assert.Contains("RESPONSE_BUDGET_TOO_SMALL", TextOf(tokenLimited), StringComparison.Ordinal);
+        Assert.DoesNotContain(McpToolResults.LoadingStatusPrefix, TextOf(tokenLimited), StringComparison.Ordinal);
+        Assert.True(IntField(tokenLimited, "minimumResponseTokens") > 80);
+        Assert.True(McpResponseFormatter.CountTokens(TextOf(tokenLimited)) <= 80);
+    }
+
+    [Fact]
+    public async Task DelegateRunningControlIsRejectedInsteadOfWrappedAsSuccess()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
+        var nestedRunning = McpToolResults.Running("foreign-token", 512, 100);
+        var actual = await store.RunAsync(Request("nested_call", "target", "query=Foo", _ => Task.FromResult(nestedRunning),
+            maxResponseBytes: 512, maxResponseTokens: 100));
+
+        Assert.True(actual.IsError);
+        Assert.Contains("OPERATION_CONTROL_UNSUPPORTED", TextOf(actual), StringComparison.Ordinal);
+        Assert.DoesNotContain("operation=ok", TextOf(actual), StringComparison.Ordinal);
+        Assert.DoesNotContain("operation=running", TextOf(actual), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PendingOperationCanFinishWithLoadingControlAndReplayItWithoutSuccessSnapshot()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromMilliseconds(10));
+        var release = new TaskCompletionSource<CallToolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var starts = 0;
+        Task<CallToolResult> Work(CancellationToken _) { Interlocked.Increment(ref starts); return release.Task; }
+        var pending = await store.RunAsync(Request("load_workspace", "target", "query=Foo", Work, maxResponseBytes: 512, maxResponseTokens: 100));
+        var operationToken = TokenOf(pending, "operationToken");
+        release.SetResult(McpToolResults.Loading("Workspace remains unavailable.", "Wait for loading to finish.", 512, 100));
+        var poll = Request("load_workspace", "target", "query=Foo", Work, operationToken: operationToken, maxResponseBytes: 512, maxResponseTokens: 100);
+        var firstPoll = await store.RunAsync(poll);
+        var replay = await store.RunAsync(poll);
+
+        Assert.False(firstPoll.IsError ?? false);
+        Assert.StartsWith(McpToolResults.LoadingStatusPrefix, TextOf(firstPoll), StringComparison.Ordinal);
+        Assert.Equal(TextOf(firstPoll), TextOf(replay));
+        Assert.DoesNotContain("operation=ok", TextOf(replay), StringComparison.Ordinal);
+        Assert.DoesNotContain("continuationToken=", TextOf(replay), StringComparison.Ordinal);
+        Assert.Equal(1, starts);
     }
 
     [Fact]
@@ -601,6 +774,15 @@ public sealed class LongRunningToolCallStoreTests
 
     private static int OperationCount(LongRunningToolCallStore store) =>
         ((System.Collections.IDictionary)typeof(LongRunningToolCallStore).GetField("_operations", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(store)!).Count;
+
+    private static void ExpireContinuationPage(LongRunningToolCallStore store, string token)
+    {
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var continuationStore = typeof(LongRunningToolCallStore).GetField("_continuations", flags)!.GetValue(store)!;
+        var pages = (System.Collections.IDictionary)continuationStore.GetType().GetField("_pages", flags)!.GetValue(continuationStore)!;
+        var page = pages[token] ?? throw new Xunit.Sdk.XunitException("Continuation page was not stored.");
+        page.GetType().GetProperty("LastAccess", flags)!.SetValue(page, DateTimeOffset.UtcNow - TimeSpan.FromHours(1));
+    }
 
     private static int RunningCount(LongRunningToolCallStore store) =>
         (int)typeof(LongRunningToolCallStore).GetField("_running", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
