@@ -6,6 +6,9 @@
   - [x] `SharpToken`-Integration für Token-Begrenzungen
   - [x] `McpTruncation`: Präzises Abschneiden mit Fortsetzungshinweisen (`RESPONSE_BUDGET_TOO_SMALL`)
   - [ ] Review/Audit zu 8.1 durchführen; Findings ergänzen und umsetzen.
+  - [ ] Audit 1 P1: Unmögliche `minimumResponseBytes`-Retry-Werte oberhalb des öffentlichen Maximums behandeln.
+  - [ ] Audit 1 P2: `startOffset` auf vollständige Zeileneinheiten begrenzen oder verlustfrei kanonisieren.
+  - [ ] Audit 1 P2: Token-Budget-Vertrag für Fehlerantworten klären und durchsetzen/testen.
 - [ ] 8.2 Standardisiertes Result-Building:
   - [ ] `McpToolResults`: Einheitliche Erzeugung von `CallToolResult`, `IsError`-Policy und Statusblöcken
   - [ ] Review/Audit zu 8.2 durchführen; Findings ergänzen und umsetzen.

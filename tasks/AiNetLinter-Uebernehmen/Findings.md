@@ -8,4 +8,6 @@ Point 7.3's three audits are complete with no open point findings. The three aud
 
 Cluster 7 integration review 1 found a P2 cache/session mismatch: a same-identity replacement of a resolved reference could create a new resident generation while reusing decompiled source produced against the previous reference bytes. Cache manifests now bind both reads and publishes to the content fingerprint captured for the reference snapshot; the fix was accepted in [Cluster 7 integration review 2](Reviews/Cluster-07.md#cluster-7-integration-review-2-after-fix-round-1). No Cluster 7 integration finding remains open.
 
-Cluster 8.1 implementation evidence and the pending independent point audit are tracked in [Cluster 8 review](Reviews/Cluster-08.md#point-81-budgeting-and-truncation). No public MCP invocation is claimed before the Cluster 9/11 host acceptance work.
+Cluster 8.1 implementation evidence and the independent point audit are tracked in [Cluster 8 review](Reviews/Cluster-08.md#point-81-budgeting-and-truncation). No public MCP invocation is claimed before the Cluster 9/11 host acceptance work.
+
+Cluster 8.1 independent point audit 1/3 found one P1 and two P2 open contract gaps: an unretryable `minimumResponseBytes` above the public maximum, accepted mid-line continuation offsets, and error responses exceeding a requested token cap. Reproductions and acceptance conditions are in [Cluster 8 review](Reviews/Cluster-08.md#point-81-audit-1-findings). Point 8.1 remains open.
