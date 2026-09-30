@@ -9,9 +9,9 @@
   - [x] Audit 1 P1: Unmögliche `minimumResponseBytes`-Retry-Werte oberhalb des öffentlichen Maximums behandeln.
   - [x] Audit 1 P2: `startOffset` auf vollständige Zeileneinheiten begrenzen oder verlustfrei kanonisieren.
   - [x] Audit 1 P2: Token-Budget-Vertrag für Fehlerantworten klären und durchsetzen/testen.
-- [ ] 8.2 Standardisiertes Result-Building:
+- [x] 8.2 Standardisiertes Result-Building:
   - [x] `McpToolResults`: Einheitliche Erzeugung von `CallToolResult`, `IsError`-Policy und Statusblöcken
-- [ ] Review/Audit zu 8.2 durchführen; Findings ergänzen und umsetzen (Audit-2-Remediation umgesetzt; finales unabhängiges Audit 3/3 ausstehend).
+- [x] Review/Audit zu 8.2 durchführen; Findings ergänzen und umsetzen (accepted in final independent audit 3/3).
 - [x] Audit 1 P2: Calculate success budget retries from the intended success projection rather than the error status prefix.
 - [x] Audit 1 P2: Preserve required recovery and argument-correction fields when error context is shortened.
 - [x] Audit 1 P2: Apply response budgets to loading/retry results, including their status and next action.
