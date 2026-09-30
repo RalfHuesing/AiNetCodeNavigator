@@ -21,7 +21,10 @@ public enum SymbolKindFilter
     Struct,
     Interface,
     Enum,
+    Delegate,
     Record,
+    RecordClass,
+    RecordStruct,
     Method,
     Property,
     Field,
@@ -53,7 +56,8 @@ public sealed record FindSymbolScanRequest(
     SymbolScopeType ScopeType = SymbolScopeType.All,
     int MaxResults = 50,
     AnalysisSymbolIdentity? AssemblyIdentity = null,
-    AnalysisSymbolIdentity? SourceIdentity = null);
+    AnalysisSymbolIdentity? SourceIdentity = null,
+    bool IncludeGenerated = false);
 
 public sealed record FindSymbolScanResult(
     string Text,

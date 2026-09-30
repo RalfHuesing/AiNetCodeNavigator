@@ -21,6 +21,26 @@
 | `pwsh -File ./scripts/test.ps1` | Passed, 280/280 across both test projects |
 | `git diff --check` | Passed before commit |
 
+## Point 4.1 audit finding fixes
+
+- Base commit: `71c9e5732eac76b4af111887739e163ac3648971`; working tree was clean before this slice.
+- Read-only AiNetLinter MCP inspection covered `SymbolKindClassifier`, `FindSymbolScanner`, `McpScopeClassifier`, `GeneratedCodeDetector`, and the scope classifier tests. The reference separates delegates and record classes/structs from plain classes/structs and filters generated source per location, with generated inclusion disabled by default.
+- **Kind filter gaps fixed.** The previous `struct` filter also returned record structs, and the request vocabulary lacked `delegate`, `record class`, and `record struct`. Added these filters, made plain `struct` exclude record structs, and made the entry kind identify record classes and record structs separately. A regression failed on the original implementation because it returned both a plain struct and a record struct for the `struct` query; new coverage checks delegate and all record query forms.
+- **Generated source contract added.** `FindSymbolScanRequest.IncludeGenerated` defaults to `false`. The scanner filters source locations by project scope and generated status. It recognizes `obj/`, `.g.cs`, `.g.i.cs`, `.generated.cs`, `.designer.cs`, auto-generated headers within the first five lines, and `GeneratedCodeAttribute`. `IncludeGenerated: true` enables those locations under `all`, `production`, or `tests`. A mixed partial declaration retains only its editable location by default and both locations when generated code is requested. Tests exercise path, header, attribute, production/test scopes, and mixed declarations.
+- Updated the current-state Find Symbol page and Cluster 4 implementation checklist. The independent point audit checkbox remains `[ ]`; this fix record is not the independent audit.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| Regression before fix: plain `struct` filter | Failed as expected: also returned a record struct |
+| Focused FindSymbolScanner FastTests after fix | Passed, 11/11 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 271/271 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 283/283 across both test projects |
+| `git diff --check` | Passed before commit |
+
 ## Independent audit 1/3 of point 4.1
 
 - Reviewed commit: `bc1da65c893eb3686b7205e2660950bd016a1c9a` (clean working tree before audit).
