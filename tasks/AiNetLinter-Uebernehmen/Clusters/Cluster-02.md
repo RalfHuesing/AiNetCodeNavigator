@@ -20,4 +20,6 @@
 - [ ] 2.3 Staleness und Ladefehler über echte Solutions absichern:
   - [x] Änderungen an vorhandenen Dateien, neu hinzugefügte/entfernte Dateien sowie geänderte Projekt- und Referenzstruktur in nachfolgenden Navigationsaufrufen korrekt abbilden; Snapshot-/Reload-Verhalten festlegen und testen.
   - [x] Lade- und MSBuild-Fehler mit Ursache und erneuter Versuchsmöglichkeit an den Aufrufer melden; Integrationstest mit realer `.slnx` statt nur in-memory-Workspace.
+  - [ ] Detect newly added C# files matched by project Compile globs outside the project directory and include them in the next snapshot.
+  - [ ] Detect structural changes from custom MSBuild imports, including changed project references, and reload the affected solution.
   - [ ] Review/Audit zu 2.3 durchführen; Findings ergänzen und umsetzen.
