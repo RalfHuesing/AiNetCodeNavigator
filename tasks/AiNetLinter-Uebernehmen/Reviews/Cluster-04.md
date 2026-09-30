@@ -267,3 +267,16 @@ The point 4.4 audit checkbox remains open pending fixes and a follow-up audit. N
 2. **P2 table escaping — closed.** `EscapeTableCell` replaces CRLF, CR, and LF with spaces and escapes pipe characters for dynamic row values. New tests inspect an `operator |` signature, a constant string containing `|`, the retained handoff, row delimiter counts, and CRLF normalization in a synthetic payload.
 
 No open finding remains for point 4.4. The audit checkbox is complete after two audits. No product code or external repository was changed in this audit.
+
+## Independent audit 1/3 of point 4.5
+
+- Reviewed commit: `6b1d71574985a25b564c907bd7590cd6e91a8310` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Read-only comparison: AiNetLinter `TestDetector` path and project classification plus the reference test-context boundary; inspected local `TestDetector`, `TestRecommendationBuilder`, models, FastTests, and current-state page. The implementation slice's gate results are recorded above. This audit did not run a build or tests.
+- Local tests substantiate xUnit/NUnit/MSTest attribution across separate projects, negative ordinary-name and Moq-only reference cases, `Unknown` for a name-only candidate, null builder arguments, and a basic production-to-test fixture match. Recommendations are explicitly static heuristic candidates. The equal-class-name multi-project loss in `TestRecommendationBuilder` is already the subject of point 4.8 and is left to that point's dedicated implementation and audit.
+
+### Open finding
+
+1. **P2 — Relative root test directories are missed by file classification.** `TestDetector.IsTestFile` (`TestDetector.cs:108-130`) checks suffixes and embedded segments such as `/tests/`, but not a relative path beginning `tests/` or `test/`. Thus `tests/Helpers.cs` and `test/Helpers.cs` return false while `src/tests/Helpers.cs` returns true. AiNetLinter's `IsTestFile` checks `TestPathPrefixes` for both root forms before suffixes and segments. The local path test (`TestDetectorTests.cs:17-31`) covers only the embedded form. This can also misclassify source locations passed as relative paths by scope consumers. **Acceptance:** recognize those two relative root prefixes without accepting ordinary filenames like `Contest.cs`, and test `IsTestFile` plus at least one consumer path/scope behavior using a root-relative test file.
+
+The point 4.5 audit checkbox remains open pending the focused fix and follow-up audit. No product code or external repository was changed in this audit.
