@@ -71,7 +71,8 @@ public static class SymbolNameMatcher
     public static async Task<IReadOnlyList<string>> FindSimilarSymbolNamesAsync(
         Solution solution,
         string rawPattern,
-        CancellationToken ct)
+        CancellationToken ct,
+        Func<ISymbol, bool>? includeSymbol = null)
     {
         var clean = CleanPattern(rawPattern).Trim('*', '?');
         var words = Regex.Matches(clean, @"[A-Z][a-z0-9]+|[a-z0-9]+", RegexOptions.None, TimeSpan.FromMilliseconds(100))
@@ -94,6 +95,7 @@ public static class SymbolNameMatcher
 
             foreach (var sym in symbols)
             {
+                if (includeSymbol is not null && !includeSymbol(sym)) continue;
                 candidates.Add(sym.Name);
                 if (candidates.Count >= MaxSuggestions) break;
             }

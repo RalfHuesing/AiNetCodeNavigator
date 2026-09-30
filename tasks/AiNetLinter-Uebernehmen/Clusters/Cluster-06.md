@@ -35,5 +35,5 @@
 - [x] Keep namespace results within the C# coverage declared by index scope when a solution contains another Roslyn project language.
 - [x] Align generated-source visibility across namespace discovery and default symbol navigation; document the opt-in behavior.
 - [x] Normalize project-name filters consistently between namespace tree and index scope.
-- [ ] Keep `find_symbol` follow-up within the C# project coverage reported by index scope and namespace tree in mixed-language solutions.
+- [x] Keep `find_symbol` follow-up within the C# project coverage reported by index scope and namespace tree in mixed-language solutions.
 - [ ] Complete the independent Cluster 6 integration review after these findings are addressed.

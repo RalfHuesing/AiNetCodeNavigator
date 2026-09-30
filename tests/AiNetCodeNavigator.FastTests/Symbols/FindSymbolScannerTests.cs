@@ -4,10 +4,13 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using AiNetCodeNavigator.Core.FileStructure;
 using AiNetCodeNavigator.Core.Workspace;
 using AiNetCodeNavigator.TestKit.Builders;
 using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.TestKit.Fixtures;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Text;
 using Xunit;
 
 namespace AiNetCodeNavigator.FastTests.Symbols;
@@ -405,6 +408,49 @@ public sealed class FindSymbolScannerTests
         var includedMixedEntry = Assert.Single(includedMixed.Entries);
         Assert.Equal(2, includedMixedEntry.Locations!.Count);
         Assert.Contains(includedMixedEntry.Locations, location => location.FilePath.EndsWith("Mixed.g.cs", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task FindMatchesWithDetailsAsync_RestrictsMixedLanguageSolutionsToCSharp()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\MixedLanguages.slnx",
+            new ProjectSpec("App", [
+                ("CSharpSource.cs", "namespace CSharpOnly; public class CSharpType {}"),
+                ("GeneratedSource.g.cs", "namespace GeneratedOnly; public class GeneratedType {}") ]));
+        var legacyProjectId = ProjectId.CreateNewId("Legacy");
+        var legacyProject = fixture.Solution.AddProject(ProjectInfo.Create(
+            legacyProjectId,
+            VersionStamp.Create(),
+            "Legacy",
+            "Legacy",
+            LanguageNames.VisualBasic));
+        var solution = legacyProject.AddDocument(
+            DocumentId.CreateNewId(legacyProjectId),
+            "Legacy.vb",
+            SourceText.From("Namespace LegacyOnly\n Public Class LegacyType\n End Class\nEnd Namespace"));
+
+        var legacy = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(solution, "LegacyType"));
+        var legacyTypo = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(solution, "LegacyTypo"));
+        var csharp = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(solution, "CSharpType"));
+        var generatedDefault = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(solution, "GeneratedType"));
+        var generatedIncluded = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(solution, "GeneratedType", IncludeGenerated: true));
+        var indexScope = await IndexScopeScanner.ScanAsync(solution);
+        var namespaceTree = await NamespaceTreeScanner.ScanSolutionAsync(solution);
+
+        Assert.Empty(legacy.Entries);
+        Assert.DoesNotContain("LegacyType", legacyTypo.Text);
+        Assert.Equal("App", Assert.Single(csharp.Entries).ProjectName);
+        Assert.Empty(generatedDefault.Entries);
+        Assert.Equal("App", Assert.Single(generatedIncluded.Entries).ProjectName);
+        Assert.False(Assert.Single(indexScope.Projects, project => project.Name == "Legacy").IsCSharpProject);
+        Assert.DoesNotContain(namespaceTree.RootNamespaces, node => node.Name == "LegacyOnly");
+        Assert.Contains(namespaceTree.RootNamespaces, node => node.Name == "CSharpOnly");
     }
 
     [Fact]

@@ -192,3 +192,21 @@
 - **Project-name normalization — accepted.** `NamespaceTreeScanner.cs:36-39,56` trims the requested name and uses the canonical selected name, matching `IndexScopeScanner.cs:31-48`. `NamespaceTreeScannerTests.cs:166-181` compares a padded project request across both scanners.
 - **New P2 — Symbol follow-up lacks the same C# language boundary.** `FindSymbolScanner.cs:53-59` sends the entire Roslyn solution to `SymbolFinder.FindSourceDeclarationsAsync`; its location filter at lines 165-191 checks scope and generated status but never `document.Project.Language`. `IndexScopeScanner.cs:64-90,109-114` marks non-C# project documents as outside C# symbol coverage, and the namespace scanner now skips those projects. Consequently the C#-only follow-up behavior for a mixed-language solution is not enforced by the symbol scanner and has no mixed-language regression test. Acceptance: restrict source declaration results to C# projects before producing symbol entries or a clear unsupported-language outcome, and test a mixed-language solution across index scope, namespace tree, and `find_symbol` (including direct symbol searches). Preserve generated-source opt-in behavior.
 - The original three findings are closed. This new integration finding is open in `Findings.md` and the cluster checklist; the cluster review remains open for fix round 2. No point audit was reopened.
+
+## Cluster 6 integration fix round 2
+
+- Starting commit: `ff27671bdb5bdb047c5ab2a935b8b7fb8bee7cb6`, clean working tree. This pass addresses only the mixed-language `find_symbol` integration finding. It does not repeat point audits or the independent Cluster 6 integration review.
+- Before-fix direct `find_symbol` repro: the focused mixed-language test was run with a C# project and a real Visual Basic workspace project. It returned a `LegacyType` result from the Visual Basic project. The test-only `Microsoft.CodeAnalysis.VisualBasic.Workspaces` reference is pinned to the repository's Roslyn 5.9.0 version because the existing test workspace otherwise lacked a Visual Basic language service and the first mixed-language fixture could not expose VB declarations.
+- `FindSymbolScanner` now filters matched source declarations by their owning project's language before name/kind selection and again filters each collected location to C# as a boundary check. Similar-name suggestions also filter to C# source declarations. Generated-document filtering remains applied per location, and the `IncludeGenerated` option is unchanged.
+- The mixed-language FastTest directly queries the VB-only type and verifies no result, then verifies C# results remain visible. It also checks generated source remains hidden by default and appears with `IncludeGenerated=true`, compares results with IndexScope/NamespaceTree, and checks VB names do not leak through miss suggestions. Updated `docs/navigation/find-symbol.md`; the `find_symbol` Cluster 6 checklist item is complete. The independent integration review remains open.
+
+### Fix round 2 verification
+
+| Gate | Result |
+|---|---|
+| Before-fix mixed-language direct search | Failed as expected: returned `LegacyType` from Visual Basic project |
+| Focused `FindSymbolScannerTests` after fix | Passed, 20/20 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 417/417 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 429/429 across both test projects |
