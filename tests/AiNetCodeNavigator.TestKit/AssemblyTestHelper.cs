@@ -1,6 +1,7 @@
 #nullable enable
 
 using System;
+using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -54,7 +55,9 @@ public static class AssemblyTestHelper
 
         var outputPath = temp.GetPath($"{name}.{extension}");
         var references = TestWorkspaceBuilder.CoreReferences
-            .Concat(additionalReferences.Select(path => MetadataReference.CreateFromFile(path)))
+            .Concat(additionalReferences.Select(path => MetadataReference.CreateFromImage(
+                ImmutableArray.CreateRange(File.ReadAllBytes(path)),
+                filePath: path)))
             .ToArray();
         var compilation = CSharpCompilation.Create(
             name,

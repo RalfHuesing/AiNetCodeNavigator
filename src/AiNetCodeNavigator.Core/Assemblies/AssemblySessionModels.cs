@@ -408,6 +408,7 @@ internal sealed record AssemblySessionGeneration(
     DecompiledProjectPaths? DecompiledProjectPaths = null)
 {
     internal int ActiveLeaseCount { get; set; }
+    internal string ReferenceSnapshotHash { get; init; } = string.Empty;
 }
 
 internal sealed record AssemblySessionState(

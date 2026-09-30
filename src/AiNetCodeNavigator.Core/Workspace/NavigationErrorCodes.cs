@@ -13,6 +13,7 @@ public static class NavigationErrorCodes
     public const string SymbolNotFound = "SYMBOL_NOT_FOUND";
     public const string AmbiguousSymbol = "AMBIGUOUS_SYMBOL";
     public const string AssemblyTargetUnsupported = "ASSEMBLY_TARGET_UNSUPPORTED";
+    public const string AssemblySessionLimit = "ASSEMBLY_SESSION_LIMIT";
     public const string ProjectTargetUnsupported = "PROJECT_TARGET_UNSUPPORTED";
     public const string InvalidAssembly = "INVALID_ASSEMBLY";
     public const string TargetUnreadable = "TARGET_UNREADABLE";

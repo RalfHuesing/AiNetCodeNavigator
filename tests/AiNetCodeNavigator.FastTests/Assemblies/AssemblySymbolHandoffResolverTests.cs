@@ -90,6 +90,69 @@ public sealed class AssemblySymbolHandoffResolverTests
     }
 
     [Fact]
+    public async Task InspectAndOldHandoffs_FailAfterResidentTargetBecomesInvalid()
+    {
+        using var temp = TestTempDirectory.Create("assembly-handoff-invalid-replacement-");
+        var path = AssemblyTestHelper.EmitAssembly(temp, "InvalidReplacement", "public sealed class OriginalApi { }");
+        var first = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(path));
+        Assert.True(first.IsSuccess, first.Error?.ToString());
+        var oldType = Assert.Single(first.Value!.Types);
+        var oldHandle = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(oldType.Id!);
+
+        File.WriteAllBytes(path, [0, 1, 2, 3, 4, 5]);
+        var reinspection = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(path));
+        var oldHandoff = await AssemblySymbolBodyScanner.GetAsync(oldHandle);
+
+        Assert.False(reinspection.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.InvalidAssembly, reinspection.Error!.Value.Code);
+        Assert.Null(reinspection.Value);
+        Assert.NotNull(oldHandoff.Error);
+        Assert.Equal(NavigationErrorCodes.InvalidAssembly, oldHandoff.Error!.Value.Code);
+        Assert.NotEqual("OriginalApi", oldHandoff.Body?.Body);
+    }
+
+    [Fact]
+    public async Task ResidentSession_RefreshesRemovedAndReplacedReferencesWithoutTargetChanges()
+    {
+        using var temp = TestTempDirectory.Create("assembly-reference-refresh-");
+        var dependency = AssemblyTestHelper.EmitAssembly(temp, "RefreshDependency", "namespace Probe.Dependency; public sealed class Dependency { public int Version => 1; }");
+        var consumer = AssemblyTestHelper.EmitAssembly(temp, "RefreshConsumer", "public sealed class Consumer { public Probe.Dependency.Dependency? Value; }", dependency);
+
+        var initial = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(consumer));
+        Assert.True(initial.IsSuccess, initial.Error?.ToString());
+        var initialGeneration = initial.Value!.Generation;
+        var consumerType = Assert.Single(initial.Value.Types);
+        var handoff = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(consumerType.Id!);
+        var originalBytes = await File.ReadAllBytesAsync(consumer);
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        File.Delete(dependency);
+        var missing = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(consumer));
+        Assert.True(missing.IsSuccess, missing.Error?.ToString());
+        Assert.True(missing.Value!.Generation > initialGeneration);
+        Assert.Contains(missing.Value.Diagnostics, diagnostic => diagnostic.Contains("Dependency not resolvable", StringComparison.Ordinal));
+        var bodyWithMissingReference = await AssemblySymbolBodyScanner.GetAsync(handoff);
+        Assert.Null(bodyWithMissingReference.Error);
+        Assert.Equal(handoff, bodyWithMissingReference.Body!.HandoffId);
+        Assert.Contains("Consumer", bodyWithMissingReference.Body.Body, StringComparison.Ordinal);
+
+        using var replacementTemp = TestTempDirectory.Create("assembly-reference-replacement-");
+        var replacement = AssemblyTestHelper.EmitAssembly(replacementTemp, "RefreshDependency", "namespace Probe.Dependency; public sealed class Dependency { public int Version => 2; public int Added => 3; }");
+        File.Copy(replacement, dependency, overwrite: true);
+        var restored = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(consumer));
+
+        Assert.True(restored.IsSuccess, restored.Error?.ToString());
+        Assert.True(restored.Value!.Generation > missing.Value.Generation);
+        Assert.DoesNotContain(restored.Value.Diagnostics, diagnostic => diagnostic.Contains("Dependency not resolvable", StringComparison.Ordinal));
+        var bodyWithReplacementReference = await AssemblySymbolBodyScanner.GetAsync(handoff);
+        Assert.Null(bodyWithReplacementReference.Error);
+        Assert.Equal(handoff, bodyWithReplacementReference.Body!.HandoffId);
+        Assert.Contains("Consumer", bodyWithReplacementReference.Body.Body, StringComparison.Ordinal);
+        Assert.Equal(originalBytes, await File.ReadAllBytesAsync(consumer));
+    }
+
+    [Fact]
     public async Task HandoffResolver_AllowsSymbolsWhenReferencesAreMissing()
     {
         using var temp = TestTempDirectory.Create("assembly-handoff-missing-reference-");
@@ -126,5 +189,47 @@ public sealed class AssemblySymbolHandoffResolverTests
 
         Assert.False(expired.IsSuccess);
         Assert.Equal(NavigationErrorCodes.TargetMismatch, expired.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task SessionRegistry_RejectsThirtyThirdTargetWhenThirtyTwoLeasesAreActive()
+    {
+        using var temp = TestTempDirectory.Create("assembly-session-capacity-");
+        var template = AssemblyTestHelper.EmitAssembly(temp, "CapacityTarget", "public sealed class Target { }");
+        await using var registry = new AssemblyAnalysisSessionRegistry();
+        var leases = new System.Collections.Generic.List<AssemblyAnalysisSessionRegistry.AssemblySessionAccess>();
+        AssemblyAnalysisSessionRegistry.AssemblySessionAccess? overflowLease = null;
+
+        try
+        {
+            for (var index = 0; index < AssemblyAnalysisSessionRegistry.MaxResidentSessions; index++)
+            {
+                var path = temp.GetPath($"target-{index:D2}.dll");
+                File.Copy(template, path);
+                var acquired = await registry.AcquireAsync(path, default);
+                Assert.True(acquired.IsSuccess, acquired.Error?.ToString());
+                leases.Add(acquired.Value!);
+            }
+
+            var overflowPath = temp.GetPath("target-overflow.dll");
+            File.Copy(template, overflowPath);
+            var overflow = await registry.AcquireAsync(overflowPath, default);
+            overflowLease = overflow.Value;
+
+            Assert.False(overflow.IsSuccess);
+            Assert.Equal("ASSEMBLY_SESSION_LIMIT", overflow.Error!.Value.Code);
+            Assert.Contains(AssemblyAnalysisSessionRegistry.MaxResidentSessions.ToString(), overflow.Error.Value.Message, StringComparison.Ordinal);
+
+            await leases[0].DisposeAsync();
+            leases.RemoveAt(0);
+            var retried = await registry.AcquireAsync(overflowPath, default);
+            Assert.True(retried.IsSuccess, retried.Error?.ToString());
+            overflowLease = retried.Value;
+        }
+        finally
+        {
+            if (overflowLease is not null) await overflowLease.DisposeAsync();
+            foreach (var lease in leases) await lease.DisposeAsync();
+        }
     }
 }

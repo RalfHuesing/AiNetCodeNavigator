@@ -150,15 +150,6 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
                 AssemblyDiagnosticSeverity.Error));
         }
 
-        if (TryReuseCurrent(fingerprint, out var reused)) return reused;
-        return await RefreshGenerationAsync(fingerprint, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task<AssemblySessionRefreshResult> RefreshGenerationAsync(
-        AssemblyFingerprint fingerprint,
-        CancellationToken cancellationToken)
-    {
-        var key = AssemblyFingerprintCalculator.CreateCacheKey(fingerprint, decompilationOptions);
         var references = referenceResolver.Resolve(fingerprint.CanonicalPath);
         if (references.Identity is null)
         {
@@ -176,6 +167,19 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
                             AssemblyDiagnosticSeverity.Error)));
         }
 
+        var referenceSnapshotHash = AssemblyReferenceSnapshotFingerprint.Create(references);
+        if (TryReuseCurrent(fingerprint, referenceSnapshotHash, out var reused)) return reused;
+        return await RefreshGenerationAsync(fingerprint, references, referenceSnapshotHash, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<AssemblySessionRefreshResult> RefreshGenerationAsync(
+        AssemblyFingerprint fingerprint,
+        AssemblyReferenceResolution references,
+        string referenceSnapshotHash,
+        CancellationToken cancellationToken)
+    {
+        var key = AssemblyFingerprintCalculator.CreateCacheKey(fingerprint, decompilationOptions);
+
         if (TryReadCache(key, fingerprint, references, out var cached, out var cacheDiagnostics) && cached is not null)
         {
             var status = ResolveManifestStatus(cached.Manifest.Status.Status, references.Diagnostics, ManifestDiagnostics(cached.Manifest));
@@ -187,17 +191,19 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
                     cached.Documents,
                     status,
                     CombineDiagnostics(references.Diagnostics, ManifestDiagnostics(cached.Manifest)),
+                    referenceSnapshotHash,
                     ProjectFilePath: cached.ProjectFilePath),
                 cancellationToken).ConfigureAwait(false);
         }
 
-        return await BuildFreshGenerationAsync(fingerprint, key, references, cacheDiagnostics, cancellationToken).ConfigureAwait(false);
+        return await BuildFreshGenerationAsync(fingerprint, key, references, referenceSnapshotHash, cacheDiagnostics, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<AssemblySessionRefreshResult> BuildFreshGenerationAsync(
         AssemblyFingerprint fingerprint,
         AssemblyDecompilationCacheKey key,
         AssemblyReferenceResolution references,
+        string referenceSnapshotHash,
         IReadOnlyList<AssemblySessionDiagnostic> cacheDiagnostics,
         CancellationToken cancellationToken)
     {
@@ -222,6 +228,7 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
                     decompilation.Documents,
                     status,
                     diagnostics,
+                    referenceSnapshotHash,
                     new AssemblyCachePublishRequest(fingerprint, key, decompilationOptions, references, decompilation, status, stagingDirectory),
                     decompilation.ProjectFilePath),
                 cancellationToken).ConfigureAwait(false);
@@ -282,7 +289,10 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
             request.References.References,
             CombineDiagnostics(request.Diagnostics, snapshotResult.Diagnostics),
             CreateGenerationOrigin(request.Fingerprint, request.Documents, finalStatus),
-            DecompiledProjectPaths.Create(request.ProjectFilePath, request.Documents));
+            DecompiledProjectPaths.Create(request.ProjectFilePath, request.Documents))
+        {
+            ReferenceSnapshotHash = request.ReferenceSnapshotHash,
+        };
 
         return InstallGeneration(generation);
     }
@@ -416,11 +426,13 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
         return false;
     }
 
-    private bool TryReuseCurrent(AssemblyFingerprint fingerprint, out AssemblySessionRefreshResult result)
+    private bool TryReuseCurrent(AssemblyFingerprint fingerprint, string referenceSnapshotHash, out AssemblySessionRefreshResult result)
     {
         lock (gate)
         {
-            if (current is null || !string.Equals(current.Fingerprint.Sha256, fingerprint.Sha256, StringComparison.OrdinalIgnoreCase))
+            if (current is null
+                || !string.Equals(current.Fingerprint.Sha256, fingerprint.Sha256, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(current.ReferenceSnapshotHash, referenceSnapshotHash, StringComparison.OrdinalIgnoreCase))
             {
                 result = null!;
                 return false;
@@ -543,6 +555,7 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
         IReadOnlyList<DecompiledDocument> Documents,
         AssemblySessionStatus Status,
         IReadOnlyList<AssemblySessionDiagnostic> Diagnostics,
+        string ReferenceSnapshotHash,
         AssemblyCachePublishRequest? PublishRequest = null,
         string? ProjectFilePath = null);
 }

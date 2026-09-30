@@ -17,7 +17,7 @@ namespace AiNetCodeNavigator.Core.Assemblies;
 internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
 {
     private static readonly TimeSpan IdleLifetime = TimeSpan.FromMinutes(10);
-    private const int MaxResidentSessions = 32;
+    internal const int MaxResidentSessions = 32;
     private static readonly Lazy<AssemblyAnalysisSessionRegistry> DefaultRegistry = new(() => new());
 
     private readonly object gate = new();
@@ -31,6 +31,7 @@ internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
         var fullPath = Path.GetFullPath(assemblyPath);
         Entry entry;
         List<Entry> retired;
+        var capacityExceeded = false;
         lock (gate)
         {
             retired = RetireIdleSessions(DateTime.UtcNow);
@@ -47,15 +48,34 @@ internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
                     retired.Add(oldest);
                 }
 
-                entry = new Entry(fullPath, new AssemblyAnalysisSession(fullPath));
-                sessions.Add(fullPath, entry);
+                if (sessions.Count >= MaxResidentSessions)
+                {
+                    entry = null!;
+                    capacityExceeded = true;
+                }
+                else
+                {
+                    entry = new Entry(fullPath, new AssemblyAnalysisSession(fullPath));
+                    sessions.Add(fullPath, entry);
+                }
             }
 
-            entry.ActiveAccesses++;
-            entry.LastAccessUtc = DateTime.UtcNow;
+            if (!capacityExceeded)
+            {
+                entry.ActiveAccesses++;
+                entry.LastAccessUtc = DateTime.UtcNow;
+            }
         }
 
         await DisposeEntriesAsync(retired).ConfigureAwait(false);
+        if (capacityExceeded)
+        {
+            return Result<AssemblySessionAccess>.Failure(
+                NavigationErrorCodes.AssemblySessionLimit,
+                $"All {MaxResidentSessions} assembly session slots are active.",
+                "Retry after an active assembly navigation operation completes.");
+        }
+
         AssemblySessionRefreshResult refresh;
         try
         {
@@ -66,7 +86,8 @@ internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
             Release(entry);
             throw;
         }
-        if (entry.Session.CurrentGeneration is null || refresh.Status == AssemblySessionStatus.Failed)
+        if (entry.Session.CurrentGeneration is null
+            || refresh.Status is AssemblySessionStatus.Failed or AssemblySessionStatus.Degraded)
         {
             Release(entry);
             var message = refresh.Diagnostics.Count == 0
