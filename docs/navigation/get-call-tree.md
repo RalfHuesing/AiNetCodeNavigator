@@ -4,7 +4,7 @@ The Core call tree engine builds a bounded graph around a Roslyn symbol. Incomin
 
 `RequestedDepth` is clamped to 1–5. `TopN` is clamped to at least one edge per expanded symbol; in `Both` mode the incoming groups are considered first, then outgoing groups use the remaining budget. The builder stops at 250 distinct nodes. `Truncated` is true when known edges were omitted or queued nodes remain unexpanded. `HiddenEdgeCount` counts only discovered groups omitted by `TopN` or the hard node cap; `PendingNodeCount` counts queued nodes whose outgoing or incoming relationships were not scanned. Reaching exactly 250 fully expanded terminal nodes does not by itself mark the graph truncated. Symbols are deduplicated with Roslyn symbol equality, call sites for the same edge are combined, and node IDs are local `n1`, `n2`, ... labels.
 
-Outgoing metadata targets are retained by default unless they resolve to BCL assemblies or namespaces. Set `IncludeBcl` to include those framework targets too.
+Outgoing source targets are always retained, including targets in `System` or other framework-named namespaces. Metadata targets are retained by default unless they resolve to BCL assemblies or namespaces. Set `IncludeBcl` to include those framework targets too.
 
 Source-backed nodes carry opaque `h:` handoff IDs when a canonical source identity can be produced. ASCII output lists graph edges, handoffs, known omitted edges, and pending expansions; Mermaid output uses the same nodes and edges, places handoffs in comments, and annotates pending expansions. Mermaid labels replace quotes and line breaks so symbol names and paths do not break the flowchart syntax.
 

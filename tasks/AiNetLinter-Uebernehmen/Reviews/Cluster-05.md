@@ -73,3 +73,22 @@
 
 - Inspected only committed source/tests and the AiNetLinter read-only reference; no production files were changed.
 - The documentation diff was inspected and `git diff --check` passed before commit.
+
+## Point 5.1 audit 2 finding fix
+
+- Fix base: `eb60637f2ef5b0ce52fa59c2d35458ee81e4b1e9`; the working tree was clean before this slice.
+- The new reproduction initially failed: a source-backed call to `System.Local.Api.Call()` produced no outgoing callee node because the namespace-only BCL heuristic filtered it.
+- Outgoing target filtering now checks whether a symbol is external before applying the BCL assembly/namespace rules. All source-backed targets remain visible; external BCL targets remain opt-in, and non-BCL metadata targets remain visible by default. The existing metadata/BCL test continues to cover both `IncludeBcl` values.
+- Updated [Call Tree Core Engine](../../../docs/navigation/get-call-tree.md) to state that source-backed symbols in framework-named namespaces remain visible. The independent follow-up review is the third and final point audit; the 5.1 checkbox remains `[ ]` until that review is complete.
+
+### Audit 2 fix verification
+
+| Gate | Result |
+|---|---|
+| Source-backed `System` namespace reproduction before fix | Failed as expected: outgoing node omitted |
+| Focused CallTree FastTests after fix | Passed, 14/14 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 342/342 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 354/354 across both test projects |
+| `git diff --check` | Passed before commit |

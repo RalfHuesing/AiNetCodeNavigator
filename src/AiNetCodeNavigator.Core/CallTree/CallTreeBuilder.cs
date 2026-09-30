@@ -169,7 +169,8 @@ public static class CallTreeBuilder
             {
                 if (target is null) return;
 
-                if (!state.IncludeBcl && IsBclSymbol(target)) return;
+                var isExternal = !target.Locations.Any(location => location.IsInSource);
+                if (!state.IncludeBcl && isExternal && IsBclSymbol(target)) return;
 
                 var lineSpan = callSite.GetLocation().GetLineSpan();
                 var relPath = PathNormalizer.ToRelative(state.SolutionDir, lineSpan.Path);

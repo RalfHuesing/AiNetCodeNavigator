@@ -203,6 +203,31 @@ public sealed class CallTreeTests
     }
 
     [Fact]
+    public async Task BuildGraphAsync_OutgoingCalls_RetainsSourceSymbolsInFrameworkNamedNamespaces()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution("""
+            namespace System.Local
+            {
+                public static class Api { public static void Call() { } }
+            }
+            namespace Calls
+            {
+                public sealed class Caller { public void Run() { System.Local.Api.Call(); } }
+            }
+            """);
+        var compilation = await fixture.Solution.Projects.Single().GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var caller = compilation.GetTypeByMetadataName("Calls.Caller");
+        Assert.NotNull(caller);
+        var run = caller.GetMembers("Run").OfType<IMethodSymbol>().Single();
+
+        var graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
+            fixture.Solution, run, Direction: CallTreeDirection.Outgoing));
+
+        Assert.Contains(graph.Nodes, node => node.Name == "Api.Call");
+    }
+
+    [Fact]
     public async Task BuildGraphAsync_BothDirection_TopNLimitsCombinedIncidentEdges()
     {
         using var fixture = TestWorkspaceBuilder.CreateSolution("""
