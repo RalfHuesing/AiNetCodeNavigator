@@ -14,9 +14,9 @@
   - [x] `HandoffCounterAlphabet` & `HandoffCounterStore`: Kompakte ID-Generierung (`h:...`)
   - [x] `HandoffHandleRegistry` & `SymbolHandoffIdentifier`: Bidirektionale Zuordnung von Token zu Symbol/Speicherort
   - [x] FastTests für Handoff-Erzeugung, Token-Auflösung und Thread-Sicherheit
-  - [ ] Neu ausgegebene Handles bei parallelem Zugriff sofort rückwärts auflösen können.
-  - [ ] Formatierung öffentlich konstruierter Identifier gegen ungültige Tokens und DocIDs absichern.
-  - [ ] Review/Audit zu 3.2 durchführen; Findings ergänzen und umsetzen.
+  - [x] Neu ausgegebene Handles bei parallelem Zugriff sofort rückwärts auflösen können.
+  - [x] Formatierung öffentlich konstruierter Identifier gegen ungültige Tokens und DocIDs absichern.
+  - [x] Review/Audit zu 3.2 durchführen; Findings ergänzen und umsetzen.
 - [ ] 3.3 Handoff-Vertrag über Producer und Consumer schließen:
   - [ ] Alle ausgegebenen `h:...`-IDs aus Source- und Assembly-Tools auf dieselbe kanonische, ziel- und snapshotgebundene Identität zurückführen; rohe DocumentationCommentIds nicht als scheinbar gültige Handoffs ausgeben.
   - [ ] Roundtrip-Tests von `find_symbol`, `get_file_skeleton` und `inspect_assembly` zu den jeweils erlaubten Folge-Tools ergänzen; unbekannte, fremde und nach Änderung veraltete Handles als typisierte Fehler behandeln.

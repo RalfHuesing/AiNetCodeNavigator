@@ -137,3 +137,10 @@ A later FastTests rerun transiently failed in the unrelated `HandoffHandleRegist
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 268/268 across both test projects |
 | `git diff --check` | Passed before commit |
+
+### Independent audit 2/3 of point 3.2
+
+- Reviewed commit: `4fb74a35d581e39f408f823293630bed100e5201` (clean working tree before review). Scope was limited to audit 1's registry-publication and identifier-format findings and their regression tests. This audit inspected code and tests; it did not run a build or tests. The preceding fix-verification table records the implementer's runs.
+- **P1 resolved.** Both mapping dictionaries are now read and written under `syncLock` (`src/AiNetCodeNavigator.Core/Symbols/HandoffHandleRegistry.cs:19-21`, `:36-45`, `:59-102`, `:139-146`). A successful `GetOrCreateOpaqueHandleForOutput` cannot expose a forward mapping before the reverse mapping to another registry call. The test restores each returned handle during concurrent creation and checks the resolved internal ID and final count (`tests/AiNetCodeNavigator.FastTests/Symbols/HandoffHandleRegistryTests.cs:143-164`). Its scheduling is nondeterministic, but the shared-lock code establishes the publication guarantee.
+- **P2 resolved.** `SymbolHandoffIdentifier.Format` now checks origin, both tokens, and DocumentationCommentId before formatting (`src/AiNetCodeNavigator.Core/Symbols/SymbolHandoffIdentifier.cs:31-47`). New tests reject malformed direct-constructor values and check a valid format/parse value roundtrip (`tests/AiNetCodeNavigator.FastTests/Symbols/SymbolHandoffIdentifierTests.cs:12-34`, `:66-85`).
+- No point 3.2 finding remains open. The audit checkbox is closed after two audits. Producer/consumer composition and stale-snapshot behavior remain point 3.3 and were not audited here.
