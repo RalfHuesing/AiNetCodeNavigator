@@ -7,6 +7,8 @@
 - [x] 3.1 Symbol-Identität (`AiNetCodeNavigator.Core.Symbols`):
   - [x] `AnalysisSymbolIdentity`: Normalisierung von `ISymbol` zu kanonischen Identifikatoren (Doc-Comment-ID, File/Line)
   - [x] FastTests für Symbol-Identitätsabbildung
+  - [ ] Gleichpfadige Projekte mit verschiedenen Referenzen sicher disambiguieren oder mehrdeutige Handoffs unterdrücken.
+  - [ ] Bei Pfadvarianten-Tests echte Source- und Assembly-Handoffs vor dem Vergleich nachweisen.
   - [ ] Review/Audit zu 3.1 durchführen; Findings ergänzen und umsetzen.
 - [x] 3.2 Handoff-Tokensystem (`AiNetCodeNavigator.Core.Models` / `Symbols`):
   - [x] `HandoffCounterAlphabet` & `HandoffCounterStore`: Kompakte ID-Generierung (`h:...`)
