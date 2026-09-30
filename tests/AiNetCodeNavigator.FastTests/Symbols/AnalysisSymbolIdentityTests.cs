@@ -5,8 +5,10 @@ using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.TestKit.Builders;
 using AiNetCodeNavigator.TestKit.Fixtures;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Text;
 using Xunit;
 
 namespace AiNetCodeNavigator.FastTests.Symbols;
@@ -67,6 +69,92 @@ public sealed class AnalysisSymbolIdentityTests
         Assert.NotEqual(firstId, secondId);
         Assert.Contains("~p:", firstId, System.StringComparison.Ordinal);
         Assert.Contains("~p:", secondId, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FormatHandoff_SameProjectPathAndDocumentationId_DistinguishesTargetFrameworksStably()
+    {
+        using var firstSnapshot = CreateMultiTargetSolution();
+        using var reloadedSnapshot = CreateMultiTargetSolution();
+        var firstIdentity = AnalysisSymbolIdentity.ForSource(
+            @"C:\VirtualRepo\Multi.slnx",
+            new string('e', 64),
+            firstSnapshot.Solution);
+        var reloadedIdentity = AnalysisSymbolIdentity.ForSource(
+            @"C:\VirtualRepo\Multi.slnx",
+            new string('e', 64),
+            reloadedSnapshot.Solution);
+
+        var firstIds = await GetMultiTargetHandoffsAsync(firstSnapshot.Solution, firstIdentity);
+        var reloadedIds = await GetMultiTargetHandoffsAsync(reloadedSnapshot.Solution, reloadedIdentity);
+
+        Assert.Equal(firstIds[0].DocumentationId, firstIds[1].DocumentationId);
+        Assert.NotEqual(firstIds[0].Handoff, firstIds[1].Handoff);
+        Assert.Equal(firstIds, reloadedIds);
+    }
+
+    [Fact]
+    public Task FormatHandoff_CaseVariantSourceTargetPaths_UseTheSameHandoffId() =>
+        AssertCaseVariantTargetPathsAsync(SymbolHandoffOrigin.Source);
+
+    [Fact]
+    public Task FormatHandoff_CaseVariantAssemblyTargetPaths_UseTheSameHandoffId() =>
+        AssertCaseVariantTargetPathsAsync(SymbolHandoffOrigin.Assembly);
+
+    private static async Task AssertCaseVariantTargetPathsAsync(SymbolHandoffOrigin origin)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var project = fixture.Solution.Projects.Single(p => p.Name == "Sample.Core");
+        var compilation = await project.GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var symbol = Assert.IsAssignableFrom<ISymbol>(compilation.GetTypeByMetadataName("SampleNamespace.Greeter"));
+        const string contentHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+        var mixedCasePath = origin == SymbolHandoffOrigin.Source
+            ? @"C:\VirtualRepo\SampleSolution.slnx"
+            : @"C:\VirtualRepo\Sample.dll";
+        var lowerCasePath = origin == SymbolHandoffOrigin.Source
+            ? @"c:\virtualrepo\samplesolution.slnx"
+            : @"c:\virtualrepo\sample.dll";
+        var mixedCaseIdentity = origin == SymbolHandoffOrigin.Source
+            ? AnalysisSymbolIdentity.ForSource(mixedCasePath, contentHash, fixture.Solution)
+            : AnalysisSymbolIdentity.ForAssembly(mixedCasePath, contentHash);
+        var lowerCaseIdentity = origin == SymbolHandoffOrigin.Source
+            ? AnalysisSymbolIdentity.ForSource(lowerCasePath, contentHash, fixture.Solution)
+            : AnalysisSymbolIdentity.ForAssembly(lowerCasePath, contentHash);
+        var mixedCaseHandoff = origin == SymbolHandoffOrigin.Source
+            ? mixedCaseIdentity.FormatHandoff(symbol, fixture.Solution)
+            : mixedCaseIdentity.FormatHandoff(symbol);
+        var lowerCaseHandoff = origin == SymbolHandoffOrigin.Source
+            ? lowerCaseIdentity.FormatHandoff(symbol, fixture.Solution)
+            : lowerCaseIdentity.FormatHandoff(symbol);
+
+        Assert.Equal(mixedCaseHandoff, lowerCaseHandoff);
+    }
+
+    [Fact]
+    public void CreateSourceSnapshotHash_CaseVariantWindowsTargetPaths_HaveTheSameHash()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var fileStates = new System.Collections.Generic.Dictionary<string, AiNetCodeNavigator.Core.Workspace.DocumentFileState>();
+
+        var upperCaseHash = AnalysisSymbolIdentity.CreateSourceSnapshotHash(
+            @"C:\VirtualRepo\Sample.slnx",
+            fileStates);
+        var lowerCaseHash = AnalysisSymbolIdentity.CreateSourceSnapshotHash(
+            @"c:\virtualrepo\sample.slnx",
+            fileStates);
+
+        Assert.Equal(upperCaseHash, lowerCaseHash);
     }
 
     [Fact]
@@ -181,4 +269,73 @@ public sealed class AnalysisSymbolIdentityTests
         Assert.False(emptyPath.Matches(validPath));
         Assert.True(validPath.Matches(equivalentPath));
     }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Reliability",
+        "CA2000:Dispose objects before losing scope",
+        Justification = "The workspace lifetime is transferred to the returned TestSolutionHandle.")]
+    private static TestSolutionHandle CreateMultiTargetSolution()
+    {
+        const string solutionPath = @"C:\VirtualRepo\Multi.slnx";
+        const string projectPath = @"C:\VirtualRepo\src\Multi\Multi.csproj";
+        const string sourcePath = @"C:\VirtualRepo\src\Multi\Worker.cs";
+        const string source = "namespace Shared; public class Worker { public void Run() {} }";
+        var workspace = new AdhocWorkspace();
+        try
+        {
+            var solution = workspace.AddSolution(SolutionInfo.Create(
+                SolutionId.CreateNewId(),
+                VersionStamp.Create(),
+                filePath: solutionPath));
+            var targetFrameworks = new[] { "NET8_0", "NET9_0" };
+            foreach (var targetFramework in targetFrameworks)
+            {
+                var projectId = ProjectId.CreateNewId("Multi");
+                var projectInfo = ProjectInfo.Create(
+                        projectId,
+                        VersionStamp.Create(),
+                        name: "Multi",
+                        assemblyName: "Multi",
+                        language: LanguageNames.CSharp,
+                        filePath: projectPath)
+                    .WithMetadataReferences(TestWorkspaceBuilder.CoreReferences)
+                    .WithParseOptions(new CSharpParseOptions(preprocessorSymbols: [targetFramework]));
+                solution = solution.AddProject(projectInfo);
+                solution = solution.AddDocument(
+                    DocumentId.CreateNewId(projectId),
+                    "Worker.cs",
+                    SourceText.From(source),
+                    filePath: sourcePath);
+            }
+
+            if (!workspace.TryApplyChanges(solution))
+            {
+                throw new System.InvalidOperationException("The test workspace rejected the multi-target solution.");
+            }
+
+            return new TestSolutionHandle(workspace.CurrentSolution, workspace);
+        }
+        catch
+        {
+            workspace.Dispose();
+            throw;
+        }
+    }
+
+    private static async Task<(string? DocumentationId, string? Handoff)[]> GetMultiTargetHandoffsAsync(
+        Solution solution,
+        AnalysisSymbolIdentity identity)
+    {
+        var results = new System.Collections.Generic.List<(string? DocumentationId, string? Handoff)>();
+        foreach (var project in solution.Projects)
+        {
+            var compilation = await project.GetCompilationAsync();
+            Assert.NotNull(compilation);
+            var symbol = Assert.IsAssignableFrom<ISymbol>(compilation.GetTypeByMetadataName("Shared.Worker"));
+            results.Add((DocumentationCommentId.CreateDeclarationId(symbol), identity.FormatHandoff(symbol, solution)));
+        }
+
+        return results.ToArray();
+    }
+
 }

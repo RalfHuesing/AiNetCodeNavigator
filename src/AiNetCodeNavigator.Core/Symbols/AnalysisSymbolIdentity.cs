@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.CodeAnalysis.CSharp;
 using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.CodeAnalysis;
 
@@ -141,12 +142,12 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
 
     public bool Matches(AnalysisSymbolIdentity other) =>
         IsAssembly == other.IsAssembly
-        && TryNormalizeTargetPath(CanonicalPath, out var canonicalPath)
-        && TryNormalizeTargetPath(other.CanonicalPath, out var otherCanonicalPath)
+        && SymbolHandoffToken.TryNormalizeTargetPath(CanonicalPath, out var canonicalPath)
+        && SymbolHandoffToken.TryNormalizeTargetPath(other.CanonicalPath, out var otherCanonicalPath)
         && string.Equals(
             canonicalPath,
             otherCanonicalPath,
-            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
+            StringComparison.Ordinal)
         && string.Equals(ContentHash, other.ContentHash, StringComparison.OrdinalIgnoreCase);
 
     public static AnalysisSymbolIdentity ForAssembly(string canonicalPath, string contentHash, long generation = 0) =>
@@ -173,13 +174,14 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
             throw new ArgumentException("A stable project marker requires an absolute project file path.", nameof(project));
         }
 
-        var canonicalPath = Path.GetFullPath(projectPath);
-        if (OperatingSystem.IsWindows())
+        if (!SymbolHandoffToken.TryNormalizeTargetPath(projectPath, out var canonicalPath))
         {
-            canonicalPath = canonicalPath.ToUpperInvariant();
+            throw new ArgumentException("The project file path could not be normalized.", nameof(project));
         }
 
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(canonicalPath));
+        var projectContext = GetStableProjectContext(project);
+        var identityMaterial = $"{canonicalPath}\0{projectContext}";
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(identityMaterial));
         return Convert.ToHexString(hash.AsSpan(0, 16)).ToLowerInvariant();
     }
 
@@ -187,11 +189,19 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
         string canonicalPath,
         IReadOnlyDictionary<string, DocumentFileState> fileState)
     {
+        if (!SymbolHandoffToken.TryNormalizeTargetPath(canonicalPath, out var normalizedTargetPath))
+        {
+            throw new ArgumentException("The solution path must be absolute and normalizable.", nameof(canonicalPath));
+        }
+
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        Append(hash, canonicalPath);
+        Append(hash, normalizedTargetPath);
         foreach (var file in fileState.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
         {
-            Append(hash, file.Key);
+            var normalizedFilePath = SymbolHandoffToken.TryNormalizeTargetPath(file.Key, out var fullFilePath)
+                ? fullFilePath
+                : file.Key;
+            Append(hash, normalizedFilePath);
             Append(hash, file.Value.Hash);
         }
 
@@ -204,22 +214,48 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
     private static void Append(IncrementalHash hash, string value) =>
         hash.AppendData(Encoding.UTF8.GetBytes(value));
 
-    private static bool TryNormalizeTargetPath(string? path, out string normalizedPath)
+    private static string GetStableProjectContext(Project project)
     {
-        normalizedPath = string.Empty;
-        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
+        var properties = new SortedDictionary<string, string>(StringComparer.Ordinal)
         {
-            return false;
+            ["assembly"] = project.AssemblyName ?? string.Empty,
+            ["language"] = project.Language,
+            ["name"] = project.Name,
+        };
+
+        if (project.ParseOptions is CSharpParseOptions csharpParseOptions)
+        {
+            properties["languageVersion"] = csharpParseOptions.LanguageVersion.ToString();
+            properties["preprocessorSymbols"] = string.Join(
+                ";",
+                csharpParseOptions.PreprocessorSymbolNames.OrderBy(symbol => symbol, StringComparer.Ordinal));
         }
 
-        try
+        if (project.CompilationOptions is { } compilationOptions)
         {
-            normalizedPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-            return normalizedPath.Length > 0;
+            properties["outputKind"] = compilationOptions.OutputKind.ToString();
+            properties["moduleName"] = compilationOptions.ModuleName ?? string.Empty;
         }
-        catch (ArgumentException)
+
+        var analyzerOptions = project.AnalyzerOptions.AnalyzerConfigOptionsProvider.GlobalOptions;
+        foreach (var propertyName in new[]
         {
-            return false;
+            "build_property.TargetFramework",
+            "build_property.TargetFrameworkIdentifier",
+            "build_property.TargetFrameworkVersion",
+            "build_property.TargetPlatformIdentifier",
+            "build_property.TargetPlatformVersion",
+            "build_property.RuntimeIdentifier",
+            "build_property.Configuration",
+            "build_property.Platform",
+        })
+        {
+            if (analyzerOptions.TryGetValue(propertyName, out var value))
+            {
+                properties[propertyName] = value;
+            }
         }
+
+        return string.Join("\n", properties.Select(property => $"{property.Key}={property.Value}"));
     }
 }

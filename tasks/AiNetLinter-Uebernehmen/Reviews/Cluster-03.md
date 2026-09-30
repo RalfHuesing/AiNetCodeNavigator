@@ -37,3 +37,22 @@ A later FastTests rerun transiently failed in the unrelated `HandoffHandleRegist
 - **P2 — Equivalent Windows target paths produce different handoff target tokens.** `Matches` explicitly treats case variants of an absolute path as equal on Windows (`AnalysisSymbolIdentity.cs:142-150`), but `Format` passes the original `CanonicalPath` (`:20-29`) to `SymbolHandoffToken.TryCreateTarget`, which hashes `Path.GetFullPath` without normalizing Windows case (`src/AiNetCodeNavigator.Core/Symbols/SymbolHandoffToken.cs:15-39`). For the same content hash and symbol, `C:\\Repo\\App.slnx` and `c:\\repo\\app.slnx` thus match as identities while yielding different `i:` target tokens. `AnalysisTargetResolver` also preserves caller path case (`src/AiNetCodeNavigator.Core/Workspace/AnalysisTargetResolver.cs:122-151`). **Reproduction/acceptance:** On Windows, format the same symbol with case-variant absolute target paths and assert identical target token or a demonstrably equivalent lookup; keep path comparison and token construction consistent. Cover source and assembly targets.
 - **Boundary:** `CreateCanonicalSymbolIdentifier` creates an `L:` file/line/column key for local functions (`AnalysisSymbolIdentity.cs:97-140`), while `FormatHandoff` intentionally rejects them (`:88-91`). This helper has no production caller yet; connecting file/line identifiers to the public handoff contract is part of point 3.3. Its current isolated test is not evidence of a local-function roundtrip.
 - Point 3.1 audit checkbox remains open pending fixes and a follow-up audit. Point 3.2 and 3.3 gates are outside this review.
+
+### Audit 1 Finding Fix
+
+- Fix base: `1dbd72df9b2ae8966a2861331e14a44de19730f2`.
+- Regression tests were run before the production changes. The multi-target case returned equal handoff IDs for two Roslyn projects sharing one `.csproj` path and declaration ID; case-variant Windows paths generated different target tokens for both source and assembly handoffs.
+- **P1 — Multi-target project identities — fixed.** Stable project markers now hash the normalized project path plus stable project context: project/assembly names, language, C# language version and preprocessor symbols, compilation output settings, and available target framework/platform/configuration properties from Roslyn's global analyzer options. No generated `ProjectId` is used. The test constructs two project configurations with the same absolute `.csproj` path, assembly name, and declaration but distinct `NET8_0`/`NET9_0` symbols; their handoffs differ and recreated solutions produce identical corresponding IDs.
+- **P2 — Windows path case mismatch — fixed.** `SymbolHandoffToken.TryNormalizeTargetPath` now owns the shared path contract: absolute paths are normalized with `Path.GetFullPath`, trailing separators are removed, and Windows paths are uppercased invariantly. Handoff target tokens, `AnalysisSymbolIdentity.Matches`, project markers, and source snapshot hashes use this routine. Tests verify complete source and assembly handoff IDs and source snapshot hashes are identical for case variants.
+- Current-state documentation updated: [build-and-tests.md](../../../docs/development/build-and-tests.md).
+- Verification: each new regression test was observed failing against its corresponding pre-fix behavior, then all four passed after the fixes. The multi-target collision was reproduced before the project-context fix; source/assembly target tokens and the source snapshot hash were reproduced with the prior case-sensitive path hashing. No unrelated tests failed on the final official-gate runs.
+
+| Gate | Result |
+|---|---|
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 233/233 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 245/245 across both test projects |
+| `git diff --check` | Passed before commit |
+
+- The point 3.1 audit checkbox remains open for independent follow-up. No 3.2 or 3.3 implementation work was included.

@@ -29,7 +29,7 @@ Core, Host, and TestKit expose internal members to the test assemblies via `Inte
 
 ## Symbol Identity
 
-`AnalysisSymbolIdentity` uses Roslyn documentation comment IDs for declarations that have them. Symbols without a documentation ID can still be identified by a unique source location, encoded as a canonical file path and one-based line and column. Source handoffs include a stable marker derived from the declaring project path and are only formatted from a project present in the identity's solution snapshot; assembly identities use the assembly target and content hash. The generation number is an in-memory lifecycle detail and does not change an identity for the same target content. The source-location key is an identity primitive; the current handoff wire format still accepts documentation comment IDs only.
+`AnalysisSymbolIdentity` uses Roslyn documentation comment IDs for declarations that have them. Symbols without a documentation ID can still be identified by a unique source location, encoded as a canonical file path and one-based line and column. Source handoffs include a stable marker derived from the project path and target-specific project options, including target framework properties and C# preprocessor symbols; equivalent workspace reloads do not depend on Roslyn's generated ProjectIds. Source snapshot hashes, identity comparisons, and handoff target tokens use `SymbolHandoffToken`'s shared absolute path normalization, including case normalization on Windows. The generation number is an in-memory lifecycle detail and does not change an identity for the same target content. The source-location key is an identity primitive; the current handoff wire format still accepts documentation comment IDs only.
 
 ## Resident Solutions
 
