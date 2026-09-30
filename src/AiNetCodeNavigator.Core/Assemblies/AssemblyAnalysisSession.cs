@@ -438,8 +438,14 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
                 return false;
             }
 
-            state = state with { Fingerprint = fingerprint, UpdatedUtc = DateTime.UtcNow };
-            result = new AssemblySessionRefreshResult(state.Status, current.Number, true, state.Diagnostics);
+            state = new AssemblySessionState(
+                current.Status,
+                current.Number,
+                current.Number,
+                fingerprint,
+                current.Diagnostics,
+                DateTime.UtcNow);
+            result = new AssemblySessionRefreshResult(current.Status, current.Number, true, current.Diagnostics);
             return true;
         }
     }

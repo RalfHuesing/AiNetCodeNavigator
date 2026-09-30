@@ -112,6 +112,44 @@ public sealed class AssemblySymbolHandoffResolverTests
     }
 
     [Fact]
+    public async Task ResidentSession_RecoversWhenOriginalTargetBytesAreRestored()
+    {
+        using var temp = TestTempDirectory.Create("assembly-handoff-invalid-restore-");
+        var dependency = AssemblyTestHelper.EmitAssembly(temp, "RestoreDependency", "namespace Probe.Restore; public sealed class Dependency { }");
+        var path = AssemblyTestHelper.EmitAssembly(temp, "RestoreTarget", "public sealed class OriginalApi { public Probe.Restore.Dependency? Value; }", dependency);
+        var originalBytes = await File.ReadAllBytesAsync(path);
+        var first = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(path));
+        Assert.True(first.IsSuccess, first.Error?.ToString());
+        var originalGeneration = first.Value!.Generation;
+        var originalStatus = first.Value.SessionStatus;
+        var originalDiagnostics = first.Value.Diagnostics;
+        var originalType = Assert.Single(first.Value.Types);
+        var originalHandle = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(originalType.Id!);
+
+        await File.WriteAllBytesAsync(path, [0, 1, 2, 3, 4, 5]);
+        var invalidInspection = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(path));
+        var invalidHandoff = await AssemblySymbolBodyScanner.GetAsync(originalHandle);
+        Assert.False(invalidInspection.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.InvalidAssembly, invalidInspection.Error!.Value.Code);
+        Assert.Null(invalidInspection.Value);
+        Assert.Equal(NavigationErrorCodes.InvalidAssembly, invalidHandoff.Error!.Value.Code);
+        Assert.Null(invalidHandoff.Body);
+
+        await File.WriteAllBytesAsync(path, originalBytes);
+        var restoredInspection = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(path));
+        var restoredHandoff = await AssemblySymbolBodyScanner.GetAsync(originalHandle);
+
+        Assert.True(restoredInspection.IsSuccess, restoredInspection.Error?.ToString());
+        Assert.Equal(originalGeneration, restoredInspection.Value!.Generation);
+        Assert.Equal(originalStatus, restoredInspection.Value.SessionStatus);
+        Assert.Equal(originalDiagnostics, restoredInspection.Value.Diagnostics);
+        Assert.Null(restoredHandoff.Error);
+        Assert.Equal(originalHandle, restoredHandoff.Body!.HandoffId);
+        Assert.Contains("OriginalApi", restoredHandoff.Body.Body, StringComparison.Ordinal);
+        Assert.Equal(originalBytes, await File.ReadAllBytesAsync(path));
+    }
+
+    [Fact]
     public async Task ResidentSession_RefreshesRemovedAndReplacedReferencesWithoutTargetChanges()
     {
         using var temp = TestTempDirectory.Create("assembly-reference-refresh-");
