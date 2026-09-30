@@ -442,3 +442,12 @@ The point 4.8 audit checkbox remains open for the remaining structured-result co
 - Before the fix, the focused regression failed because the `FeatureContextPayload.EvidenceMode` property was absent. The red test also confirms both candidates and handoffs were already present.
 - Updated [Get Feature Context](../../../docs/navigation/get-feature-context.md) to document the structured payload field. No markdown behavior or scope/totals behavior changed.
 - Point 4.8 remains open for the final audit; no 4.9 work is included.
+
+## Independent audit 3/3 of point 4.8
+
+- Reviewed commit: `9b479eaa1d6e202cc9e38b3205153835649d9692` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Final narrow read-only review of the structured Feature Context evidence marker and its regression. This audit did not run a build or tests and does not claim separate gate results.
+- **P2 structured evidence mode — closed.** `FeatureContextPayload.EvidenceMode` now uses `TestContextPayload.StaticTestCandidatesOnlyEvidenceMode`, so structured consumers see the same `static-test-candidates-only` value as the Test Context DTO and rendered Feature Context. The expanded test asserts the mode with one attributed xUnit method and one name-only `Unknown` fixture, `TotalTests == Tests.Count == 2`, and successful Body roundtrips for both unchanged handoffs. The change adds only a payload property; the scanner's sorting, scope, and count paths are unchanged.
+
+No open finding remains for point 4.8 after the third audit. The audit checkbox is complete. No product code or external repository was changed in this audit.
