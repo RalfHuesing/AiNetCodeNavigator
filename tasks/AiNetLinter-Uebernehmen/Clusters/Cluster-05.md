@@ -9,8 +9,8 @@
   - [x] Preserve non-BCL metadata callees with the default `IncludeBcl` setting and test both settings.
   - [x] Apply `TopN` to the combined incoming/outgoing expansion and cover `Both`.
   - [x] Report node-cap completeness accurately, including exact-cap and pending-work cases.
-  - [ ] Preserve source-backed callees in framework-named namespaces with default `IncludeBcl`.
-  - [ ] Review/Audit zu 5.1 durchführen; Findings ergänzen und umsetzen.
+  - [x] Preserve source-backed callees in framework-named namespaces with default `IncludeBcl`.
+  - [x] Review/Audit zu 5.1 durchführen; Findings ergänzen und umsetzen.
 - [x] 5.2 Referenzen & Implementierungen (`find_references`, `find_implementations`-Engine):
   - [x] `FindReferencesResolver`: AST-Aufrufstellensuche über Solution-Grenzen
   - [x] Interface- und abstrakte Methoden-Implementierungssuche

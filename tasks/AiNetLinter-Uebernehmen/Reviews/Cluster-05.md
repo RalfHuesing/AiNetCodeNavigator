@@ -92,3 +92,15 @@
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 354/354 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Independent audit 3/3 of point 5.1
+
+- Audited commit: `d11caa3d709a2a2e259370be5948328385e7955b` (clean working tree before review edits).
+- Reviewer: `gpt-6-sol`, medium reasoning effort. Scope was limited to the remaining audit-2 BCL-filter finding and its regression coverage; no broader point audit or build/test run was performed.
+- **Accepted:** `CallTreeBuilder.cs:172-173` now applies the BCL classifier only to external symbols. The new FastTest at `CallTreeTests.cs:205-229` covers a source-backed `System.Local.Api.Call()` under the default setting. The pre-existing `CallTreeTests.cs:170-202` covers a third-party metadata callee retained by default and a framework metadata callee excluded by default but included with `IncludeBcl=true`. This matches AiNetLinter's external-only filter. No point-5.1 findings remain open at the third-audit limit.
+- The point 5.1 audit checkbox is complete. Public MCP transport and end-to-end contract verification remain assigned to later roadmap clusters and were not inferred from this Core audit.
+
+### Review verification
+
+- Inspected the committed source and regression tests; no production files were changed by this audit.
+- The documentation diff was inspected and `git diff --check` passed before commit.
