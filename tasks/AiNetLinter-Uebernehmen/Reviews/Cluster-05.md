@@ -405,3 +405,17 @@ The point 5.5 audit checkbox remains unchecked for the final allowed point audit
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 393/393 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Independent audit 3/3 of point 5.5
+
+- Audited commit: `5816da597c37d38a76bf84415e40f21b75093c89` (clean working tree before review edits).
+- Reviewer: `gpt-6-sol`, medium reasoning effort. Scope was limited to the two open audit-2 findings: cross-window targeted traversal, document 1001+ continuation, node limit, and completeness. No build or tests were run in this audit; the remediation gates above belong to the implementation turn.
+- **Accepted — cross-window traversal and conservative incompleteness:** the public `DependencyGraphTraversal.MergeAndTraverse` (`DependencyGraphTraversal.cs:14-169`) rejects targeted input pages, combines direct type edges across document windows, and uses the same direction/depth traversal as the scanner. Missing pages set `ContinuationInputIncomplete`; document errors, nonzero result offset, depth clamp, or node cap also prevent `IsComplete` (`DependencyGraphModels.cs:111-112`). The multi-page completeness defect below remains.
+- **Accepted — document continuation and cap:** `DependencyGraphScannerTests.cs:222-304` creates 1002 documents. The first 1000-document window contains Caller→Target, the resumed window at offset 1000 contains Target→Dependency, and the merged result returns both hops for outgoing type/file and incoming type queries. A first-window-only merge stays incomplete. The test also checks a one-node budget, `NodeLimitReached`, one hidden downstream edge, and false completeness. Scanner traversal itself now applies the same 200-type hard cap (`DependencyGraphScanner.cs:220-291`).
+- **P2 open technical debt — complete relationship pages can falsely report incomplete.** `DependencyGraphTraversal.cs:174-190` advances `ArePagesComplete` by each collection's returned item count, while the scanner applies the same `Offset`/`PageSize` to all four independent collections (`DependencyGraphScanner.cs:172-175`). With `PageSize=100`, 101 type edges, and one project edge, passing pages at offsets 0 and 100 makes the project collection advance its expected offset to 1, so it rejects the valid second page at 100. `MergeAndTraverse` sets `ContinuationInputIncomplete=true` and `IsComplete=false` although every relationship page was supplied. The 1002-document regression uses only one relationship page per window and does not catch this. Acceptance: validate each collection's coverage against shared page windows while allowing shorter collections to be exhausted; preserve detection of skipped/duplicate pages. Add a regression with more than one type-edge page and fewer project/namespace/file edges, asserting the complete merged query reports `IsComplete=true` and a missing type page reports false.
+- The point audit checkbox is complete at the third-audit limit, with this finding retained as technical debt. Public MCP transport, production/test scope, generated-file filtering, and handoff rendering remain later integration work and are not claimed here.
+
+### Review verification
+
+- Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
+- The documentation diff was inspected and `git diff --check` passed before commit.
