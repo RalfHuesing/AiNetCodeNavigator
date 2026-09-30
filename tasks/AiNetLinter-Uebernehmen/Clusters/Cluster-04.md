@@ -5,6 +5,8 @@
 - [x] 4.1 Symbolsuche (`find_symbol`-Engine):
   - [x] `FindSymbolScanner`: Filter nach Namen/Patterns, `SymbolKind`, `scopeType` (`production`, `tests`, `all`)
   - [x] FastTests für Symbolsuche (Name/Pattern, `SymbolKind`, Produktions-/Testprojekt-Scope, Mehrprojektfall)
+  - [ ] Complete the public kind vocabulary (`delegate`, `record class`, `record struct`) and make plain `struct` exclude record structs; cover each kind and mismatch with FastTests.
+  - [ ] Apply the reference `includeGenerated` default and opt-in to source locations across all scopes; cover generated path/header and mixed-source declarations with FastTests.
   - [ ] Review/Audit zu 4.1 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.2 Symbol-Body-Extraktion (`get_symbol_body`-Engine):
   - [x] `SourceSymbolBodyResolver`: Syntax-Extraktion aus AST mit Paginierung (`startLine`, `maxBodyLines`)

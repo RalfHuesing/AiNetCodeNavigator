@@ -20,3 +20,16 @@
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 280/280 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Independent audit 1/3 of point 4.1
+
+- Reviewed commit: `bc1da65c893eb3686b7205e2660950bd016a1c9a` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Read-only comparison: AiNetLinter `FindSymbolScanner`, `SymbolKindClassifier`, `McpScopeClassifier`, and their relevant FastTests. The project/document scope fix and the existing exact name, wildcard, class/method, multi-project, and truncation tests support the checked implementation items. This review did not run a build or tests; the implementation gates above belong to the earlier slice.
+
+### Open findings
+
+1. **P2 — The kind filter does not cover the reference's public vocabulary.** `FindSymbolModels.cs:17-29` has no `delegate`, `record class`, or `record struct` values. `FindSymbolScanner.cs:222-236` also admits record structs for plain `struct`, while the reference `SymbolKindClassifier.MatchesTypeKind` excludes records from plain `class`/`struct` and recognizes the specific record kinds and delegates. The local kind test (`FindSymbolScannerTests.cs:262-275`) covers only class versus method. **Acceptance:** expose and correctly filter all reference kind values, preserve distinct record class/struct results, and test positive and mismatched cases, including a record struct excluded by plain `struct`.
+2. **P2 — Generated declarations are returned by default with no opt-in control.** `FindSymbolScanRequest` (`FindSymbolModels.cs:49-56`) has no `IncludeGenerated` option, and `FindSymbolScanner.CollectVisibleLocations` (`FindSymbolScanner.cs:158-185`) admits every source location that passes the project scope. The reference `TryCreateVisibleLocationAsync` excludes `McpSourceKind.Generated` unless `IncludeGenerated` is true. The local tests have no generated-file or generated-header case. **Acceptance:** classify generated locations using the reference conventions, exclude them by default for `all`, `production`, and `tests`, allow explicit inclusion, and cover both generated path/header and a declaration with generated and editable locations.
+
+The point 4.1 audit checkbox remains open pending fixes and a follow-up audit. No product code or external repository was changed in this audit.
