@@ -6,197 +6,264 @@ status: draft
 
 ## Intention
 
-Ein Agent soll mit den öffentlichen Navigationswerkzeugen konkrete Aufgaben auf definierten Repositories lösen. Wir wollen beobachten, ob er Werkzeugbeschreibungen und Parameter versteht, relevante Antworten erhält und mit Fehlern, Begrenzungen und Folgeaufrufen zurechtkommt. Die Ergebnisse sollen belegbare Verbesserungen an Verständlichkeit, Korrektheit und Tokeneffizienz ermöglichen.
+Ein Agent soll anhand der echten öffentlichen Tooldefinitionen konkrete Navigationsaufgaben auf definierten Repositories lösen. Wir untersuchen, ob Beschreibungen und Parameter verständlich sind und ob Antworten korrekt, nutzbringend, möglichst rauscharm und tokeneffizient sind.
 
-Diese Untersuchung soll lokal gegen den aktuellen Entwicklungsstand funktionieren, ohne MCP-Deployment, MCP-Transport oder Austausch der MCP-Konfiguration in Codex. Sie ergänzt die Produktverifikation, beansprucht aber keinen Nachweis für den ausgelassenen Transport.
+Der Zugang arbeitet lokal gegen den Entwicklungsstand ohne MCP-Transport, Deployment oder Änderungen der Codex-MCP-Konfiguration. Zunächst erfolgen breite Einzelaufrufe und kurze A→B-Ketten. Die Aufgabenerstellung, Durchführung, Analyse und spätere Behebung erfolgen durch getrennte Agenten. Eine automatische Verbesserungsschleife ist nicht Gegenstand dieses Vorhabens.
 
-## Geprüfter Ausgangspunkt
+## Festgelegte Grenzen
 
-Geprüfter Ausgangsstand: `9470613a57951cb5085c800ee15ce69c110948c0`; Arbeitsbaum zu Beginn sauber. Während der Konzeptarbeit sind unabhängige Änderungen unter anderem am Host hinzugekommen. Die folgenden Belege beschreiben den gelesenen Ausgangsstand, nicht einen Abschlussbefund zu diesen laufenden Änderungen. Sie werden vor Umsetzung neu geprüft.
+- Genau ein neues .NET-Konsolenprojekt: tests/AiNetCodeNavigator.AgentLab/, Assemblyname AiNetCodeNavigator.AgentLab. Die Ausgabe enthält eine eigene Windows-Exe.
+- Lab → produktiver Toolcode → Core. Das Lab referenziert das bestehende Anwendungsprojekt; Produktionsprojekte referenzieren das Lab nicht.
+- Alle Lab-Befehle, Sitzungssteuerung, Konfigurationen, Artefakte, Renderer und Messungen liegen im Lab.
+- Die reguläre Anwendung erhält keinen Lab-Modus, keine Lab-Parameter und keine Dump-/Aufgabenlogik. Die reguläre Produktverteilung benötigt das Lab nicht.
+- Definitionen, Validierung, Bindung, Handler, Zustandsverwaltung und Ergebnisformatierung stammen aus gemeinsamem produktivem Code. Keine Kopien der Tool-API und keine Lab-eigene Navigation.
+- SDK-Typen, SDK-Schemaerzeugung und SDK-Funktionsbindung sind erlaubt; MCP-Client, MCP-Server, JSON-RPC, Handshake und MCP-Transport sind in Lab-Läufen ausgeschlossen.
+- Erste Abnahme: AiNetCodeNavigator und AiNetLinter, Source und verwaltete Assemblies, alle 22 vorgesehenen Produkttools.
+- Die Lab-Exe führt keine Modelle aus und startet keine Codex-Agenten. Der aufrufende Codex-Agent koordiniert die getrennten Rollen außerhalb der Exe.
 
-- [`McpServerHost`](../../src/AiNetCodeNavigator/Mcp/McpServerHost.cs) und die fünf Klassen unter `Mcp/Tools/` sind leere Platzhalter. Öffentliche Registrierungen und deren endgültige Beschreibungen können deshalb heute noch nicht untersucht werden.
-- [`McpArgumentValidationFilter`](../../src/AiNetCodeNavigator/Mcp/Validation/McpArgumentValidationFilter.cs) validiert gegen das registrierte SDK-Schema und prüft Bindbarkeit. Der Einstieg verwendet derzeit einen SDK-RequestContext; ein transportlos nutzbarer gemeinsamer Einstieg ist noch nicht belegt.
-- [`McpResponseFormatter`](../../src/AiNetCodeNavigator/Mcp/Formatting/McpResponseFormatter.cs), [`McpToolResults`](../../src/AiNetCodeNavigator/Mcp/Formatting/McpToolResults.cs) und [`LongRunningToolCallStore`](../../src/AiNetCodeNavigator/Mcp/LongRunningToolCallStore.cs) enthalten Antwort-, Budget- und Sitzungsbausteine. Der Formatter zählt mit `cl100k_base`.
-- [`McpArgumentValidationFilterTests`](../../tests/AiNetCodeNavigator.FastTests/Mcp/McpArgumentValidationFilterTests.cs) verwenden echte SDK-Registrierungen für Fixture-Tools, aber einen MCP-Stream-Client und -Server. Sie sind keine transportlose Agentenuntersuchung der produktiven Tools.
-- [`McpServerIntegrationTests`](../../tests/AiNetCodeNavigator.IntegrationTests/Mcp/McpServerIntegrationTests.cs) prüfen Typverfügbarkeit und Logging beim Prozessstart; sie belegen keinen nutzbaren produktiven Toolkatalog.
+## Geprüfte Grundlage und Abhängigkeit
 
-Die öffentlichen Verträge entstehen im bestehenden [Toolregistrierungs-Vorhaben](../AiNetLinter-Uebernehmen/Clusters/Cluster-09.md). Das Lab muss daran anschließen. Ein Zugriff nur auf Core-Scanner wäre für diese Intention unzureichend.
+Gelesener Stand am 2026-09-30: HEAD 89b51b9c88850beb02328c02bdb9ac49e3024f6e sowie gleichzeitig in Bearbeitung befindliche Hostdateien. Diese fremden Änderungen wurden weder geändert noch durch diese Konzeptarbeit verifiziert.
 
-Zusätzlich wurde die während dieser Sitzung veränderte [`CommandLineOptions`](../../src/AiNetCodeNavigator/Cli/CommandLineOptions.cs) gelesen: Sie verwendet bereits `System.CommandLine`, bietet aber einen Stdio-MCP-Start mit `--config`, keinen transportlosen Toolaufruf oder JSON-/Markdown-Dumpmodus. Vorhandene JSON-Serialisierung, SDK-Schemavalidierung und Antwortformatierung sind wiederverwendbare Bausteine; das hier beschriebene Laufprotokoll ist geplante Infrastruktur. Die fremden laufenden Änderungen wurden nicht bearbeitet oder verifiziert.
+- [Host](../../src/AiNetCodeNavigator/Mcp/McpServerHost.cs) und [Runtime](../../src/AiNetCodeNavigator/Mcp/NavigatorHostRuntime.cs) enthalten im gelesenen Arbeitsbaum Stdio-Start, Dependency Injection und Prozesszustand. Der Host registriert zwei Wartungstools; die Navigationsklassen sind noch Platzhalter. [Cluster 9](../AiNetLinter-Uebernehmen/Clusters/Cluster-09.md) besitzt deren Umsetzung.
+- Die bestehenden FastTests und IntegrationTests referenzieren bereits das Anwendungsprojekt. InternalsVisibleTo wird für Testzugriff verwendet.
+- [Argumentvalidierung](../../src/AiNetCodeNavigator/Mcp/Validation/McpArgumentValidationFilter.cs) erhält derzeit einen SDK-RequestContext. SDK 2.2.0 verlangt hierfür einen McpServer; dieser Einstieg kann deshalb nicht unverändert der transportlose Lab-Einstieg sein.
+- Die lokal installierte SDK-Dokumentation belegt den öffentlichen Einstieg McpServerTool.Create(AIFunction, options). Die Funktionsbindung kann über Microsoft.Extensions.AI und dieselben Serializeroptionen geteilt werden. Die konkrete SDK-Klasse AIFunctionMcpServerTool ist intern; das Lab darf sie weder per Reflection verwenden noch deren Implementierung kopieren.
+- [Formatierung](../../src/AiNetCodeNavigator/Mcp/Formatting/McpResponseFormatter.cs), [Ergebnisbau](../../src/AiNetCodeNavigator/Mcp/Formatting/McpToolResults.cs) und [Operations-/Fortsetzungsspeicher](../../src/AiNetCodeNavigator/Mcp/LongRunningToolCallStore.cs) sind vorhandene Bausteine; gezählt wird mit cl100k_base.
+- [SDK-Streamtests](../../tests/AiNetCodeNavigator.FastTests/Mcp/McpArgumentValidationFilterTests.cs) bieten Vorarbeiten für separate Paritätsprüfungen. Sie sind keine transportlosen Agentenläufe.
 
-## Empfohlene Richtung
+Die produktiven Registrierungen müssen für alle 22 Tools vor der vollständigen Lab-Abnahme existieren. Dieses Vorhaben implementiert deren Navigationssemantik nicht. Bis dahin darf Lab-Infrastruktur mit ausdrücklich als solchen bezeichneten Fixture-Tools geprüft werden; ein realer Lab-Lauf mit unvollständigem Katalog startet nicht.
 
-Ein lokaler Entwicklungs- und Testzugang bietet den unveränderten produktiven Toolkatalog und führt Aufrufe durch dieselbe Verarbeitung wie der MCP-Host aus. Die zusätzliche Schnittstelle nimmt Werkzeugname und JSON-Argumente entgegen. Sie bildet keinen MCP-Client oder -Server nach.
+## Gemeinsamer produktiver Aufrufpfad
 
-Der Nutzer hat den Kommandozeilenzugang bestätigt. Verbraucher ist ein Agent hier in Codex, der diesen Zugang über lokale Befehle bedient. Konkret: Er liest die echten Toolbeschreibungen, wählt beispielsweise `find_symbol` und übergibt dessen JSON-Argumente an das lokale Testprogramm. Dieses führt den produktiven Aufrufpfad aus und liefert dessen Antwort. Codex muss dafür keine MCP-Verbindung aufbauen. Der Einstieg beschreibt ausschließlich die Bedienung des lokalen Zugangs, nicht die richtige Wahl von Navigationswerkzeugen.
+Der Hostbereich erhält einen internen, transportunabhängigen Toolkatalog und einen gemeinsamen Dispatcher. Zugriff für das Lab erfolgt über InternalsVisibleTo für AiNetCodeNavigator.AgentLab; keine neue öffentliche Produkt-API und kein weiteres Bibliotheksprojekt.
 
-Die Werkzeugdefinitionen, inklusive Beschreibungen, Parameterbeschreibungen und Schemas, stammen aus derselben Registrierung wie beim Produkt. Validierung, SDK-Bindesemantik, Defaults, Handler, Fehlerklassifikation, Formatierung und Budgets dürfen nicht unabhängig nachgebaut werden. Eine gemeinsame Verarbeitung muss gegebenenfalls im Hostbereich zugänglich gemacht werden; Core erhält keine MCP-Abhängigkeiten. SDK-Typen oder SDK-Metadaten lokal zu verwenden verletzt das Transport-Nicht-Ziel nicht.
+Der gemeinsame Katalog wird aus einer expliziten Liste der produktiven Toolklassen und deren annotierten Methoden aufgebaut. Keine Suche über sämtliche Repository-Assemblies. Er enthält je Tool die originale Methoden-/Bindungsmetadaten, genau eine SDK-Funktionsbindung, die SDK-Tooldefinition und den gemeinsamen Aufrufzugang. Namen müssen eindeutig sein.
 
-### Eigenständiges Lab-Programm und Projektgrenze
+Verbindlicher Weg:
 
-Der Nutzer verlangt, dass die reguläre Anwendung keine Lab-Parameter und im Regelbetrieb unnötige Testfunktionen erhält. Empfehlung: genau ein zusätzliches .NET-Konsolenprojekt unter `tests/AiNetCodeNavigator.AgentLab/`, dessen Windows-Ausgabe `AiNetCodeNavigator.AgentLab.exe` heißt. Es ist Entwicklungs-/Testinfrastruktur im gleichen Repository und kein zweites Navigationsprodukt. Diese Packaging-Empfehlung ist noch nicht ausdrücklich bestätigt.
+1. Die gemeinsame Registrierung bindet produktive Toolinstanzen aus der bestehenden Runtime. Microsoft.Extensions.AI erzeugt die Funktionsbindung aus den originalen Methoden. Die gemeinsamen Optionen verwenden McpJsonUtilities.DefaultOptions; die Resultatbindung erhält CallToolResult als solchen und serialisiert ihn nicht vorzeitig in einen anderen Ergebnisvertrag.
+2. Eine gemeinsame validierende Funktionshülle erhält Name, Beschreibung, Parameter-/Ergebnisschema und ursprüngliche Bindungsmetadaten. Sie validiert gegen die tatsächlich veröffentlichte SDK-InputSchema, führt anschließend genau die originale Funktionsbindung aus und liefert den produktiven CallToolResult.
+3. McpServerTool.Create(AIFunction, options) adaptiert diese Hülle für den regulären SDK-Host. Toolname, Beschreibung, Annotationen, Schemas und Metadaten stammen aus den originalen Registrierungsinformationen; das Lab schreibt sie nicht neu.
+4. Das Lab ruft dieselbe validierende Hülle direkt mit JSON-Argumenten und CancellationToken auf. Es erzeugt keinen RequestContext und keinen McpServer.
+5. Der bisherige Argumentfilter delegiert seine Validierungslogik an einen gemeinsamen Einstieg mit registrierter Tooldefinition, ursprünglicher Bindungsmetadaten und Argumenten. Die produktive Registrierung validiert nur einmal an der gemeinsamen Hülle. Der Filter bleibt für die vorhandenen direkten SDK-Fixturetests nutzbar; er wird nicht zusätzlich um die bereits validierten produktiven Hüllen gelegt.
 
-Das Lab besitzt seinen eigenen Einstieg, seine Kommandozeilenparameter, lokale Sitzungssteuerung, Target-/Aufgabenkonfiguration, Request-/Response-Dateien, Markdown-Renderer und Messdaten. Die reguläre `AiNetCodeNavigator.exe` erhält dafür weder einen Lab-Modus noch Dump-, Replay-, Aufgaben- oder Sitzungsparameter. Das Lab wird nicht als Bestandteil der regulären Produktverteilung benötigt.
+Die gemeinsame Registrierung enthält ausschließlich Handler mit JSON-Parametern, CancellationToken und vorhandenen Anwendungsdiensten. Navigationstools dürfen für diese Verarbeitung keinen MCP-Server, RequestContext, Clientcallback oder Progress-Transport verlangen. Interne Loading-, Running- und Continuation-Ergebnisse bleiben produktive Resultate.
 
-Das Lab referenziert den produktiven Toolcode als Assembly und verwendet dessen Registrierung und Verarbeitung direkt im eigenen Prozess. Es ruft nicht `Program.Main` auf, startet nicht die reguläre Exe und baut keine MCP-Verbindung auf. Ein ProjectReference auf das vorhandene Anwendungsprojekt ist der empfohlene Einstieg; die vorhandenen FastTests und IntegrationTests verwenden bereits solche Referenzen. Dadurch ist zunächst kein zusätzliches gemeinsames Bibliotheksprojekt erforderlich. Die notwendige transportunabhängige Wiederverwendung von Registrierung, Validierung und Dispatch ist noch herzustellen und nachzuweisen; die Projektdateireferenz allein belegt sie nicht.
+Schema-/Binderabweichungen, fehlende CallToolResult-Erhaltung und Abweichungen zum SDK-Pfad sind Abnahmefehler. Der Implementierer darf sie nicht durch einen manuellen Binder, kopierte Schemas oder einen versteckten MCP-Loopback umgehen. Die bestehenden Validierungsfälle, insbesondere unbekannte Felder, Null, Enumwerte, Zahlenbereiche und nicht bindbare Zahlen, bleiben erhalten. Ein unbekannter Toolname wird im gemeinsamen Dispatcher als produktive ProtocolException mit InvalidParams zurückgegeben; das Lab erfindet dafür keinen Navigationserfolg.
 
-Die Abhängigkeitsrichtung ist ausschließlich Lab → produktiver Toolcode → Core. Produktionsprojekte dürfen das Lab nicht referenzieren. Gemeinsamer Toolcode und dessen Abhängigkeitsaufbau enthalten keine Dump-Pfade, Testaufgaben, Lab-Schalter oder eigenen Lab-Handler. Wo interne produktive Bausteine zugänglich gemacht werden müssen, geschieht das durch eine begrenzte Assembly-Freigabe entsprechend den bestehenden Testprojekten oder einen fachlich gemeinsamen Einstieg; Toolverträge werden dafür nicht kopiert.
+## Sitzung und Kommandozeilenvertrag
 
-Eine eigenständige Exe trennt Betrieb und Bedienung, nicht die Implementierung der zu prüfenden Tools. Eine Kopie von Toolbeschreibungen, Schemas oder Dispatch im Lab würde die Aussagekraft trotz getrennter Projekte zerstören.
+Die Windows-Abnahme verwendet NamedPipeServerStream/NamedPipeClientStream aus .NET mit CurrentUserOnly. Es gibt keinen HTTP-Dienst und keine Netzwerkadresse. Named Pipes übertragen ausschließlich Lab-Steueraufträge; sie implementieren kein MCP.
 
-| Form | Einschätzung für diesen Umfang |
+Eine Sitzung gehört genau einem Runverzeichnis und einem Workerprozess. Der Worker startet denselben Lab-Einstieg mit dem internen Befehl worker; Start erfolgt ohne sichtbares Fenster. Er hält Runtime, Toolinstanzen, Registry, Handoffs, Operationen und Fortsetzungen über alle Aufrufe dieses Runs am Leben. Andere Runs teilen keinen Workerprozess. Die gemeinsame Anwendungs-DI wird ohne AddMcpServer/Transport-/Serverdienste aufgebaut; IHostApplicationLifetime und andere Anwendungsdienste werden durch den normalen .NET Generic Host bereitgestellt. Workerlogs liegen im Runverzeichnis. Logging-/Konfigurationseinrichtung ist vom regulären Produktstart getrennt, verwendet aber dessen vorhandene Anwendungsbausteine.
+
+Befehle der Lab-Exe:
+
+| Befehl | Vertrag |
 |---|---|
-| Eigenes .NET-Konsolenprojekt | Empfehlung: direkte Wiederverwendung der .NET-Toolverarbeitung, langlebiger Sitzungszustand und klare Trennung aller Lab-Funktionen. Kosten: ein weiteres kleines Projekt samt passenden Tests. |
-| PowerShell als gesamte Infrastruktur | Geeignet für Start-/Build-Befehle; als Besitzer von .NET-Toolbindung, Sitzungszustand und Artefaktverträgen weniger passend als ein typisiertes .NET-Programm. |
-| Python als gesamte Infrastruktur | Führt einen zusätzlichen Laufzeit-/Interop-Weg zu den .NET-Tools ein; für diese Aufgabe kein erkennbarer Vorteil. |
+| start --config <absolute-path> | Prüft Zielkonfiguration/Pfade, erzeugt einen neuen Run unter temp/agent-interaction-lab/<runId>/, startet Worker und wartet höchstens 30 Sekunden auf Bereitschaft. Nur der Worker erzeugt Runtime/Katalog und prüft die vollständige Toolmenge vor ready. Gibt den absoluten Runpfad und session.json zurück; Fehler ergeben keine nutzbare Sitzung. |
+| catalog --run <absolute-run-path> | Gibt den beim Start exportierten produktiven Katalog aus; kein erneuter Targetload und keine neue Registrierung. |
+| task --run <path> --file <absolute-task-path> | Validiert und registriert eine neue task.json. Existierende Task-IDs werden nicht überschrieben. |
+| call --run <path> --task <task-id> --tool <name> --args-file <absolute-path> [--parent <call-id>] | Sendet genau die vom Agenten gelieferten Argumente an den Worker. Die Task-ID ist Pflicht. Parent referenziert einen früheren Call derselben Task/Sitzung, verändert die Argumente aber nicht. |
+| status --run <path> | Zeigt Sitzungszustand, aktuellen Call und verbrauchte Grenzen; ruft kein Produkttool auf. |
+| stop --run <path> | Stoppt die Annahme neuer Calls, cancelt und beendet laufende Arbeit und disposed die produktive Runtime. Zweiter Stop ist erfolgreich und startet keinen Worker. |
+| render --run <path> | Erzeugt nach Sitzungsende die Markdown-Dumps erneut aus vorhandenen JSON-Artefakten. Bei lebender Sitzung LAB_BUSY; ruft kein Produkttool auf. |
 
-Ein PowerShell-Startwrapper und eine weitere gemeinsame Bibliothek gehören nicht zum vereinbarten ersten Umfang. Ein eigenes Lab-Projekt ist für Sitzung, Katalog und Dumps angemessen; mehrere neue Infrastrukturprojekte würden den Einstieg unnötig vergrößern.
+runId und callId sind vom Lab erzeugte lowercase GUIDs im N-Format. session.json enthält schemaVersion, runId, workerPid, pipeName, state und zuletzt abgeschlossene Call-ID. Der Pipename lautet ainetnav-lab-<runId>. Sitzungszustände: starting, ready, stopping, stopped, failed. Ein Workerlock verhindert zwei Besitzer desselben Runs.
 
-Der Zugang benötigt einen langlebigen lokalen Sitzungsprozess über mehrere Agentenaufrufe. Registry, Handoff-Handles, laufende Operationen und Fortsetzungen gehören zu dieser Sitzung. Ein neuer Produktprozess pro Aufruf würde die zu untersuchenden Workflows verfälschen. Sitzungsstart und -ende sind Lab-Bedienung, keine zusätzlichen Navigationstools. Der konkrete lokale Kommunikationsmechanismus ist vor Konzeptfreigabe zu entscheiden.
+Pipe-Nachrichten verwenden einen 4-Byte-Little-Endian-Längenpräfix und UTF-8-JSON, maximal 1 MiB je Steuerauftrag. Der Client liest die Argumentdatei einmal und sendet deren Bytes als argumentsBase64; der Worker verwendet genau diese Bytes statt die Datei erneut zu lesen. Steuerdaten enthalten schemaVersion, command, runId und die zum Befehl gehörenden Task-/Callfelder. Ein Produktresultat wird nicht über die Pipe dupliziert; die terminale Antwort enthält state, callId, exitCode und relative Artefaktpfade. task überträgt analog die gelesene task.json, die anderen Befehle nur ihre Steuerdaten. Ungültige Nachrichten werden vor Dispatch als LAB_INPUT_INVALID zurückgewiesen.
 
-Der Agent erhält die produktiven Ergebnisinhalte und Statusfelder ohne erklärende Lab-Zusätze oder nachträgliche Kürzung. Rohresultat und tatsächlich sichtbare Darstellung werden getrennt aufgezeichnet; insbesondere darf strukturierter Inhalt nicht unbemerkt verschwinden oder als zusätzlicher Text doppelt gezählt werden. Lab-Messdaten und technische Logs gelangen nicht in die Navigationsergebnisse. Ein eigener Testzugang darf das für MCP reservierte stdout des Produktstarts nicht verändern.
+Der Client erzeugt die Call-ID vor dem Senden und gibt ID/Runpfad auf stderr aus. Wiederholung derselben ID startet nie einen zweiten Produktaufruf. Andere Task-/Tool-/Parentdaten oder andere Argumentbytes bei gleicher ID ergeben LAB_CALL_ID_CONFLICT. Der öffentliche call-Befehl erzeugt immer eine neue ID; Idempotenz schützt interne Übertragungswiederholungen, nicht eine erneute fachliche Ausführung durch den Agenten.
 
-### Grenze der Aussagekraft
+Verbindungsaufbau wartet höchstens fünf Sekunden. call wartet nach Annahme bis zum terminalen Resultat, höchstens 160 Sekunden; der Worker beendet Produktarbeit gemäß den eigenen Call-/Gracegrenzen. Bei Clienttimeout ist der Erfolg unbekannt: keine neue Call-ID automatisch senden, sondern die gespeicherten Ereignisse/Artefakte der gemeldeten ID lesen. Fehlt der Worker nach seinem Tod, status markiert die Sitzung failed und nennt unvollständige Calls. stop und render führen keine neuen Produktaufrufe aus.
 
-Bei lokalen Befehlen wählt der Agent ein Werkzeug aus einem gelesenen Katalog und formuliert einen Aufruf. Das prüft Aufgabenlösung und Verständlichkeit, bildet aber native Funktionsauswahl durch das Modell sowie die Darstellung eines MCP-Clients nur näherungsweise ab. Bedienfehler des lokalen Zugangs werden deshalb getrennt von Produktproblemen erfasst.
+Pro Sitzung läuft höchstens ein produktiver Call gleichzeitig. Ein weiterer Call erhält LAB_BUSY, ohne Produktdispatch und ohne Callverbrauch. Status und Stop bleiben während eines Calls bedienbar. Nach Clientverbindungsabbruch läuft ein bereits angenommener Call begrenzt weiter und speichert sein Resultat; der Client liest es über seine Call-ID. Es gibt keinen automatischen Retry.
 
-Ein eigener Modell-Runner mit API-Anbindung gehört nicht zum Einstieg. Für die gewünschte Trennung der Agentenrollen ist er nicht erforderlich.
+Feste Grenzen für Version 1:
 
-## Vereinbarter Ablauf und erster Umfang
-
-Die Nutzerklärung legt vier getrennte Agentenrollen fest:
-
-1. **Aufgabenagent:** formuliert ein konkretes Navigationsziel, beispielsweise „Suche im Code nach XYZ“, und ordnet es einem definierten Repository zu.
-2. **Testagent:** erhält Ziel und öffentliche Tooldefinitionen, wählt selbst Werkzeuge und Parameter und führt die lokalen Aufrufe aus. Aufrufe und Antworten werden vollständig in Markdown-Dateien festgehalten.
-3. **Analyseagent:** untersucht anschließend separat die Dumps und prüft Korrektheit, Verständlichkeit, Rauschen, Nutzwert und Aufwand mit unabhängigen Belegen.
-4. **Umsetzungsagent:** behebt bestätigte Findings in einem getrennten, später beauftragten Umsetzungslauf. Er verändert nichts während eines bewerteten Testlaufs.
-
-Der erste Umfang ist eine breite Untersuchung einzelner Aufrufe über die vereinbarten Tools und Parameterfälle. Dazu kommen wenige kurze A→B-Ketten, um zu prüfen, ob ein Agent Ergebnisse aus A tatsächlich in B verwenden kann. Beispiel: Symbol finden und dessen ausgegebene `handoffId` unverändert für den Body-Aufruf verwenden. Die Abdeckung wird gegen den tatsächlichen Katalog dokumentiert; nicht untersuchte Tools werden sichtbar benannt.
-
-Eine vollständige autonome Verbesserungsrunde und lange Aufgabenketten gehören nicht zum ersten Umfang. Die Untersuchungsmethode unten beschreibt die Beweissicherung; spätere Wiederholungen sind gezielte neue Läufe, kein jetzt einzuführender Schleifenautomat.
-
-## JSON-Infrastruktur und Markdown-Dumps
-
-Die Infrastruktur erzeugt das Laufprotokoll automatisch. JSON ist die maschinenlesbare Primärquelle; Markdown ist die daraus erzeugte lesbare Darstellung. Der Testagent soll weder Antworten abschreiben noch sich eigene Logging-Skripte oder Tests für jeden Fall ausdenken müssen.
-
-Ein Lauf enthält folgende Artefakte:
-
-| Artefakt | Inhalt und Herkunft |
+| Grenze | Wert |
 |---|---|
-| `run.json` | Lauf-ID, Zielzuordnung, Produkt-/Targetstand, Modellangaben und Grenzen; durch den Zugang erfasst, unbekannte Werte ausdrücklich markiert. |
-| `tools.json` | Unveränderter Katalog aus den produktiven Registrierungen, einschließlich Beschreibungen und Schemas; pro Lauf exportiert. |
-| `task.json` | Ziel und erlaubter Target vom Aufgabenagenten in einem validierten Lab-Format; keine vorgegebenen Aufrufsequenzen. |
-| `calls/<call-id>/request.json` | Tatsächlich gewählter Toolname und JSON-Argumente, unverändert mit Herkunft und Sitzungsbezug aufgezeichnet. |
-| `calls/<call-id>/response.json` | Originales produktives Ergebnis; Prozessfehler, Abbruch oder ausbleibendes Resultat werden separat als Lab-Ereignis gespeichert. |
-| `calls/<call-id>/call.md` | Automatisch gerenderte Beschreibung des verwendeten Tools, tatsächliche Argumente und vollständige Antwort beziehungsweise dokumentiertes Ausbleiben. |
-| `report.md` | Nachgelagerte Analyse mit Referenzen auf die Call-IDs; vom Analyseagenten erstellt. |
+| Produktcalls je Task | 8, inklusive Fehler, Polls und Fortsetzungen |
+| Zeit je Task | 5 Minuten ab ihrem ersten angenommenen Call |
+| Zeit je Produktcall | 120 Sekunden; anschließend Cancellation |
+| Calls je Sitzung | 200 |
+| Gesamtdauer einer Sitzung | 60 Minuten |
+| Idle-Ende | 15 Minuten ohne angenommenen Call; reine Statusabfragen verlängern nicht |
+| Cancellation-/Shutdown-Grace | 30 Sekunden; danach Worker beenden und Sitzung failed markieren |
 
-Das Testprogramm nimmt eine Argumentdatei entgegen und verwendet eine gemeinsame JSON-Serialisierung sowie ein versioniertes Lab-Format für Metadaten. Dadurch entfällt die fehleranfällige Verschachtelung von JSON in Shell-Argumenten. Wo der Agent eine Datei bereitstellt, validiert und archiviert die Infrastruktur deren tatsächlichen Inhalt. Sie erfindet keine Parameterwerte, injiziert keine Defaults und korrigiert keine ungültigen Toolargumente vor dem produktiven Validator. Auch fehlgeschlagene Aufrufe werden erfasst.
+Erreichte Grenzen verhindern neue Calls und werden als Lab-Ereignis ausgewiesen. Sie sind keine Produktfehler. Alle Zähler und Zeiten stehen im Protokoll. Ein Calltimeout cancelt den Call; wenn dessen Arbeit binnen der Grace nicht endet, wird die gesamte Sitzung beendet. Beim regulären Stop/Timeout wird die bestehende Runtime entsorgt; nach einem Prozesscrash werden alte IDs/Tokens nicht in einem neuen Prozess wiederbelebt.
 
-Vor einem Aufruf wird der Request festgehalten; danach werden Resultat oder Fehler dem gleichen Call zugeordnet. Eine unvollständige Spur bleibt sichtbar. Die Markdown-Generierung übernimmt keine freie Zusammenfassung: Alle produktiven Inhalte bleiben erhalten, Metadaten sind gesondert gekennzeichnet. Derselbe gespeicherte JSON-Dump erzeugt dieselbe Markdown-Darstellung bei gleicher Rendererversion. Die Anzeige für den Testagenten und der spätere Dump werden getrennt erfasst, damit Protokollierung dessen Wahrnehmung nicht erweitert.
+CLI-Exitcodes: 0 für einen empfangenen CallToolResult, auch bei IsError=true; 1 für eine produktive ProtocolException; 2 für Lab-/Bedienfehler; 3 für Timeout, Cancellation oder unerwartetes Sitzungsende. stderr enthält nur Lab-Diagnostik. Beim call schreibt stdout die vollständig gespeicherte produktive Resultatdarstellung, ohne Toolerklärungen, Messdaten oder Erfolgskommentar; bei Lab-Fehlern einen klar bezeichneten Lab-Fehler. Die übrigen Befehle dürfen Lab-Metadaten ausgeben. Die stdout-Regeln des regulären MCP-Einstiegs werden nicht geändert.
 
-„Deterministisch“ bedeutet hier verlässliche Formate, eindeutige Zuordnung, unveränderte Aufzeichnung und wiederholbare Verarbeitung festgehaltener Eingaben gegen einen festen Stand. Die Toolwahl des Agenten bleibt frei. Zeitangaben, opaque IDs, Sitzungszustand und asynchrone Abläufe verbieten eine pauschale Zusage bitweise identischer neuer Läufe. Für A→B übernimmt der Agent den Wert aus der aktuellen Antwort von A; ein früherer Token wird nicht blind erneut verwendet.
+## Konfiguration und Targets
 
-Aufgaben und ausgewählte Reproduktionen bleiben erhalten, statt pro Untersuchung neue Testskripte zu schreiben. Eine spätere gezielte Reproduktion kann identische unabhängige Argumente erneut verwenden; zustandsabhängige Folgen brauchen neue Vorgängerantworten. Ein allgemeiner Replay-Interpreter oder eine eigene Skriptsprache gehört nicht zum ersten Umfang.
+Die lokale Konfiguration wird nicht versioniert; sie liegt unter dem bereits ignorierten temp/agent-interaction-lab/targets.local.json. Ein englisches Beispiel ohne maschinenspezifische reale Pfade wird als Dokumentation im Lab-Projekt versioniert. Die Konfiguration hat ausschließlich schemaVersion 1, repositoryRoot als absoluten Pfad zur AiNetCodeNavigator-Checkoutwurzel und targets als Liste. Jeder Targeteintrag hat id, kind (source oder assembly), repositoryRoot und targetPath, jeweils absolute Pfade. IDs bestehen aus ASCII-Buchstaben, Ziffern und Bindestrichen und sind eindeutig. Der Ausgabeordner ist fest unter repositoryRoot/temp/agent-interaction-lab/; alle vom Lab erzeugten Pfade werden auf Zugehörigkeit geprüft. Das Lab löscht keine alten Runs automatisch.
 
-## Untersuchungsmethode
+Die folgenden vier Ziel-IDs sind für die erste Abnahme verbindlich:
 
-### Repositories und Aufgaben
-
-Eine versionierte Konfiguration definiert erlaubte Ziel-Repositories beziehungsweise Solutions und Szenarien. Externe Repositorypfade werden lokal zugeordnet; sie müssen nicht auf jedem Rechner identisch sein. Ein Lauf protokolliert die tatsächliche absolute Zieladresse, Repository-Commit und Änderungen beziehungsweise relevante Inhaltsfingerprints. Ein veränderliches oder nicht ladbares Ziel macht den Vergleich ungültig beziehungsweise den Lauf blockiert, nicht zu einem Tool-Verständlichkeitsfehler.
-
-Ein Szenario enthält ein fachliches Ziel, den erlaubten Target, überprüfbare Erfolgskriterien sowie Grenzen für Aufrufe und Laufzeit. Es enthält für den Testagenten weder die Lösung noch eine Liste auszuführender Werkzeuge. Gezielte Recovery-Szenarien dürfen eine kontrollierte Ausgangslage vorgeben; diese Vorgabe wird als solche dokumentiert.
-
-Der Aufgabenagent erzeugt die Aufgaben; der Analyseagent prüft deren Lösbarkeit und unabhängige Erfolgskriterien, ohne diese dem Testagenten zu verraten. Neue Aufgaben werden anschließend festgehalten. Auch neu erzeugte Aufgaben müssen später vergleichbar bleiben. Aufgaben werden nicht allein deshalb als Tooldefekt gewertet, weil ihr Ziel im Repository gar nicht existiert.
-
-Der Testagent startet mit frischem Kontext: Aufgabe, Target, Lab-Bedienung und produktiver Toolkatalog. Er bekommt keine internen Implementierungshinweise, früheren Findings, Lösungsskizzen oder Referenzantworten. Zur Navigation verwendet er ausschließlich den Testzugang; direkte Datei-, Shell- oder andere MCP-Navigation ist für diesen Lauf unzulässig. Das ist in Codex zunächst eine Rollenregel, keine behauptete technische Sandbox. Zugriffe außerhalb des Zugangs werden als ungültiger Lauf markiert; unbeobachtete Zugriffe verhindern einen belastbaren Abschluss.
-
-Der Auswerter darf den Code unabhängig lesen und mit Referenzfakten vergleichen. Er erhält Aufgabe, Verlauf und Abschlussantwort. Eine überzeugend klingende Agentenantwort oder ein zweiter Agent mit ähnlicher Meinung ist kein Korrektheitsbeleg.
-
-Beispielaufgabe: „Finde die Verarbeitung eines ungültigen Arguments. Zeige, wodurch der eigentliche Handler nicht ausgeführt wird, und nenne Tests, die dieses Verhalten belegen.“ Die internen Anker für die Bewertung werden dem Testagenten nicht gezeigt. Das Beispiel ist eine Aufgabenform, kein Nachweis, dass die heutigen Platzhalter den Workflow ermöglichen.
-
-### Klassische Tests und Agentenläufe
-
-Deterministische Tests bleiben für maschinenprüfbare Verträge zuständig: Schemas, gültige und ungültige Argumente, Handoff-Ketten, Status, Budgetgrenzen und fachliche Ergebnisse. Ein reproduzierbares Fehlverhalten aus einem Agentenlauf erhält vor einer späteren Korrektur einen passenden Regressionstest gemäß Repository-Regeln.
-
-Agentenläufe prüfen zusätzlich Toolwahl, Verständnis, Aufgabenlösung, Wiederherstellung nach Fehlern und Nutzen der Antwort. Erwartet wird ein belegtes Ergebnis, keine identische Aufrufreihenfolge oder wortgleiche Markdown-Antwort. Ein stabiler Kern von Aufgaben bleibt für Vorher-/Nachher-Vergleiche bestehen; neue Aufgaben ergänzen die Untersuchung, statt den Kern nach jedem Finding umzuschreiben.
-
-Aufrufverläufe können ohne Agentenentscheidung erneut ausgeführt werden, um Fehler und Vertragsänderungen nachzustellen. Das ersetzt keinen frischen Agentenlauf nach geänderten Beschreibungen oder Antworten: Der Agent könnte jetzt ganz andere Werkzeuge wählen. Handoff- und Fortsetzungstokens sind sitzungsgebunden; bei Wiederholung müssen sie aus neuen Vorgängerantworten stammen. Ein Rohverlauf ist daher nicht automatisch ein direkt ausführbarer Regressionstest.
-
-### Laufartefakte und Bewertung
-
-Jeder Lauf erhält einen eigenen Ordner unter dem bereits ignorierten `temp/agent-interaction-lab/`. Er enthält eine maschinenlesbare Laufbeschreibung und Ereignisspur sowie einen lesbaren Markdown-Bericht. Rohartefakte bleiben erhalten; bestätigte Findings mit ausreichendem Reproduktionsbeleg werden im Taskverzeichnis versioniert, damit sie nicht allein von temporären Dateien abhängen.
-
-Aufgezeichnet werden mindestens Toolkatalog, Produktstand, Targetstand, Aufgabenfassung, verwendetes Agentenmodell und bekannte Einstellungen, Call- und Parent-IDs, Argumente, originale Ergebnisse, sichtbare Ergebnisse, Zeitmessungen, Aufrufabbrüche und finale Agentenantwort. Es werden keine internen Gedankengänge verlangt. Nicht verfügbare Modell- oder Nutzungsdaten werden als unbekannt ausgewiesen.
-
-Bewertet wird mit konkreten Belegen:
-
-| Gesichtspunkt | Beobachtung |
+| ID | Inhalt |
 |---|---|
-| Korrektheit | Erfolgskriterien mit unabhängigen Code-/Testbelegen erfüllt; keine erfundenen Symbole oder Schlussfolgerungen. |
-| Verständlichkeit | Verwechselte Werkzeuge, falsch verstandene Parameter, benötigte Korrekturaufrufe und fehlende Entscheidungshinweise. |
-| Nutzbarkeit | Folgeaufrufe aus ausgegebenen IDs möglich; Aufgabenfortschritt und Fehlerbehebung ohne interne Hinweise. |
-| Rauschen | Konkrete unnötige oder wiederholte Antwortteile gegenüber der Aufgabe; fehlende relevante Unterscheidungen separat erfasst. |
-| Aufwand | Aufrufe, vermeidbare Wiederholungen, Katalog-/Argument-/Antwortumfang und Zeit bis zum belegten Ergebnis. |
-| Stabilität | Beobachtete Fehler und erfolgreiche Wiederholung bei festgehaltenen Bedingungen; ein einzelner Lauf belegt keine allgemeine Zuverlässigkeit. |
+| navigator-source | AiNetCodeNavigator.slnx im eigenen Repository |
+| linter-source | AiNetLinter.slnx im externen AiNetLinter-Repository |
+| navigator-assembly | Bereits gebaute AiNetCodeNavigator.Core.dll |
+| linter-assembly | Bereits gebaute AiNetLinter.dll |
 
-Bytes sind exakt messbar. Vergleichbare Tokenzahlen verwenden zunächst denselben benannten `cl100k_base`-Tokenizer wie der Produktformatter und gelten nicht als exakte Abrechnung des verwendeten Agentenmodells. Produkttext, strukturierter Inhalt, tatsächlich sichtbare Darstellung und Lab-/Shell-Aufwand werden getrennt angegeben. Katalogumfang gehört zu den Kosten; reale Kontextwiederholungen werden nur gezählt, wenn beobachtbar. Unbekannter Gesamtverbrauch wird nicht aus Antworttokens erfunden.
+Externe Repositories und deren Binaries werden nur gelesen; das Lab startet dort weder Restore noch Build. Fehlende Binaries müssen vor dem Lauf bereitgestellt werden. Es baut auch die eigenen Produktbinaries nicht implizit. Kein Aufruf des untersuchten Binaries.
 
-Kürzere Antworten gelten nur bei erhaltener Korrektheit und Aufgabenlösung als Verbesserung. Ein pauschaler „Noise Score“ oder die bloße Einhaltung eines Tokenlimits genügt nicht. Fehlversuche zählen auch dann, wenn der Agent am Ende erfolgreich ist.
+Die Lab-eigene hostsettings.json wird beim Sitzungsstart mit minimumLogLevel=Information unter dem Runverzeichnis erzeugt und ausdrücklich als Konfigurationspfad der Runtime gesetzt. Wartungsszenarien bearbeiten nur diese Datei. Ein geplanter Fehlerfall darf sie vorübergehend ungültig machen oder entfernen; vor der nächsten Task wird ihr definierter Startzustand wiederhergestellt und erfolgreich geladen. Der normale Benutzer-Konfigurationspfad wird niemals verwendet.
 
-Ein Finding enthält Priorität, Kategorie, Aufgabe und Produkt-/Targetstand, die verursachenden Call-IDs mit Argumenten und Antwortausschnitt, Auswirkung auf die Aufgabe sowie eine überprüfbare Abnahmebedingung. Lab-Probleme, Produktprobleme, Agentenfehler und nicht entscheidbare Beobachtungen bleiben unterscheidbar.
+Neue Targets sind über die gleiche lokale Konfiguration zulässig. Die vier verbindlichen Abnahmeziele bleiben erforderlich; keine implizite Suche nach beliebigen Solutions.
 
-## Scope
+Produktargumente werden nicht umgeschrieben: Der Testagent erhält die erlaubten absoluten Zielpfade und setzt targetPath selbst. Die Targetliste ist eine Experimentregel, keine Dateisystem-Sandbox. Ein Zugriff auf ein anderes echtes Repository wird als isolationStatus=violated bewertet; gezielte Fehlertests mit fehlendem oder ungültigem targetPath müssen in der zugehörigen Referenz ausdrücklich vorgesehen sein.
 
-Die folgenden Grenzen beschreiben den Entwurf für den bestätigten Kommandozeilenzugang. Das Gesamtkonzept ist noch nicht freigegeben.
+Beim Start und Sitzungsende werden je Repository HEAD, git status --porcelain und SHA-256 für die vorhandenen versionierten und nicht ignorierten unversionierten Dateien erfasst; gelöschte Dateien werden als fehlend protokolliert. Assemblies erhalten zusätzlich Dateihash und Hashes der vom produktiven Resolver tatsächlich verwendeten Referenzen. Hash-/Snapshotaufwand wird getrennt von Toolzeit gemessen.
 
-### Muss
+snapshotStatus ist unchanged_observed, changed oder unknown. Eine Differenz ergibt changed; nicht lesbare Dateien oder nicht erfasste Referenzen ergeben unknown. Diese Vorher-/Nachher-Prüfung garantiert keine Erkennung vorübergehender Änderungen. Während eines bewerteten Runs finden keine Repositoryänderungen oder Rebuilds statt. changed/unknown schließt belastbare Vorher-/Nachher-Aussagen aus.
 
-- Transportloser lokaler Testzugang zum gemeinsamen produktiven Katalog und Aufrufpfad; keine zweite Definition der Navigations-API.
-- Getrennter Lab-Einstieg: gemäß Empfehlung ein eigenes .NET-Konsolenprojekt unter `tests/AiNetCodeNavigator.AgentLab/`. Alle Lab-Parameter, Dump-Funktionen und Testkonfigurationen gehören ausschließlich dorthin; die reguläre Anwendung erhält keinen Lab-Modus.
-- Zusammenhängende Sitzung mit echter produktiver Zustandsverwaltung, explizitem Ende und begrenzter Laufdauer.
-- Konfigurierte Source-Solution-Ziele, einschließlich des eigenen Repositories und mindestens eines vom Nutzer benannten externen C#-Repositories; Navigation ausschließlich lesend.
-- Vier getrennte Agentenrollen für Aufgabenerstellung, Test, nachgelagerte Analyse und spätere Behebung; verdeckte Referenzkriterien und begrenzte Laufbudgets.
-- Breite Einzelaufrufe zu Toolwahl, Parametern, Erfolgsausgaben und relevanten Fehler-/Budgetfällen sowie wenige kurze Symbol-Folgeaufrufe. Der konkrete erste Toolumfang und Aufgabenbestand werden vor Freigabe festgelegt.
-- Belegbare Laufartefakte, überprüfte Findings und Vergleiche auf festgehaltenen Produkt- und Targetständen.
-- Automatisch erzeugtes JSON-Laufprotokoll mit produktivem Katalogexport, validierten Lab-Metadaten, archivierten tatsächlichen Requests und originalen Ergebnissen; vollständige Markdown-Dumps werden daraus deterministisch gerendert.
-- Deterministische Tests für Zugang und geteilte Verträge; frische Agentenläufe für die qualitative Wirkung einer Korrektur.
+## Artefaktverträge
 
-### Nicht
+Alle Lab-Metadaten verwenden schemaVersion 1, camelCase, UTC-Zeitangaben im ISO-8601-Format, UTF-8 ohne BOM und LF. Unbekannte Metadatenfelder, doppelte Keys und falsche Typen werden als Lab-Eingabefehler zurückgewiesen. Das ist unabhängig von der produktiven Argumentvalidierung; tatsächliche Toolargumente bleiben unverändert.
 
-- MCP-Deployment, MCP-Client/-Server, Handshake oder Protokolltransport innerhalb der Lab-Agentenläufe.
-- Ersatz der produktiven MCP-Integrationstests und der bestehenden Ende-zu-Ende-Abnahme.
-- Neue Navigationssemantik, Linting, Refactoring oder Schreiben in analysierte Repositories.
-- Ein selbstständiges alternatives CLI-Produkt; der Zugang ist Entwicklungs-/Testinfrastruktur.
-- Lab-Parameter, Dump-/Aufgabenlogik oder Abhängigkeiten auf das Lab in der regulären Anwendung oder im Core.
-- Eine kopierte Toolimplementierung, ein zusätzlicher Python-Laufzeitweg, ein PowerShell-Startwrapper oder mehrere neue Infrastrukturprojekte im ersten Umfang.
-- Harte Sandbox-Garantie durch bloße Agentenanweisungen.
-- Assembly- und Wartungsszenarien im vorgeschlagenen ersten Source-Umfang.
-- Separater Modellanbieter-Runner in der vorgeschlagenen Codex-Variante.
-- Ein allgemeiner Replay-Interpreter oder eine eigene Skriptsprache für Szenarien.
-- Produktänderungen innerhalb eines bewerteten Laufs. Findings werden separat analysiert und von einem anderen Agenten in einem getrennten Auftrag behoben.
-- Vollständige automatische Verbesserungsrunden und lange mehrstufige Navigationsaufgaben im ersten Umfang.
-- Unbegrenzte Verbesserungsrunden, absolute Fehlerfreiheitsversprechen oder eine allgemeine Modell-Benchmark-Plattform.
+~~~text
+temp/agent-interaction-lab/<runId>/
+  run.json
+  session.json
+  tools.json
+  hostsettings.json
+  events.jsonl
+  tasks/<taskId>/task.json
+  calls/<callId>/arguments.json
+  calls/<callId>/request.json
+  calls/<callId>/response.json
+  calls/<callId>/error.json
+  calls/<callId>/display.json
+  calls/<callId>/metrics.json
+  calls/<callId>/call.md
+  report.md
+~~~
 
-## Verifikation des Vorhabens
+- run.json hält unveränderliche Startmetadaten: runId, Produkt-HEAD/Arbeitsbaum, Paket-/SDK-/Renderer-Versionen, Targets und Startfingerprints, Grenzen und bekannte Agentenangaben. Unbekanntes ist null, keine erfundene Modellangabe.
+- tools.json enthält alle originalen ProtocolTool-Definitionen, ordinal nach Toolname sortiert. Beschreibungen, Parameterbeschreibungen, Schemas, Annotationen und weitere SDK-Felder werden nicht verkürzt. Es ist der Katalog der aktuellen SDK-Definition, keine Simulation einer ausgehandelten alten MCP-Protokollversion.
+- arguments.json ist eine bytegetreue Kopie der Eingabedatei, einschließlich ungültigen JSONs.
+- request.json enthält schemaVersion, runId, callId, sequence, taskId, parentCallId (oder null), toolName, receivedUtc, inputStatus und arguments. inputStatus ist valid_json für ein darstellbares Argumentobjekt, invalid_json für Syntaxfehler oder invalid_shape für eine andere JSON-Wurzel beziehungsweise doppelte Top-Level-Argumentnamen. arguments hält den geparsten unveränderten JSON-Wert oder bei Syntaxfehlern null; die originale Datei bleibt immer unter arguments.json erhalten.
+- response.json enthält ausschließlich den originalen CallToolResult mit den gemeinsamen SDK-Serializeroptionen. Keine Lab-Felder im Produktresultat. Eine produktive ProtocolException steht mit ursprünglichem Code und bereinigter Message in error.json; sie wird nicht zu einem normalen IsError-Resultat umgedeutet.
+- Bei syntaktisch ungültigem JSON, Nicht-Objekt als Argumentwurzel, doppelten Top-Level-Argumentnamen, fehlender Datei oder Lab-Fehler erfolgt kein Produktdispatch. Doppelte Top-Level-Argumentnamen sind im produktiven Dictionary-Vertrag nicht darstellbar; sie werden nicht still auf den letzten Wert reduziert. request/event/error kennzeichnen ausdrücklich lab_error. Bei einer vor Übertragung fehlenden/unlesbaren Datei speichert der Client einen vorbereitenden Lab-Eingabefehler; es gibt dann noch keinen angenommenen Produktcall. Ein falscher Wert innerhalb eines gültigen Argumentobjekts gelangt unverändert zur produktiven Schemavalidierung.
+- display.json ist die genaue kompakte UTF-8-Darstellung des Resultats, die call auf stdout ausgibt, einschließlich aller Textblöcke, StructuredContent und IsError. Die Ausgabe endet mit LF; diese Ausgabeform wird getrennt vom Produkttextbudget gemessen. Eine ProtocolException oder ein Lab-Fehler wird als eindeutig typisierter Fehler dargestellt.
+- metrics.json enthält Zeiten, Outputbytes und die unten definierten Tokenmessungen. Keine Messdaten werden in response.json eingefügt.
+- events.jsonl ist eine vom Worker seriell geschriebene Ereignisspur mit monotoner sequence, Zeitpunkt, taskId/callId und Typ. Typen: session_started, task_registered, call_received, dispatch_started, result_saved, call_failed, limit_reached, session_stopping, session_stopped, session_failed.
+- Neue Artefakte werden unter temporärem Dateinamen geschrieben und atomar veröffentlicht. Existierende Call-/Taskinhalte werden nicht überschrieben. session.json wird atomar ersetzt, events.jsonl append-only geschrieben.
+- request.json und Eingabekopie müssen veröffentlicht sein, bevor ein Produktdispatch startet. Schlägt dies fehl, findet kein Call statt. Fehlt nach einem Crash ein terminales Ereignis, bleibt der Call incomplete; keine erfundene Antwort und kein stiller Replay.
+- start besitzt vorbereitende Run-/Konfigurationsdateien bis zur Workerübergabe. Danach ist der Worker alleiniger Autor der Laufartefakte. Der CLI-Client darf bei Fehlern vor Annahme ausschließlich einen eigenen, per GUID benannten Clientfehler unter client-errors/ speichern; er verändert keine Calls oder Ereignisspur. Nach Sitzungsende darf render ausschließlich erzeugte call.md-Dateien aktualisieren. status darf unter exklusivem Workerlock eine verwaiste session.json auf failed setzen. Der Analyseagent besitzt report.md; die Exe schreibt keine freie Analyse.
 
-Der Zugang ist erst belastbar, wenn die beabsichtigte gemeinsame Verarbeitung im Code belegt ist. Automatisierte Vergleiche mit dem echten SDK-/MCP-Testpfad müssen den freigegebenen Toolumfang abdecken: Katalog, Defaults/Bindung, gültige und ungültige Argumente, Erfolg, Fehler, Budget/Recovery und sitzungsabhängige Folgeaufrufe. Diese Paritätsprüfungen dürfen als separate Produkt-/Integrationstests MCP verwenden; die Agentenläufe selbst verwenden es nicht. Flüchtige IDs werden über ihre Bedeutung und Folgeaufrufe verglichen, nicht über gleiche Tokenstrings.
+call.md hat englische Überschriften in fester Reihenfolge: Identity, Task, Tool definition, Request, Outcome, Metrics. Tooldefinition und Request werden vollständig ausgegeben. Outcome erhält die originalen Textblöcke in ihrer Reihenfolge, StructuredContent und weitere Resultatfelder; bei Fehlern die typisierte Fehlerdarstellung. Es gibt keine freie Zusammenfassung oder nachträgliche Kürzung. Codefences sind mindestens drei Backticks und länger als jede Backtickfolge im eingeschlossenen Text. Das verhindert beschädigte Dumps bei Code oder Markdown im Ergebnis.
 
-Die Projektgrenze wird am Referenzgraphen und an den Einstiegen geprüft: Das Lab verwendet produktiven Code, Produktionsprojekte referenzieren das Lab nicht. Die reguläre CLI bekommt keine Lab-Befehle oder Lab-Optionen; ihre Startlogik registriert weder Dump-Writer noch Lab-Konfiguration. Die reguläre Produktverteilung benötigt keine Lab-Artefakte. Wiederverwendung wird durch gemeinsamen Code und passende Vertragsprüfungen nachgewiesen, nicht durch ähnliche Ausgaben zweier unabhängiger Implementierungen.
+Gleiche gespeicherte Artefakte und gleiche Rendererversion erzeugen byteidentische call.md-Dateien. Neue Produkt-/Agentenläufe müssen wegen Zeitangaben, asynchroner Abläufe und opaker IDs nicht byteidentisch sein.
 
-Zur Lab-Abnahme gehört ein aufgezeichneter frischer Agentenlauf auf jedem vereinbarten Repository, eine unabhängig bewertete Aufgabenlösung und ein nachvollziehbarer Fehler-/Recovery-Verlauf. Ein bewusst ausgelöster Fehler muss als solcher erkennbar bleiben. Zugriff außerhalb der erlaubten Navigation, fehlende Ereignisse oder nicht eingefrorene Vergleichsstände werden im Bericht als ungültig beziehungsweise nicht vergleichbar ausgewiesen.
+## Agentenrollen und Aufgaben
 
-Der erste Bericht liefert Beobachtungen mit Belegen und sichtbarer Toolabdeckung. Er muss keine statistische Stabilität oder fertige automatische Verbesserungsschleife nachweisen. Wird später eine Verbesserung behauptet, braucht sie dieselben Aufgaben, Targets und bekannten Agenteneinstellungen vor und nach der Änderung sowie erhaltene Korrektheit. Ein einzelner erfolgreicher Lauf ist eine Beobachtung, kein Stabilitätsnachweis.
+Die Umsetzung liefert vier englische Rollenaufträge unter dem Lab-Projekt in roles/: task-author.md, test-agent.md, analyst.md und fixer.md. Sie beschreiben Eingaben, erlaubte Zugriffe, Ergebnisformat und Abschlussbedingungen. Die Exe enthält keine Modell-API und keinen eingebauten Orchestrator. Codex startet die Rollen in getrennten Agentenkontexten; der Testagent erhält keine geerbte Gesprächshistorie. Bei Subagenten ohne explizite Modellwahl gelten die Repository-Defaults.
 
-Implementierungsabnahme verwendet die passenden offiziellen Build-/Testskripte. Für diesen Konzeptentwurf sind ausschließlich Diff-Review und `git diff --check` erforderlich; Produktverhalten wurde hier nicht geändert.
+| Rolle | Auftrag und Zugriff |
+|---|---|
+| Aufgabenagent | Liest die Targets und den Katalog, darf zur Erstellung lösbarer Aufgaben Referenzcode lesen. Erstellt task.json und verdeckte Referenzkriterien. Gibt keine richtige Toolsequenz an den Testagenten weiter. |
+| Testagent | Erhält ausschließlich öffentliche task.json, Targetpfade, tools.json und Lab-Bedienung. Erstellt Argumentdateien, verwendet call und liest dessen Ergebnisse. Keine direkte Source-/Assemblyinspektion, keine andere MCP-Navigation, keine früheren Findings oder Referenzen. |
+| Analyseagent | Prüft nach dem Lauf Dumps und finale Agentenantwort gegen unabhängigen Code, Tests und verdeckte Referenzkriterien. Ändert weder Produktcode noch ursprüngliche Dumps. |
+| Umsetzungsagent | Erhält bestätigte Findings in einem getrennten späteren Umsetzungsauftrag. Reproduziert Defekte mit passenden Tests und beachtet Repository-Gates. Führt im bewerteten Run keine Fixes aus. |
+
+Die öffentlichen Tasks enthalten exakt schemaVersion, id, targetId, goal und mode. id verwendet dieselbe ASCII-ID-Regel wie Target-IDs. mode ist single oder chain; beide erlauben begrenzte Korrekturaufrufe. targetId ist eine konfigurierte Ziel-ID oder runtime für Wartung. goal ist ein nicht leerer String und beschreibt das fachliche Ergebnis, nicht die zu verwendenden Tools. Schemafehler werden vor der Taskregistrierung zurückgewiesen. Lab-Grenzen gelten auch für single, statt den Agenten nach einem ersten missverständlichen Aufruf abzuschneiden.
+
+Der Aufgabenagent hält getrennt Referenzkriterien mit taskId, erwarteten Fakten, unabhängigen Code-/Testankern, beabsichtigten Fehlerfällen und gewünschten Coverage-Zellen fest. Der Analyseagent prüft vor Weitergabe der Aufgabe, ob das Ziel tatsächlich existiert oder ein ausdrücklich beabsichtigter Negativfall ist. Referenzen liegen außerhalb der dem Testagenten übergebenen Dateien. Sie sind auf derselben Maschine keine Sicherheitsgrenze.
+
+Für die breite Untersuchung dürfen Aufgaben gezielt einen Parameterfall beschreiben, beispielsweise eine gewünschte Sichtbarkeit, geringe Antwortmenge oder eine Mehrdeutigkeit. Sie nennen dem Testagenten trotzdem weder einen Toolnamen noch eine fertige Argumentliste. Er darf bis zur Taskgrenze selbst korrigieren und Folgeaufrufe wählen. Er liefert am Ende eine knappe Antwort mit seinen Call-IDs und den belegten Fakten.
+
+Direkte Navigation außerhalb des Zugangs ergibt isolationStatus=violated und eine ungültige Tool-Verständlichkeitsbewertung. Der koordinierende Agent liefert eine Zugriffserklärung und verfügbare Toolspuren für die Auswertung. Ohne vollständige beobachtbare Spur ist isolationStatus=declared, nicht verified. Das Lab behauptet keine technische Sandbox und keinen Beweis, was Codex tatsächlich vollständig in den Modellkontext übernommen hat.
+
+## Abdeckung aller 22 Tools
+
+Der Start erwartet exakt die folgende produktive Toolmenge. Fehlende, doppelte oder zusätzliche Tools verhindern einen realen Run mit LAB_CATALOG_MISMATCH. Fixture-Kataloge dürfen ausschließlich interne automatisierte Tests verwenden; keine öffentliche Fixture-Startoption.
+
+| Gruppe | Tools |
+|---|---|
+| Symbol | find_symbol, get_symbol_body |
+| Struktur | get_file_skeleton, get_class_structure, get_file_tree, get_namespace_tree, get_index_scope |
+| Beziehungen | get_call_tree, find_references, get_type_hierarchy, find_implementations, get_impact, dependency_graph, resolve_type_origin |
+| Assembly | get_assembly_context, inspect_assembly, search_assembly, find_assembly_extensions |
+| Kontext | get_feature_context, get_test_context |
+| Wartung | get_server_health, reload_config |
+
+Für jedes Tool gibt es mindestens eine Aufgabe für den normalen Erfolg und eine für einen relevanten Parameter- oder Fehlerfall. Source-Navigation wird auf beiden Solutions untersucht; Assembly-Navigation und resolve_type_origin auf beiden Assemblyzielen; get_symbol_body zusätzlich als Assemblyfolge. Wartung wird einmal auf der Lab-Runtime untersucht, nicht künstlich pro Repository dupliziert. Die Eignung von Tasks wird anhand des realen Targets geprüft; fehlende Referenzdaten dürfen keinen Scheinerfolg erzeugen.
+
+Drei kurze Ketten sind Pflicht:
+
+- Source: find_symbol → get_symbol_body mit unverändertem handoffId, auf beiden Solutions.
+- Source: find_symbol → find_references mit unverändertem handoffId, auf beiden Solutions.
+- Assembly: inspect_assembly → get_symbol_body mit dem tatsächlich angebotenen handoffId, auf beiden Assemblies.
+
+Die Namen dieser Ketten gehören in die verdeckten Abnahmekriterien und die Auswertung, nicht in die Zielbeschreibung des Testagenten. Die Aufgabe nennt das fachliche Ziel. Parent-IDs machen die Verwendung des vorherigen Resultats nachvollziehbar; es gibt keinen automatischen Parameterersatz.
+
+Über den Gesamtbestand sind zusätzlich diese Fälle abzudecken: kein Treffer, Mehrdeutigkeit, unbekannter Parameter, falscher Parametertyp, RESPONSE_BUDGET_TOO_SMALL mit Recovery, Truncation mit einer echten Fortsetzung sowie Loading/Running mit Polling. Letztere werden gezielt bei kalter Runtime oder kontrolliertem geringem Budget angestoßen. Scheitert eine reale Reproduktion, wird sie als not_observed dokumentiert; deterministische Fixturetests prüfen den Lab-Mechanismus, ersetzen aber den fehlenden Produktnachweis nicht.
+
+Abdeckung wird als Matrix Tool × Target × Fall dokumentiert. Ein Tool, das der Agent trotz gezielter Aufgaben nicht auswählt, bleibt not_observed und liefert einen möglichen Verständlichkeitsbefund. Ein Aufgabenfehler wird getrennt benannt. Die Auswertung darf Lücken nicht durch vorgegebene Toolsequenzen als angeblich autonome Erfolge schließen.
+
+## Messungen und nachgelagerte Analyse
+
+Erfasst werden getrennt: Katalogtext, Argumentdatei, produktive Textblöcke, StructuredContent und gesamte CLI-Resultatdarstellung. UTF-8-Bytes werden exakt gezählt; Tokenzahlen verwenden den vorhandenen cl100k_base-Zähler mit benannter Version. Textbudgetmessungen verwenden exakt die produktiven Textstrings; JSONdarstellung und Escapezeichen werden separat gezählt. Die Bestandteile werden nicht als unabhängige Gesamtkosten zusammenaddiert und damit doppelt gezählt.
+
+Callzeiten trennen Archivierung/Snapshotaufwand, gemeinsame Validierung/Bindung/Handler und Darstellung. Fehler, Korrekturaufrufe, Polls und Fortsetzungen zählen mit. Verfügbarkeit von Modell-/Reasoningeinstellungen und realen Usagezahlen wird protokolliert; unbekannte Werte bleiben null. Das Lab misst weder verborgene Reasoningtokens noch exakte Kosten des tatsächlichen Agentenmodells oder die Truncation einer externen Codex-Ausgabefläche.
+
+report.md enthält für jede Aufgabe:
+
+- Outcome: solved, failed, blocked, invalid oder inconclusive.
+- Code-/Testbelege für Korrektheit; eine plausibel klingende Antwort allein genügt nicht.
+- Tool-/Parameterverständnis mit konkreten Fehlversuchen.
+- Nutzwert und Rauschen mit genauen Antwortstellen, nicht mit pauschalem Score.
+- Aufruf-/Tokenaufwand und snapshotStatus/isolationStatus.
+- Coverage-Zellen und Findings beziehungsweise eine begründete Aussage, dass kein Finding belegt ist.
+
+Ein Finding enthält ID, Priorität P0–P3, Kategorie (product, description, output, lab, task, agent oder undetermined), taskId, Call-IDs, Produkt-/Targetstand, Reproduktion/Antwortausschnitt, konkrete Auswirkung und überprüfbare Abnahmebedingung. Bestätigte Findings werden in Findings.md unter diesem Taskverzeichnis mit ausreichenden Belegen versioniert; ein bloßer Link auf später löschbare temp-Dateien genügt nicht.
+
+Kürzer gilt nur bei erhaltener Korrektheit und Aufgabenlösung als besser. Ein einzelner Lauf liefert Beobachtungen, keinen statistischen Stabilitätsnachweis. Ein späterer Verbesserungsvergleich verwendet gleiche Aufgaben/Targets/bekannte Agenteneinstellungen und neue Agentenkontexte. Zustandsabhängige IDs werden aus aktuellen Vorgängerantworten gewonnen; Rohverläufe sind kein allgemeines Replayprogramm.
+
+## Verifikation und Abschlussbedingungen
+
+### Infrastrukturabnahme
+
+Die bestehende Testinfrastruktur wird erweitert; kein zusätzliches Testprojekt. FastTests erhalten eine Referenz auf das Lab für Renderer, Metadatenvalidierung und Protokollzustände; IntegrationTests für Prozess-/Named-Pipe-Lifecycle und gemeinsame Aufrufparität. Das Lab erhält Zugriff für diese Testassemblies. Es wird in die Solution und damit die offiziellen Build-/Testgates aufgenommen.
+
+Verbindliche Nachweise:
+
+- Referenzgraph ohne Abhängigkeit von Produktionsprojekten auf das Lab; reguläre CLI ohne Lab-Befehle/-Parameter und keine Registrierung von Lab-Diensten im Produktstart.
+- Transportloser gemeinsamer Aufruf in Produktion und Lab; kein MCP-Client/-Server/Loopback im Lab.
+- Produktkatalogfelder stimmen mit einem separaten realen SDK-/MCP-Testpfad überein. Eingabe-/Ergebnisschemas und Annotationen werden vollständig verglichen; Protokollversion des Vergleichs entspricht der aktuellen SDK-Definition.
+- Pro Tool mindestens ein gültiger und ein ungültiger Aufruf im Paritätsvergleich. Zusätzlich repräsentative Fälle für Defaults, Null, unbekannte Felder, Enum-/Zahlenbindung, Budget, ProtocolException, Handoffs, Running und Fortsetzungen. Flüchtige Werte werden nur in ausdrücklich benannten Feldern normalisiert; deren Folgefunktion wird separat geprüft.
+- A→B funktioniert in derselben Workerinstanz; fremde/abgelaufene/alte Handoffs erzeugen den vorgesehenen produktiven Fehler.
+- Busy, Clientabbruch, Timeout, Stop, doppelter Call-ID, Workercrash und unvollständige Artefakte sind nachvollziehbar und führen nicht zu Doppelcalls oder falschen Erfolgsmeldungen.
+- Gleiche Artefakte erzeugen byteidentisches Markdown; Codefences, Unicode, mehrteiliger Content und StructuredContent bleiben vollständig.
+- Inputs/Outputs werden atomar und vor/nach Dispatch entsprechend dem Vertrag gespeichert; Lab-Fehler bleiben von produktiven Fehlern getrennt.
+- Normale Navigation und Wartungsprüfung verändern keine analysierten Source-/Assemblydateien und keine Benutzerkonfiguration. Snapshotdifferenzen werden nicht als unveränderter Lauf gemeldet.
+- Offizielle Gates: scripts/build.ps1, scripts/test-fast.ps1, scripts/test-integration.ps1 und scripts/test.ps1. Ausführung und Ergebnisse werden gemäß Repository-Regeln dokumentiert; docs/ wird erst mit implementiertem Stand aktualisiert.
+
+### Erste Agentenuntersuchung
+
+Die Abnahme liefert Tasks, unveränderte JSON-/Markdown-Dumps, finale Agentenantworten und einen separat erstellten Bericht für beide Repositories und die vollständige Toolmenge. Ein erster Run pro Repository genügt; es werden keine statistischen Zusagen gemacht. Die Anzahl der Sitzungen darf an die festen Grenzen angepasst werden; keine Grenze wird still angehoben.
+
+Das Lab kann korrekt implementiert sein, obwohl die Untersuchung Produktdefekte oder Verständlichkeitsprobleme aufzeigt. Diese sind Findings, keine fehlgeschlagene Infrastrukturabnahme. Fehlende Tools, ungültige Tasks, beschädigte Spuren, Zieländerungen und nicht reproduzierte Spezialfälle bleiben sichtbar als Blocker/Lücken der Untersuchung. Keine vollständige Produktqualität oder vollständige qualitative Abdeckung behaupten, solange solche Lücken bestehen.
+
+Die Umsetzung umfasst die erste Agentenuntersuchung und das belegte Findingsregister. Behebung der Produktfindings erfolgt im getrennten späteren Auftrag an den Umsetzungsagenten; dieser Auftrag ist kein Bestandteil der Lab-Infrastrukturabnahme.
+
+## Nicht-Ziele
+
+- MCP-Deployment, Codex-MCP-Konfigurationswechsel und MCP-Transport in Lab-Läufen.
+- Ersatz der regulären MCP-Integrationstests, der bestehenden Produktabnahme oder der Navigationstool-Implementierung in Cluster 9.
+- Zusätzliche Navigations-/Lint-/Refactoringfunktionen, Schreiben in analysierte Repositories oder Ausführen der untersuchten Binaries.
+- Neue Modell-API, eingebauter Agenten-Orchestrator, Weboberfläche oder technische Codex-Sandbox.
+- Kopierte Tooldefinitionen, manueller Parameterbinder oder Umgehung des gemeinsamen produktiven Validators.
+- Python-Runtime, PowerShell-Startwrapper, zusätzliches Bibliotheks-/Testprojekt oder allgemeine Replay-Skriptsprache.
+- Automatische Fixschleifen, Fixes während der Bewertung, exhaustive Parameterkombinationen oder statistische Modellbenchmarks.
 
 ## Arbeitsgedächtnis (nur Draft)
 
-- Nutzer hat den Kommandozeilenmodus bestätigt: vorhandene Codex-Agenten bedienen ein lokales Testprogramm; keine zusätzliche Modell-API.
-- Nutzer wünscht Infrastruktur für die JSON-Dateien und deterministische Verarbeitung. Empfehlung konkretisiert: automatisch erzeugtes JSON-Laufprotokoll, daraus vollständige Markdown-Dumps; freie Agentenwahl und flüchtige IDs sind davon getrennt.
-- Nutzer verlangt klare Trennung vom Regelbetrieb: keine zusätzlichen Lab-Parameter oder unnötige Lab-Funktionen in der primären Anwendung. Empfehlung: genau ein eigenes .NET-Konsolenprojekt unter `tests/AiNetCodeNavigator.AgentLab/`, das produktiven Toolcode referenziert. Noch keine ausdrückliche Bestätigung der Projektwahl; die Trennung selbst ist verbindlich.
-- Nutzer hat festgelegt: Aufgabenagent → Testagent → vollständige Markdown-Dumps → separater Analyseagent → anderer Umsetzungsagent. Zunächst grob flächig untersuchen; kurze A→B-Ketten ergänzen, keine vollständige automatische Schleife.
-- Vor Freigabe festzulegen: lokaler Sitzungs-/Kommunikationsmechanismus und dessen beobachtbarer Zugriffsumfang; keine transportlose Parität behaupten, bevor die gemeinsame Verarbeitung belegbar ist.
-- Vor Freigabe festzulegen: erstes externes Repository, konkrete Szenarien und Toolumfang sowie Call-/Zeitgrenzen. Eine statistische Wiederholungsstudie gehört nicht zum ersten Umfang.
-- Fehlende produktive Registrierungen sind eine Abhängigkeit des Labs. Dieser Entwurf startet weder deren Umsetzung noch den nächsten Agent-Workflow-Schritt.
-- Das Taskverzeichnis wurde gemäß ausdrücklichem Nutzerauftrag ausgewählt: `tasks/Agent-Interaction-Lab/`.
+Die Sachentscheidungen sind getroffen: separate .NET-Lab-Exe, AiNetCodeNavigator/AiNetLinter und alle 22 Tools. Technische Verträge, Grenzen und Nachweise sind in diesem Entwurf festgelegt; kein Implementierer soll aus offenen Varianten auswählen.
+
+Offen ist ausschließlich die ausdrückliche Freigabe dieses konkretisierten Gesamtkonzepts. Danach wird status auf ready gesetzt und dieser Abschnitt entfernt. Dies startet weder Roadmap noch Umsetzung; der Nutzer ruft den nächsten Workflow-Schritt selbst auf.
