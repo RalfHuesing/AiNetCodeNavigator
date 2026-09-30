@@ -2,10 +2,10 @@
 
 [Zurück zum Konzept](../Konzept.md)
 
-- [ ] 8.1 Budgeting & Truncation:
+- [x] 8.1 Budgeting & Truncation:
   - [x] `SharpToken`-Integration für Token-Begrenzungen
   - [x] `McpTruncation`: Präzises Abschneiden mit Fortsetzungshinweisen (`RESPONSE_BUDGET_TOO_SMALL`)
-  - [ ] Review/Audit zu 8.1 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 8.1 durchführen; Findings ergänzen und umsetzen.
   - [x] Audit 1 P1: Unmögliche `minimumResponseBytes`-Retry-Werte oberhalb des öffentlichen Maximums behandeln.
   - [x] Audit 1 P2: `startOffset` auf vollständige Zeileneinheiten begrenzen oder verlustfrei kanonisieren.
   - [x] Audit 1 P2: Token-Budget-Vertrag für Fehlerantworten klären und durchsetzen/testen.
