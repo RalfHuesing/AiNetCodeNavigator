@@ -19,7 +19,7 @@
   - [x] FastTests für deklarative Struktur, getrennte Multi-Variable-Handoffs/Roundtrips und wichtige Fehlerfälle
   - [x] Exclude executable field and event initializer expressions from skeleton DTO signatures and Markdown; cover lambda/block initializers with FastTests.
   - [x] Give every variable in a multi-variable field or event declaration an unambiguous own entry and handoff; test DTO formatter associations and Markdown roundtrips for later variables.
-  - [ ] Review/Audit zu 4.3 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 4.3 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.4 Klassen-Struktur (`get_class_structure`-Engine):
   - [x] `ClassStructureScanner`: Vollständige Member-Übersicht (Properties, Methoden, Konstruktoren, Sichtbarkeiten)
   - [x] FastTests für Class-Structure

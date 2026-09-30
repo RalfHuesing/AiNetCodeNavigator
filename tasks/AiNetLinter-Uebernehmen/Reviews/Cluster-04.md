@@ -187,3 +187,12 @@ The point 4.3 audit checkbox remains open for the residual DTO test obligation. 
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 304/304 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Independent audit 3/3 of point 4.3
+
+- Reviewed commit: `36b8d9bd93172763fc184db847b515c567dd7d39` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Narrow read-only audit of the remaining DTO `formatSymbolId` obligation; the implementation slice's gate results are recorded above. This audit did not run a build or tests.
+- **P3 DTO handoff test gap — closed.** `BuildForDocumentAsync_FormatsDistinctHandoffsForEachFieldAndEventVariable` supplies a formatter and asserts four separate DTO member IDs matching the Roslyn documentation IDs for `_first`, `_second`, `Changed`, and `Closed`. It also asserts four distinct IDs. The earlier Markdown test still follows all four opaque IDs through `FeatureContextScanner` to their own symbols. Together they cover the DTO association and navigable text roundtrip required by the second audit.
+
+Point 4.3 is accepted after the third and final audit; no open finding or technical debt remains for this point. The audit checkbox is complete. No product code or external repository was changed in this audit.
