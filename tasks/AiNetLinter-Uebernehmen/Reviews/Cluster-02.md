@@ -172,3 +172,22 @@
 - **P2 closed — changes to active custom imports:** `MSBuildStructureInputCollector.cs:34-58` records evaluated import paths, and `SolutionStructureFingerprint.cs:51-54,67-106` hashes their contents even when timestamp and length are preserved. `WorkspaceLoadingIntegrationTests.cs:168-205` exercises both `.props` and `.targets` and checks that the App project's reference changes from Library to Extra by resolved Roslyn project ID.
 - **P2 open — creation of a conditional import is invisible.** The collector at `MSBuildStructureInputCollector.cs:36-45` records only `project.Imports`, the imports effective during the last load. For `<Import Project="../../build/Optional.props" Condition="Exists('../../build/Optional.props')" />` with the file initially absent, there is no imported file to hash. Creating `Optional.props` later with a `ProjectReference` changes neither the unchanged `.csproj` nor any recorded input in `SolutionStructureFingerprint.cs:18-64`. `ResidentSolution.cs:236-246` therefore skips re-evaluation and keeps the previous project graph. The current integration tests edit imports that already exist at initial load; they do not cover activation. **Acceptance:** in a real `.slnx` test, start with a missing conditional import, create the imported file with a project reference, and verify the next snapshot resolves the new reference; include absent conditional import paths or another reliable evaluation trigger in the structure fingerprint.
 - The import-activation boundary is distinct from the now-covered edits to active imports and remains within point 2.3's changed project/reference-structure contract. Public MCP transport behavior remains a later integration gate. No build or tests were run by this auditor; the fix verification table above records the implementer's runs. Documentation-only diff reviewed and `git diff --check` passed before commit.
+
+### Audit 2 Finding Fix
+
+- Fix base: `a3c79c93f0149839b7a1baa6f4ac197c9328523f`.
+- Implementation commit: `e3f236a5d719e71aa112868c307aa03b84a0144d`.
+- The new real-`.slnx` regression test failed before the implementation: after creating `build/Optional.props`, the next snapshot still had no App project reference, and the assertion for the new reference threw because the sequence was empty.
+- **P2 — creation of a missing conditional import — fixed.** The collector now inspects MSBuild `ProjectImportElement`s in the root and currently imported project files. It expands supported project properties using the evaluated project and each import's containing directory, then fingerprints the exact declared candidate path even when it is currently absent or its `Condition` evaluates false. A later file creation changes the missing marker to a file fingerprint and triggers a complete MSBuild reload. This uses explicit import declarations and their path expressions; it does not scan parent directories or infer possible filenames. Unresolved expressions and wildcard import paths are skipped rather than treated as broad filesystem roots.
+- The regression uses `<Import Project="../../build/Optional.props" Condition="Exists('../../build/Optional.props')" />`, starts without that file, creates it with a `ProjectReference`, then verifies the next snapshot resolves the App reference to `Extra`.
+- Updated current-state documentation with the candidate-path behavior and its unresolved-expression/wildcard boundary. The point 2.3 audit checkbox remains open for the final independent audit.
+
+#### Fix Verification
+
+| Gate | Result |
+|---|---|
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 223/223 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 11/11 including the conditional import activation case |
+| `pwsh -File ./scripts/test.ps1` | Passed, 234/234 across both test projects |
+| `git diff --check` | Passed |
