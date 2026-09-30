@@ -36,4 +36,4 @@
 - [x] Align generated-source visibility across namespace discovery and default symbol navigation; document the opt-in behavior.
 - [x] Normalize project-name filters consistently between namespace tree and index scope.
 - [x] Keep `find_symbol` follow-up within the C# project coverage reported by index scope and namespace tree in mixed-language solutions.
-- [ ] Complete the independent Cluster 6 integration review after these findings are addressed.
+- [x] Complete the independent Cluster 6 integration review after these findings are addressed.
