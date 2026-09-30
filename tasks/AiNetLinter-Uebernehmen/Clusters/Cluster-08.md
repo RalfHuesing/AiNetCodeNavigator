@@ -11,12 +11,12 @@
   - [x] Audit 1 P2: Token-Budget-Vertrag für Fehlerantworten klären und durchsetzen/testen.
 - [ ] 8.2 Standardisiertes Result-Building:
   - [x] `McpToolResults`: Einheitliche Erzeugung von `CallToolResult`, `IsError`-Policy und Statusblöcken
-- [ ] Review/Audit zu 8.2 durchführen; Findings ergänzen und umsetzen (Audit 2/3: two P2 edge cases remain open).
+- [ ] Review/Audit zu 8.2 durchführen; Findings ergänzen und umsetzen (Audit-2-Remediation umgesetzt; finales unabhängiges Audit 3/3 ausstehend).
 - [x] Audit 1 P2: Calculate success budget retries from the intended success projection rather than the error status prefix.
 - [x] Audit 1 P2: Preserve required recovery and argument-correction fields when error context is shortened.
 - [x] Audit 1 P2: Apply response budgets to loading/retry results, including their status and next action.
-- [ ] Audit 2 P2: Make the advertised truncated-success byte/token retry executable with the final status projection.
-- [ ] Audit 2 P2: Preserve the exact required error envelope when optional context follows multiline correction fields.
+- [x] Audit 2 P2: Make the advertised truncated-success byte/token retry executable with the final status projection.
+- [x] Audit 2 P2: Preserve the exact required error envelope when optional context follows multiline correction fields.
 - [ ] 8.3 Langläufer & Paginierung:
   - [ ] `LongRunningToolCallStore`: Polling- und Fortsetzungs-Tokens (`operationToken`, `continuationToken`)
   - [ ] Review/Audit zu 8.3 durchführen; Findings ergänzen und umsetzen.

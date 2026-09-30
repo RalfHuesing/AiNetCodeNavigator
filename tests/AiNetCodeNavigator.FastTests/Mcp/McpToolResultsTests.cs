@@ -156,6 +156,38 @@ public sealed class McpToolResultsTests
     }
 
     [Fact]
+    public void Success_BudgetRecoveryUsesExecutableProjectionForTruncatedAndShortCompleteResults()
+    {
+        var truncatedText = new string('x', 500) + "\n" + new string('y', 1_000);
+        var truncatedError = McpToolResults.Success(truncatedText, maxResponseBytes: 512);
+        var truncatedResponse = TextOf(truncatedError);
+
+        Assert.True(truncatedError.IsError);
+        Assert.Contains("minimumResponseBytes: 616", truncatedResponse, StringComparison.Ordinal);
+        Assert.Contains("minimumResponseTokens: 97", truncatedResponse, StringComparison.Ordinal);
+        var truncatedRetry = McpToolResults.Success(truncatedText, maxResponseBytes: 616, maxResponseTokens: 97);
+        Assert.False(truncatedRetry.IsError ?? false);
+        Assert.StartsWith(McpToolResults.TruncatedSuccessStatusPrefix, TextOf(truncatedRetry), StringComparison.Ordinal);
+        Assert.True(Encoding.UTF8.GetByteCount(TextOf(truncatedRetry)) <= 616);
+        Assert.True(McpResponseFormatter.CountTokens(TextOf(truncatedRetry)) <= 97);
+
+        var shortText = new string('x', 500) + "\ny";
+        var completeProjection = McpToolResults.SuccessStatusPrefix + shortText;
+        var completeBytes = Encoding.UTF8.GetByteCount(completeProjection);
+        var completeTokens = McpResponseFormatter.CountTokens(completeProjection);
+        var shortError = McpToolResults.Success(shortText, maxResponseBytes: 512);
+        var shortErrorText = TextOf(shortError);
+
+        Assert.True(shortError.IsError);
+        Assert.Contains($"minimumResponseBytes: {completeBytes}", shortErrorText, StringComparison.Ordinal);
+        Assert.Contains($"minimumResponseTokens: {completeTokens}", shortErrorText, StringComparison.Ordinal);
+        var completeRetry = McpToolResults.Success(shortText, maxResponseBytes: completeBytes, maxResponseTokens: completeTokens);
+        Assert.False(completeRetry.IsError ?? false);
+        Assert.StartsWith(McpToolResults.SuccessStatusPrefix, TextOf(completeRetry), StringComparison.Ordinal);
+        Assert.DoesNotContain("completeness=truncated", TextOf(completeRetry), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Recoverable_LargeContextKeepsCorrectionWithinBudget()
     {
         var context = string.Concat(Enumerable.Repeat("ctx\n", 200));
@@ -211,6 +243,25 @@ public sealed class McpToolResultsTests
             "Search again.",
             maxResponseBytes: 512,
             maxResponseTokens: 5));
+    }
+
+    [Fact]
+    public void Recoverable_ContextCannotTruncateMultilineRequiredActionWithTrailingNewline()
+    {
+        var action = "Retry.\n" + new string('a', 370) + "\n";
+        var result = McpToolResults.Recoverable(
+            "CODE",
+            "Message.",
+            action,
+            context: new string('z', 1_000),
+            maxResponseBytes: 512);
+        var response = TextOf(result);
+        var requiredPrefix = McpToolResults.ErrorStatusPrefix +
+            $"[ERROR]: CODE: Message.\nnextAction: {action}";
+
+        Assert.True(result.IsError);
+        Assert.StartsWith(requiredPrefix, response, StringComparison.Ordinal);
+        Assert.True(Encoding.UTF8.GetByteCount(response) <= 512);
     }
 
     [Fact]

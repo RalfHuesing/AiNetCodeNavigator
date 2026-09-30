@@ -35,7 +35,51 @@ internal static class McpToolResults
 
         if (formatted.ErrorCode is not null)
         {
-            return BudgetTooSmall(formatted, maxResponseBytes, maxResponseTokens);
+            var truncatedProjection = McpResponseFormatter.Format(
+                text,
+                maxResponseBytes,
+                maxResponseTokens,
+                responsePrefix: TruncatedSuccessStatusPrefix);
+            if (truncatedProjection.ErrorCode is null)
+            {
+                if (truncatedProjection.IsTruncated && structuredContent.HasValue)
+                {
+                    throw new InvalidOperationException("Structured content cannot accompany a truncated text result.");
+                }
+
+                return Create(truncatedProjection.Text, isError: false, structuredContent);
+            }
+
+            var completeText = SuccessStatusPrefix + text;
+            var completeBytes = Encoding.UTF8.GetByteCount(completeText);
+            var completeTokens = McpResponseFormatter.CountTokens(completeText);
+            var truncatedMinimumBytes = truncatedProjection.MinimumResponseBytes ?? int.MaxValue;
+            var completeProjectionFitsPublicMaximum = completeBytes <= McpResponseBudgetLimits.MaximumBytes;
+            var truncatedProjectionFitsPublicMaximum = truncatedMinimumBytes <= McpResponseBudgetLimits.MaximumBytes;
+
+            var retryProjection = completeProjectionFitsPublicMaximum
+                && (!truncatedProjectionFitsPublicMaximum || completeBytes <= truncatedMinimumBytes)
+                ? formatted with
+                {
+                    MinimumResponseBytes = completeBytes,
+                    MinimumResponseTokens = completeTokens,
+                    CanRetryWithLargerResponseBudget = completeBytes > maxResponseBytes,
+                    RecoveryHint = completeBytes > maxResponseBytes
+                        ? $"retry: repeat with maxResponseBytes={completeBytes} and maxResponseTokens at least {completeTokens}."
+                        : $"recovery: repeat with maxResponseTokens at least {completeTokens}."
+                }
+                : truncatedProjection;
+
+            if (!completeProjectionFitsPublicMaximum && !truncatedProjectionFitsPublicMaximum)
+            {
+                retryProjection = truncatedProjection with
+                {
+                    CanRetryWithLargerResponseBudget = false,
+                    RecoveryHint = $"recovery: narrow the query to fit complete response units within {McpResponseBudgetLimits.MaximumBytes} bytes."
+                };
+            }
+
+            return BudgetTooSmall(retryProjection, maxResponseBytes, maxResponseTokens);
         }
 
         if (formatted.IsTruncated && structuredContent.HasValue)
@@ -191,9 +235,8 @@ internal static class McpToolResults
             maxResponseBytes,
             maxResponseTokens,
             responsePrefix: ErrorStatusPrefix);
-        var requiredLastLine = requiredBody[(requiredBody.LastIndexOf('\n') + 1)..];
         if (withContext.ErrorCode is not null
-            || withContext.IsTruncated && !withContext.Text.Contains(requiredLastLine, StringComparison.Ordinal))
+            || withContext.IsTruncated && !withContext.Text.StartsWith(required.Text, StringComparison.Ordinal))
         {
             return Create(required.Text, isError: true);
         }
