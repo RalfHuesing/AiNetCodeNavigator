@@ -43,6 +43,12 @@
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 426/426 across both test projects |
 
+## Point 6.3 independent audit 2 of 3
+
+- Reviewed commit: `bbca9a12603a7aea50b1119b726ee7c1792c5fc2` (`gpt-6-sol`, medium), with a clean working tree before this documentation edit. Inspected the remediation diff, shared generated-source classifier, index-scope scanner/models, ten FastTests, and current-state documentation. No product gates were run by this auditor; the remediation record above reports the implementer's gate results.
+- **P2 generated and test document populations — accepted.** `IndexScopeScanner.cs:55-100` counts both populations inside the selected project loop before project and extension projection at lines 119-128. The payload and formatted report expose `GeneratedDocumentCount` and `TestDocumentCount` (`IndexScopeModels.cs:42-43`; `IndexScopeScanner.cs:166-167,249-250`). `GeneratedDocumentDetector.cs:15-50` is now called by both this scanner and `FindSymbolScanner`, so their C# generated-source classification shares one implementation. The test-document rule at `IndexScopeScanner.cs:76-80` matches `FindSymbolScanner.MatchesScope` (`TestDetector.IsTestProject` or `IsTestFile`). `IndexScopeScannerTests.cs:148-200` checks mixed production/test/generated documents, complete totals despite `MaxProjects=1`, case-insensitive project filtering, and the Markdown summary. `docs/navigation/get-index-scope.md` states the C# generated-document scope and that totals precede presentation limits.
+- The audit-1 finding meets its acceptance conditions, so the 6.3 audit checkbox is complete. No new finding was identified in this targeted follow-up.
+
 ## Point 6.1 implementation record
 
 - Starting commit: `4068706a60cd00c9d13137384a572db196bb10a6`, clean working tree.

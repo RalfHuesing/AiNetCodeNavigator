@@ -28,4 +28,4 @@
   - [x] Current-State-Dokumentation zu Roslyn-Dokumentumfang, Grenzen und AiNetLinter-Unterschieden ergänzen.
   - [x] Report generated-document and test-document totals over the selected Roslyn scope, independent of presentation limits; cover them in FastTests and documentation.
   - [x] Share generated-document classification with symbol navigation and align test-document classification with navigation scope rules.
-  - [ ] Review/Audit zu 6.3 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 6.3 durchführen; Findings ergänzen und umsetzen.
