@@ -97,6 +97,12 @@
 | `pwsh -File ./scripts/test.ps1` | Passed, 453/453 across both test projects |
 | `git diff --check` | Passed before commit; only expected LF-to-CRLF working-copy notices |
 
+### Independent audit 3/3 of point 7.2
+
+- Reviewed commit: `00533876824bfd115251c3e73aaa74f3577568e2` (clean working tree before review). This final point audit was limited to audit 2's matched-declaration `Symbol` finding and its tests. Code and tests were inspected read-only; this auditor did not run product gates. The preceding fix table reports the implementer's runs.
+- **P2 resolved.** `FindTextLines` carries the exact matched declaration-name `TextSpan` with each line (`AssemblySearchScanner.cs:123-162`), and `SearchAsync` passes that span to `GetContainingSymbolName` (`:89-104`). The helper returns the name from that span instead of choosing the first declarator on the line (`:207-224`). The end-to-end assembly test now requires `NeighborField`, `NeighborEvent`, and `TargetMember` in `AssemblySearchHit.Symbol`, while syntax-level tests cover `int A, B;` and two enum members on one line (`AssemblyNavigationScannerTests.cs:81-156`). The existing declaration-only assertion still excludes the repeated body, string, and comment uses of the field name.
+- No point 7.2 finding remains open after the third and final audit. The point 7.2 audit checkbox is closed. Point 7.3 and the later cluster integration review remain separate.
+
 ### Independent audit 1/3 of point 7.1
 
 - Reviewed commit: `9430da952afef7abc902494b198f50d2e4531169` (clean working tree before review). The adapter, cache, workspace factory, component tests, and AiNetLinter's corresponding classes and cache concurrency tests were inspected read-only. No product build or tests were run in this audit; the verification table above belongs to the implementation review.

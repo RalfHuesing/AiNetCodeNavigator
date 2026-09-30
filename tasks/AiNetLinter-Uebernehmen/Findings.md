@@ -1,6 +1,5 @@
 # Open Findings and Technical Debt
 
 - **Cluster 3, point 3.3 (audit 3/3; local blocker):** Assembly `inspect_assembly` handoffs still lack a resident Assembly consumer/session and follow-up roundtrips. This depends on Cluster 7; point 3.3 stays open. Source identity and roundtrip findings are closed. Evidence and acceptance criteria: [Cluster-03 review](Reviews/Cluster-03.md#independent-audit-33-of-point-33).
-- **Cluster 7, point 7.2 (audit 2/3; P2):** A multi-field declaration can return the correct search line with the wrong `AssemblySearchHit.Symbol`; audit-1 findings are resolved. Evidence and acceptance criteria: [Cluster-07 review](Reviews/Cluster-07.md#independent-audit-23-of-point-72).
 
 Resolved integration findings and closure are recorded in [Cluster 6 integration review 3](Reviews/Cluster-06.md#cluster-6-integration-review-3-after-fix-round-2).

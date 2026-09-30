@@ -15,6 +15,6 @@
   - [x] `find_assembly_extensions`: Auffinden von Extension Methods in Binaries
   - [x] `resolve_type_origin`: DLL-Pfad und NuGet-Herkunft externer Typen ermitteln
   - [x] FastTests für Assembly-Navigation
-  - [ ] Review/Audit zu 7.2 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 7.2 durchführen; Findings ergänzen und umsetzen.
 - [ ] 7.3 Assembly-Folgeaufrufe und Lebenszyklus prüfen: `inspect_assembly`-Handoffs aus der formatierten und strukturierten Antwort müssen mit passender Assembly-Session bei Folge-Tools auflösbar sein; Cache-/Session-Wiederverwendung, geänderte DLL, abgelaufene Tokens, fehlende Referenzen und native Dateien testen.
   - [ ] Review/Audit zu 7.3 durchführen; Findings ergänzen und umsetzen.
