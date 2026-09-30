@@ -1,5 +1,167 @@
+using System.Text;
+using SharpToken;
+
 namespace AiNetCodeNavigator.Mcp.Formatting;
 
-public class McpResponseFormatter
+internal static class McpResponseFormatter
 {
+    private const string EncodingName = "cl100k_base";
+    private static readonly GptEncoding TokenEncoding = GptEncoding.GetEncoding(EncodingName);
+
+    internal static int CountTokens(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ValidateUnicode(text);
+        return TokenEncoding.CountTokens(text);
+    }
+
+    internal static McpResponseFormatResult Format(
+        string text,
+        int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
+        int? maxResponseTokens = null,
+        int startOffset = 0)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        if (!McpResponseBudgetLimits.IsPublicBudget(maxResponseBytes))
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxResponseBytes), maxResponseBytes,
+                $"The response budget must be between {McpResponseBudgetLimits.MinimumBytes} and {McpResponseBudgetLimits.MaximumBytes} bytes.");
+        }
+
+        if (maxResponseTokens is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxResponseTokens), maxResponseTokens, "The token budget must be positive.");
+        }
+
+        ValidateUnicode(text);
+        ValidateOffset(text, startOffset);
+
+        var remaining = text[startOffset..];
+        if (Fits(remaining, maxResponseBytes, maxResponseTokens))
+        {
+            return Success(remaining, isTruncated: false, nextOffset: null, omittedBytes: 0, hint: null);
+        }
+
+        var best = (Text: (string?)null, Offset: 0, OmittedBytes: 0, Hint: (string?)null);
+        var position = startOffset;
+        while (position < text.Length)
+        {
+            var newline = text.IndexOf('\n', position);
+            if (newline < 0)
+            {
+                break;
+            }
+
+            var nextOffset = newline + 1;
+            if (nextOffset >= text.Length)
+            {
+                break;
+            }
+
+            var prefix = text[startOffset..nextOffset];
+            var omittedBytes = Encoding.UTF8.GetByteCount(text[nextOffset..]);
+            var hint = CreateContinuationHint(nextOffset, omittedBytes);
+            var candidate = $"{prefix}\n{hint}";
+            if (Fits(candidate, maxResponseBytes, maxResponseTokens))
+            {
+                best = (candidate, nextOffset, omittedBytes, hint);
+            }
+
+            position = nextOffset;
+        }
+
+        if (best.Text is null)
+        {
+            var firstBoundary = text.IndexOf('\n', startOffset);
+            var firstEnd = firstBoundary < 0 ? text.Length : firstBoundary + 1;
+            var firstUnit = text[startOffset..firstEnd];
+            var omittedBytes = Encoding.UTF8.GetByteCount(text[firstEnd..]);
+            var minimumText = omittedBytes == 0
+                ? firstUnit
+                : $"{firstUnit}\n{CreateContinuationHint(firstEnd, omittedBytes)}";
+            var minimumBytes = Encoding.UTF8.GetByteCount(minimumText);
+            var minimumTokens = TokenEncoding.CountTokens(minimumText);
+            var errorText = $"RESPONSE_BUDGET_TOO_SMALL\nminimumResponseBytes: {minimumBytes}\nminimumResponseTokens: {minimumTokens}\nretry: repeat with maxResponseBytes={minimumBytes} and a sufficient token budget.";
+            return new McpResponseFormatResult(
+                errorText,
+                Encoding.UTF8.GetByteCount(errorText),
+                TokenEncoding.CountTokens(errorText),
+                IsTruncated: false,
+                ErrorCode: "RESPONSE_BUDGET_TOO_SMALL",
+                MinimumResponseBytes: minimumBytes,
+                MinimumResponseTokens: minimumTokens,
+                NextOffset: null,
+                OmittedUtf8Bytes: Encoding.UTF8.GetByteCount(remaining),
+                ContinuationHint: null);
+        }
+
+        return Success(best.Text, isTruncated: true, best.Offset, best.OmittedBytes, best.Hint);
+    }
+
+    private static bool Fits(string text, int maxBytes, int? maxTokens) =>
+        Encoding.UTF8.GetByteCount(text) <= maxBytes
+        && (maxTokens is null || TokenEncoding.CountTokens(text) <= maxTokens.Value);
+
+    private static McpResponseFormatResult Success(
+        string text,
+        bool isTruncated,
+        int? nextOffset,
+        int omittedBytes,
+        string? hint) =>
+        new(
+            text,
+            Encoding.UTF8.GetByteCount(text),
+            TokenEncoding.CountTokens(text),
+            isTruncated,
+            ErrorCode: null,
+            MinimumResponseBytes: null,
+            MinimumResponseTokens: null,
+            nextOffset,
+            omittedBytes,
+            hint);
+
+    private static string CreateContinuationHint(int nextOffset, int omittedBytes) =>
+        $"[Truncated; continue at UTF-16 offset {nextOffset}; {omittedBytes} UTF-8 bytes omitted.]";
+
+    private static void ValidateOffset(string text, int startOffset)
+    {
+        if (startOffset < 0 || startOffset > text.Length
+            || (startOffset > 0 && startOffset < text.Length
+                && char.IsLowSurrogate(text[startOffset]) && char.IsHighSurrogate(text[startOffset - 1])))
+        {
+            throw new ArgumentOutOfRangeException(nameof(startOffset));
+        }
+    }
+
+    private static void ValidateUnicode(string text)
+    {
+        for (var index = 0; index < text.Length; index++)
+        {
+            if (char.IsHighSurrogate(text[index]))
+            {
+                if (index + 1 >= text.Length || !char.IsLowSurrogate(text[index + 1]))
+                {
+                    throw new ArgumentException("Text must contain valid Unicode scalar values.", nameof(text));
+                }
+
+                index++;
+            }
+            else if (char.IsLowSurrogate(text[index]))
+            {
+                throw new ArgumentException("Text must contain valid Unicode scalar values.", nameof(text));
+            }
+        }
+    }
 }
+
+internal sealed record McpResponseFormatResult(
+    string Text,
+    int Utf8Bytes,
+    int TokenCount,
+    bool IsTruncated,
+    string? ErrorCode,
+    int? MinimumResponseBytes,
+    int? MinimumResponseTokens,
+    int? NextOffset,
+    int OmittedUtf8Bytes,
+    string? ContinuationHint);

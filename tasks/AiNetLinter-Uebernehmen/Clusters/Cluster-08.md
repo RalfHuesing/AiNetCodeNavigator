@@ -3,8 +3,8 @@
 [Zurück zum Konzept](../Konzept.md)
 
 - [ ] 8.1 Budgeting & Truncation:
-  - [ ] `SharpToken`-Integration für Token-Begrenzungen
-  - [ ] `McpTruncation`: Präzises Abschneiden mit Fortsetzungshinweisen (`RESPONSE_BUDGET_TOO_SMALL`)
+  - [x] `SharpToken`-Integration für Token-Begrenzungen
+  - [x] `McpTruncation`: Präzises Abschneiden mit Fortsetzungshinweisen (`RESPONSE_BUDGET_TOO_SMALL`)
   - [ ] Review/Audit zu 8.1 durchführen; Findings ergänzen und umsetzen.
 - [ ] 8.2 Standardisiertes Result-Building:
   - [ ] `McpToolResults`: Einheitliche Erzeugung von `CallToolResult`, `IsError`-Policy und Statusblöcken
