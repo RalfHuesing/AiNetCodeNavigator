@@ -22,5 +22,6 @@
   - [x] Lade- und MSBuild-Fehler mit Ursache und erneuter Versuchsmöglichkeit an den Aufrufer melden; Integrationstest mit realer `.slnx` statt nur in-memory-Workspace.
   - [x] Detect newly added C# files matched by project Compile globs outside the project directory and include them in the next snapshot.
   - [x] Detect structural changes from custom MSBuild imports, including changed project references, and reload the affected solution.
-  - [ ] Detect activation of a previously absent conditional MSBuild import when its file appears, then reload the project structure.
-  - [ ] Review/Audit zu 2.3 durchführen; Findings ergänzen und umsetzen.
+  - [x] Detect activation of a previously absent conditional MSBuild import when its file appears, then reload the project structure.
+  - [ ] Detect activation of a previously absent conditional import nested in an MSBuild `ImportGroup` or other supported import container.
+  - [x] Review/Audit zu 2.3 durchführen; Findings ergänzen und umsetzen.
