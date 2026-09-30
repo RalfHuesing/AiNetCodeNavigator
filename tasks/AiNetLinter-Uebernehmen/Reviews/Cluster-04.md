@@ -53,3 +53,16 @@
 2. **P2 — Generated declarations are returned by default with no opt-in control.** `FindSymbolScanRequest` (`FindSymbolModels.cs:49-56`) has no `IncludeGenerated` option, and `FindSymbolScanner.CollectVisibleLocations` (`FindSymbolScanner.cs:158-185`) admits every source location that passes the project scope. The reference `TryCreateVisibleLocationAsync` excludes `McpSourceKind.Generated` unless `IncludeGenerated` is true. The local tests have no generated-file or generated-header case. **Acceptance:** classify generated locations using the reference conventions, exclude them by default for `all`, `production`, and `tests`, allow explicit inclusion, and cover both generated path/header and a declaration with generated and editable locations.
 
 The point 4.1 audit checkbox remains open pending fixes and a follow-up audit. No product code or external repository was changed in this audit.
+
+## Independent audit 2/3 of point 4.1
+
+- Reviewed commit: `ce047c598178beb5c0824faa668523fe88af6bae` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Read-only comparison: AiNetLinter `SymbolKindClassifier.MatchesTypeKind`, `FindSymbolScanner.TryCreateVisibleLocationAsync`, `McpScopeClassifier.ClassifySourceKindAsync`, and `GeneratedCodeDetector.IsGenerated`. The second implementation slice's gate results are recorded above; this audit did not run a build or tests.
+
+### Finding disposition
+
+1. **P2 kind vocabulary — closed.** `FindSymbolModels.cs` now includes delegate and both specific record forms. `FindSymbolScanner.FilterByKind` distinguishes plain class/struct from record class/struct, while generic record includes both. `DescribeKind` returns the specific record form. New FastTests check delegate, generic and specific record results, mismatches, and record struct exclusion from plain struct. The plain class branch also explicitly excludes records. No kind-filter regression was found in the reviewed paths.
+2. **P2 generated-source filtering — closed.** `FindSymbolScanRequest.IncludeGenerated` defaults to `false`. `CollectVisibleLocationsAsync` filters each source location after project/document scope classification. `IsGeneratedDocumentAsync` matches the reference's path suffixes, `obj/` segment, first-five-line header, and declared-symbol attribute checks. New FastTests cover generated path variants, header, attribute, explicit inclusion in production and test scopes, and an editable/generated partial declaration. The existing scope and multi-project tests remain present.
+
+No open finding remains for point 4.1 on this reviewed Core implementation. The audit checkbox is complete after two audits. The end-to-end MCP contract remains subject to Cluster 11 verification.

@@ -7,7 +7,7 @@
   - [x] FastTests für Symbolsuche (Name/Pattern, `SymbolKind` einschließlich Delegate/Record-Varianten, Produktions-/Testprojekt-Scope, generated source und Mehrprojektfall)
   - [x] Complete the public kind vocabulary (`delegate`, `record class`, `record struct`) and make plain `struct` exclude record structs; cover each kind and mismatch with FastTests.
   - [x] Apply the reference `includeGenerated` default and opt-in to source locations across all scopes; cover generated path/header and mixed-source declarations with FastTests.
-  - [ ] Review/Audit zu 4.1 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 4.1 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.2 Symbol-Body-Extraktion (`get_symbol_body`-Engine):
   - [x] `SourceSymbolBodyResolver`: Syntax-Extraktion aus AST mit Paginierung (`startLine`, `maxBodyLines`)
   - [x] Batch-Extraktion für mehrere Symbole in einem Aufruf
