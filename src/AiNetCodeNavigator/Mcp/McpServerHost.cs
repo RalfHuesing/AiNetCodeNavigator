@@ -2,6 +2,8 @@ using AiNetCodeNavigator.Cli;
 using AiNetCodeNavigator.Configuration;
 using AiNetCodeNavigator.Logging;
 using AiNetCodeNavigator.Mcp.Tools.Maintenance;
+using AiNetCodeNavigator.Mcp.Tools.Symbols;
+using AiNetCodeNavigator.Mcp.Tools;
 using AiNetCodeNavigator.Mcp.Validation;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -43,6 +45,8 @@ internal static class McpServerHost
                 .AddMcpServer()
                 .WithStdioServerTransport()
                 .WithTools<MaintenanceTools>()
+                .WithTools<SymbolTools>()
+                .WithTools<StructureTools>()
                 .WithRequestFilters(McpArgumentValidationFilter.Configure);
 
             using (var host = builder.Build())

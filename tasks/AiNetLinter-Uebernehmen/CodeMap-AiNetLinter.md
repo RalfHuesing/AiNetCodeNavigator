@@ -86,6 +86,6 @@ Diese Landkarte dokumentiert alle wiederverwendbaren Komponenten, Quellpfade und
 | Tool-Result Building & Error Policy | `Mcp/McpToolResults.cs`, `McpToolResults.NavigationText.cs`, `IsErrorPolicy.md` | `AiNetCodeNavigator/Mcp/Formatting/` | `FastTests/Mcp/Results/McpToolResultsContentTests.cs` |
 | Budgeting & Truncation | `Mcp/McpTruncation.cs`, `SharpToken`-Nutzung | `AiNetCodeNavigator/Mcp/Formatting/` | `FastTests/Mcp/Results/McpTruncationTests.cs` |
 | Argument- & Schema-Validierung | `Mcp/Registration/McpArgumentValidationFilter.cs` | `AiNetCodeNavigator/Mcp/` | `FastTests/Mcp/Registration/McpArgumentValidationFilterTests.cs` |
-| Tool-Registrierungen | `Mcp/Registration/*ToolRegistrations.cs` (SymbolGraph, FileStructure, Assembly, Maintenance) | `AiNetCodeNavigator/Mcp/Tools/` | `IntegrationTests/Mcp/McpHandshakeToolRegistrationTests.cs` |
+| Tool-Registrierungen | `Mcp/Registration/*ToolRegistrations.cs` (SymbolGraph, FileStructure, Assembly, Maintenance) | `AiNetCodeNavigator/Mcp/Tools/` | `IntegrationTests/Mcp/McpServerIntegrationTests.cs` (current: two maintenance + seven navigation tools; thirteen navigation registrations remain) |
 | Maintenance: `get_server_health` | `Mcp/Tools/ServerMaintenance/*` | `AiNetCodeNavigator/Mcp/Tools/Maintenance/` | `FastTests/Mcp/Tools/ServerMaintenance/GetServerHealthToolTests.cs` |
 | Stdio-Server Lifetime & Host | `Mcp/Daemon/ThinClientProxy.cs`, `Commands/McpServerCommand.cs` | `AiNetCodeNavigator/Program.cs`, `McpServerHost.cs` | `IntegrationTests/Mcp/McpServerLifetimeTests.cs` |

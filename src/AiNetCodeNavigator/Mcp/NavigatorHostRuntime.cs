@@ -36,6 +36,7 @@ public sealed class NavigatorHostRuntime : IAsyncDisposable, IDisposable
         await Operations.DisposeAsync().ConfigureAwait(false);
         await ProjectRegistry.DisposeAsync().ConfigureAwait(false);
         await AssemblyRegistry.DisposeAsync().ConfigureAwait(false);
+        MSBuildSolutionLoader.CleanupDesignTimeScratch();
     }
 
     public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();

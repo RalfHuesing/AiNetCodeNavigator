@@ -15,7 +15,9 @@ internal sealed record LongRunningToolCallRequest(
     string? OperationToken = null,
     string? ContinuationToken = null,
     int MaxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
-    int? MaxResponseTokens = null);
+    int? MaxResponseTokens = null,
+    bool DomainTruncated = false,
+    string? DomainNextAction = null);
 
 /// <summary>Owns bounded tool executions and their opaque operation/continuation tokens.</summary>
 internal sealed class LongRunningToolCallStore : IAsyncDisposable
@@ -405,6 +407,7 @@ internal sealed class McpResponseContinuationStore : IDisposable
             if (!page.Matches(request))
                 return McpToolResults.Recoverable("CONTINUATION_ARGUMENT_MISMATCH", "The continuation token belongs to a different tool request.", "Repeat the continuation with the original target and arguments.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
             page.LastAccess = DateTimeOffset.UtcNow;
+            request = request with { DomainTruncated = page.DomainTruncated, DomainNextAction = page.DomainNextAction };
             var budgetKey = (request.MaxResponseBytes, request.MaxResponseTokens);
             if (page.Results.TryGetValue(budgetKey, out var cached))
             {
@@ -481,6 +484,21 @@ internal sealed class McpResponseContinuationStore : IDisposable
                 "Return a loading/retry result, or complete this operation with its result.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
 
         var source = ExtractText(result);
+        if (source.StartsWith(McpToolResults.DomainTruncatedMarker, StringComparison.Ordinal))
+        {
+            var markerEnd = source.IndexOf('\n', McpToolResults.DomainTruncatedMarker.Length);
+            if (markerEnd < 0)
+                return McpToolResults.Recoverable("INVALID_DOMAIN_COMPLETENESS", "A truncated navigation result omitted its next action.",
+                    "Repeat the original query with a valid result limit.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
+            var action = source[McpToolResults.DomainTruncatedMarker.Length..markerEnd];
+            if (!action.StartsWith("nextAction: ", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(action["nextAction: ".Length..]))
+                return McpToolResults.Recoverable("INVALID_DOMAIN_COMPLETENESS", "A truncated navigation result omitted its next action.",
+                    "Repeat the original query with a valid result limit.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
+            source = source[(markerEnd + 1)..];
+            request = request with { DomainTruncated = true, DomainNextAction = action["nextAction: ".Length..] };
+        }
+        if (request.DomainTruncated && result.StructuredContent.HasValue)
+            return McpToolResults.Recoverable("STRUCTURED_RESULT_INCOMPLETE", "Domain-truncated navigation results cannot include complete structured content.", "Repeat with limits that return a complete domain result.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
         if (result.StructuredContent.HasValue)
         {
             var complete = McpResponseFormatter.Format(source, request.MaxResponseBytes, request.MaxResponseTokens,
@@ -499,12 +517,17 @@ internal sealed class McpResponseContinuationStore : IDisposable
 
     private CallToolResult CreatePage(string snapshotId, string source, int offset, LongRunningToolCallRequest request)
     {
+        var completePrefix = request.DomainTruncated
+            ? McpToolResults.TruncatedSuccessStatusPrefix + $"nextAction: {request.DomainNextAction}\n"
+            : McpToolResults.SuccessStatusPrefix;
         var complete = McpResponseFormatter.Format(source, request.MaxResponseBytes, request.MaxResponseTokens,
-            startOffset: offset, responsePrefix: McpToolResults.SuccessStatusPrefix);
+            startOffset: offset, responsePrefix: completePrefix);
         if (complete.ErrorCode is null && !complete.IsTruncated)
-            return McpToolResults.Success(source[offset..], maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
+            return McpToolResults.TextResult(complete.Text, isError: false);
         var token = CreateOpaqueToken();
-        var prefix = McpToolResults.TruncatedSuccessStatusPrefix + $"continuationToken={token}\n";
+        var prefix = McpToolResults.TruncatedSuccessStatusPrefix
+            + (request.DomainTruncated ? $"nextAction: {request.DomainNextAction}\n" : string.Empty)
+            + $"continuationToken={token}\n";
         var page = McpResponseFormatter.Format(source, request.MaxResponseBytes, request.MaxResponseTokens,
             startOffset: offset, responsePrefix: prefix);
         if (page.ErrorCode is not null)
@@ -565,6 +588,8 @@ internal sealed class McpResponseContinuationStore : IDisposable
         internal string Target { get; } = request.Target;
         internal string Arguments { get; } = request.ArgumentsKey;
         internal int SnapshotBytes { get; } = snapshotBytes;
+        internal bool DomainTruncated { get; } = request.DomainTruncated;
+        internal string? DomainNextAction { get; } = request.DomainNextAction;
         internal DateTimeOffset LastAccess { get; set; } = lastAccess;
         internal bool Matches(LongRunningToolCallRequest other) =>
             string.Equals(Tool, other.ToolName, StringComparison.Ordinal)

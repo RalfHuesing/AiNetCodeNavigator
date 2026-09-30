@@ -41,4 +41,7 @@ public sealed record NamespaceTreePayload(
 public sealed record NamespaceTreeScanOptions(
     int MaxDepth = NamespaceTreeScanner.MaxDepthCap,
     int MaxResults = NamespaceTreeScanner.DefaultMaxResults,
-    bool IncludeGenerated = false);
+    bool IncludeGenerated = false,
+    string? NamespacePrefix = null,
+    string Kind = "all",
+    bool IncludeTypes = true);

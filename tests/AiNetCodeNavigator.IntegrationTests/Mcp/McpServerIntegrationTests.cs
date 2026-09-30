@@ -13,7 +13,7 @@ public sealed class McpServerIntegrationTests
         var configPath = Path.Combine(Path.GetTempPath(), "ainet-host-" + Guid.NewGuid().ToString("N") + ".json");
         await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
 
-        using var process = StartHost(repositoryRoot, hostAssemblyPath, "--config", configPath);
+        using var process = StartHost(repositoryRoot, hostAssemblyPath, null, "--config", configPath);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
 
@@ -30,7 +30,7 @@ public sealed class McpServerIntegrationTests
             var tools = toolsResponse.GetProperty("result").GetProperty("tools").EnumerateArray()
                 .Select(tool => tool.GetProperty("name").GetString())
                 .ToArray();
-            Assert.Equal(new[] { "get_server_health", "reload_config" }, tools.Order(StringComparer.Ordinal).ToArray());
+            Assert.Equal(new[] { "find_symbol", "get_class_structure", "get_file_skeleton", "get_file_tree", "get_index_scope", "get_namespace_tree", "get_server_health", "get_symbol_body", "reload_config" }, tools.Order(StringComparer.Ordinal).ToArray());
             var reloadTool = toolsResponse.GetProperty("result").GetProperty("tools").EnumerateArray()
                 .Single(tool => tool.GetProperty("name").GetString() == "reload_config");
             Assert.True(reloadTool.GetProperty("annotations").GetProperty("idempotentHint").GetBoolean());
@@ -173,7 +173,7 @@ public sealed class McpServerIntegrationTests
     public async Task CommandLineErrorsGoToStderrAndNeverProtocolStdout()
     {
         var repositoryRoot = SolutionRootLocator.Find();
-        using var process = StartHost(repositoryRoot, GetHostAssemblyPath(repositoryRoot), "--unknown-option");
+        using var process = StartHost(repositoryRoot, GetHostAssemblyPath(repositoryRoot), null, "--unknown-option");
         var stderrTask = process.StandardError.ReadToEndAsync();
 
         await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
@@ -268,7 +268,198 @@ public sealed class McpServerIntegrationTests
         }
     }
 
-    private static Process StartHost(string repositoryRoot, string hostAssemblyPath, params string[] arguments)
+    [Fact]
+    public async Task SourceAndAssemblySymbolHandlesRoundTripThroughPublicStdioTools()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        var hostAssemblyPath = GetHostAssemblyPath(repositoryRoot);
+        var configPath = Path.Combine(Path.GetTempPath(), "ainet-navigation-" + Guid.NewGuid().ToString("N") + ".json");
+        var hostLogDirectory = Path.Combine(Path.GetTempPath(), "ainet-navigation-logs-" + Guid.NewGuid().ToString("N"));
+        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var process = await StartInitializedHostAsync(repositoryRoot, hostAssemblyPath, configPath, timeout.Token, hostLogDirectory);
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+
+        try
+        {
+            await SendRequestAsync(process, 2, "tools/list", new { }, timeout.Token);
+            var listing = await ReadResponseAsync(process, 2, timeout.Token);
+            var names = listing.GetProperty("result").GetProperty("tools").EnumerateArray()
+                .Select(tool => tool.GetProperty("name").GetString())
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            Assert.Equal(new[] { "find_symbol", "get_class_structure", "get_file_skeleton", "get_file_tree", "get_index_scope", "get_namespace_tree", "get_server_health", "get_symbol_body", "reload_config" }, names);
+
+            var solutionPath = Path.Combine(repositoryRoot, "AiNetCodeNavigator.slnx");
+            var workspaceBeforeNavigation = CaptureWorkspaceSnapshot(repositoryRoot);
+            await SendRequestAsync(process, 3, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = solutionPath, pattern = "ClassStructureScanner", maxResults = 10 },
+            }, timeout.Token);
+            var sourceFind = await ReadResponseAsync(process, 3, timeout.Token);
+            Assert.False(sourceFind.GetProperty("result").GetProperty("isError").GetBoolean());
+            var sourceText = GetFirstText(sourceFind);
+            var sourceHandle = ExtractHandoff(sourceText);
+            Assert.StartsWith("h:", sourceHandle, StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 4, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = solutionPath, symbolIdentifiers = new[] { sourceHandle } },
+            }, timeout.Token);
+            var sourceBody = await ReadResponseAsync(process, 4, timeout.Token);
+            Assert.False(sourceBody.GetProperty("result").GetProperty("isError").GetBoolean());
+            Assert.Contains("Content mode: source", GetFirstText(sourceBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 7, "tools/call", new
+            {
+                name = "get_file_skeleton",
+                arguments = new { targetPath = solutionPath, filePaths = new[] { "src/AiNetCodeNavigator.Core/Symbols/FindSymbolScanner.cs" } },
+            }, timeout.Token);
+            var skeleton = await ReadResponseAsync(process, 7, timeout.Token);
+            Assert.False(skeleton.GetProperty("result").GetProperty("isError").GetBoolean());
+            Assert.Contains("FindSymbolScanner", GetFirstText(skeleton), StringComparison.Ordinal);
+            Assert.Contains("handoffId: `h:", GetFirstText(skeleton), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 8, "tools/call", new
+            {
+                name = "get_class_structure",
+                arguments = new { targetPath = solutionPath, symbolIdentifier = sourceHandle, maxMembers = 20 },
+            }, timeout.Token);
+            var structure = await ReadResponseAsync(process, 8, timeout.Token);
+            Assert.False(structure.GetProperty("result").GetProperty("isError").GetBoolean());
+            Assert.Contains("ClassStructureScanner", GetFirstText(structure), StringComparison.Ordinal);
+            Assert.Contains("[handoff: h:", GetFirstText(structure), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 9, "tools/call", new
+            {
+                name = "get_file_tree",
+                arguments = new { targetPath = solutionPath, root = "src/AiNetCodeNavigator.Core/Symbols", view = "files", maxResults = 10 },
+            }, timeout.Token);
+            var tree = await ReadResponseAsync(process, 9, timeout.Token);
+            Assert.False(tree.GetProperty("result").GetProperty("isError").GetBoolean());
+            Assert.Contains("FindSymbolScanner.cs", GetFirstText(tree), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 10, "tools/call", new { name = "get_index_scope", arguments = new { targetPath = solutionPath } }, timeout.Token);
+            var indexScope = await ReadResponseAsync(process, 10, timeout.Token);
+            Assert.False(indexScope.GetProperty("result").GetProperty("isError").GetBoolean());
+            Assert.Contains("Index Scope:", GetFirstText(indexScope), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 11, "tools/call", new
+            {
+                name = "get_namespace_tree",
+                arguments = new { targetPath = solutionPath, project = "AiNetCodeNavigator.Core", namespacePrefix = "AiNetCodeNavigator.Core.Symbols", depth = 2 },
+            }, timeout.Token);
+            var namespaceTree = await ReadResponseAsync(process, 11, timeout.Token);
+            Assert.False(namespaceTree.GetProperty("result").GetProperty("isError").GetBoolean());
+            Assert.Contains("- Symbols", GetFirstText(namespaceTree), StringComparison.Ordinal);
+
+            AssertWorkspaceUnchanged(workspaceBeforeNavigation, CaptureWorkspaceSnapshot(repositoryRoot));
+
+            await SendRequestAsync(process, 5, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = hostAssemblyPath, pattern = "SymbolTools", maxResults = 10 },
+            }, timeout.Token);
+            var assemblyFind = await ReadResponseAsync(process, 5, timeout.Token);
+            Assert.False(assemblyFind.GetProperty("result").GetProperty("isError").GetBoolean());
+            var assemblyHandle = ExtractHandoff(GetFirstText(assemblyFind));
+            Assert.StartsWith("h:", assemblyHandle, StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 6, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = hostAssemblyPath, symbolIdentifiers = new[] { assemblyHandle } },
+            }, timeout.Token);
+            var assemblyBody = await ReadResponseAsync(process, 6, timeout.Token);
+            Assert.False(assemblyBody.GetProperty("result").GetProperty("isError").GetBoolean());
+            Assert.Contains("Content mode: decompiled", GetFirstText(assemblyBody), StringComparison.Ordinal);
+
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
+            _ = await stderrTask;
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            File.Delete(configPath);
+            if (Directory.Exists(hostLogDirectory)) Directory.Delete(hostLogDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ColdSourceSolutionNavigationDoesNotAddOrChangeWorkspaceFiles()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        var hostAssemblyPath = GetHostAssemblyPath(repositoryRoot);
+        var fixtureRoot = Directory.CreateTempSubdirectory("ainet-cold-source-").FullName;
+        var configPath = Path.Combine(Path.GetTempPath(), "ainet-cold-config-" + Guid.NewGuid().ToString("N") + ".json");
+        var logDirectory = Path.Combine(Path.GetTempPath(), "ainet-cold-logs-" + Guid.NewGuid().ToString("N"));
+        var solutionPath = Path.Combine(fixtureRoot, "Cold.slnx");
+        var projectPath = Path.Combine(fixtureRoot, "Cold.csproj");
+        Process? process = null;
+        await File.WriteAllTextAsync(solutionPath, "<Solution><Project Path=\"Cold.csproj\" /></Solution>");
+        await File.WriteAllTextAsync(projectPath,
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>");
+        await File.WriteAllTextAsync(Path.Combine(fixtureRoot, "ColdMarker.cs"),
+            "using System.Text;\nnamespace Cold.Sample;\npublic sealed class ColdMarker { public StringBuilder Build() => new(); }\n");
+        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
+
+        try
+        {
+            await RestoreProjectAsync(projectPath, fixtureRoot);
+            Assert.False(Directory.Exists(Path.Combine(fixtureRoot, "bin")), "The cold fixture must not have compiler output before navigation.");
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            process = await StartInitializedHostAsync(repositoryRoot, hostAssemblyPath, configPath, timeout.Token, logDirectory);
+            var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+            var before = CaptureWorkspaceSnapshot(fixtureRoot);
+
+            await SendRequestAsync(process, 2, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = solutionPath, pattern = "ColdMarker", maxResults = 10 },
+            }, timeout.Token);
+            var found = await ReadResponseAsync(process, 2, timeout.Token);
+            Assert.False(found.GetProperty("result").GetProperty("isError").GetBoolean());
+            var handoff = ExtractHandoff(GetFirstText(found));
+
+            await SendRequestAsync(process, 3, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = solutionPath, symbolIdentifiers = new[] { handoff } },
+            }, timeout.Token);
+            var body = await ReadResponseAsync(process, 3, timeout.Token);
+            Assert.False(body.GetProperty("result").GetProperty("isError").GetBoolean());
+            Assert.Contains("StringBuilder Build()", GetFirstText(body), StringComparison.Ordinal);
+
+            AssertWorkspaceUnchanged(before, CaptureWorkspaceSnapshot(fixtureRoot));
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
+            Assert.False(Directory.Exists(Path.Combine(Path.GetTempPath(), "AiNetCodeNavigator", "msbuild-analysis", process.Id.ToString())),
+                "The host must release its temporary MSBuild outputs after resident workspaces are disposed.");
+            _ = await stderrTask;
+        }
+        finally
+        {
+            if (process is not null && !process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            process?.Dispose();
+            File.Delete(configPath);
+            if (Directory.Exists(logDirectory)) Directory.Delete(logDirectory, recursive: true);
+            if (Directory.Exists(fixtureRoot)) Directory.Delete(fixtureRoot, recursive: true);
+        }
+    }
+
+    private static Process StartHost(string repositoryRoot, string hostAssemblyPath, string? logDirectory = null, params string[] arguments)
     {
         var startInfo = new ProcessStartInfo("dotnet")
         {
@@ -279,6 +470,7 @@ public sealed class McpServerIntegrationTests
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        if (logDirectory is not null) startInfo.Environment["AINET_CODE_NAVIGATOR_LOG_DIRECTORY"] = logDirectory;
         startInfo.ArgumentList.Add(hostAssemblyPath);
         foreach (var argument in arguments)
         {
@@ -288,9 +480,28 @@ public sealed class McpServerIntegrationTests
         return Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start MCP host process.");
     }
 
-    private static async Task<Process> StartInitializedHostAsync(string repositoryRoot, string hostAssemblyPath, string configPath, CancellationToken cancellationToken)
+    private static async Task RestoreProjectAsync(string projectPath, string workingDirectory)
     {
-        var process = StartHost(repositoryRoot, hostAssemblyPath, "--config", configPath);
+        var startInfo = new ProcessStartInfo("dotnet")
+        {
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("restore");
+        startInfo.ArgumentList.Add(projectPath);
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start dotnet restore for the temporary fixture.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromMinutes(2));
+        Assert.True(process.ExitCode == 0, $"Temporary source fixture restore failed: {await stderr}\n{await stdout}");
+    }
+
+    private static async Task<Process> StartInitializedHostAsync(string repositoryRoot, string hostAssemblyPath, string configPath, CancellationToken cancellationToken, string? logDirectory = null)
+    {
+        var process = StartHost(repositoryRoot, hostAssemblyPath, logDirectory, "--config", configPath);
         await SendRequestAsync(process, 1, "initialize", new
         {
             protocolVersion = "2025-03-26",
@@ -353,5 +564,60 @@ public sealed class McpServerIntegrationTests
     {
         var line = text.Split('\n').Single(value => value.StartsWith(name + ": ", StringComparison.Ordinal));
         return int.Parse(line[(name.Length + 2)..], System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static string ExtractHandoff(string text)
+    {
+        const string marker = "[handoff: ";
+        var markerStart = text.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(markerStart >= 0, "The navigation result did not include a reusable opaque handoff.");
+        var valueStart = markerStart + marker.Length;
+        var valueEnd = text.IndexOf(']', valueStart);
+        Assert.True(valueEnd > valueStart, "The navigation result included a malformed opaque handoff.");
+        return text[valueStart..valueEnd];
+    }
+
+    private static Dictionary<string, string> CaptureWorkspaceSnapshot(string root)
+    {
+        var snapshot = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.TryPop(out var directory))
+        {
+            var relativeDirectory = Path.GetRelativePath(root, directory);
+            snapshot[relativeDirectory == "." ? "." : relativeDirectory + Path.DirectorySeparatorChar] = "directory";
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+            {
+                if (string.Equals(Path.GetFileName(entry), ".git", StringComparison.OrdinalIgnoreCase)) continue;
+                var relativeEntry = Path.GetRelativePath(root, entry).Replace(Path.DirectorySeparatorChar, '/');
+                if (relativeEntry is "temp/build.log" or "temp/test-fast.log" or "temp/test-integration.log" or "temp/test.log") continue;
+                var attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0) continue;
+                if ((attributes & FileAttributes.Directory) != 0)
+                {
+                    pending.Push(entry);
+                    continue;
+                }
+
+                var relative = relativeEntry;
+                var bytes = File.ReadAllBytes(entry);
+                snapshot[relative] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+            }
+        }
+
+        return snapshot;
+    }
+
+    private static void AssertWorkspaceUnchanged(IReadOnlyDictionary<string, string> before, IReadOnlyDictionary<string, string> after)
+    {
+        var added = after.Keys.Except(before.Keys, StringComparer.OrdinalIgnoreCase).ToArray();
+        var removed = before.Keys.Except(after.Keys, StringComparer.OrdinalIgnoreCase).ToArray();
+        Assert.True(added.Length == 0 && removed.Length == 0,
+            $"Source navigation changed workspace entries. Added: {string.Join(", ", added)}; removed: {string.Join(", ", removed)}.");
+        foreach (var (relativePath, fingerprint) in before)
+        {
+            Assert.True(after.TryGetValue(relativePath, out var afterFingerprint), $"Navigation removed workspace entry: {relativePath}");
+            Assert.True(string.Equals(fingerprint, afterFingerprint, StringComparison.Ordinal), $"Navigation modified workspace file: {relativePath}");
+        }
     }
 }

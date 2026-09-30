@@ -258,6 +258,42 @@ public sealed class LongRunningToolCallStoreTests
     }
 
     [Fact]
+    public async Task DomainTruncationRemainsTruncatedAcrossEveryBudgetPageAndReplay()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
+        var source = string.Join("\n", Enumerable.Range(0, 120).Select(index => $"symbol-{index:D3}: [handoff: h:00000000000000000000000000000000]"));
+        var calls = 0;
+        Task<CallToolResult> Work(CancellationToken _)
+        {
+            Interlocked.Increment(ref calls);
+            return Task.FromResult(McpToolResults.DomainTruncated(source, "Increase maxResults and repeat the query."));
+        }
+
+        var current = await store.RunAsync(Request("find_symbol", "target", "pattern=Symbol", Work, maxResponseBytes: 512));
+        var collected = new StringBuilder();
+        var pageNumber = 0;
+        while (true)
+        {
+            var text = TextOf(current);
+            Assert.Contains("completeness=truncated", text, StringComparison.Ordinal);
+            Assert.Contains("nextAction: Increase maxResults and repeat the query.", text, StringComparison.Ordinal);
+            Assert.Null(current.StructuredContent);
+            Assert.True(Encoding.UTF8.GetByteCount(text) <= 512);
+            collected.Append(BodyOf(current));
+            pageNumber++;
+            var token = TryTokenOf(current, "continuationToken");
+            if (token is null) break;
+
+            current = await store.RunAsync(Request("find_symbol", "target", "pattern=Symbol", Work,
+                continuationToken: token, maxResponseBytes: 512));
+        }
+
+        Assert.True(pageNumber > 1);
+        Assert.Contains("symbol-119", collected.ToString(), StringComparison.Ordinal);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
     public async Task OversizedAtomicUnitAndStructuredPartialResultsAreRejectedClearly()
     {
         await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));

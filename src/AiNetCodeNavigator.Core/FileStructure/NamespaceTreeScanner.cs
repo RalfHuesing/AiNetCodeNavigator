@@ -31,7 +31,17 @@ public static class NamespaceTreeScanner
         var requestedOptions = options ?? new NamespaceTreeScanOptions();
         var effectiveDepth = ClampBound(requestedOptions.MaxDepth, MaxDepthCap);
         var effectiveResults = ClampBound(requestedOptions.MaxResults, MaxResultsCap);
-        var boundsWereClamped = effectiveDepth != requestedOptions.MaxDepth || effectiveResults != requestedOptions.MaxResults;
+        var prefix = string.IsNullOrWhiteSpace(requestedOptions.NamespacePrefix) ? null : requestedOptions.NamespacePrefix.Trim().Trim('.');
+        var kind = requestedOptions.Kind.Trim().ToLowerInvariant();
+        var validKinds = new[] { "all", "class", "record", "struct", "interface", "enum", "delegate" };
+        if (!validKinds.Contains(kind, StringComparer.Ordinal))
+            return CreatePayload(Path.GetFileName(solution.FilePath) ?? "Solution", projectName, [], 0, 0, false, [],
+                $"Unsupported namespace type kind '{requestedOptions.Kind}'.", requestedOptions, effectiveDepth, effectiveResults,
+                effectiveDepth != requestedOptions.MaxDepth || effectiveResults != requestedOptions.MaxResults);
+        var prefixDepth = prefix?.Count(character => character == '.') ?? 0;
+        var scanDepth = Math.Min(MaxDepthCap, effectiveDepth + prefixDepth);
+        var boundsWereClamped = effectiveDepth != requestedOptions.MaxDepth || effectiveResults != requestedOptions.MaxResults
+            || prefix is not null && scanDepth < effectiveDepth + prefixDepth;
         var solutionName = Path.GetFileName(solution.FilePath) ?? "Solution";
         var requestedProjectName = string.IsNullOrWhiteSpace(projectName) ? null : projectName.Trim();
         var namedProjects = requestedProjectName is null
@@ -80,11 +90,13 @@ public static class NamespaceTreeScanner
                     compilation.GlobalNamespace,
                     sourceTrees,
                     [],
-                    effectiveDepth,
+                    scanDepth,
                     nsTypeCounts,
                     ref totalTypes,
                     ref depthWasTruncated,
-                    ct);
+                    ct,
+                    kind,
+                    requestedOptions.IncludeTypes);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -95,6 +107,16 @@ public static class NamespaceTreeScanner
         }
 
         var fullTree = BuildTree(nsTypeCounts);
+        if (prefix is not null)
+        {
+            var prefixNode = FindNode(fullTree, prefix);
+            if (prefixNode is null)
+                return CreatePayload(solutionName, selectedProjectName, [], 0, 0, false, [], $"Namespace prefix '{prefix}' was not found.",
+                    requestedOptions, effectiveDepth, effectiveResults, boundsWereClamped);
+            var scopedNode = PruneAtDepth(prefixNode, effectiveDepth, 0, out var prefixDepthTruncated);
+            fullTree = [scopedNode];
+            depthWasTruncated |= prefixDepthTruncated;
+        }
         var totalNamespaces = CountNodes(fullTree);
         var rootNodes = TakeTree(fullTree, effectiveResults, out var shownNamespaces);
         var resultLimitWasReached = shownNamespaces < totalNamespaces;
@@ -153,20 +175,22 @@ public static class NamespaceTreeScanner
         Dictionary<string, int> nsTypeCounts,
         ref int totalTypes,
         ref bool depthWasTruncated,
-        CancellationToken ct)
+        CancellationToken ct,
+        string kind,
+        bool includeTypes)
     {
         ct.ThrowIfCancellationRequested();
         var path = ns.IsGlobalNamespace ? parentPath : [.. parentPath, ns.Name];
 
         if (!ns.IsGlobalNamespace)
         {
-            var typesInNs = ns.GetTypeMembers().Count(type => type.Locations.Any(location =>
-                location.IsInSource && location.SourceTree is not null && sourceTrees.Contains(location.SourceTree)));
-            if (typesInNs > 0)
+            var matchingTypes = ns.GetTypeMembers().Where(type => MatchesKind(type, kind) && type.Locations.Any(location =>
+                location.IsInSource && location.SourceTree is not null && sourceTrees.Contains(location.SourceTree))).ToArray();
+            if (matchingTypes.Length > 0)
             {
                 var fullName = string.Join('.', path);
-                nsTypeCounts[fullName] = nsTypeCounts.GetValueOrDefault(fullName) + typesInNs;
-                totalTypes += typesInNs;
+                nsTypeCounts[fullName] = nsTypeCounts.GetValueOrDefault(fullName) + (includeTypes ? matchingTypes.Length : 0);
+                totalTypes += matchingTypes.Length;
             }
         }
 
@@ -175,7 +199,7 @@ public static class NamespaceTreeScanner
             ct.ThrowIfCancellationRequested();
             if (!ns.IsGlobalNamespace && path.Count >= maxDepth)
             {
-                var typesBelowDepth = CountProjectSourceTypesInHierarchy(childNs, sourceTrees, ct);
+                var typesBelowDepth = CountProjectSourceTypesInHierarchy(childNs, sourceTrees, ct, kind);
                 if (typesBelowDepth > 0)
                 {
                     depthWasTruncated = true;
@@ -186,18 +210,60 @@ public static class NamespaceTreeScanner
                 continue;
             }
 
-            CollectNamespacesAndTypes(childNs, sourceTrees, path, maxDepth, nsTypeCounts, ref totalTypes, ref depthWasTruncated, ct);
+            CollectNamespacesAndTypes(childNs, sourceTrees, path, maxDepth, nsTypeCounts, ref totalTypes, ref depthWasTruncated, ct, kind, includeTypes);
         }
     }
 
-    private static int CountProjectSourceTypesInHierarchy(INamespaceSymbol ns, HashSet<SyntaxTree> sourceTrees, CancellationToken ct)
+    private static int CountProjectSourceTypesInHierarchy(INamespaceSymbol ns, HashSet<SyntaxTree> sourceTrees, CancellationToken ct, string kind)
     {
         ct.ThrowIfCancellationRequested();
-        var count = ns.GetTypeMembers().Count(type => type.Locations.Any(location =>
+        var count = ns.GetTypeMembers().Count(type => MatchesKind(type, kind) && type.Locations.Any(location =>
             location.IsInSource && location.SourceTree is not null && sourceTrees.Contains(location.SourceTree)));
-        foreach (var child in ns.GetNamespaceMembers()) count += CountProjectSourceTypesInHierarchy(child, sourceTrees, ct);
+        foreach (var child in ns.GetNamespaceMembers()) count += CountProjectSourceTypesInHierarchy(child, sourceTrees, ct, kind);
 
         return count;
+    }
+
+    private static bool MatchesKind(INamedTypeSymbol type, string kind) => kind switch
+    {
+        "all" => true,
+        "class" => type.TypeKind == TypeKind.Class && !type.IsRecord,
+        "record" => type.IsRecord,
+        "struct" => type.TypeKind == TypeKind.Struct && !type.IsRecord,
+        "interface" => type.TypeKind == TypeKind.Interface,
+        "enum" => type.TypeKind == TypeKind.Enum,
+        "delegate" => type.TypeKind == TypeKind.Delegate,
+        _ => false,
+    };
+
+    private static NamespaceNode? FindNode(IReadOnlyList<NamespaceNode> nodes, string fullName)
+    {
+        foreach (var node in nodes)
+        {
+            if (string.Equals(node.FullName, fullName, StringComparison.Ordinal)) return node;
+            var child = FindNode(node.Children, fullName);
+            if (child is not null) return child;
+        }
+        return null;
+    }
+
+    private static NamespaceNode PruneAtDepth(NamespaceNode source, int maxDepth, int depth, out bool truncated)
+    {
+        truncated = false;
+        var result = new NamespaceNode(source.Name, source.FullName, source.TypeCount);
+        if (depth + 1 >= maxDepth)
+        {
+            truncated = source.Children.Count > 0;
+            return result;
+        }
+
+        foreach (var child in source.Children)
+        {
+            var pruned = PruneAtDepth(child, maxDepth, depth + 1, out var childTruncated);
+            result.Children.Add(pruned);
+            truncated |= childTruncated;
+        }
+        return result;
     }
 
     private static List<NamespaceNode> BuildTree(Dictionary<string, int> nsTypeCounts)

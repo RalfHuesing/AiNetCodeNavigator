@@ -46,6 +46,44 @@ public sealed class NamespaceTreeScannerTests
     }
 
     [Fact]
+    public async Task ScanSolutionAsync_AppliesPrefixKindAndIncludeTypesOptions()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+
+        var filtered = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution, options: new NamespaceTreeScanOptions(
+            MaxDepth: 4,
+            MaxResults: 50,
+            NamespacePrefix: "SampleNamespace.Hierarchy",
+            Kind: "class"));
+        var root = Assert.Single(filtered.RootNamespaces);
+        Assert.Equal("SampleNamespace.Hierarchy", root.FullName);
+        Assert.True(filtered.TotalTypes > 0);
+        Assert.All(Descendants(filtered.RootNamespaces), node => Assert.StartsWith("SampleNamespace.Hierarchy", node.FullName, StringComparison.Ordinal));
+
+        var hiddenTypes = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution, options: new NamespaceTreeScanOptions(
+            MaxDepth: 4,
+            MaxResults: 50,
+            NamespacePrefix: "SampleNamespace.Hierarchy",
+            Kind: "class",
+            IncludeTypes: false));
+        Assert.Equal(0, Assert.Single(hiddenTypes.RootNamespaces).TypeCount);
+        Assert.Equal(filtered.TotalTypes, hiddenTypes.TotalTypes);
+
+        var missingPrefix = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution, options: new NamespaceTreeScanOptions(
+            NamespacePrefix: "SampleNamespace.DoesNotExist"));
+        Assert.Contains("Namespace prefix", missingPrefix.Error, StringComparison.Ordinal);
+    }
+
+    private static IEnumerable<NamespaceNode> Descendants(IEnumerable<NamespaceNode> nodes)
+    {
+        foreach (var node in nodes)
+        {
+            yield return node;
+            foreach (var child in Descendants(node.Children)) yield return child;
+        }
+    }
+
+    [Fact]
     public async Task ScanSolutionAsync_CountsDeclaredHierarchyAndCombinesPartialNamespaces()
     {
         using var fixture = TestWorkspaceBuilder.CreateSolution(

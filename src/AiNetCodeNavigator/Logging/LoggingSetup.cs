@@ -26,7 +26,8 @@ public static class LoggingSetup
     /// </summary>
     public static LoggingLevelSwitch Initialize(string command = "mcp", string? customLogDirectory = null, LogEventLevel minimumLevel = LogEventLevel.Information)
     {
-        var logDirectory = customLogDirectory ?? Path.Combine(AppContext.BaseDirectory, "logs");
+        var configuredLogDirectory = Environment.GetEnvironmentVariable("AINET_CODE_NAVIGATOR_LOG_DIRECTORY");
+        var logDirectory = customLogDirectory ?? configuredLogDirectory ?? Path.Combine(AppContext.BaseDirectory, "logs");
         Directory.CreateDirectory(logDirectory);
         _activeLogDirectory = logDirectory;
 

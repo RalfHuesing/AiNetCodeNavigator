@@ -1,5 +1,260 @@
+using System.ComponentModel.DataAnnotations;
+using AiNetCodeNavigator.Core.Assemblies;
+using AiNetCodeNavigator.Core.Models;
+using AiNetCodeNavigator.Core.Symbols;
+using AiNetCodeNavigator.Core.Workspace;
+using AiNetCodeNavigator.Mcp.Formatting;
+using AiNetCodeNavigator.Mcp.Tools;
+using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
+
 namespace AiNetCodeNavigator.Mcp.Tools.Symbols;
 
-public class SymbolTools
+[McpServerToolType]
+public sealed class SymbolTools(NavigatorHostRuntime runtime)
 {
+    [McpServerTool(Name = "find_symbol", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    public Task<CallToolResult> FindSymbol(
+        [Required] string targetPath,
+        string[]? namePatterns = null,
+        string? pattern = null,
+        string? kind = null,
+        string scopeType = "all",
+        bool includeGenerated = false,
+        [Range(1, 1000)] int maxResults = 50,
+        bool includeReferences = false,
+        string? operationToken = null,
+        string? continuationToken = null,
+        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes)] int maxResponseBytes = 16 * 1024,
+        [Range(1, int.MaxValue)] int? maxResponseTokens = null,
+        CancellationToken cancellationToken = default)
+    {
+        if ((namePatterns is null) == string.IsNullOrWhiteSpace(pattern))
+        {
+            return Task.FromResult(McpToolResults.InvalidArgument(
+                "Specify exactly one of namePatterns or pattern.", "$.namePatterns",
+                "Provide a non-empty pattern or a non-empty namePatterns array, but not both.",
+                maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
+        }
+        var patterns = namePatterns ?? [pattern!];
+        if (patterns.Length is < 1 or > 10 || patterns.Any(string.IsNullOrWhiteSpace))
+        {
+            return Task.FromResult(McpToolResults.InvalidArgument(
+                "namePatterns must contain between 1 and 10 non-empty patterns.", "$.namePatterns",
+                "Provide up to 10 non-empty patterns.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
+        }
+        if (!TryScope(scopeType, out var scope))
+        {
+            return Task.FromResult(McpToolResults.InvalidArgument(
+                "scopeType must be all, production, or tests.", "$.scopeType",
+                "Choose one of the supported scope values.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
+        }
+        if (!TryKind(kind, out var symbolKind))
+        {
+            return Task.FromResult(McpToolResults.InvalidArgument(
+                "kind is not a supported C# symbol kind.", "$.kind",
+                "Use a supported type or member kind.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
+        }
+
+        var effectivePatterns = patterns.Distinct(StringComparer.Ordinal).ToArray();
+        var arguments = new { patterns = effectivePatterns, kind = symbolKind, scope, includeGenerated, maxResults, includeReferences };
+        return NavigationToolSupport.RouteAsync(runtime, "find_symbol", targetPath, arguments,
+            operationToken, continuationToken, maxResponseBytes, maxResponseTokens,
+            async (target, ct) =>
+            {
+                var results = new List<FindSymbolScanResult>();
+                foreach (var searchPattern in effectivePatterns)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    FindSymbolScanResult result;
+                    if (target.TargetType == AnalysisTargetType.Assembly)
+                    {
+                        result = await AssemblyFindSymbolScanner.FindAsync(target.CanonicalPath, searchPattern,
+                            symbolKind, scope, maxResults, includeReferences, ct).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        var scanned = await ScanSourceAsync(target, searchPattern, symbolKind, scope,
+                            includeGenerated, maxResults, ct, maxResponseBytes, maxResponseTokens).ConfigureAwait(false);
+                        if (scanned.Result is null) return scanned.Response!;
+                        result = scanned.Result;
+                    }
+                    if (result.Error is { } error)
+                        return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.targetPath");
+                    results.Add(result);
+                }
+
+                var truncated = results.Any(result => result.IsTruncated);
+                var text = string.Join("\n\n", results.Select((result, index) =>
+                {
+                    var resultText = target.TargetType == AnalysisTargetType.Assembly
+                        ? FormatAssemblyFindResult(result)
+                        : result.Text;
+                    return results.Count == 1 ? resultText : $"Pattern: {effectivePatterns[index]}\n{resultText}";
+                }));
+                return NavigationToolSupport.SuccessText(text, truncated,
+                    truncated ? "Increase maxResults up to 1000 and repeat the same pattern query." : null);
+            }, null, cancellationToken);
+    }
+
+    [McpServerTool(Name = "get_symbol_body", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    public Task<CallToolResult> GetSymbolBody(
+        [Required] string targetPath,
+        [Required] string[] symbolIdentifiers,
+        [Range(1, 1000)] int maxBodyLines = 80,
+        [Range(1, int.MaxValue)] int startLine = 1,
+        [Range(1, int.MaxValue)] int? endLine = null,
+        string? operationToken = null,
+        string? continuationToken = null,
+        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes)] int maxResponseBytes = 32 * 1024,
+        [Range(1, int.MaxValue)] int? maxResponseTokens = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (symbolIdentifiers.Length == 0 || symbolIdentifiers.Any(string.IsNullOrWhiteSpace))
+            return Task.FromResult(McpToolResults.InvalidArgument(
+                "symbolIdentifiers must contain one or more non-empty identifiers.", "$.symbolIdentifiers",
+                "Provide symbol names, documentation IDs, source positions, or h: handoffs.",
+                maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
+        if (endLine is { } end && end < startLine)
+            return Task.FromResult(McpToolResults.InvalidArgument(
+                "endLine must be greater than or equal to startLine.", "$.endLine",
+                "Choose an inclusive endLine that is not before startLine.",
+                maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
+
+        var effectiveLines = endLine is { } inclusiveEnd ? inclusiveEnd - startLine + 1 : maxBodyLines;
+        var arguments = new { symbolIdentifiers, maxBodyLines, startLine, endLine };
+        return NavigationToolSupport.RouteAsync(runtime, "get_symbol_body", targetPath, arguments,
+            operationToken, continuationToken, maxResponseBytes, maxResponseTokens,
+            async (target, ct) =>
+            {
+                var items = new List<object>();
+                var hasDomainGaps = false;
+                var suggestedStartLine = startLine;
+                if (target.TargetType == AnalysisTargetType.Project)
+                {
+                    var response = await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, token) =>
+                    {
+                        var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, token).ConfigureAwait(false);
+                        foreach (var identifier in symbolIdentifiers)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            var resolved = await SourceSymbolBodyResolver.ResolveAsync(
+                                solution, identifier, effectiveLines, startLine, identity, token).ConfigureAwait(false);
+                            hasDomainGaps |= resolved.Error is not null || resolved.Body?.HasMore == true;
+                            if (resolved.Body?.HasMore == true)
+                                suggestedStartLine = Math.Max(suggestedStartLine, resolved.Body.DisplayedEnd + 1);
+                            if (resolved.Error is { } error)
+                            {
+                                var candidates = resolved.ResolutionCandidates.Count == 0 ? string.Empty
+                                    : $" Candidates: {string.Join(", ", resolved.ResolutionCandidates.Select(candidate => candidate.Name))}.";
+                                items.Add($"Could not resolve {identifier}: {error.Code}: {error.Message}{candidates}");
+                            }
+                            else if (resolved.Body is { } body)
+                            {
+                                items.Add(FormatBody(identifier, body));
+                            }
+                        }
+                        return NavigationToolSupport.SuccessText(string.Join("\n\n", items), hasDomainGaps,
+                            hasDomainGaps ? $"Resolve item errors and repeat; for a body with more lines set startLine to {suggestedStartLine}." : null);
+                    }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
+                    return response;
+                }
+
+                foreach (var identifier in symbolIdentifiers)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var resolved = await AssemblySymbolBodyScanner.GetAsync(identifier, effectiveLines, startLine, ct).ConfigureAwait(false);
+                    hasDomainGaps |= resolved.Error is not null || resolved.Body?.HasMore == true;
+                    if (resolved.Body?.HasMore == true)
+                        suggestedStartLine = Math.Max(suggestedStartLine, resolved.Body.DisplayedEnd + 1);
+                    if (resolved.Error is { } error)
+                    {
+                        var candidates = resolved.ResolutionCandidates.Count == 0 ? string.Empty
+                            : $" Candidates: {string.Join(", ", resolved.ResolutionCandidates.Select(candidate => candidate.Name))}.";
+                        items.Add($"Could not resolve {identifier}: {error.Code}: {error.Message}{candidates}");
+                    }
+                    else if (resolved.Body is { } body)
+                    {
+                        items.Add(FormatBody(identifier, body));
+                    }
+                }
+                return NavigationToolSupport.SuccessText(string.Join("\n\n", items), hasDomainGaps,
+                    hasDomainGaps ? $"Resolve item errors and repeat; for a body with more lines set startLine to {suggestedStartLine}." : null);
+            }, null, cancellationToken);
+    }
+
+    private async Task<(FindSymbolScanResult? Result, CallToolResult? Response)> ScanSourceAsync(
+        AnalysisTarget target,
+        string pattern,
+        SymbolKindFilter kind,
+        SymbolScopeType scope,
+        bool includeGenerated,
+        int maxResults,
+        CancellationToken cancellationToken,
+        int maxResponseBytes,
+        int? maxResponseTokens)
+    {
+        FindSymbolScanResult? result = null;
+        var response = await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, token) =>
+        {
+            var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, token).ConfigureAwait(false);
+            result = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+                new FindSymbolScanRequest(solution, pattern, kind, scope, maxResults,
+                    SourceIdentity: identity, IncludeGenerated: includeGenerated), token).ConfigureAwait(false);
+            return NavigationToolSupport.Success(result);
+        }, maxResponseBytes, maxResponseTokens, cancellationToken).ConfigureAwait(false);
+        return (result, response);
+    }
+
+    private static bool TryScope(string value, out SymbolScopeType scope)
+    {
+        scope = value.ToLowerInvariant() switch
+        {
+            "all" => SymbolScopeType.All,
+            "production" => SymbolScopeType.Production,
+            "tests" => SymbolScopeType.Tests,
+            _ => (SymbolScopeType)(-1),
+        };
+        return Enum.IsDefined(scope);
+    }
+
+    private static string FormatBody(string identifier, SymbolBodyResult body)
+    {
+        var status = body.HasMore ? ", more lines available" : ", complete";
+        return $"Symbol: {identifier}\nContent mode: {body.ContentMode}\nLines: {body.DisplayedStart}-{body.DisplayedEnd} of {body.TotalLines}{status}\n{body.Body}";
+    }
+
+    private static string FormatAssemblyFindResult(FindSymbolScanResult result)
+    {
+        if (result.Entries.Count == 0) return result.Text;
+        var lines = result.Entries.Select(entry =>
+        {
+            var handoff = entry.HandoffId is null ? string.Empty : $" [handoff: {entry.HandoffId}]";
+            return $"- {entry.Kind} {entry.Name} in {entry.FilePath}:{entry.Line} ({entry.ProjectName}) {entry.Signature}{handoff}";
+        });
+        var summary = $"Found {result.TotalMatches} matching assembly symbol(s); returned {result.ReturnedMatches}.";
+        return summary + "\n" + string.Join("\n", lines);
+    }
+
+    private static bool TryKind(string? value, out SymbolKindFilter kind)
+    {
+        kind = value?.Trim().ToLowerInvariant() switch
+        {
+            null or "all" => SymbolKindFilter.All,
+            "class" => SymbolKindFilter.Class,
+            "record" => SymbolKindFilter.Record,
+            "record class" => SymbolKindFilter.RecordClass,
+            "record struct" => SymbolKindFilter.RecordStruct,
+            "struct" => SymbolKindFilter.Struct,
+            "interface" => SymbolKindFilter.Interface,
+            "enum" => SymbolKindFilter.Enum,
+            "delegate" => SymbolKindFilter.Delegate,
+            "method" => SymbolKindFilter.Method,
+            "property" => SymbolKindFilter.Property,
+            "field" => SymbolKindFilter.Field,
+            "event" => SymbolKindFilter.Event,
+            _ => (SymbolKindFilter)(-1),
+        };
+        return Enum.IsDefined(kind);
+    }
 }

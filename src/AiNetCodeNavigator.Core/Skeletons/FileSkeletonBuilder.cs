@@ -18,14 +18,14 @@ public static class FileSkeletonBuilder
         Document document,
         string solutionPath,
         Func<string?, string?>? formatSymbolId = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Func<ISymbol, string?>? formatSymbol = null)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(solutionPath);
 
         var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
-        Func<ISymbol, string?>? formatSymbol = null;
-        if (formatSymbolId is null)
+        if (formatSymbolId is null && formatSymbol is null)
         {
             var identity = await AnalysisSymbolIdentity.ForSourceAsync(document.Project.Solution, ct).ConfigureAwait(false);
             if (identity is not null)

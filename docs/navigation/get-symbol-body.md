@@ -5,3 +5,5 @@
 `maxBodyLines` limits the output window and `startLine` selects its one-based starting line. Values below one are normalized to one. A window that exceeds the declaration returns a message with the total line count and does not throw. Truncated windows include a continuation marker and set `HasMore`.
 
 `ResolveBatch` applies the same window to each input symbol, preserves input order, and returns an empty result for an empty sequence. Metadata symbols without source syntax are retained as unavailable results with zero source lines, so they do not prevent other batch items from being returned. Passing a null symbol or null batch sequence throws `ArgumentNullException`.
+
+The MCP host currently registers `get_symbol_body` for source and managed-assembly targets. It is the tested follow-up consumer for symbol handoffs from the initial navigation slice; see [MCP Host](../mcp-host.md) for the scope of the public integration evidence.

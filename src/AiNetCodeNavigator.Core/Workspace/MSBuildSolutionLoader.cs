@@ -21,14 +21,51 @@ public static class MSBuildSolutionLoader
 {
     private static readonly Lock RegistrationLock = new();
 
-    public static Dictionary<string, string> CreateWorkspaceProperties() => new()
+    public static Dictionary<string, string> CreateWorkspaceProperties()
     {
-        ["DesignTimeBuild"] = "true",
-        ["SkipCompilerExecution"] = "true",
-        ["ProvideCommandLineArgs"] = "true",
-        ["RunAnalyzers"] = "false",
-        ["RunCodeAnalysis"] = "false",
-    };
+        var scratchRoot = Path.Combine(Path.GetTempPath(), "AiNetCodeNavigator", "msbuild-analysis", Environment.ProcessId.ToString(), Guid.NewGuid().ToString("N"));
+        var customTargets = EnsureDesignTimeTargets(scratchRoot);
+        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["DesignTimeBuild"] = "true",
+            ["SkipCompilerExecution"] = "true",
+            ["ProvideCommandLineArgs"] = "true",
+            ["RunAnalyzers"] = "false",
+            ["RunCodeAnalysis"] = "false",
+            ["DisableRarCache"] = "true",
+            ["NavigatorAnalysisScratchRoot"] = scratchRoot,
+            ["CustomBeforeMicrosoftCommonTargets"] = customTargets,
+        };
+    }
+
+    /// <summary>Removes the process-scoped MSBuild design-time output after resident workspaces are disposed.</summary>
+    public static void CleanupDesignTimeScratch()
+    {
+        var scratchRoot = Path.Combine(Path.GetTempPath(), "AiNetCodeNavigator", "msbuild-analysis", Environment.ProcessId.ToString());
+        try
+        {
+            if (Directory.Exists(scratchRoot)) Directory.Delete(scratchRoot, recursive: true);
+        }
+        catch (IOException)
+        {
+            // A second in-process MSBuild workspace may still be releasing files; the OS temp cleanup owns leftovers.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Do not fail host shutdown because a transient design-time output remains locked.
+        }
+    }
+
+    private static string EnsureDesignTimeTargets(string scratchRoot)
+    {
+        Directory.CreateDirectory(scratchRoot);
+        var targetsPath = Path.Combine(scratchRoot, "Navigator.DesignTime.targets");
+        var escapedRoot = scratchRoot.Replace("&", "&amp;", StringComparison.Ordinal).Replace("<", "&lt;", StringComparison.Ordinal);
+        var content = $"""<Project><PropertyGroup><NavigatorProjectScratchKey>$(MSBuildProjectDirectory.Replace(':','_'))</NavigatorProjectScratchKey><IntermediateOutputPath>{escapedRoot}\$(NavigatorProjectScratchKey)\$(MSBuildProjectName)\$(Configuration)\$(TargetFramework)\obj\</IntermediateOutputPath><OutputPath>{escapedRoot}\$(NavigatorProjectScratchKey)\$(MSBuildProjectName)\$(Configuration)\$(TargetFramework)\bin\</OutputPath></PropertyGroup></Project>""";
+        if (!File.Exists(targetsPath) || !string.Equals(File.ReadAllText(targetsPath), content, StringComparison.Ordinal))
+            File.WriteAllText(targetsPath, content);
+        return targetsPath;
+    }
 
     public static void EnsureMSBuildRegistered()
     {

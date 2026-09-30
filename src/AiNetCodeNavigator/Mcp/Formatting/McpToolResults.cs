@@ -11,6 +11,7 @@ internal static class McpToolResults
     internal const string ErrorStatusPrefix = "Status: operation=error, completeness=not_applicable\n";
     internal const string LoadingStatusPrefix = "Status: operation=retry, completeness=not_applicable\n";
     internal const string RunningStatusPrefix = "Status: operation=running, completeness=not_applicable\n";
+    internal const string DomainTruncatedMarker = "\u001eNAVIGATION_DOMAIN_TRUNCATED\n";
 
     internal static CallToolResult Success(
         string text,
@@ -228,6 +229,13 @@ internal static class McpToolResults
 
     internal static CallToolResult TextResult(string text, bool isError, JsonElement? structuredContent = null) =>
         Create(text, isError, structuredContent);
+
+    internal static CallToolResult DomainTruncated(string text, string nextAction)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ArgumentException.ThrowIfNullOrWhiteSpace(nextAction);
+        return TextResult($"{DomainTruncatedMarker}nextAction: {nextAction}\n{text}", isError: false);
+    }
 
     internal static string NormalizeExistingResult(CallToolResult result)
     {

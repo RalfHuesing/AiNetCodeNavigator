@@ -7,3 +7,5 @@
 Supported views are `tree`, `files`, and `summary`. The tree view shows directory aggregates and files directly under the selected root; the files view lists matching paths. The summary view returns no file entries and shows the root and top-level directory aggregates, including files found in nested directories. Extension filters and relative glob filters combine with AND semantics; requested exclusion patterns remove matching paths. Results use deterministic path ordering by default, with optional size or extension ordering. Line counts are read only when requested.
 
 The Core result reports truncation and warnings and includes one `Next` action that suggests how to refine or repeat a bounded scan. This scanner does not retain continuation state or expose offset-based pages; `MaxResults` is a display limit, not a cursor.
+
+The MCP host currently registers `get_file_tree` with an absolute `targetPath` and relative tree root. The initial public integration test exercises a source target; the full public parameter and budget matrix remains open. See [MCP Host](../mcp-host.md).

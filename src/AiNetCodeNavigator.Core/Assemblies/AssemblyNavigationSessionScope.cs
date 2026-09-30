@@ -7,10 +7,11 @@ using System.Diagnostics.CodeAnalysis;
 using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Core.Workspace;
+using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.Assemblies;
 
-internal sealed class AssemblyNavigationSessionScope : IAsyncDisposable
+public sealed class AssemblyNavigationSessionScope : IAsyncDisposable
 {
     private readonly AssemblyAnalysisSessionRegistry.AssemblySessionAccess sessionAccess;
 
@@ -20,10 +21,11 @@ internal sealed class AssemblyNavigationSessionScope : IAsyncDisposable
         Context = context;
     }
 
-    internal AssemblyContext Context { get; }
+    public AssemblyContext Context { get; }
+    public Solution Solution => sessionAccess.Generation.Snapshot.Solution;
 
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The successful result transfers ownership of the session snapshot lease to the returned scope.")]
-    internal static async Task<Result<AssemblyNavigationSessionScope>> OpenAsync(
+    public static async Task<Result<AssemblyNavigationSessionScope>> OpenAsync(
         string? assemblyPath,
         CancellationToken cancellationToken)
     {

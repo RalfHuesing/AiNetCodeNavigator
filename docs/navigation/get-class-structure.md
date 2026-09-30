@@ -7,3 +7,5 @@ Type kinds distinguish `Class`, `Record Class`, `Record Struct`, `Interface`, `S
 Markdown output adds a `File` column for types declared in multiple files, showing each member's declaring file. Dynamic table cells escape pipe characters and replace line breaks with spaces so signatures stay in one table row.
 
 Source members carry opaque `h:...` handoffs when an identity can be created. Compiler-generated constructors and synthetic record-parameter rows do not have handoffs. A handoff from a member resolves to that member's containing type for another class-structure query. A missing type returns `null`; an unknown or stale handoff returns a payload with a recoverable error. Null requests or solutions and blank symbol identifiers throw argument exceptions. `RenderMarkdown` rejects a null payload with `ArgumentNullException`.
+
+The MCP host currently registers `get_class_structure` for source and managed-assembly targets. Public integration coverage currently exercises the source path; complete source/assembly parameter and filter parity remains open. See [MCP Host](../mcp-host.md).
