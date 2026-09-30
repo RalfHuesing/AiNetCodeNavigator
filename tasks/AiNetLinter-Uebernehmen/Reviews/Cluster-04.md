@@ -121,3 +121,17 @@ The point 4.2 audit checkbox is complete after one audit. No product code or ext
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 301/301 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Independent audit 1/3 of point 4.3
+
+- Reviewed commit: `beeb8992c45feb088948f13d5e8a27a3e4ce8fd5` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Read-only comparison: AiNetLinter `SkeletonSyntaxWalker` and `SkeletonMapBuilder`; inspected the local walker, builder, Markdown renderer, handoff formatter, DTOs, FastTests, and current-state page. The implementation slice's gate results are recorded separately. This audit did not run a build or tests.
+- Nested block namespaces now compose to `Outer.Inner`; dotted namespace syntax is retained through `node.Name.ToString()`. Method, constructor, and property expression bodies are excluded by the local signature builders. Type and ordinary member Markdown handoffs have roundtrip tests; null input cases are covered. These observations do not close the two findings below.
+
+### Open findings
+
+1. **P2 — Field and event initializers can expose executable bodies in a skeleton.** `SkeletonSyntaxWalker.cs:183-188` and `220-225` put `node.ToString()` into the DTO signature, and `SkeletonMarkdownRenderer.cs:101-107` emits that string unchanged. For `private Func<int> compute = () => { return 42; };` or an event initialized with a lambda, the skeleton includes the lambda body and `return 42`, contrary to the point's body-free skeleton requirement. AiNetLinter uses the same source-copy pattern, so this inherited behavior requires an adaptation rather than literal reuse. The existing body test (`SkeletonMapTests.cs:74-95`) covers methods, constructors, and a computed property, but no initializer. **Acceptance:** form field/event signatures from declarative syntax without initializer expressions, retain type/modifiers/names, and assert that DTO and Markdown omit executable initializer markers for field and event cases.
+2. **P2 — A multi-variable declaration has one handoff that identifies only its first variable.** `SkeletonSyntaxWalker.cs:185-188` and `222-225` select `Variables.FirstOrDefault()` while the signature contains every variable (`int First, Second;` or `event Action First, Second;`). The ID beside that line resolves only to `First`, leaving `Second` without a navigable entry and making the printed association ambiguous. Current handoff tests (`SkeletonMapTests.cs:133-170`) use one type and one single-variable member. **Acceptance:** emit a separate DTO and Markdown entry or another explicit ID-to-name association for each declared variable, and verify that the later field and event variable handoffs roundtrip to their own symbols.
+
+The point 4.3 audit checkbox remains open pending fixes and a follow-up audit. No product code or external repository was changed in this audit.
