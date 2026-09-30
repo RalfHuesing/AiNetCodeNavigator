@@ -19,7 +19,7 @@
   - [x] Sämtliche Produkttexte englisch halten und `TotalTypes` über Namespace-Tiefen- und Ergebnisgrenzen hinweg vollständig zählen.
   - [x] Emit English error, summary, truncation, and next-action text from the namespace scanner; cover the public output paths in FastTests.
   - [x] Define and implement `TotalTypes` consistently for depth-truncated namespace scans; test a source type below `MaxDepth` and align current-state documentation.
-  - [ ] Review/Audit zu 6.2 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 6.2 durchführen; Findings ergänzen und umsetzen.
 - [x] 6.3 Index-Scope (`get_index_scope`-Engine):
   - [x] `IndexScopeScanner`: Status der C#-Indizierung und Dokumentenübersicht
   - [x] FastTests für Index-Scope

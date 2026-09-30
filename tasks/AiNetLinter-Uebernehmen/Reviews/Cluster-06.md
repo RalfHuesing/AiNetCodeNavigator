@@ -100,3 +100,10 @@
 | `pwsh -File ./scripts/test-fast.ps1` | Passed, 405/405 |
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 417/417 across both test projects |
+
+## Point 6.2 independent audit 2 of 3
+
+- Reviewed commit: `9817c76daf9a65caace7b869d25fa9f57993cac8` (`gpt-6-sol`, medium), with a clean working tree before this documentation edit. Inspected the remediation diff, current scanner and models, the nine namespace FastTests, and current-state documentation. This auditor did not run product gates; the remediation record above reports the implementer's gate results.
+- **P2 English public output — accepted.** `NamespaceTreeScanner.cs:41,58,77,282-328` now uses English for scanner-authored errors, `NextAction`, summary, truncation guidance, and direct type labels. `NamespaceTreeScannerTests.cs:69,91-92,113,139-174` verifies success, truncation, and unknown-project error strings. The scanner source has no remaining German string literals. Exception messages and user-provided names may retain their originating language; this is outside the scanner-authored-text finding.
+- **P2 depth-independent `TotalTypes` — accepted.** At the depth boundary, `NamespaceTreeScanner.cs:152-177` counts source types in the omitted child hierarchy and adds them to `totalTypes`, while `nsTypeCounts` stores a zero-count visible prefix. The new depth-one test at `NamespaceTreeScannerTests.cs:140-157` establishes `TotalTypes=1`, direct `A.TypeCount=0`, and `maxDepth` for a type in `A.B`. `docs/navigation/get-namespace-tree.md` now states that `TotalTypes` covers named namespaces throughout the selected target while node counts remain direct.
+- Both audit-1 findings meet their acceptance conditions; the 6.2 audit checkbox is complete. No new finding was identified in this targeted follow-up. Point 6.3 was outside scope.
