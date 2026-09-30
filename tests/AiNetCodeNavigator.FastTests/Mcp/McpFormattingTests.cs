@@ -71,10 +71,53 @@ public sealed class McpFormattingTests
 
         Assert.Equal("RESPONSE_BUDGET_TOO_SMALL", result.ErrorCode);
         Assert.Equal(Encoding.UTF8.GetByteCount(text), result.MinimumResponseBytes);
+        Assert.True(result.CanRetryWithLargerResponseBudget);
         Assert.False(result.IsTruncated);
         Assert.Null(result.NextOffset);
         Assert.Contains("RESPONSE_BUDGET_TOO_SMALL", result.Text, StringComparison.Ordinal);
         Assert.Contains($"minimumResponseBytes: {result.MinimumResponseBytes}", result.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Format_UnitWhoseRetryExceedsPublicMaximum_OffersSupportedRecovery()
+    {
+        var text = new string('x', 65_490) + "\n" + new string('y', 100);
+
+        var atMaximum = McpResponseFormatter.Format(new string('x', 65_536), 65_536);
+        var result = McpResponseFormatter.Format(text, 65_536);
+        var overMaximum = McpResponseFormatter.Format(new string('x', 65_537), 65_536);
+
+        Assert.False(atMaximum.IsTruncated);
+        Assert.Equal("RESPONSE_BUDGET_TOO_SMALL", result.ErrorCode);
+        Assert.True(result.MinimumResponseBytes > McpResponseBudgetLimits.MaximumBytes);
+        Assert.False(result.CanRetryWithLargerResponseBudget);
+        Assert.Contains("narrow the query", result.RecoveryHint, StringComparison.Ordinal);
+        Assert.DoesNotContain("retry: repeat with maxResponseBytes=", result.Text, StringComparison.Ordinal);
+        Assert.Equal("RESPONSE_BUDGET_TOO_SMALL", overMaximum.ErrorCode);
+        Assert.False(overMaximum.CanRetryWithLargerResponseBudget);
+    }
+
+    [Fact]
+    public void Format_RejectsContinuationOffsetInsideAtomicLine()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => McpResponseFormatter.Format("alpha\nbeta", 512, startOffset: 1));
+    }
+
+    [Fact]
+    public void Format_BudgetErrorHonorsTokenCapOrRejectsUnrepresentableError()
+    {
+        var text = new string('x', 600);
+        var error = McpResponseFormatter.Format(text, 512);
+
+        var exact = McpResponseFormatter.Format(text, 512, error.TokenCount);
+
+        Assert.Equal("RESPONSE_BUDGET_TOO_SMALL", exact.ErrorCode);
+        Assert.Equal(error.TokenCount, exact.TokenCount);
+        Assert.True(exact.TokenCount <= error.TokenCount);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            McpResponseFormatter.Format(text, 512, error.TokenCount - 1));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            McpResponseFormatter.Format("hello world from the navigator", 512, maxResponseTokens: 1));
     }
 
     [Fact]

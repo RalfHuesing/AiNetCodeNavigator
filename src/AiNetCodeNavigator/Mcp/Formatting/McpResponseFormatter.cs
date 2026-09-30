@@ -81,18 +81,36 @@ internal static class McpResponseFormatter
                 : $"{firstUnit}\n{CreateContinuationHint(firstEnd, omittedBytes)}";
             var minimumBytes = Encoding.UTF8.GetByteCount(minimumText);
             var minimumTokens = TokenEncoding.CountTokens(minimumText);
-            var errorText = $"RESPONSE_BUDGET_TOO_SMALL\nminimumResponseBytes: {minimumBytes}\nminimumResponseTokens: {minimumTokens}\nretry: repeat with maxResponseBytes={minimumBytes} and a sufficient token budget.";
+            var canRetryWithLargerBudget = minimumBytes > maxResponseBytes
+                && minimumBytes <= McpResponseBudgetLimits.MaximumBytes;
+            var recoveryHint = minimumBytes > McpResponseBudgetLimits.MaximumBytes
+                ? $"recovery: narrow the query to use complete units within {McpResponseBudgetLimits.MaximumBytes} bytes."
+                : canRetryWithLargerBudget
+                    ? $"retry: repeat with maxResponseBytes={minimumBytes} and maxResponseTokens at least {minimumTokens}."
+                    : $"recovery: repeat with maxResponseTokens at least {minimumTokens}.";
+            var errorText = $"RESPONSE_BUDGET_TOO_SMALL\nminimumResponseBytes: {minimumBytes}\nminimumResponseTokens: {minimumTokens}\n{recoveryHint}";
+            var errorTokenCount = TokenEncoding.CountTokens(errorText);
+            if (maxResponseTokens is { } errorTokenBudget && errorTokenCount > errorTokenBudget)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(maxResponseTokens),
+                    maxResponseTokens,
+                    $"The token budget cannot represent the recoverable error response; at least {errorTokenCount} tokens are required.");
+            }
+
             return new McpResponseFormatResult(
                 errorText,
                 Encoding.UTF8.GetByteCount(errorText),
-                TokenEncoding.CountTokens(errorText),
+                errorTokenCount,
                 IsTruncated: false,
                 ErrorCode: "RESPONSE_BUDGET_TOO_SMALL",
                 MinimumResponseBytes: minimumBytes,
                 MinimumResponseTokens: minimumTokens,
                 NextOffset: null,
                 OmittedUtf8Bytes: Encoding.UTF8.GetByteCount(remaining),
-                ContinuationHint: null);
+                ContinuationHint: null,
+                CanRetryWithLargerResponseBudget: canRetryWithLargerBudget,
+                RecoveryHint: recoveryHint);
         }
 
         return Success(best.Text, isTruncated: true, best.Offset, best.OmittedBytes, best.Hint);
@@ -118,7 +136,9 @@ internal static class McpResponseFormatter
             MinimumResponseTokens: null,
             nextOffset,
             omittedBytes,
-            hint);
+            hint,
+            CanRetryWithLargerResponseBudget: false,
+            RecoveryHint: null);
 
     private static string CreateContinuationHint(int nextOffset, int omittedBytes) =>
         $"[Truncated; continue at UTF-16 offset {nextOffset}; {omittedBytes} UTF-8 bytes omitted.]";
@@ -127,7 +147,8 @@ internal static class McpResponseFormatter
     {
         if (startOffset < 0 || startOffset > text.Length
             || (startOffset > 0 && startOffset < text.Length
-                && char.IsLowSurrogate(text[startOffset]) && char.IsHighSurrogate(text[startOffset - 1])))
+                && (text[startOffset - 1] != '\n'
+                    || char.IsLowSurrogate(text[startOffset]) && char.IsHighSurrogate(text[startOffset - 1]))))
         {
             throw new ArgumentOutOfRangeException(nameof(startOffset));
         }
@@ -164,4 +185,6 @@ internal sealed record McpResponseFormatResult(
     int? MinimumResponseTokens,
     int? NextOffset,
     int OmittedUtf8Bytes,
-    string? ContinuationHint);
+    string? ContinuationHint,
+    bool CanRetryWithLargerResponseBudget,
+    string? RecoveryHint);

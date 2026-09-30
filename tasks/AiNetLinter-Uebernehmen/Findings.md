@@ -10,4 +10,4 @@ Cluster 7 integration review 1 found a P2 cache/session mismatch: a same-identit
 
 Cluster 8.1 implementation evidence and the independent point audit are tracked in [Cluster 8 review](Reviews/Cluster-08.md#point-81-budgeting-and-truncation). No public MCP invocation is claimed before the Cluster 9/11 host acceptance work.
 
-Cluster 8.1 independent point audit 1/3 found one P1 and two P2 open contract gaps: an unretryable `minimumResponseBytes` above the public maximum, accepted mid-line continuation offsets, and error responses exceeding a requested token cap. Reproductions and acceptance conditions are in [Cluster 8 review](Reviews/Cluster-08.md#point-81-audit-1-findings). Point 8.1 remains open.
+Cluster 8.1 independent point audit 1/3 found one P1 and two P2 contract gaps: an unretryable `minimumResponseBytes` above the public maximum, accepted mid-line continuation offsets, and error responses exceeding a requested token cap. Implementer remediation evidence is in [Cluster 8 review](Reviews/Cluster-08.md#point-81-audit-1-remediation). The independent follow-up audit remains pending; public stdio acceptance is later Cluster 9/11 work.
