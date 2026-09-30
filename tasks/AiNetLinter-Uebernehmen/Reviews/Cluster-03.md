@@ -199,3 +199,19 @@ A later FastTests rerun transiently failed in the unrelated `HandoffHandleRegist
 - **Resolved — Assembly fallback handoff flags.** `InspectAssemblyScanner.StableId` now returns only `FormatHandoff`, and type/member DTOs set `Handoff` and allowed follow-ups only when that canonical ID exists (`src/AiNetCodeNavigator.Core/Assemblies/InspectAssemblyScanner.cs:222-264`). The regression forces a noncanonical identity and checks null ID, false flag, and empty follow-ups (`tests/AiNetCodeNavigator.FastTests/Assemblies/InspectAssemblyScannerTests.cs:93-125`). The normal `inspect_assembly` text/DTO mapping test remains, but an actual consumer is still absent.
 - **P2 — Supplied source identity is checked only by `find_symbol`.** `FindSymbolScanner` now rejects foreign target and stale content identities (`src/AiNetCodeNavigator.Core/Symbols/FindSymbolScanner.cs:27-49`), with matching tests (`FindSymbolScannerTests.cs:94-119`). `FeatureContextScanner.ScanAsync` and `ClassStructureScanner.ScanAsync` still accept `request.HandoffIdentity` without comparing it to the current solution (`src/AiNetCodeNavigator.Core/Symbols/FeatureContextScanner.cs:25-44`; `ClassStructureScanner.cs:28-45`). For a semantic-name input, resolution bypasses the handoff validator, then declaration/member handoffs are formatted with the supplied foreign/stale identity. **Reproduction/acceptance:** Pass a semantic name with foreign and stale `HandoffIdentity` to both scanners; reject it with `TARGET_MISMATCH`/`STALE_SNAPSHOT`, or recompute the current identity before any handle is emitted. Also ensure any matching target/hash identity with a different project-marker map cannot emit a nonroundtripping handoff.
 - **Local blocker unchanged:** Assembly follow-up resolution and session lifetime require the Cluster 7 work described in audit 1. Keep point 3.3 and its audit checkbox open. One audit remains under the three-audit limit; use it after the remaining source and Assembly acceptance work is ready.
+
+### Audit 2 Finding Fix Verification
+
+- Base: `9404371ca98c452485cb1344fd39e71695068a21` (clean working tree before this slice). The forged-marker repros failed before the fix: `find_symbol` emitted a handoff, and feature/class context accepted the supplied identity for semantic-name input.
+- `AnalysisSymbolIdentity.Matches` now compares the stable source project-marker values, independent of workspace-local ProjectIds. `SourceHandoffResolver.ValidateIdentityAsync` returns typed target, snapshot, or project-context failures. `find_symbol`, feature context, and class structure reject mismatched identities before output and use the freshly computed current identity for emitted handles.
+- Added regressions for forged markers across all three scanners, case-variant producer-to-consumer roundtrip, and two projects sharing the same DocCommentId resolving to the correct project-specific members.
+- The Cluster 7 assembly resolver/session blocker remains unchanged; the 3.3 audit checkbox remains open for the final point audit.
+
+| Gate | Result |
+|---|---|
+| Focused marker and project roundtrip tests | Passed, 4/4 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 265/265 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 277/277 across both test projects |
+| `git diff --check` | Passed before commit |

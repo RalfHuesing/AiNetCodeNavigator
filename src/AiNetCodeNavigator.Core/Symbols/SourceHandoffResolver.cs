@@ -13,6 +13,48 @@ namespace AiNetCodeNavigator.Core.Symbols;
 /// <summary>Resolves source handoffs only within the target and snapshot that produced them.</summary>
 public static class SourceHandoffResolver
 {
+    public static async Task<Result<AnalysisSymbolIdentity>> ValidateIdentityAsync(
+        Solution solution,
+        AnalysisSymbolIdentity? suppliedIdentity,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(solution);
+        var currentIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, cancellationToken).ConfigureAwait(false);
+        if (currentIdentity is null)
+        {
+            return Result<AnalysisSymbolIdentity>.Failure(
+                NavigationErrorCodes.InvalidHandoff,
+                "A canonical source identity could not be created for this solution.");
+        }
+
+        if (suppliedIdentity is null || suppliedIdentity.Matches(currentIdentity))
+        {
+            return Result<AnalysisSymbolIdentity>.Success(currentIdentity);
+        }
+
+        var sameTarget = !suppliedIdentity.IsAssembly
+            && SymbolHandoffToken.TryCreateTarget(suppliedIdentity.CanonicalPath, out var suppliedTarget)
+            && SymbolHandoffToken.TryCreateTarget(solution.FilePath ?? string.Empty, out var currentTarget)
+            && string.Equals(suppliedTarget, currentTarget, StringComparison.Ordinal);
+        if (!sameTarget)
+        {
+            return Result<AnalysisSymbolIdentity>.Failure(
+                NavigationErrorCodes.TargetMismatch,
+                "The supplied source identity belongs to a different analysis target.");
+        }
+
+        if (!string.Equals(suppliedIdentity.ContentHash, currentIdentity.ContentHash, StringComparison.OrdinalIgnoreCase))
+        {
+            return Result<AnalysisSymbolIdentity>.Failure(
+                NavigationErrorCodes.StaleSnapshot,
+                "The supplied source identity does not match the current solution snapshot.");
+        }
+
+        return Result<AnalysisSymbolIdentity>.Failure(
+            NavigationErrorCodes.TargetMismatch,
+            "The supplied source identity has a different project context.");
+    }
+
     public static async Task<Result<ISymbol?>> ResolveAsync(
         Solution solution,
         string handoffOrIdentifier,
@@ -37,23 +79,12 @@ public static class SourceHandoffResolver
                 "The handoff identifier is malformed.");
         }
 
-        var currentIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, cancellationToken).ConfigureAwait(false);
-        if (currentIdentity is null)
+        var identityResult = await ValidateIdentityAsync(solution, identity, cancellationToken).ConfigureAwait(false);
+        if (!identityResult.IsSuccess)
         {
-            return Result<ISymbol?>.Failure(
-                NavigationErrorCodes.InvalidHandoff,
-                "A canonical source identity could not be created for this solution.");
+            return Result<ISymbol?>.Failure(identityResult.Error!.Value);
         }
-
-        if (!identity.Matches(currentIdentity))
-        {
-            var sameTarget = SymbolHandoffToken.TryCreateTarget(identity.CanonicalPath, out var requestedTarget)
-                && SymbolHandoffToken.TryCreateTarget(solution.FilePath ?? string.Empty, out var requestedTargetToken)
-                && string.Equals(requestedTarget, requestedTargetToken, StringComparison.Ordinal);
-            return Result<ISymbol?>.Failure(
-                sameTarget ? NavigationErrorCodes.StaleSnapshot : NavigationErrorCodes.TargetMismatch,
-                sameTarget ? "The supplied source identity is stale." : "The supplied source identity belongs to a different analysis target.");
-        }
+        var currentIdentity = identityResult.Value!;
 
         if (parsed.Origin != SymbolHandoffOrigin.Source
             || !SymbolHandoffToken.TryCreateTarget(solution.FilePath ?? string.Empty, out var currentTarget)

@@ -33,10 +33,12 @@ public static class FindSymbolScanner
                 && SymbolHandoffToken.TryCreateTarget(request.SourceIdentity.CanonicalPath, out var suppliedTarget)
                 && SymbolHandoffToken.TryCreateTarget(request.Solution.FilePath ?? string.Empty, out var actualTarget)
                 && string.Equals(suppliedTarget, actualTarget, StringComparison.Ordinal);
-            var code = sameTarget ? NavigationErrorCodes.StaleSnapshot : NavigationErrorCodes.TargetMismatch;
-            var message = sameTarget
+            var sameContent = currentSourceIdentity is not null
+                && string.Equals(request.SourceIdentity.ContentHash, currentSourceIdentity.ContentHash, StringComparison.OrdinalIgnoreCase);
+            var code = sameTarget && !sameContent ? NavigationErrorCodes.StaleSnapshot : NavigationErrorCodes.TargetMismatch;
+            var message = code == NavigationErrorCodes.StaleSnapshot
                 ? "The supplied source identity does not match the current solution snapshot."
-                : "The supplied source identity belongs to a different analysis target.";
+                : "The supplied source identity does not match this target and project context.";
             return new FindSymbolScanResult(
                 message,
                 Array.Empty<SymbolLocationEntry>(),
@@ -69,7 +71,7 @@ public static class FindSymbolScanner
         }
 
         var outputRoot = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
-        var sourceIdentity = request.SourceIdentity ?? currentSourceIdentity;
+        var sourceIdentity = currentSourceIdentity;
         var allEntries = (await BuildVisibleEntriesAsync(request, filtered, outputRoot, sourceIdentity, ct).ConfigureAwait(false))
             .OrderBy(entry => GetMatchRank(entry, request.NamePattern))
             .ThenBy(entry => GetScopeRank(entry))

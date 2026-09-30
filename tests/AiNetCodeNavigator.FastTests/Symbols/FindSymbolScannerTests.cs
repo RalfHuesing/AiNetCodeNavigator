@@ -2,6 +2,7 @@
 
 using System.Linq;
 using System.Threading.Tasks;
+using System.Collections.Generic;
 using AiNetCodeNavigator.Core.Workspace;
 using AiNetCodeNavigator.TestKit.Builders;
 using AiNetCodeNavigator.Core.Symbols;
@@ -133,6 +134,97 @@ public sealed class FindSymbolScannerTests
         Assert.NotNull(original);
         Assert.NotNull(variant);
         Assert.Equal(original!.ContentHash, variant!.ContentHash);
+    }
+
+    [Fact]
+    public async Task FindMatchesWithDetailsAsync_RejectsSourceIdentityWithForgedProjectMarker()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var identity = await AnalysisSymbolIdentity.ForSourceAsync(fixture.Solution);
+        Assert.NotNull(identity);
+        var project = fixture.Solution.Projects.First();
+        var forgedIdentity = identity! with
+        {
+            SourceProjectMarkers = new Dictionary<Microsoft.CodeAnalysis.ProjectId, string>
+            {
+                [project.Id] = "forged-project-marker",
+            },
+        };
+
+        var result = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(fixture.Solution, "Greeter", Kind: SymbolKindFilter.Class, SourceIdentity: forgedIdentity));
+
+        Assert.Empty(result.Entries);
+        Assert.Equal(NavigationErrorCodes.TargetMismatch, result.Error!.Value.Code);
+
+    }
+
+    [Fact]
+    public async Task FeatureAndClassScanners_RejectSourceIdentityWithForgedProjectMarker()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var identity = await AnalysisSymbolIdentity.ForSourceAsync(fixture.Solution);
+        Assert.NotNull(identity);
+        var project = fixture.Solution.Projects.First();
+        var forgedIdentity = identity! with
+        {
+            SourceProjectMarkers = new Dictionary<Microsoft.CodeAnalysis.ProjectId, string>
+            {
+                [project.Id] = "forged-project-marker",
+            },
+        };
+
+        var featureContext = await FeatureContextScanner.ScanAsync(
+            new FeatureContextRequest(fixture.Solution, "Greeter", HandoffIdentity: forgedIdentity));
+        Assert.Equal(NavigationErrorCodes.TargetMismatch, featureContext!.Error!.Value.Code);
+
+        var classStructure = await ClassStructureScanner.ScanAsync(
+            new ClassStructureScanRequest(fixture.Solution, "Greeter", HandoffIdentity: forgedIdentity));
+        Assert.Equal(NavigationErrorCodes.TargetMismatch, classStructure!.Error!.Value.Code);
+    }
+
+    [Fact]
+    public async Task SourceHandoffRoundTripsAcrossCaseVariantSolutionPaths()
+    {
+        using var upper = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\Roundtrip.slnx",
+            new ProjectSpec("Sample", [("Sample.cs", "namespace Shared; public class SampleType { public void Run() { } }")], VirtualProjectDirectory: "src/Sample"));
+        using var lower = TestWorkspaceBuilder.CreateSolution(
+            @"c:\virtualrepo\roundtrip.slnx",
+            new ProjectSpec("Sample", [("Sample.cs", "namespace Shared; public class SampleType { public void Run() { } }")], VirtualProjectDirectory: "src/Sample"));
+
+        var found = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(upper.Solution, "SampleType", Kind: SymbolKindFilter.Class));
+        var entry = Assert.Single(found.Entries);
+        Assert.NotNull(entry.HandoffId);
+
+        var payload = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(lower.Solution, entry.HandoffId!));
+        Assert.NotNull(payload);
+        Assert.Null(payload.Error);
+        Assert.Equal("SampleType", payload.Declaration.SymbolName);
+    }
+
+    [Fact]
+    public async Task SameDocumentationIdInTwoProjects_RoundTripsToExactProject()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\Duplicates.slnx",
+            new ProjectSpec("First", [("Worker.cs", "namespace Shared; public class Worker { public void OnlyFirst() { } }")], VirtualProjectDirectory: "src/First"),
+            new ProjectSpec("Second", [("Worker.cs", "namespace Shared; public class Worker { public void OnlySecond() { } }")], VirtualProjectDirectory: "src/Second"));
+
+        var result = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(fixture.Solution, "Worker", Kind: SymbolKindFilter.Class));
+        Assert.Equal(2, result.Entries.Count);
+        Assert.Equal(result.Entries[0].DocCommentId, result.Entries[1].DocCommentId);
+        Assert.NotEqual(result.Entries[0].HandoffId, result.Entries[1].HandoffId);
+
+        foreach (var entry in result.Entries)
+        {
+            var payload = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(fixture.Solution, entry.HandoffId!));
+            Assert.NotNull(payload);
+            Assert.Null(payload.Error);
+            Assert.Contains(payload.Members, member => member.Name == (entry.ProjectName == "First" ? "OnlyFirst" : "OnlySecond"));
+        }
     }
 
     [Fact]

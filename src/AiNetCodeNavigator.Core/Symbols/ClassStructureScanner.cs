@@ -29,7 +29,23 @@ public static class ClassStructureScanner
         ClassStructureScanRequest request,
         CancellationToken ct = default)
     {
-        var identity = request.HandoffIdentity ?? await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
+        AnalysisSymbolIdentity? identity;
+        if (request.HandoffIdentity is not null)
+        {
+            var identityResult = await SourceHandoffResolver.ValidateIdentityAsync(request.Solution, request.HandoffIdentity, ct).ConfigureAwait(false);
+            if (!identityResult.IsSuccess)
+            {
+                return new ClassStructurePayload(
+                    string.Empty, string.Empty, Array.Empty<string>(), 0, 0, 0, false,
+                    Array.Empty<ClassStructureMemberEntry>(), Array.Empty<string>(), identityResult.Error);
+            }
+            identity = identityResult.Value;
+        }
+        else
+        {
+            identity = await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
+        }
+
         var resolveResult = await ResolveTypeSymbolResultAsync(request.Solution, request.SymbolIdentifier, identity, ct).ConfigureAwait(false);
         if (!resolveResult.IsSuccess)
         {

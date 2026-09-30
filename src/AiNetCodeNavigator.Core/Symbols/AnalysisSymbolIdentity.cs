@@ -150,7 +150,20 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
             canonicalPath,
             otherCanonicalPath,
             StringComparison.Ordinal)
-        && string.Equals(ContentHash, other.ContentHash, StringComparison.OrdinalIgnoreCase);
+        && string.Equals(ContentHash, other.ContentHash, StringComparison.OrdinalIgnoreCase)
+        && (IsAssembly || HaveSameSourceProjectMarkers(other));
+
+    private bool HaveSameSourceProjectMarkers(AnalysisSymbolIdentity other)
+    {
+        if (SourceProjectMarkers is null || other.SourceProjectMarkers is null)
+        {
+            return false;
+        }
+
+        // ProjectIds are workspace-local; compare stable marker values across reloads.
+        return SourceProjectMarkers.Values.OrderBy(marker => marker, StringComparer.Ordinal)
+            .SequenceEqual(other.SourceProjectMarkers.Values.OrderBy(marker => marker, StringComparer.Ordinal), StringComparer.Ordinal);
+    }
 
     public static AnalysisSymbolIdentity ForAssembly(string canonicalPath, string contentHash, long generation = 0) =>
         new(contentHash, generation)

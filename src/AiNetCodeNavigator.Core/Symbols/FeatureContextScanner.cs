@@ -26,7 +26,23 @@ public static class FeatureContextScanner
         FeatureContextRequest request,
         CancellationToken ct = default)
     {
-        var identity = request.HandoffIdentity ?? await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
+        AnalysisSymbolIdentity? identity;
+        if (request.HandoffIdentity is not null)
+        {
+            var identityResult = await SourceHandoffResolver.ValidateIdentityAsync(request.Solution, request.HandoffIdentity, ct).ConfigureAwait(false);
+            if (!identityResult.IsSuccess)
+            {
+                return new FeatureContextPayload(
+                    new FeatureContextDeclaration(string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0, 0),
+                    Array.Empty<FeatureContextCallerEntry>(), Array.Empty<FeatureContextTestRecommendation>(), 0, 0, false, false, identityResult.Error);
+            }
+            identity = identityResult.Value;
+        }
+        else
+        {
+            identity = await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
+        }
+
         var resolved = await ResolveSymbolResultAsync(request.Solution, request.SymbolIdentifier, identity, ct).ConfigureAwait(false);
         if (!resolved.IsSuccess)
         {
