@@ -46,6 +46,7 @@
 - [x] 4.7 Gemeinsame Symbolauflösung für Folge-Tools fertigstellen: eindeutige qualifizierte Namen, Doc-IDs, Positionen und `h:...`-IDs unterstützen; bei mehrdeutigen Kurznamen auswählbare Treffer statt eines zufälligen ersten Symbols liefern. Die Tool-Verträge und Fehlerfälle mit FastTests belegen.
   - [x] Gemeinsame Core-Auflösung für Body-, Feature-Context- und Class-Structure-Folgeaufrufe; Kandidaten mit Signature, Pfad/Position, Projekt, Doc-ID und auswählbarer `h:`-ID zurückgeben.
   - [x] Vertragstests für Doc-IDs, qualified/simple names, absolute Position, line-only Position, Mehrdeutigkeit, Invalid-Position-Fehler und Handoff-Roundtrips zu allen drei Folge-Scannern.
+  - [x] Source-only Grenzfälle abdecken: keine Metadata-only Treffer wie `System.String`, und Literal-/Punctuation-Positionen nicht über umgebende Deklarationen auflösen.
   - [x] AiNetLinter read-only vergleichen und den gemeinsamen Resolver-Vertrag in der Current-State-Dokumentation festhalten.
   - [ ] Review/Audit zu 4.7 durchführen; Findings ergänzen und umsetzen.
 - [ ] 4.8 Test-Kontext fachlich absichern: gleichnamige Testklassen in verschiedenen Projekten getrennt erhalten, xUnit/NUnit/MSTest korrekt klassifizieren und Empfehlungen als Heuristik ausweisen; Tests für Mehrprojektfälle und `TestMethodAttribute` ergänzen.

@@ -288,6 +288,41 @@ public sealed class FeatureContextScannerTests
     }
 
     [Fact]
+    public async Task ResolveSymbolResultAsync_RejectsMetadataOnlyTypesAndSymbolFreeTokens()
+    {
+        const string source = "namespace Demo;\npublic class Greeter\n{\n public string Greet()\n {\n  return \"hello\";\n }\n}";
+        using var handle = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\SourceOnlyResolution.slnx",
+            new ProjectSpec("Demo", [("Greeter.cs", source)]));
+        var document = handle.Solution.Projects.Single().Documents.Single();
+        var literalLine = source.Split('\n')[5];
+        var literalPosition = $"{document.FilePath}:6:{literalLine.IndexOf("hello", StringComparison.Ordinal) + 2}";
+        var lineOnlyLiteralPosition = $"{document.FilePath}:6";
+        var punctuationPosition = $"{document.FilePath}:7:2";
+
+        var metadataType = await FeatureContextScanner.ResolveSymbolResultAsync(handle.Solution, "System.String", null);
+        var literal = await FeatureContextScanner.ResolveSymbolResultAsync(handle.Solution, literalPosition, null);
+        var lineOnlyLiteral = await FeatureContextScanner.ResolveSymbolResultAsync(handle.Solution, lineOnlyLiteralPosition, null);
+        var punctuation = await FeatureContextScanner.ResolveSymbolResultAsync(handle.Solution, punctuationPosition, null);
+        var body = await SourceSymbolBodyResolver.ResolveAsync(handle.Solution, "System.String", maxBodyLines: 10);
+        var feature = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(handle.Solution, "System.String"));
+        var structure = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(handle.Solution, "System.String"));
+
+        Assert.False(literal.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.SymbolNotFound, literal.Error?.Code);
+        Assert.False(lineOnlyLiteral.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.SymbolNotFound, lineOnlyLiteral.Error?.Code);
+        Assert.False(punctuation.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.SymbolNotFound, punctuation.Error?.Code);
+        Assert.False(metadataType.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.SymbolNotFound, metadataType.Error?.Code);
+        Assert.Null(body.Body);
+        Assert.Equal(NavigationErrorCodes.SymbolNotFound, body.Error?.Code);
+        Assert.Equal(NavigationErrorCodes.SymbolNotFound, feature?.Error?.Code);
+        Assert.Equal(NavigationErrorCodes.SymbolNotFound, structure?.Error?.Code);
+    }
+
+    [Fact]
     public async Task ResolveSymbolResultAsync_ResolvesDocumentationIdsAndQualifiedNames()
     {
         const string source = "namespace Sample.Core; public class Greeter { public string Greet() => \"hello\"; }";

@@ -10,6 +10,8 @@ using AiNetCodeNavigator.Core.Common;
 using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.Text;
 
@@ -211,16 +213,6 @@ public static class SourceSymbolResolver
             cancellationToken).ConfigureAwait(false);
 
         var matches = symbols.Where(symbol => MatchesQualifiedName(symbol, normalized)).ToList();
-        if (matches.Count > 0) return matches;
-
-        foreach (var project in solution.Projects)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var compilation = await project.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
-            var type = compilation?.GetTypeByMetadataName(normalized);
-            if (type is not null) return [type];
-        }
-
         return matches;
     }
 
@@ -393,17 +385,50 @@ public static class SourceSymbolResolver
 
     private static ISymbol? ResolveSymbolAtToken(SyntaxToken token, SemanticModel semanticModel)
     {
+        if (!token.IsKind(SyntaxKind.IdentifierToken) && !IsAccessorKeyword(token)) return null;
+
         for (var node = token.Parent; node is not null; node = node.Parent)
         {
-            var declared = semanticModel.GetDeclaredSymbol(node);
-            if (declared is not null) return NormalizeOwningSymbol(declared);
+            if (IsDeclarationName(node, token))
+            {
+                var declared = semanticModel.GetDeclaredSymbol(node);
+                if (declared is not null) return NormalizeOwningSymbol(declared);
+            }
 
-            var referenced = semanticModel.GetSymbolInfo(node).Symbol;
-            if (referenced is not null) return NormalizeOwningSymbol(referenced);
+            if (node is SimpleNameSyntax simpleName && simpleName.Identifier == token)
+            {
+                var referenced = semanticModel.GetSymbolInfo(node).Symbol;
+                if (referenced is not null) return NormalizeOwningSymbol(referenced);
+            }
         }
 
         return null;
     }
+
+    private static bool IsDeclarationName(SyntaxNode node, SyntaxToken token) => node switch
+    {
+        BaseTypeDeclarationSyntax declaration => declaration.Identifier == token,
+        DelegateDeclarationSyntax declaration => declaration.Identifier == token,
+        MethodDeclarationSyntax declaration => declaration.Identifier == token,
+        ConstructorDeclarationSyntax declaration => declaration.Identifier == token,
+        DestructorDeclarationSyntax declaration => declaration.Identifier == token,
+        PropertyDeclarationSyntax declaration => declaration.Identifier == token,
+        EventDeclarationSyntax declaration => declaration.Identifier == token,
+        VariableDeclaratorSyntax declaration => declaration.Identifier == token,
+        ParameterSyntax declaration => declaration.Identifier == token,
+        TypeParameterSyntax declaration => declaration.Identifier == token,
+        LocalFunctionStatementSyntax declaration => declaration.Identifier == token,
+        EnumMemberDeclarationSyntax declaration => declaration.Identifier == token,
+        AccessorDeclarationSyntax declaration => declaration.Keyword == token,
+        _ => false
+    };
+
+    private static bool IsAccessorKeyword(SyntaxToken token) =>
+        token.IsKind(SyntaxKind.GetKeyword) ||
+        token.IsKind(SyntaxKind.SetKeyword) ||
+        token.IsKind(SyntaxKind.InitKeyword) ||
+        token.IsKind(SyntaxKind.AddKeyword) ||
+        token.IsKind(SyntaxKind.RemoveKeyword);
 
     private static bool IsSourceSymbol(ISymbol symbol) =>
         NormalizeOwningSymbol(symbol)?.Locations.Any(location => location.IsInSource && location.SourceTree is not null) == true;
