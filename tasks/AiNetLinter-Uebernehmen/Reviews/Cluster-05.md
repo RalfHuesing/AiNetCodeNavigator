@@ -139,6 +139,26 @@
 2. **P2 — Property implementations/overrides lack the reference's explicit dispatch.** `FindReferencesResolver.cs:123-133` applies `SymbolFinder.FindImplementationsAsync` to all non-type symbols and adds `FindOverridesAsync` only for `IMethodSymbol`. AiNetLinter's `FindImplementationsTool.FindPropertyImplementationsAsync` uses `FindOverridesAsync` for virtual/abstract/override properties and `FindImplementationsAsync` for interface properties. No Core test covers either property case. Acceptance: route supported property symbols by interface versus override semantics and cover a cross-project interface property implementation and an abstract/virtual property override; preserve distinct source handoffs.
 3. **P2 — Unsupported implementation targets have no recoverable result.** `FindReferencesResolver.cs:110-133` sends every non-interface named type to `FindDerivedClassesAsync` and every other symbol to `FindImplementationsAsync`, whereas AiNetLinter's `FindRawImplementationsAsync` rejects unsupported symbol kinds and non-virtual concrete methods with an explanatory error. The Core model has no status/error field and tests only null arguments. Acceptance: distinguish an unsupported target from a valid target with zero implementations using a typed result or documented exception that the MCP layer can map to a clear error; cover a struct and a non-virtual ordinary method without conflating them with empty interface results.
 
+### Audit 1 remediation
+
+- Added before-fix contract tests. The depth, node-limit, and typed-error tests failed to compile because the Core API had no depth/node-limit overload or recoverable implementation error fields. Re-running the property test with the former generic `FindImplementationsAsync` dispatch reproduced an empty abstract-property override list. The cycle case and remaining contracts run against real Roslyn projects.
+- `FindReferencesResolver` now performs breadth-first caller traversal. Depth is clamped to 1–3, the hard expanded-symbol limit is 200 (lower per-call limits are supported), visited symbols prevent cycles, and each call site records its depth plus reached-from name and handoff. Result metadata distinguishes result-limit truncation, node-limit truncation, and a clamped requested depth.
+- Implementation dispatch now supports interface and abstract/virtual/override properties, accepts only interface types and classes for type queries, and returns `FindImplementationsResult.IsSuccess`/`ErrorMessage` for unsupported targets. Valid targets with no matches remain successful empty results.
+- Updated [Find References and Implementations Core Engines](../../../docs/navigation/find-references-and-implementations.md) with traversal limits, call-site origin metadata, completeness, property support, and recoverable target errors. The 5.2 audit checkbox remains open pending independent review.
+
+### Remediation verification
+
+| Gate | Result |
+|---|---|
+| Before-fix depth/node-limit and unsupported-target contract tests | Failed to compile as expected: depth/maxNodes overload and typed error fields were absent |
+| Before-fix generic property dispatch reproduction | Failed as expected: abstract property override list was empty |
+| Focused FindReferencesResolver FastTests after fix | Passed, 16/16 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 355/355 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 367/367 across both test projects |
+| `git diff --check` | Passed before commit |
+
 ### Review verification
 
 - Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.

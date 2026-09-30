@@ -41,6 +41,97 @@ public sealed class FindReferencesResolverTests
     }
 
     [Fact]
+    public async Task FindReferencesAsync_DepthTwo_ReturnsCallerChainAcrossProjectsWithOriginAndDepth()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\ReferenceChain.slnx",
+            new ProjectSpec("Contracts", [("A.cs", "namespace Chain; public class Target { public void A() { } }")]),
+            new ProjectSpec("Middle", [("B.cs", "namespace Chain; public class CallerB { public void B(Target target) { target.A(); } }")], ProjectReferences: ["Contracts"]),
+            new ProjectSpec("App", [("C.cs", "namespace Chain; public class CallerC { public void C(CallerB caller, Target target) { caller.B(target); } }")], ProjectReferences: ["Middle", "Contracts"]));
+        var contracts = await fixture.Solution.Projects.Single(project => project.Name == "Contracts").GetCompilationAsync();
+        Assert.NotNull(contracts);
+        var target = contracts.GetTypeByMetadataName("Chain.Target")!.GetMembers("A").OfType<IMethodSymbol>().Single();
+
+        var depthOne = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, maxResults: 50, depth: 1);
+        var depthTwo = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, maxResults: 50, depth: 2);
+
+        var direct = Assert.Single(depthOne.References);
+        Assert.Equal("CallerB.B", direct.EnclosingSymbolName);
+        Assert.Equal(1, direct.Depth);
+        Assert.Equal("Target.A", direct.ReachedFromSymbolName);
+        Assert.StartsWith("h:", direct.ReachedFromSymbolHandoffId);
+        Assert.Equal("A", (await SourceSymbolResolver.ResolveAsync(fixture.Solution, direct.ReachedFromSymbolHandoffId!)).Symbol!.Name);
+        Assert.Equal(2, depthTwo.References.Count);
+        var indirect = Assert.Single(depthTwo.References.Where(reference => reference.Depth == 2));
+        Assert.Equal("CallerC.C", indirect.EnclosingSymbolName);
+        Assert.Equal("CallerB.B", indirect.ReachedFromSymbolName);
+        Assert.Equal(2, indirect.Depth);
+        Assert.Equal("B", (await SourceSymbolResolver.ResolveAsync(fixture.Solution, indirect.ReachedFromSymbolHandoffId!)).Symbol!.Name);
+        Assert.True(depthTwo.IsComplete);
+        Assert.Equal(2, depthTwo.VisitedSymbolCount);
+
+        var clamped = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, maxResults: 50, depth: 99);
+        Assert.Equal(99, clamped.RequestedDepth);
+        Assert.Equal(FindReferencesResolver.MaxReferenceDepth, clamped.EffectiveDepth);
+        Assert.True(clamped.IsDepthClamped);
+        Assert.False(clamped.IsComplete);
+
+        var nodeLimitClamped = await FindReferencesResolver.FindReferencesAsync(
+            target,
+            fixture.Solution,
+            maxResults: 50,
+            depth: 2,
+            maxNodes: FindReferencesResolver.DefaultMaxVisitedSymbols + 1);
+        Assert.Equal(FindReferencesResolver.DefaultMaxVisitedSymbols, nodeLimitClamped.EffectiveNodeLimit);
+
+        var limited = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, maxResults: 1, depth: 2);
+        Assert.Single(limited.References);
+        Assert.Equal(2, limited.TotalCount);
+        Assert.True(limited.IsTruncated);
+        Assert.False(limited.IsTruncatedByNodeLimit);
+        Assert.False(limited.IsComplete);
+    }
+
+    [Fact]
+    public async Task FindReferencesAsync_NodeLimitReportsIncompleteTraversal()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\ReferenceNodeLimit.slnx",
+            new ProjectSpec("Contracts", [("A.cs", "namespace Limit; public class Target { public void A() { } }")]),
+            new ProjectSpec("Middle", [("B.cs", "namespace Limit; public class CallerB { public void B(Target target) { target.A(); } }")], ProjectReferences: ["Contracts"]),
+            new ProjectSpec("App", [("C.cs", "namespace Limit; public class CallerC { public void C(CallerB caller, Target target) { caller.B(target); } }")], ProjectReferences: ["Middle", "Contracts"]));
+        var contracts = await fixture.Solution.Projects.Single(project => project.Name == "Contracts").GetCompilationAsync();
+        Assert.NotNull(contracts);
+        var target = contracts.GetTypeByMetadataName("Limit.Target")!.GetMembers("A").OfType<IMethodSymbol>().Single();
+
+        var result = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, maxResults: 50, depth: 3, maxNodes: 1);
+
+        Assert.Single(result.References);
+        Assert.Equal("CallerB.B", result.References[0].EnclosingSymbolName);
+        Assert.False(result.IsComplete);
+        Assert.True(result.IsTruncatedByNodeLimit);
+        Assert.Equal(1, result.VisitedSymbolCount);
+        await Assert.ThrowsAsync<System.ArgumentOutOfRangeException>(() => FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, maxResults: 50, depth: 3, maxNodes: 0));
+    }
+
+    [Fact]
+    public async Task FindReferencesAsync_CycleDoesNotRepeatVisitedSymbols()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\ReferenceCycle.slnx",
+            new ProjectSpec("Cycle", [("Cycle.cs", "namespace Cycle; public class Calls { public void A() { B(); } public void B() { A(); } }")]));
+        var compilation = await fixture.Solution.Projects.Single().GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var target = compilation.GetTypeByMetadataName("Cycle.Calls")!.GetMembers("A").OfType<IMethodSymbol>().Single();
+
+        var result = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, maxResults: 50, depth: 3);
+
+        Assert.Equal(2, result.References.Count);
+        Assert.Equal(2, result.VisitedSymbolCount);
+        Assert.All(result.References, reference => Assert.InRange(reference.Depth, 1, 2));
+    }
+
+    [Fact]
     public async Task FindImplementationsAsync_Interface_FindsAllImplementations()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
@@ -202,5 +293,59 @@ public sealed class FindReferencesResolverTests
         Assert.StartsWith("h:", abstractImplementation.HandoffId);
         Assert.Equal("Run", (await SourceSymbolResolver.ResolveAsync(fixture.Solution, interfaceImplementation.HandoffId!)).Symbol!.Name);
         Assert.Equal("Stop", (await SourceSymbolResolver.ResolveAsync(fixture.Solution, abstractImplementation.HandoffId!)).Symbol!.Name);
+    }
+
+    [Fact]
+    public async Task FindImplementationsAsync_InterfaceAndAbstractProperties_FindsCrossProjectImplementationsAndOverrides()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\PropertyImplementations.slnx",
+            new ProjectSpec("Contracts", [("Contracts.cs", "namespace Contracts; public interface IHasName { string Name { get; set; } } public abstract class BaseEntity { public abstract string Label { get; set; } }")]),
+            new ProjectSpec("App", [("Entity.cs", "namespace App; public sealed class Entity : Contracts.IHasName { public string Name { get; set; } = string.Empty; } public sealed class NamedEntity : Contracts.BaseEntity { public override string Label { get; set; } = string.Empty; }")], ProjectReferences: ["Contracts"]));
+        var contracts = await fixture.Solution.Projects.Single(project => project.Name == "Contracts").GetCompilationAsync();
+        Assert.NotNull(contracts);
+        var interfaceProperty = contracts.GetTypeByMetadataName("Contracts.IHasName")!.GetMembers("Name").OfType<IPropertySymbol>().Single();
+        var abstractProperty = contracts.GetTypeByMetadataName("Contracts.BaseEntity")!.GetMembers("Label").OfType<IPropertySymbol>().Single();
+
+        var interfaceResult = await FindReferencesResolver.FindImplementationsAsync(interfaceProperty, fixture.Solution);
+        var abstractResult = await FindReferencesResolver.FindImplementationsAsync(abstractProperty, fixture.Solution);
+
+        var interfaceImplementation = Assert.Single(interfaceResult.Implementations);
+        var propertyOverride = Assert.Single(abstractResult.Implementations);
+        Assert.Equal("Name", interfaceImplementation.SymbolName);
+        Assert.Equal("Label", propertyOverride.SymbolName);
+        Assert.Equal("App", interfaceImplementation.ProjectName);
+        Assert.Equal("App", propertyOverride.ProjectName);
+        Assert.StartsWith("h:", interfaceImplementation.HandoffId);
+        Assert.StartsWith("h:", propertyOverride.HandoffId);
+        Assert.Equal("Name", (await SourceSymbolResolver.ResolveAsync(fixture.Solution, interfaceImplementation.HandoffId!)).Symbol!.Name);
+        Assert.Equal("Label", (await SourceSymbolResolver.ResolveAsync(fixture.Solution, propertyOverride.HandoffId!)).Symbol!.Name);
+    }
+
+    [Fact]
+    public async Task FindImplementationsAsync_UnsupportedTargetsReturnRecoverableTypedErrors()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\UnsupportedImplementationTargets.slnx",
+            new ProjectSpec("App", [("Types.cs", "namespace Unsupported; public struct Point { public void Move() { } } public class Concrete { public void Run() { } } public interface INoMatches { void Missing(); }")]));
+        var compilation = await fixture.Solution.Projects.Single().GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var point = compilation.GetTypeByMetadataName("Unsupported.Point")!;
+        var concreteMethod = compilation.GetTypeByMetadataName("Unsupported.Concrete")!.GetMembers("Run").OfType<IMethodSymbol>().Single();
+        var emptyInterface = compilation.GetTypeByMetadataName("Unsupported.INoMatches")!;
+
+        var structResult = await FindReferencesResolver.FindImplementationsAsync(point, fixture.Solution);
+        var methodResult = await FindReferencesResolver.FindImplementationsAsync(concreteMethod, fixture.Solution);
+        var validEmptyResult = await FindReferencesResolver.FindImplementationsAsync(emptyInterface, fixture.Solution);
+
+        Assert.False(structResult.IsSuccess);
+        Assert.Contains("struct", structResult.ErrorMessage, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(structResult.Implementations);
+        Assert.False(methodResult.IsSuccess);
+        Assert.Contains("interface", methodResult.ErrorMessage, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(methodResult.Implementations);
+        Assert.True(validEmptyResult.IsSuccess);
+        Assert.Null(validEmptyResult.ErrorMessage);
+        Assert.Empty(validEmptyResult.Implementations);
     }
 }

@@ -17,67 +17,132 @@ namespace AiNetCodeNavigator.Core.Symbols;
 /// </summary>
 public static class FindReferencesResolver
 {
+    public const int MaxReferenceDepth = 3;
+    public const int DefaultMaxVisitedSymbols = 200;
+
     public static async Task<FindReferencesResult> FindReferencesAsync(
         ISymbol targetSymbol,
         Solution solution,
         int maxResults = 50,
         CancellationToken ct = default)
+        => await FindReferencesAsyncCore(
+            targetSymbol, solution, maxResults, requestedDepth: 1, DefaultMaxVisitedSymbols, ct).ConfigureAwait(false);
+
+    public static async Task<FindReferencesResult> FindReferencesAsync(
+        ISymbol targetSymbol,
+        Solution solution,
+        int maxResults,
+        int depth,
+        CancellationToken ct = default,
+        int maxNodes = DefaultMaxVisitedSymbols)
+        => await FindReferencesAsyncCore(targetSymbol, solution, maxResults, depth, maxNodes, ct).ConfigureAwait(false);
+
+    private static async Task<FindReferencesResult> FindReferencesAsyncCore(
+        ISymbol targetSymbol,
+        Solution solution,
+        int maxResults,
+        int requestedDepth,
+        int maxNodes,
+        CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(targetSymbol);
         ArgumentNullException.ThrowIfNull(solution);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxNodes, 1);
 
         var normalizedMaxResults = Math.Max(maxResults, 1);
+        var effectiveDepth = Math.Clamp(requestedDepth, 1, MaxReferenceDepth);
+        var effectiveNodeLimit = Math.Min(maxNodes, DefaultMaxVisitedSymbols);
         var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
-        var references = await SymbolFinder.FindReferencesAsync(targetSymbol, solution, ct).ConfigureAwait(false);
-
         var entries = new List<ReferenceLocationEntry>();
+        var queue = new Queue<(ISymbol Symbol, int Depth)>();
+        var visited = new HashSet<ISymbol>(SymbolEqualityComparer.Default) { targetSymbol };
+        queue.Enqueue((targetSymbol, 1));
+        var truncatedByNodeLimit = false;
+        var expandedSymbolCount = 0;
 
-        foreach (var refSymbol in references)
+        while (queue.Count > 0)
         {
             ct.ThrowIfCancellationRequested();
-            foreach (var loc in refSymbol.Locations)
+            if (expandedSymbolCount >= effectiveNodeLimit)
             {
-                ct.ThrowIfCancellationRequested();
-                if (loc.Document is not { } doc) continue;
+                truncatedByNodeLimit = true;
+                break;
+            }
 
-                var lineSpan = loc.Location.GetLineSpan();
-                var relPath = PathNormalizer.ToRelative(solutionDir, lineSpan.Path);
-                var line = lineSpan.StartLinePosition.Line + 1;
-                var column = lineSpan.StartLinePosition.Character + 1;
+            var (currentSymbol, currentDepth) = queue.Dequeue();
+            expandedSymbolCount++;
+            var references = await SymbolFinder.FindReferencesAsync(currentSymbol, solution, ct).ConfigureAwait(false);
 
-                var text = await doc.GetTextAsync(ct).ConfigureAwait(false);
-                var snippet = string.Empty;
-                if (line <= text.Lines.Count)
+            foreach (var refSymbol in references)
+            {
+                foreach (var loc in refSymbol.Locations)
                 {
-                    snippet = text.Lines[line - 1].ToString().Trim();
+                    ct.ThrowIfCancellationRequested();
+                    if (loc.Document is not { } doc || !loc.Location.IsInSource) continue;
+
+                    var lineSpan = loc.Location.GetLineSpan();
+                    var relPath = PathNormalizer.ToRelative(solutionDir, lineSpan.Path);
+                    var line = lineSpan.StartLinePosition.Line + 1;
+                    var column = lineSpan.StartLinePosition.Character + 1;
+
+                    var text = await doc.GetTextAsync(ct).ConfigureAwait(false);
+                    var snippet = string.Empty;
+                    if (line <= text.Lines.Count)
+                    {
+                        snippet = text.Lines[line - 1].ToString().Trim();
+                    }
+
+                    var semanticModel = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false);
+                    var enclosing = semanticModel?.GetEnclosingSymbol(loc.Location.SourceSpan.Start);
+
+                    var callerName = enclosing switch
+                    {
+                        IMethodSymbol m => $"{m.ContainingType?.Name}.{m.Name}",
+                        IPropertySymbol p => $"{p.ContainingType?.Name}.{p.Name}",
+                        _ => enclosing?.Name ?? string.Empty
+                    };
+
+                    var callerHandoff = SourceHandoffFormatter.Format(enclosing, solution, handoffIdentity);
+                    var reachedFromName = currentSymbol switch
+                    {
+                        IMethodSymbol method => $"{method.ContainingType?.Name}.{method.Name}",
+                        IPropertySymbol property => $"{property.ContainingType?.Name}.{property.Name}",
+                        _ => currentSymbol.Name
+                    };
+                    var reachedFromHandoff = SourceHandoffFormatter.Format(currentSymbol, solution, handoffIdentity);
+
+                    entries.Add(new ReferenceLocationEntry(
+                        FilePath: relPath,
+                        Line: line,
+                        Column: column,
+                        Snippet: snippet,
+                        EnclosingSymbolName: callerName,
+                        EnclosingSymbolHandoffId: callerHandoff,
+                        ProjectName: doc.Project.Name,
+                        Depth: currentDepth,
+                        ReachedFromSymbolName: reachedFromName,
+                        ReachedFromSymbolHandoffId: reachedFromHandoff));
+
+                    if (currentDepth >= effectiveDepth || enclosing is null) continue;
+                    var caller = NormalizeToOwningMember(enclosing);
+                    if (caller is null || visited.Contains(caller)) continue;
+                    if (visited.Count >= effectiveNodeLimit)
+                    {
+                        truncatedByNodeLimit = true;
+                        continue;
+                    }
+
+                    visited.Add(caller);
+                    queue.Enqueue((caller, currentDepth + 1));
                 }
-
-                var semanticModel = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false);
-                var enclosing = semanticModel?.GetEnclosingSymbol(loc.Location.SourceSpan.Start);
-
-                var callerName = enclosing switch
-                {
-                    IMethodSymbol m => $"{m.ContainingType?.Name}.{m.Name}",
-                    IPropertySymbol p => $"{p.ContainingType?.Name}.{p.Name}",
-                    _ => enclosing?.Name ?? string.Empty
-                };
-
-                var callerHandoff = SourceHandoffFormatter.Format(enclosing, solution, handoffIdentity);
-
-                entries.Add(new ReferenceLocationEntry(
-                    FilePath: relPath,
-                    Line: line,
-                    Column: column,
-                    Snippet: snippet,
-                    EnclosingSymbolName: callerName,
-                    EnclosingSymbolHandoffId: callerHandoff,
-                    ProjectName: doc.Project.Name));
             }
         }
 
         var sorted = entries
-            .OrderBy(e => e.FilePath, StringComparer.OrdinalIgnoreCase)
+            .Distinct()
+            .OrderBy(e => e.Depth)
+            .ThenBy(e => e.FilePath, StringComparer.OrdinalIgnoreCase)
             .ThenBy(e => e.Line)
             .ThenBy(e => e.Column)
             .ToList();
@@ -90,8 +155,17 @@ public static class FindReferencesResolver
             TargetKind: targetSymbol.Kind.ToString().ToLowerInvariant(),
             References: shown,
             TotalCount: sorted.Count,
-            IsTruncated: isTruncated);
+            IsTruncated: isTruncated,
+            RequestedDepth: requestedDepth,
+            EffectiveDepth: effectiveDepth,
+            VisitedSymbolCount: expandedSymbolCount,
+            IsTruncatedByNodeLimit: truncatedByNodeLimit,
+            IsDepthClamped: requestedDepth != effectiveDepth,
+            EffectiveNodeLimit: effectiveNodeLimit);
     }
+
+    private static ISymbol? NormalizeToOwningMember(ISymbol? symbol) =>
+        symbol is IMethodSymbol { AssociatedSymbol: { } owner } ? owner : symbol;
 
     public static async Task<FindImplementationsResult> FindImplementationsAsync(
         ISymbol targetSymbol,
@@ -106,6 +180,7 @@ public static class FindReferencesResolver
         var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
         var implementations = new List<ISymbol>();
+        string? errorMessage = null;
 
         if (targetSymbol is INamedTypeSymbol namedType)
         {
@@ -114,22 +189,64 @@ public static class FindReferencesResolver
                 var impls = await SymbolFinder.FindImplementationsAsync(namedType, solution, cancellationToken: ct).ConfigureAwait(false);
                 implementations.AddRange(impls);
             }
-            else
+            else if (namedType.TypeKind == TypeKind.Class)
             {
                 var derived = await SymbolFinder.FindDerivedClassesAsync(namedType, solution, cancellationToken: ct).ConfigureAwait(false);
                 implementations.AddRange(derived);
             }
+            else
+            {
+                errorMessage = $"Typ '{namedType.ToDisplayString()}' ({namedType.TypeKind.ToString().ToLowerInvariant()}) ist weder ein Interface noch eine vererbbare Klasse.";
+            }
         }
-        else
+        else if (targetSymbol is IMethodSymbol method)
         {
-            var impls = await SymbolFinder.FindImplementationsAsync(targetSymbol, solution, cancellationToken: ct).ConfigureAwait(false);
-            implementations.AddRange(impls);
-
-            if (targetSymbol is IMethodSymbol method && (method.IsAbstract || method.IsVirtual || method.IsOverride))
+            if (method.ContainingType?.TypeKind == TypeKind.Interface)
+            {
+                var impls = await SymbolFinder.FindImplementationsAsync(method, solution, cancellationToken: ct).ConfigureAwait(false);
+                implementations.AddRange(impls);
+            }
+            else if (method.IsAbstract || method.IsVirtual || method.IsOverride)
             {
                 var overrides = await SymbolFinder.FindOverridesAsync(method, solution, cancellationToken: ct).ConfigureAwait(false);
                 implementations.AddRange(overrides);
             }
+            else
+            {
+                errorMessage = $"Methode '{method.ToDisplayString()}' ist weder Teil eines Interface noch virtuell/abstrakt.";
+            }
+        }
+        else if (targetSymbol is IPropertySymbol property)
+        {
+            if (property.ContainingType?.TypeKind == TypeKind.Interface)
+            {
+                var impls = await SymbolFinder.FindImplementationsAsync(property, solution, cancellationToken: ct).ConfigureAwait(false);
+                implementations.AddRange(impls);
+            }
+            else if (property.IsAbstract || property.IsVirtual || property.IsOverride)
+            {
+                var overrides = await SymbolFinder.FindOverridesAsync(property, solution, cancellationToken: ct).ConfigureAwait(false);
+                implementations.AddRange(overrides);
+            }
+            else
+            {
+                errorMessage = $"Eigenschaft '{property.ToDisplayString()}' ist weder Teil eines Interface noch virtuell/abstrakt.";
+            }
+        }
+        else
+        {
+            errorMessage = $"Symbol '{targetSymbol.ToDisplayString()}' ({targetSymbol.Kind}) kann keine Implementierungen oder Overrides haben.";
+        }
+
+        if (errorMessage is not null)
+        {
+            return new FindImplementationsResult(
+                TargetSymbolName: targetSymbol.Name,
+                TargetKind: targetSymbol.Kind.ToString().ToLowerInvariant(),
+                Implementations: Array.Empty<ImplementationLocationEntry>(),
+                TotalCount: 0,
+                IsTruncated: false,
+                ErrorMessage: errorMessage);
         }
 
         var entries = new List<ImplementationLocationEntry>();
@@ -171,6 +288,7 @@ public static class FindReferencesResolver
             TargetKind: targetSymbol.Kind.ToString().ToLowerInvariant(),
             Implementations: shown,
             TotalCount: sorted.Count,
-            IsTruncated: isTruncated);
+            IsTruncated: isTruncated,
+            ErrorMessage: null);
     }
 }

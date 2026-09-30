@@ -11,14 +11,26 @@ public sealed record ReferenceLocationEntry(
     string Snippet,
     string EnclosingSymbolName,
     string? EnclosingSymbolHandoffId,
-    string ProjectName);
+    string ProjectName,
+    int Depth = 1,
+    string? ReachedFromSymbolName = null,
+    string? ReachedFromSymbolHandoffId = null);
 
 public sealed record FindReferencesResult(
     string TargetSymbolName,
     string TargetKind,
     IReadOnlyList<ReferenceLocationEntry> References,
     int TotalCount,
-    bool IsTruncated);
+    bool IsTruncated,
+    int RequestedDepth = 1,
+    int EffectiveDepth = 1,
+    int VisitedSymbolCount = 1,
+    bool IsTruncatedByNodeLimit = false,
+    bool IsDepthClamped = false,
+    int EffectiveNodeLimit = 200)
+{
+    public bool IsComplete => !IsTruncated && !IsTruncatedByNodeLimit && !IsDepthClamped;
+}
 
 public sealed record ImplementationLocationEntry(
     string SymbolName,
@@ -34,4 +46,8 @@ public sealed record FindImplementationsResult(
     string TargetKind,
     IReadOnlyList<ImplementationLocationEntry> Implementations,
     int TotalCount,
-    bool IsTruncated = false);
+    bool IsTruncated = false,
+    string? ErrorMessage = null)
+{
+    public bool IsSuccess => ErrorMessage is null;
+}
