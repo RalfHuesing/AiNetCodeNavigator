@@ -12,8 +12,8 @@ The solution `AiNetCodeNavigator.slnx` contains five projects:
 - `src/AiNetCodeNavigator.Core/`: Core library for Roslyn workspace resolution, AST exploration, symbol queries, call hierarchies, decompilation, and caching.
 - `src/AiNetCodeNavigator/`: MCP server host executable and Serilog logging bootstrap.
 - `tests/AiNetCodeNavigator.TestKit/`: Shared test support infrastructure, sample code fixtures, and workspace builders.
-- `tests/AiNetCodeNavigator.FastTests/`: Fast unit and component test suite.
-- `tests/AiNetCodeNavigator.IntegrationTests/`: Workspace-loading and host-startup integration tests. MCP protocol handshakes and tool calls are not covered yet.
+- `tests/AiNetCodeNavigator.FastTests/`: Fast unit and component test suite, including an in-memory MCP SDK stream fixture that performs protocol handshakes and calls SDK-registered fixture tools through the request filter.
+- `tests/AiNetCodeNavigator.IntegrationTests/`: Workspace-loading and host-startup integration tests, including host stdout/stderr and log-location checks. Production tool registration and the public host/stdio tool-call contract are not covered yet.
 
 Core, Host, and TestKit expose internal members to the test assemblies via `InternalsVisibleTo`.
 
@@ -75,3 +75,5 @@ pwsh -File ./scripts/test.ps1
 ```
 
 Agents and automation tools should inspect the static log files under `temp/*.log` whenever diagnosing build or test outcomes.
+
+The MCP stream fixture in FastTests verifies SDK schema exposure and request-filter behavior over the real SDK client/server transport. It remains fixture-level component coverage: the production host has no public tool registration, and these tests do not establish the public host or stdio tool-call contract. See [MCP Argument Validation](../mcp-argument-validation.md).

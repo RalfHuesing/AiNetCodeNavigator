@@ -5,6 +5,7 @@
 - [Build and Tests](development/build-and-tests.md): Solution structure, PowerShell scripts, and static log files in `temp/`.
 - [MCP Response Budgets](mcp-response-budgets.md): Host-side UTF-8 limits, token accounting, explicit truncation, and recoverable undersized-budget results.
 - [MCP Tool Results](mcp-tool-results.md): Internal `CallToolResult` builders, status text, structured success content, and error classification.
+- [MCP Argument Validation](mcp-argument-validation.md): SDK input-schema validation, binder compatibility checks, safe field paths, and error-budget behavior.
 - [MCP Long-Running Calls and Continuations](mcp-long-running-calls.md): Operation token lifecycle, polling, immutable text snapshots, continuation tokens, and their limits.
 
 ## Navigation

@@ -1,0 +1,11 @@
+# MCP Argument Validation
+
+`McpArgumentValidationFilter` validates a registered SDK tool's incoming arguments before its handler is invoked. It reads the input schema from the matched `McpServerTool`, parses it with NJsonSchema, and validates the JSON argument object against that schema. The SDK schema is the source of truth, so required properties, primitive types, array items, enums, and declared constraints stay aligned with the tool advertised by the SDK.
+
+The filter rejects unknown top-level arguments even if the SDK-generated schema does not explicitly close its root object. Nested objects follow their declared schema, including explicitly allowed `additionalProperties` schemas. Local references such as `$defs` are supported. External schema references are rejected so a request or schema cannot trigger a network fetch.
+
+JSON Schema validation is followed by a binding compatibility check for SDK-backed methods. It uses the registered method's serializer metadata to catch values the schema accepts but the SDK binder cannot safely convert, including fractional or out-of-range C# integers. Cancellation is checked before validation and is passed through to the next request filter/handler. Invalid inputs return the standard `INVALID_ARGUMENT` error with a safe `fieldPath` (for example `$.options.label` or `$.items[2]`) and a correction `nextAction`; the handler is not invoked. A malformed registered schema fails closed as `TOOL_SCHEMA_UNAVAILABLE`.
+
+Argument errors use valid `maxResponseBytes` and positive `maxResponseTokens` values supplied with the call. If the required error envelope cannot fit the token budget, the filter returns an MCP `InvalidParams` protocol error explaining that the token budget is too small; it does not return a partial correction instruction. Other invalid budget values use the shared default error budget.
+
+The filter is available for SDK registration through `WithRequestFilters(McpArgumentValidationFilter.Configure)`. FastTests exercise it with a real in-memory MCP stream server/client and SDK-registered fixture tools. This verifies SDK schema generation, protocol serialization, request filtering, argument validation, and handler dispatch. The production host still has no public tool registration, so this fixture coverage does not establish the public tool or stdio contract.

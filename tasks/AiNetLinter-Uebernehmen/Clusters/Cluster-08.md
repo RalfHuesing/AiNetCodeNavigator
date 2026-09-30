@@ -11,7 +11,7 @@
   - [x] Audit 1 P2: Token-Budget-Vertrag für Fehlerantworten klären und durchsetzen/testen.
 - [x] 8.2 Standardisiertes Result-Building:
   - [x] `McpToolResults`: Einheitliche Erzeugung von `CallToolResult`, `IsError`-Policy und Statusblöcken
-- [x] Review/Audit zu 8.2 durchführen; Findings ergänzen und umsetzen (accepted in final independent audit 3/3).
+  - [x] Review/Audit zu 8.2 durchführen; Findings ergänzen und umsetzen (accepted in final independent audit 3/3).
   - [x] Audit 1 P2: Calculate success budget retries from the intended success projection rather than the error status prefix.
   - [x] Audit 1 P2: Preserve required recovery and argument-correction fields when error context is shortened.
   - [x] Audit 1 P2: Apply response budgets to loading/retry results, including their status and next action.
@@ -28,8 +28,8 @@
   - [x] Audit 2 P2 (accepted in audit 3/3): Keep replayed cached final pages consistent with continuation snapshot lifetime.
   - [x] Audit 2 P2 (accepted in audit 3/3): Preserve delegate loading/retry control semantics instead of projecting complete success.
 - [ ] 8.4 Argument-Validierung:
-  - [ ] `McpArgumentValidationFilter`: Schema- und Eingabevalidierung für alle Tools
-  - [ ] FastTests für Budgeting, Formatting und Validierung
+  - [x] `McpArgumentValidationFilter`: Schema- und Eingabevalidierung für registrierte SDK-Tools
+  - [x] FastTests mit SDK-Stream-Fixture für Schema, Budgeting, Formatting und Validierung
   - [ ] Review/Audit zu 8.4 durchführen; Findings ergänzen und umsetzen.
 - [ ] 8.5 Einheitlichen öffentlichen Fehler- und Fortsetzungsvertrag pro Tool testen: `IsError`, Retry bei noch ladendem Target, `RESPONSE_BUDGET_TOO_SMALL`, `minimumResponseBytes`, stabile Pagination und Eingabegrenzen dürfen weder partielle Erfolge vortäuschen noch Daten still verlieren.
   - [ ] Review/Audit zu 8.5 durchführen; Findings ergänzen und umsetzen.
