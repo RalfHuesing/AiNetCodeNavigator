@@ -37,6 +37,9 @@
   - [x] Source-Typen über Roslyn-Symbolidentität auflösen und Kanten mit Projektgrenzen ausgeben.
   - [x] Dokumente begrenzen, Beziehungssammlungen paginieren und unvollständige Scans kenntlich machen.
   - [x] Validierungs- und Dokumentfehler als dokumentierten Core-Vertrag abbilden.
+  - [ ] Provide file/type-targeted directional depth queries with retained type-edge provenance.
+  - [ ] Make document-limited scans continuable or queryable beyond the first window.
+  - [ ] Collect cross-project generic named-type dependencies without external noise.
   - [ ] Review/Audit zu 5.5 durchführen; Findings ergänzen und umsetzen.
 - [ ] 5.6 Beziehungen über ein gemeinsames Test-Szenario prüfen: Aufrufe, Referenzen, Overrides, Interface-Implementierungen und transitive Auswirkungen über mehrere Projekte hinweg mit identischer Semantik und stabilen Handoffs testen; Grenzen und Kürzungen der Ergebnisse ausgeben.
   - [ ] Review/Audit zu 5.6 durchführen; Findings ergänzen und umsetzen.

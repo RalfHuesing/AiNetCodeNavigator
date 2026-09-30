@@ -327,3 +327,20 @@
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 388/388 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Independent audit 1/3 of point 5.5
+
+- Audited commit: `1295b465d3e87b20c5684b87486d9fbabe6e6a3e` (clean working tree before review edits).
+- Reviewer: `gpt-6-sol`, medium reasoning effort. Read-only comparison covered AiNetLinter's `DependencyGraphTool`, file/type scoped `DependencyGraphScanner`, and semantic referenced-type collector. No build or tests were run in this audit; the implementation gates above belong to the prior turn.
+- Project references, same full type names in different assemblies, external BCL exclusion, independent relationship paging, limit metadata, and basic invalid offsets have relevant Core tests. The following gaps remain; point 5.5's audit checkbox stays unchecked.
+
+### Findings
+
+1. **P1 — The target-centered dependency graph contract cannot be reconstructed from the snapshot.** `src/AiNetCodeNavigator.Core/Dependencies/DependencyGraphScanner.cs:23-26` accepts only a solution and paging options; `:110-145` aggregates usages into namespace/file pairs and loses which declaring type produced each edge. AiNetLinter's `DependencyGraphScanner.ScanTypeAsync` scans only the selected type's declarations (including partials), while `ScanFileAsync` supports a file target; both support incoming/outgoing/both traversal up to three hops with a visited-file cap. Filtering the current aggregate by file cannot produce a correct type-scoped first hop when a file has two types. Acceptance: provide a bounded Core query for file and type targets with direction and depth, preserving edge provenance, cycles, and truncation metadata; test two types in one file with different dependencies, plus incoming and multi-hop paths. The MCP layer may resolve identifiers and format the result later, but cannot infer discarded type provenance.
+2. **P1 — The 1000-document cap is not resumable.** `DependencyGraphScanner.cs:37-45` always takes the first `maxDocuments` documents; `:147-165` applies `Offset` only to completed relationship collections. Repeating calls with another relationship offset rescans the same first 1000 documents, so dependencies in document 1001+ cannot be queried through this Core API. `DocumentLimitReached` correctly reports incompleteness but supplies no document cursor. Acceptance: provide a deterministic document continuation/window or targeted bounded scan that can reach later documents, keep counts/completeness scoped accurately, and test a dependency whose declaring or consuming file lies beyond a small test document limit across continuation calls.
+3. **P2 — Generic type targets are absent from source dependency edges.** `DependencyGraphScanner.cs:110-113` inspects only `IdentifierNameSyntax` and uses `GetTypeInfo`; a reference to `Contracts.Box<int>` has a `GenericNameSyntax` for `Box`, so the target generic type is never considered. AiNetLinter's `CollectReferencedTypes` explicitly inspects identifier, generic, and qualified names using `GetSymbolInfo`. Acceptance: collect source-backed named types for generic and qualified forms without adding external metadata noise or duplicate edges; test a cross-project field or parameter of `Contracts.Box<int>` and a non-generic control.
+
+### Review verification
+
+- Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
+- The documentation diff was inspected and `git diff --check` passed before commit.
