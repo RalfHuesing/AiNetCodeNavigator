@@ -25,6 +25,24 @@
 - **P2 — Test and generated document populations are missing.** `src/AiNetCodeNavigator.Core/FileStructure/IndexScopeScanner.cs:53-88,130-151` reports `TestProjectCount`, but never counts documents belonging to those test projects or documents classified as generated. Neither count exists in `IndexScopeModels.cs:19-41` or the formatted report at `IndexScopeScanner.cs:223-256`. AiNetLinter's `GetIndexScopeScanner.cs:57-67,125-128` reports both generated and test-project document counts as part of its index-scope population. For a test project with multiple documents and an indexed `.g.cs` document, the current payload cannot answer either document-level question; `IndexScopeScannerTests.cs:99-118` checks read-only behavior but asserts neither count. Acceptance: add explicit generated-document and test-project-document totals for the selected Roslyn document scope, define generated classification consistently with navigation, keep totals complete when either list is truncated, and test mixed production/test/generated documents plus project filtering.
 - The 6.3 audit checkbox remains open pending this finding. No finding is raised for 6.1 or 6.2 in this point audit.
 
+## Point 6.3 audit 1 remediation
+
+- Scope: address the P2 missing generated- and test-document totals from the independent audit at `f1c0ba33932af75022027ca369b09148ab591dd2`. The independent audit checkbox remains open for follow-up.
+- Before-fix regression attempt: the new contract tests failed to compile because `IndexScopePayload` had no `GeneratedDocumentCount` or `TestDocumentCount` properties. The reported scanner behavior also exposed no corresponding summary output.
+- Added both counts to `IndexScopePayload` and the formatted report. Counts are computed across the complete selected Roslyn project scope before project/file-type presentation limits. `TestDocumentCount` applies the same project-or-document-path rule as symbol navigation. `GeneratedDocumentCount` counts C# documents and uses the same path, header, and `GeneratedCodeAttribute` rules as symbol navigation.
+- Extracted the generated-document classifier to `GeneratedDocumentDetector` and made `FindSymbolScanner` and `IndexScopeScanner` share it. Added FastTests covering production and test projects in one solution, `.g.cs` documents, test-path files, top-level totals despite project-list truncation, and case-insensitive project filtering. Updated the current-state documentation. No independent follow-up audit has been performed; the 6.3 audit checkbox remains open.
+
+### Audit 1 remediation verification
+
+| Gate | Result |
+|---|---|
+| Before-fix regression attempt | Contract tests failed to compile because both count properties were missing |
+| Focused `IndexScopeScannerTests` after fix | Passed, 10/10 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 414/414 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 426/426 across both test projects |
+
 ## Point 6.1 implementation record
 
 - Starting commit: `4068706a60cd00c9d13137384a572db196bb10a6`, clean working tree.

@@ -20,7 +20,7 @@ public static class IndexScopeScanner
     public const int DefaultMaxFileTypes = 64;
     public const int MaxFileTypesCap = 128;
 
-    public static Task<IndexScopePayload> ScanAsync(
+    public static async Task<IndexScopePayload> ScanAsync(
         Solution solution,
         CancellationToken ct = default,
         IndexScopeScanOptions? options = null)
@@ -41,8 +41,8 @@ public static class IndexScopeScanner
 
         if (requestedProjectName is not null && scopedProjects.Count == 0)
         {
-            return Task.FromResult(ErrorPayload(solutionPath, requestedProjectName, requested, effectiveMaxProjects, effectiveMaxFileTypes,
-                boundsWereClamped, $"Project '{requestedProjectName}' was not found."));
+            return ErrorPayload(solutionPath, requestedProjectName, requested, effectiveMaxProjects, effectiveMaxFileTypes,
+                boundsWereClamped, $"Project '{requestedProjectName}' was not found.");
         }
 
         var projectName = requestedProjectName is null ? null : scopedProjects[0].Name;
@@ -53,6 +53,8 @@ public static class IndexScopeScanner
         var totalDocuments = 0;
         var cSharpDocumentCount = 0;
         var testProjectCount = 0;
+        var generatedDocumentCount = 0;
+        var testDocumentCount = 0;
 
         try
         {
@@ -72,11 +74,21 @@ public static class IndexScopeScanner
                     ct.ThrowIfCancellationRequested();
                     var extension = NormalizeExtension(document.FilePath ?? document.Name);
                     extensionCounts[extension] = extensionCounts.GetValueOrDefault(extension) + 1;
+                    if (isTestProject
+                        || TestDetector.IsTestFile(document.FilePath ?? document.Name))
+                    {
+                        testDocumentCount++;
+                    }
+
                     if (isCSharpProject && extension.Equals(".cs", StringComparison.OrdinalIgnoreCase))
                     {
                         cSharpDocumentCount++;
                         projectCSharpDocumentCount++;
                         coveredExtensionCounts[extension] = coveredExtensionCounts.GetValueOrDefault(extension) + 1;
+                        if (await GeneratedDocumentDetector.IsGeneratedDocumentAsync(document, ct).ConfigureAwait(false))
+                        {
+                            generatedDocumentCount++;
+                        }
                     }
                 }
 
@@ -90,8 +102,8 @@ public static class IndexScopeScanner
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return Task.FromResult(ErrorPayload(solutionPath, projectName, requested, effectiveMaxProjects, effectiveMaxFileTypes,
-                boundsWereClamped, $"Index scope scan failed: {ex.Message}"));
+            return ErrorPayload(solutionPath, projectName, requested, effectiveMaxProjects, effectiveMaxFileTypes,
+                boundsWereClamped, $"Index scope scan failed: {ex.Message}");
         }
 
         var allFileTypes = extensionCounts
@@ -120,6 +132,8 @@ public static class IndexScopeScanner
             orderedProjects.Count,
             totalDocuments,
             cSharpDocumentCount,
+            generatedDocumentCount,
+            testDocumentCount,
             testProjectCount,
             allFileTypes.Count,
             shownProjects,
@@ -127,7 +141,7 @@ public static class IndexScopeScanner
             truncatedBy,
             nextAction);
 
-        return Task.FromResult(new IndexScopePayload(
+        return new IndexScopePayload(
             SolutionPath: solutionPath,
             ProjectCount: orderedProjects.Count,
             TotalDocumentCount: totalDocuments,
@@ -148,7 +162,9 @@ public static class IndexScopeScanner
             RequestedMaxFileTypes: requested.MaxFileTypes,
             EffectiveMaxFileTypes: effectiveMaxFileTypes,
             BoundsWereClamped: boundsWereClamped,
-            NextAction: nextAction));
+            NextAction: nextAction,
+            GeneratedDocumentCount: generatedDocumentCount,
+            TestDocumentCount: testDocumentCount);
     }
 
     private static int ClampBound(int requested, int cap) => requested < 1 ? 1 : Math.Min(requested, cap);
@@ -213,6 +229,8 @@ public static class IndexScopeScanner
         int projectCount,
         int totalDocuments,
         int cSharpDocumentCount,
+        int generatedDocumentCount,
+        int testDocumentCount,
         int testProjectCount,
         int totalFileTypeCount,
         IReadOnlyList<ProjectScopeEntry> projects,
@@ -228,6 +246,8 @@ public static class IndexScopeScanner
         sb.AppendLine($"> Path: {solutionPath.Replace('\\', '/')}");
         sb.AppendLine($"> Projects: {projectCount} ({testProjectCount} test, {projectCount - testProjectCount} production)");
         sb.AppendLine($"> Roslyn documents: {totalDocuments} (.cs: {cSharpDocumentCount})");
+        sb.AppendLine($"> Generated C# documents: {generatedDocumentCount}");
+        sb.AppendLine($"> Test documents: {testDocumentCount}");
         sb.AppendLine($"> File types: {totalFileTypeCount} total, {fileTypes.Count} shown");
         if (truncatedBy.Count > 0)
         {

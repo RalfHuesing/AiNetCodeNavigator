@@ -146,6 +146,59 @@ public sealed class IndexScopeScannerTests
     }
 
     [Fact]
+    public async Task ScanAsync_CountsGeneratedAndTestDocumentsAcrossMixedProjectsAndBounds()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\virtual\MixedIndexScope.slnx",
+            new ProjectSpec("Production", [
+                ("Plain.cs", "namespace App; public class Plain {}"),
+                ("Build.g.cs", "namespace App; public class BuildGenerated {}"),
+                ("tests/Inline.cs", "namespace App.Tests; public class InlineTest {}")]),
+            new ProjectSpec("UnitTests", [
+                ("Case.cs", "namespace App.Tests; public class CaseTest {}"),
+                ("Case.g.cs", "namespace App.Tests; public class GeneratedCaseTest {}") ]));
+
+        var payload = await IndexScopeScanner.ScanAsync(
+            fixture.Solution,
+            options: new IndexScopeScanOptions(MaxProjects: 1));
+
+        Assert.Equal(5, payload.TotalDocumentCount);
+        Assert.Equal(2, payload.GeneratedDocumentCount);
+        Assert.Equal(3, payload.TestDocumentCount);
+        Assert.Contains("Generated C# documents: 2", payload.FormattedText);
+        Assert.Contains("Test documents: 3", payload.FormattedText);
+        Assert.True(payload.IsTruncated);
+        Assert.Equal(2, payload.ProjectCount);
+        Assert.Single(payload.Projects);
+    }
+
+    [Fact]
+    public async Task ScanAsync_CountsGeneratedAndTestDocumentsWithinSelectedProject()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\virtual\ScopedGeneratedIndexScope.slnx",
+            new ProjectSpec("Production", [
+                ("Plain.cs", "namespace App; public class Plain {}"),
+                ("Build.g.cs", "namespace App; public class BuildGenerated {}"),
+                ("tests/Inline.cs", "namespace App.Tests; public class InlineTest {}")]),
+            new ProjectSpec("UnitTests", [
+                ("Case.cs", "namespace App.Tests; public class CaseTest {}"),
+                ("Case.g.cs", "namespace App.Tests; public class GeneratedCaseTest {}") ]));
+
+        var production = await IndexScopeScanner.ScanAsync(
+            fixture.Solution,
+            options: new IndexScopeScanOptions(ProjectName: "production"));
+        var tests = await IndexScopeScanner.ScanAsync(
+            fixture.Solution,
+            options: new IndexScopeScanOptions(ProjectName: "UnitTests"));
+
+        Assert.Equal(1, production.GeneratedDocumentCount);
+        Assert.Equal(1, production.TestDocumentCount);
+        Assert.Equal(1, tests.GeneratedDocumentCount);
+        Assert.Equal(2, tests.TestDocumentCount);
+    }
+
+    [Fact]
     public async Task ScanAsync_ClampsBoundsAndCountsCompileErrorDocuments()
     {
         using var fixture = TestWorkspaceBuilder.CreateSolution(

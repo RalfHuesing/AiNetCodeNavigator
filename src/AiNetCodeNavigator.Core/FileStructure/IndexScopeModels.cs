@@ -38,7 +38,9 @@ public sealed record IndexScopePayload(
     int RequestedMaxFileTypes = IndexScopeScanner.DefaultMaxFileTypes,
     int EffectiveMaxFileTypes = IndexScopeScanner.DefaultMaxFileTypes,
     bool BoundsWereClamped = false,
-    string? NextAction = null);
+    string? NextAction = null,
+    int GeneratedDocumentCount = 0,
+    int TestDocumentCount = 0);
 
 public sealed record IndexScopeScanOptions(
     string? ProjectName = null,
