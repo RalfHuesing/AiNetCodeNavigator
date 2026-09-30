@@ -48,6 +48,6 @@
   - [x] Vertragstests für Doc-IDs, qualified/simple names, absolute Position, line-only Position, Mehrdeutigkeit, Invalid-Position-Fehler und Handoff-Roundtrips zu allen drei Folge-Scannern.
   - [x] Source-only Grenzfälle abdecken: keine Metadata-only Treffer wie `System.String`, und Literal-/Punctuation-Positionen nicht über umgebende Deklarationen auflösen.
   - [x] AiNetLinter read-only vergleichen und den gemeinsamen Resolver-Vertrag in der Current-State-Dokumentation festhalten.
-  - [ ] Review/Audit zu 4.7 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 4.7 durchführen; Findings ergänzen und umsetzen.
 - [ ] 4.8 Test-Kontext fachlich absichern: gleichnamige Testklassen in verschiedenen Projekten getrennt erhalten, xUnit/NUnit/MSTest korrekt klassifizieren und Empfehlungen als Heuristik ausweisen; Tests für Mehrprojektfälle und `TestMethodAttribute` ergänzen.
   - [ ] Review/Audit zu 4.8 durchführen; Findings ergänzen und umsetzen.

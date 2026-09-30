@@ -376,3 +376,16 @@ The point 4.7 audit checkbox remains open pending a focused fix and follow-up au
 - **P2 symbol-free positions — closed.** Position lookup now checks only declaration-name tokens, accessor keywords, and identifier references with semantic symbols. Added column and line-only regressions for a string literal, plus a column regression for a method-body closing brace. These return `SYMBOL_NOT_FOUND` instead of the enclosing method.
 - Verification: focused source-boundary regression passed 1/1; `FeatureContextScannerTests` passed 16/16; `pwsh -File ./scripts/build.ps1` passed with 0 warnings/errors; `pwsh -File ./scripts/test-fast.ps1` passed 330/330; `pwsh -File ./scripts/test-integration.ps1` passed 12/12; `pwsh -File ./scripts/test.ps1` passed 342/342; `git diff --check` passed.
 - The 4.7 audit checkbox remains `[ ]` pending a follow-up audit. Point 4.8 is unchanged.
+
+## Independent audit 2/3 of point 4.7
+
+- Reviewed commit: `b832e613ef432b6d14306ccc3410a31d8e500704` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Narrow read-only review of the two 4.7 corrections, their regression test, the source resolver's consumer calls, and current-state documentation. The implementation slice's gate results are recorded above; this audit did not run a build or tests.
+
+### Finding disposition
+
+1. **P2 metadata-only name fallback — closed.** `ResolveByNameAsync` now returns only the results of `SymbolFinder.FindSourceDeclarationsAsync`; the `GetTypeByMetadataName` fallback is gone. The regression checks `System.String` returns `SYMBOL_NOT_FOUND` through direct resolution and each Body, Feature Context, and Class Structure consumer. Existing source type and member roundtrip tests remain.
+2. **P2 enclosing-declaration position fallback — closed.** `ResolveSymbolAtToken` now accepts declaration-name tokens, accessor keywords, and identifier references only. A literal and method-body closing brace return no symbol; line-only lookup over the literal-only return line likewise reports `SYMBOL_NOT_FOUND`. The existing declaration-name, documentation ID, `h:` handoff, and line-only declaration roundtrips remain covered. The change prevents an ancestor method declaration from being selected for symbol-free tokens.
+
+No open finding remains for point 4.7. The audit checkbox is complete after two audits. No product code or external repository was changed in this audit.
