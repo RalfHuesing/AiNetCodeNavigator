@@ -164,13 +164,23 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
 
         foreach (var member in members)
         {
+            if (member is FieldDeclarationSyntax field)
+            {
+                result.AddRange(BuildVariableMemberInfos(field, SkeletonMemberKind.Field));
+                continue;
+            }
+
+            if (member is EventFieldDeclarationSyntax eventField)
+            {
+                result.AddRange(BuildVariableMemberInfos(eventField, SkeletonMemberKind.Event));
+                continue;
+            }
+
             var info = member switch
             {
-                FieldDeclarationSyntax f => BuildFieldInfo(f),
                 ConstructorDeclarationSyntax c => BuildConstructorInfo(c),
                 PropertyDeclarationSyntax p => BuildPropertyInfo(p),
                 MethodDeclarationSyntax m => BuildMethodInfo(m),
-                EventFieldDeclarationSyntax e => BuildEventInfo(e),
                 _ => null,
             };
 
@@ -180,12 +190,19 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
         return result;
     }
 
-    private SkeletonMemberInfo BuildFieldInfo(FieldDeclarationSyntax node)
+    private List<SkeletonMemberInfo> BuildVariableMemberInfos(BaseFieldDeclarationSyntax node, SkeletonMemberKind kind)
     {
-        var sig = NormalizeWhitespace(node.ToString().Trim().TrimEnd(';') + ";");
-        var firstVar = node.Declaration.Variables.FirstOrDefault();
-        var symbol = firstVar is null ? null : _semanticModel.GetDeclaredSymbol(firstVar);
-        return new SkeletonMemberInfo(SkeletonMemberKind.Field, sig, null, FormatSymbolId(symbol));
+        var modifiers = NormalizeWhitespace(node.Modifiers.ToString());
+        var modifierPrefix = string.IsNullOrEmpty(modifiers) ? string.Empty : modifiers + " ";
+        var eventPrefix = kind == SkeletonMemberKind.Event ? "event " : string.Empty;
+
+        return node.Declaration.Variables.Select(variable =>
+        {
+            var variableName = variable.Identifier + (variable.ArgumentList?.ToString() ?? string.Empty);
+            var signature = NormalizeWhitespace($"{modifierPrefix}{eventPrefix}{node.Declaration.Type} {variableName};");
+            var symbol = _semanticModel.GetDeclaredSymbol(variable);
+            return new SkeletonMemberInfo(kind, signature, null, FormatSymbolId(symbol));
+        }).ToList();
     }
 
     private SkeletonMemberInfo BuildPropertyInfo(PropertyDeclarationSyntax node)
@@ -215,14 +232,6 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
         var symbol = _semanticModel.GetDeclaredSymbol(node) as IMethodSymbol;
         var kind = ClassifyMethodKind(node.Modifiers, node.Parent);
         return new SkeletonMemberInfo(kind, NormalizeWhitespace(sig), null, FormatSymbolId(symbol));
-    }
-
-    private SkeletonMemberInfo BuildEventInfo(EventFieldDeclarationSyntax node)
-    {
-        var sig = NormalizeWhitespace(node.ToString().Trim().TrimEnd(';') + ";");
-        var firstVar = node.Declaration.Variables.FirstOrDefault();
-        var symbol = firstVar is null ? null : _semanticModel.GetDeclaredSymbol(firstVar);
-        return new SkeletonMemberInfo(SkeletonMemberKind.Event, sig, null, FormatSymbolId(symbol));
     }
 
     private static SkeletonMemberKind ClassifyMethodKind(SyntaxTokenList modifiers, SyntaxNode? parent)

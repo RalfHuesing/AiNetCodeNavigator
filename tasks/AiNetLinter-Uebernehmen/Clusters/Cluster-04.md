@@ -14,9 +14,9 @@
   - [x] FastTests für Symbol-Body-Lesen (Partials, Zeilenfenster, Metadaten-Symbole und Batch-Fehlerfälle)
   - [x] Review/Audit zu 4.2 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.3 File-Skeletons (`get_file_skeleton`-Engine):
-  - [x] `SkeletonSyntaxWalker` & `SkeletonMapBuilder`: top-level Typ- und Member-Deklarationen aus AST/`SemanticModel` erfassen, Bodies auslassen, verschachtelte Namespaces zusammensetzen
+  - [x] `SkeletonSyntaxWalker` & `SkeletonMapBuilder`: top-level Typ- und Member-Deklarationen aus AST/`SemanticModel` erfassen, Bodies und Field-/Event-Initializers auslassen, verschachtelte Namespaces zusammensetzen
   - [x] `SkeletonMarkdownRenderer`: sortierte Markdown-Ausgabe mit verfügbaren Handoff-IDs
-  - [x] FastTests für deklarative Struktur, Handoff-Roundtrips und wichtige Fehlerfälle
+  - [x] FastTests für deklarative Struktur, getrennte Multi-Variable-Handoffs/Roundtrips und wichtige Fehlerfälle
   - [ ] Exclude executable field and event initializer expressions from skeleton DTO signatures and Markdown; cover lambda/block initializers with FastTests.
   - [ ] Give every variable in a multi-variable field or event declaration an unambiguous own entry and handoff; test DTO and Markdown roundtrips for later variables.
   - [ ] Review/Audit zu 4.3 durchführen; Findings ergänzen und umsetzen.

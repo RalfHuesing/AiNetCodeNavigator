@@ -122,6 +122,27 @@ The point 4.2 audit checkbox is complete after one audit. No product code or ext
 | `pwsh -File ./scripts/test.ps1` | Passed, 301/301 across both test projects |
 | `git diff --check` | Passed before commit |
 
+## Point 4.3 audit finding fixes
+
+- Base commit: `8da62214e67a6cea7cb50492690c20d608cc2367`; the working tree was clean before this audit-fix slice.
+- Read-only AiNetLinter MCP comparison covered the reference field/event extraction and skeleton tests. The reference emits a whole declaration and assigns one handoff to its first declarator; the audit findings identify two requirements that need stronger behavior in this repository.
+- **P2 — Field/event initializer bodies leaked through Core DTOs and Markdown.** A regression with lambda initializers containing block bodies failed before the fix: both `FIELD_BODY_MARKER` and `EVENT_BODY_MARKER` were present in `SkeletonMemberInfo.Signature`. Field and event signatures are now constructed from modifiers, declared type, and variable name without initializer expressions.
+- **P2 — Multi-variable declarations shared one signature and only the first symbol handoff.** A regression with two fields and two events failed before the fix: Markdown contained two member entries instead of four. The walker now creates one DTO per declarator and obtains a distinct Roslyn symbol/Handoff ID for each variable. The test follows all four IDs through `FeatureContextScanner` and checks the corresponding symbol names.
+- Updated the current-state File Skeleton page and Cluster 4 checklist. The point 4.3 audit checkbox remains `[ ]` pending the requested independent follow-up audit.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| Initializer-body leakage regression before fix | Failed as expected: both initializer markers appeared in the DTO signatures |
+| Multi-variable handoff regression before fix | Failed as expected: two declarations produced only two Markdown member entries |
+| Focused `SkeletonMapTests` after fix | Passed, 14/14 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 291/291 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 303/303 across both test projects |
+| `git diff --check` | Passed before commit |
+
 ## Independent audit 1/3 of point 4.3
 
 - Reviewed commit: `beeb8992c45feb088948f13d5e8a27a3e4ce8fd5` (clean working tree before audit).

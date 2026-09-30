@@ -95,6 +95,69 @@ public sealed class SkeletonMapTests
     }
 
     [Fact]
+    public async Task BuildForDocumentAsync_OmitsFieldAndEventInitializerBodiesFromStructuredResults()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var project = fixture.Solution.Projects.Single(p => p.Name == "Sample.Core");
+        var document = project.AddDocument("InitializerBodies.cs", """
+            public class InitializerSample
+            {
+                private System.Action _callback = () => { System.Console.WriteLine("FIELD_BODY_MARKER"); };
+                public event System.Action Changed = () => { System.Console.WriteLine("EVENT_BODY_MARKER"); };
+            }
+            """);
+
+        var types = await SkeletonMapBuilder.BuildForDocumentAsync(document, Path.GetDirectoryName(fixture.Solution.FilePath) ?? "");
+        var type = Assert.Single(types);
+
+        Assert.DoesNotContain(type.Members, member => member.Signature.Contains("BODY_MARKER", System.StringComparison.Ordinal));
+        Assert.Equal("private System.Action _callback;", Assert.Single(type.Members, member => member.Kind == SkeletonMemberKind.Field).Signature);
+        Assert.Equal("public event System.Action Changed;", Assert.Single(type.Members, member => member.Kind == SkeletonMemberKind.Event).Signature);
+    }
+
+    [Fact]
+    public async Task BuildMarkdownForDocumentAsync_EmitsPerVariableHandoffsForMultiVariableDeclarations()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var project = fixture.Solution.Projects.Single(p => p.Name == "Sample.Core");
+        var document = project.AddDocument("MultiVariables.cs", """
+            public class MultiVariableSample
+            {
+                private System.Action _first = () => { System.Console.WriteLine("FIELD_BODY_MARKER"); }, _second = () => { System.Console.WriteLine("FIELD_BODY_MARKER"); };
+                public event System.Action Changed = () => { System.Console.WriteLine("EVENT_BODY_MARKER"); }, Closed = () => { System.Console.WriteLine("EVENT_BODY_MARKER"); };
+            }
+            """);
+
+        var markdown = await FileSkeletonBuilder.BuildMarkdownForDocumentAsync(document, fixture.Solution.FilePath ?? "");
+        var lines = markdown.Split('\n', System.StringSplitOptions.RemoveEmptyEntries);
+        var memberLines = lines.Where(line => line.Contains("_first", System.StringComparison.Ordinal)
+            || line.Contains("_second", System.StringComparison.Ordinal)
+            || line.Contains("Changed", System.StringComparison.Ordinal)
+            || line.Contains("Closed", System.StringComparison.Ordinal)).ToList();
+
+        Assert.Equal(4, memberLines.Count);
+        Assert.DoesNotContain("BODY_MARKER", markdown, System.StringComparison.Ordinal);
+
+        var handoffIds = memberLines
+            .Select(line => Regex.Match(line, @"handoffId: `(?<id>h:[A-Za-z0-9_-]+)`", RegexOptions.CultureInvariant, System.TimeSpan.FromSeconds(1)))
+            .ToList();
+        Assert.All(handoffIds, match => Assert.True(match.Success));
+        Assert.Equal(4, handoffIds.Select(match => match.Groups["id"].Value).Distinct().Count());
+
+        foreach (var (line, match) in memberLines.Zip(handoffIds))
+        {
+            var expectedName = line.Contains("_first", System.StringComparison.Ordinal) ? "_first"
+                : line.Contains("_second", System.StringComparison.Ordinal) ? "_second"
+                : line.Contains("Changed", System.StringComparison.Ordinal) ? "Changed"
+                : "Closed";
+            var context = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(document.Project.Solution, match.Groups["id"].Value));
+            Assert.NotNull(context);
+            Assert.Null(context.Error);
+            Assert.Equal(expectedName, context.Declaration.SymbolName);
+        }
+    }
+
+    [Fact]
     public async Task BuildForDocumentAsync_RejectsNullDocument()
     {
         await Assert.ThrowsAsync<System.ArgumentNullException>(
