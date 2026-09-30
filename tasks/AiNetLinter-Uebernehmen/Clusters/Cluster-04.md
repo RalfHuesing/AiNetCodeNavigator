@@ -33,7 +33,7 @@
   - [x] Detect xUnit, NUnit, and MSTest attributes across separate projects, without mistaking ordinary names or mocking references for test evidence.
   - [x] Document fixture matches as static heuristic candidates and report `Unknown` when no framework attribute identifies them.
   - [x] Recognize relative `tests/` and `test/` path prefixes as test files without broadening ordinary-name false positives; cover both prefixes and downstream scope classification with FastTests.
-  - [ ] Review/Audit zu 4.5 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 4.5 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.6 Feature-Kontext (`get_feature_context`-Engine):
   - [x] `FeatureContextScanner`: Bündelung von Symbol, Signatur, Aufrufern und Tests *(ohne Linter-Violations!)*
   - [x] FastTests für Feature-Kontext

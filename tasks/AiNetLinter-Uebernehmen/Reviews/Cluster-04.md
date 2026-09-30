@@ -288,3 +288,12 @@ The point 4.5 audit checkbox remains open pending the focused fix and follow-up 
 - A consumer test gives two documents exact relative file paths via the Roslyn solution API and verifies both appear in the test scope, while an ordinary `Contest.cs` type remains in production scope and excluded from test scope.
 - Read-only AiNetLinter MCP comparison confirmed its `TestPathPrefixes` check uses `StartsWith` for these same root-relative prefixes.
 - Verification: focused path test passed 12/12; focused `FindSymbolScanner` scope consumer passed 1/1; `pwsh -File ./scripts/build.ps1` passed with 0 warnings/errors; `pwsh -File ./scripts/test-fast.ps1` passed 315/315; `pwsh -File ./scripts/test-integration.ps1` passed 12/12; `pwsh -File ./scripts/test.ps1` passed 327/327; `git diff --check` passed. The independent point 4.5 audit checkbox remains `[ ]` pending follow-up.
+
+## Independent audit 2/3 of point 4.5
+
+- Reviewed commit: `b3ad5ecb2be8ba10ec3f2f9ff3199f81c4174119` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Narrow read-only review of the relative-path fix, direct classifier tests, FindSymbolScanner scope regression, and documentation. The implementation slice's gate results are recorded above; this audit did not run a build or tests.
+- **P2 root-relative test paths — closed.** `TestDetector.IsTestFile` now checks normalized paths for anchored `tests/` and `test/` prefixes before existing suffix and embedded-segment checks, matching the AiNetLinter reference. Direct tests cover both prefixes and the negative `contest/Helpers.cs` case. A Roslyn solution test assigns exact root-relative document paths and verifies both declarations enter the `tests` scope while an ordinary `Contest.cs` declaration stays in `production`. No broader name-classification regression was found in the reviewed paths.
+
+No open finding remains for point 4.5. The audit checkbox is complete after two audits. The equal-name multi-project and recommendation-depth work remains explicitly assigned to point 4.8. No product code or external repository was changed in this audit.
