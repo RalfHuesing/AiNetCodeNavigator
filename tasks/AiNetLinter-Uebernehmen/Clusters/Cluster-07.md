@@ -30,4 +30,4 @@
 ## Cluster 7 integration
 
 - [x] Bind cached decompiled source to the content snapshot of resolved references, including same-identity replacements at the same path.
-- [ ] Complete the independent Cluster 7 integration review after the cache/session finding is addressed.
+- [x] Complete the independent Cluster 7 integration review after the cache/session finding is addressed.
