@@ -12,6 +12,9 @@
 - [ ] 8.2 Standardisiertes Result-Building:
   - [x] `McpToolResults`: Einheitliche Erzeugung von `CallToolResult`, `IsError`-Policy und Statusblöcken
   - [ ] Review/Audit zu 8.2 durchführen; Findings ergänzen und umsetzen.
+  - [ ] Audit 1 P2: Calculate success budget retries from the intended success projection rather than the error status prefix.
+  - [ ] Audit 1 P2: Preserve required recovery and argument-correction fields when error context is shortened.
+  - [ ] Audit 1 P2: Apply response budgets to loading/retry results, including their status and next action.
 - [ ] 8.3 Langläufer & Paginierung:
   - [ ] `LongRunningToolCallStore`: Polling- und Fortsetzungs-Tokens (`operationToken`, `continuationToken`)
   - [ ] Review/Audit zu 8.3 durchführen; Findings ergänzen und umsetzen.
