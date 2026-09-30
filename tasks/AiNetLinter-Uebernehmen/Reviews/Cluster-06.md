@@ -164,3 +164,22 @@
 - **P2 — Generated-source visibility is unclear across discovery and follow-up.** `NamespaceTreeScanner.cs:63-72,137-163` counts all project source trees, including generated `.g.cs` documents. `IndexScopeScanner.cs:74-91` separately counts these documents, while `FindSymbolScanner.cs:173-183` excludes their locations unless `IncludeGenerated=true`. A namespace whose only type is generated appears in `get_namespace_tree` but a default `find_symbol` follow-up cannot find that type. `docs/navigation/get-namespace-tree.md` does not state this inclusion or the follow-up option. Acceptance: make the default discovery/follow-up behavior coherent, either through matching generated-source selection or explicit generated-inclusive metadata and `IncludeGenerated` guidance, with a shared-fixture integration test.
 - **P3 — Project-name filtering differs between two Core tools.** `IndexScopeScanner.cs:31-40` trims a supplied project name; `NamespaceTreeScanner.cs:35-41` matches the original string. With a project named `App`, `ProjectName=" App "` succeeds in index scope but `projectName=" App "` returns an unknown-project error in namespace tree. Acceptance: use the same name normalization and error semantics across both scanners, and cover the cross-tool selection with a focused test.
 - The three integration findings are open in `Findings.md` and in the cluster checklist. The cluster integration checkbox stays open; the next implementation pass is fix round 1.
+
+## Cluster 6 integration fix round 1
+
+- Starting commit: `a08f3ab227a313ea31e6cf0ac53c8f2c5b7048fe`, clean working tree. This is a targeted remediation of the three integration findings above; it does not repeat the point audits or the independent Cluster 6 integration review.
+- Before-fix repros: 3 of 11 focused `NamespaceTreeScannerTests` failed. A mixed C#/Visual Basic solution returned `Project 'Legacy' could not be compiled.` instead of scanning only C#; a namespace containing only `Generated.g.cs` appeared in the default namespace tree although `FindSymbolScanner` hid its symbol by default; and `ProjectName="  English  "` was returned with spaces instead of matching the canonical project name.
+- Solution scans now skip non-C# projects, keeping `get_namespace_tree` within the C# project coverage reported by index scope. Naming a non-C# project returns a recoverable `not a C# project` error. Project names are trimmed before case-insensitive lookup, and output uses the selected project's canonical name.
+- Namespace scans now exclude generated documents by default, matching `FindSymbolScanner`'s default. `NamespaceTreeScanOptions.IncludeGenerated=true` opts in to generated source; the payload and formatted output state whether generated source was included. The scanner and symbol navigation use the shared `GeneratedDocumentDetector`.
+- FastTests compare mixed-language results with index scope, generated-only namespace visibility with FindSymbol default and opt-in, and padded project selection with index scope. Current-state documentation describes supported languages, generated-source selection, and project-name normalization. The three implementation checkboxes in the Cluster 6 integration checklist are complete; the independent integration review remains open.
+
+### Fix round 1 verification
+
+| Gate | Result |
+|---|---|
+| Before-fix focused `NamespaceTreeScannerTests` | 3 expected failures, 8 passed |
+| Focused `NamespaceTreeScannerTests` after fix | Passed, 11/11 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 416/416 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 428/428 across both test projects |

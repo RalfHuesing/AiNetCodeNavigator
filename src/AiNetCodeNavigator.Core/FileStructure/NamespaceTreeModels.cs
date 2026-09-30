@@ -35,8 +35,10 @@ public sealed record NamespaceTreePayload(
     int RequestedMaxResults = NamespaceTreeScanner.DefaultMaxResults,
     int EffectiveMaxResults = NamespaceTreeScanner.DefaultMaxResults,
     bool BoundsWereClamped = false,
-    string? NextAction = null);
+    string? NextAction = null,
+    bool IncludeGenerated = false);
 
 public sealed record NamespaceTreeScanOptions(
     int MaxDepth = NamespaceTreeScanner.MaxDepthCap,
-    int MaxResults = NamespaceTreeScanner.DefaultMaxResults);
+    int MaxResults = NamespaceTreeScanner.DefaultMaxResults,
+    bool IncludeGenerated = false);

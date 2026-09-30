@@ -6,8 +6,11 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.FileStructure;
+using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.TestKit.Builders;
 using AiNetCodeNavigator.TestKit.Fixtures;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Text;
 using Xunit;
 
 namespace AiNetCodeNavigator.FastTests.FileStructure;
@@ -163,14 +166,80 @@ public sealed class NamespaceTreeScannerTests
             @"C:\virtual\EnglishNamespaceSolution.slnx",
             new ProjectSpec("English", [("Type.cs", "namespace English; public class TypeOne {}") ]));
 
-        var success = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution);
+        var success = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution, "  English  ");
+        var indexScope = await IndexScopeScanner.ScanAsync(
+            fixture.Solution,
+            options: new IndexScopeScanOptions(ProjectName: "  English  "));
         var error = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution, "Missing.Project");
 
+        Assert.Equal("English", success.ProjectName);
+        Assert.Equal(indexScope.ScopeProjectName, success.ProjectName);
         Assert.Contains("1 namespaces total, 1 shown | 1 types", success.FormattedText);
         Assert.Equal("Project 'Missing.Project' was not found.", error.Error);
         Assert.Contains("Project 'Missing.Project' was not found.", error.FormattedText);
         Assert.DoesNotContain("Typen", success.FormattedText);
         Assert.DoesNotContain("Gekürzt", success.FormattedText);
+    }
+
+    [Fact]
+    public async Task ScanSolutionAsync_SkipsNonCSharpProjects()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\virtual\MixedLanguageNamespaceSolution.slnx",
+            new ProjectSpec("CSharp", [("Type.cs", "namespace CSharpOnly; public class CSharpType {}") ]));
+        var legacyProjectId = ProjectId.CreateNewId("Legacy");
+        var legacyProject = fixture.Solution.AddProject(ProjectInfo.Create(
+            legacyProjectId,
+            VersionStamp.Create(),
+            "Legacy",
+            "Legacy",
+            LanguageNames.VisualBasic));
+        var solution = legacyProject.AddDocument(
+            DocumentId.CreateNewId(legacyProjectId),
+            "Legacy.vb",
+            SourceText.From("Namespace VisualBasicOnly\n Public Class LegacyType\n End Class\nEnd Namespace"));
+
+        var payload = await NamespaceTreeScanner.ScanSolutionAsync(solution);
+        var indexScope = await IndexScopeScanner.ScanAsync(solution);
+        var unsupported = await NamespaceTreeScanner.ScanSolutionAsync(solution, " Legacy ");
+
+        Assert.Null(payload.Error);
+        Assert.Equal(1, payload.TotalTypes);
+        Assert.Equal("CSharpOnly", Assert.Single(payload.RootNamespaces).FullName);
+        Assert.False(Assert.Single(indexScope.Projects, project => project.Name == "Legacy").IsCSharpProject);
+        Assert.Equal("Project 'Legacy' is not a C# project.", unsupported.Error);
+    }
+
+    [Fact]
+    public async Task ScanSolutionAsync_ExcludesGeneratedOnlyNamespacesByDefaultLikeFindSymbol()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\virtual\GeneratedNamespaceSolution.slnx",
+            new ProjectSpec("App", [
+                ("Handwritten.cs", "namespace Visible; public class HandwrittenType {}"),
+                ("Generated.g.cs", "namespace GeneratedOnly; public class GeneratedType {}") ]));
+
+        var defaultTree = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution);
+        var includingGenerated = await NamespaceTreeScanner.ScanSolutionAsync(
+            fixture.Solution,
+            options: new NamespaceTreeScanOptions(IncludeGenerated: true));
+        var indexScope = await IndexScopeScanner.ScanAsync(fixture.Solution);
+        var defaultSymbol = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(fixture.Solution, "GeneratedType"));
+        var includingGeneratedSymbol = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(fixture.Solution, "GeneratedType", IncludeGenerated: true));
+
+        Assert.DoesNotContain(defaultTree.RootNamespaces, node => node.Name == "GeneratedOnly");
+        Assert.Equal(1, defaultTree.TotalTypes);
+        Assert.Equal(1, indexScope.GeneratedDocumentCount);
+        Assert.False(defaultTree.IncludeGenerated);
+        Assert.Contains("Generated source: excluded", defaultTree.FormattedText);
+        Assert.Contains(includingGenerated.RootNamespaces, node => node.Name == "GeneratedOnly");
+        Assert.Equal(2, includingGenerated.TotalTypes);
+        Assert.True(includingGenerated.IncludeGenerated);
+        Assert.Contains("Generated source: included", includingGenerated.FormattedText);
+        Assert.Empty(defaultSymbol.Entries);
+        Assert.Single(includingGeneratedSymbol.Entries);
     }
 
     [Fact]

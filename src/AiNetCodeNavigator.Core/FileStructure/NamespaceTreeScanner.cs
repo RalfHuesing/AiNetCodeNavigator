@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using AiNetCodeNavigator.Core.Symbols;
 using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.FileStructure;
@@ -32,16 +33,30 @@ public static class NamespaceTreeScanner
         var effectiveResults = ClampBound(requestedOptions.MaxResults, MaxResultsCap);
         var boundsWereClamped = effectiveDepth != requestedOptions.MaxDepth || effectiveResults != requestedOptions.MaxResults;
         var solutionName = Path.GetFileName(solution.FilePath) ?? "Solution";
-        var projects = string.IsNullOrWhiteSpace(projectName)
+        var requestedProjectName = string.IsNullOrWhiteSpace(projectName) ? null : projectName.Trim();
+        var namedProjects = requestedProjectName is null
             ? solution.Projects.ToList()
-            : solution.Projects.Where(p => string.Equals(p.Name, projectName, StringComparison.OrdinalIgnoreCase)).ToList();
+            : solution.Projects.Where(p => string.Equals(p.Name, requestedProjectName, StringComparison.OrdinalIgnoreCase)).ToList();
 
-        if (!string.IsNullOrWhiteSpace(projectName) && projects.Count == 0)
+        if (requestedProjectName is not null && namedProjects.Count == 0)
         {
-            var error = $"Project '{projectName}' was not found.";
-            return CreatePayload(solutionName, projectName, [], 0, 0, false, [], error,
+            var error = $"Project '{requestedProjectName}' was not found.";
+            return CreatePayload(solutionName, requestedProjectName, [], 0, 0, false, [], error,
                 requestedOptions, effectiveDepth, effectiveResults, boundsWereClamped);
         }
+
+        var selectedProject = requestedProjectName is null ? null : namedProjects[0];
+        if (selectedProject is not null && !string.Equals(selectedProject.Language, LanguageNames.CSharp, StringComparison.Ordinal))
+        {
+            var error = $"Project '{selectedProject.Name}' is not a C# project.";
+            return CreatePayload(solutionName, selectedProject.Name, [], 0, 0, false, [], error,
+                requestedOptions, effectiveDepth, effectiveResults, boundsWereClamped);
+        }
+
+        var selectedProjectName = selectedProject?.Name;
+        var projects = namedProjects
+            .Where(project => string.Equals(project.Language, LanguageNames.CSharp, StringComparison.Ordinal))
+            .ToList();
 
         var nsTypeCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         var totalTypes = 0;
@@ -56,11 +71,11 @@ public static class NamespaceTreeScanner
                 if (compilation is null)
                 {
                     var error = $"Project '{project.Name}' could not be compiled.";
-                    return CreatePayload(solutionName, projectName, [], 0, 0, false, [], error,
+                    return CreatePayload(solutionName, selectedProjectName, [], 0, 0, false, [], error,
                         requestedOptions, effectiveDepth, effectiveResults, boundsWereClamped);
                 }
 
-                var sourceTrees = await GetProjectSourceTreesAsync(project, ct).ConfigureAwait(false);
+                var sourceTrees = await GetProjectSourceTreesAsync(project, requestedOptions.IncludeGenerated, ct).ConfigureAwait(false);
                 CollectNamespacesAndTypes(
                     compilation.GlobalNamespace,
                     sourceTrees,
@@ -75,7 +90,7 @@ public static class NamespaceTreeScanner
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var error = $"Namespace tree scan failed: {ex.Message}";
-            return CreatePayload(solutionName, projectName, [], 0, 0, false, [], error,
+            return CreatePayload(solutionName, selectedProjectName, [], 0, 0, false, [], error,
                 requestedOptions, effectiveDepth, effectiveResults, boundsWereClamped);
         }
 
@@ -88,10 +103,11 @@ public static class NamespaceTreeScanner
         if (resultLimitWasReached) truncatedBy.Add("maxResults");
 
         var nextAction = GetNextAction(truncatedBy);
-        var formatted = FormatTree(solutionName, projectName, rootNodes, totalNamespaces, shownNamespaces, totalTypes, truncatedBy, nextAction);
+        var formatted = FormatTree(solutionName, selectedProjectName, rootNodes, totalNamespaces, shownNamespaces, totalTypes,
+            requestedOptions.IncludeGenerated, truncatedBy, nextAction);
         return CreatePayload(
             solutionName,
-            projectName,
+            selectedProjectName,
             rootNodes,
             totalNamespaces,
             totalTypes,
@@ -108,12 +124,20 @@ public static class NamespaceTreeScanner
 
     private static int ClampBound(int requested, int cap) => requested < 1 ? 1 : Math.Min(requested, cap);
 
-    private static async Task<HashSet<SyntaxTree>> GetProjectSourceTreesAsync(Project project, CancellationToken ct)
+    private static async Task<HashSet<SyntaxTree>> GetProjectSourceTreesAsync(
+        Project project,
+        bool includeGenerated,
+        CancellationToken ct)
     {
         var trees = new HashSet<SyntaxTree>();
         foreach (var document in project.Documents)
         {
             ct.ThrowIfCancellationRequested();
+            if (!includeGenerated && await GeneratedDocumentDetector.IsGeneratedDocumentAsync(document, ct).ConfigureAwait(false))
+            {
+                continue;
+            }
+
             var tree = await document.GetSyntaxTreeAsync(ct).ConfigureAwait(false);
             if (tree is not null) trees.Add(tree);
         }
@@ -271,7 +295,8 @@ public static class NamespaceTreeScanner
             RequestedMaxResults: requestedOptions.MaxResults,
             EffectiveMaxResults: effectiveResults,
             BoundsWereClamped: boundsWereClamped,
-            NextAction: GetNextAction(truncatedBy));
+            NextAction: GetNextAction(truncatedBy),
+            IncludeGenerated: requestedOptions.IncludeGenerated);
     }
 
     private static string? GetNextAction(IReadOnlyList<string> truncatedBy)
@@ -300,6 +325,7 @@ public static class NamespaceTreeScanner
         int totalNamespaces,
         int shownNamespaces,
         int totalTypes,
+        bool includeGenerated,
         IReadOnlyList<string> truncatedBy,
         string? nextAction)
     {
@@ -310,6 +336,7 @@ public static class NamespaceTreeScanner
 
         sb.AppendLine(title);
         sb.AppendLine($"> {totalNamespaces} namespaces total, {shownNamespaces} shown | {totalTypes} types");
+        sb.AppendLine($"> Generated source: {(includeGenerated ? "included" : "excluded")}");
         if (truncatedBy.Count > 0)
         {
             sb.AppendLine($"> Truncated by: {string.Join(", ", truncatedBy)}");
