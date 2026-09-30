@@ -421,3 +421,16 @@ The point 4.8 audit checkbox remains open pending a focused fix and follow-up au
 - Before the fix, the DTO contract repro failed because `EvidenceMode` was absent, and the renderer repro failed because neither the evidence marker nor the execution/coverage disclaimer appeared.
 - Verification: focused DTO and Markdown contracts passed 1/1 each; `pwsh -File ./scripts/build.ps1` passed with 0 warnings/errors; `pwsh -File ./scripts/test-fast.ps1` passed 331/331; `pwsh -File ./scripts/test-integration.ps1` passed 12/12; `pwsh -File ./scripts/test.ps1` passed 343/343; `git diff --check` passed.
 - The 4.8 audit checkbox remains `[ ]` pending follow-up; no 4.9 work is included.
+
+## Independent audit 2/3 of point 4.8
+
+- Reviewed commit: `5d812faaf8da3870e5e27d2b148032b6b06ad904` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Narrow review of the evidence-mode DTO change, Feature Context Markdown, its regressions, and downstream model shape. The implementation slice's gate results are recorded above; this audit did not run a build or tests.
+
+### Finding disposition
+
+1. **Test-context evidence mode and rendered disclosure — closed.** `TestContextPayload.EvidenceMode` is a public read-only `static-test-candidates-only` value. The Markdown heading and preceding line now describe static heuristic candidates and explicitly disclaim verified execution or coverage. The renderer regression includes both an attributed xUnit method and a name-only `Unknown` fixture, and the DTO regression checks the wire value.
+2. **P2 structured Feature Context result — remains open.** `FeatureContextScanner.ScanAsync` flattens those same candidates into `FeatureContextPayload.Tests`, but `FeatureContextModels.cs:28-48` still has no evidence-mode field on either the test entries or their containing payload. Consumers reading the structured result instead of `RenderMarkdown` cannot see the new disclosure; this is the remaining DTO portion of the first audit finding. **Acceptance:** carry `static-test-candidates-only` on the Feature Context structured result as well, and assert it for both attributed and name-only candidates without changing the scoped totals or handoff behavior.
+
+The point 4.8 audit checkbox remains open for the remaining structured-result contract and one final audit. No product code or external repository was changed in this audit.
