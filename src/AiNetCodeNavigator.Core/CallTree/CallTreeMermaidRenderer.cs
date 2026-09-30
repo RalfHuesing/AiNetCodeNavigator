@@ -14,6 +14,7 @@ public static class CallTreeMermaidRenderer
 {
     public static string RenderMermaid(CallGraphPayload graph)
     {
+        ArgumentNullException.ThrowIfNull(graph);
         var sb = new StringBuilder();
         sb.AppendLine("flowchart TD");
 
@@ -53,5 +54,5 @@ public static class CallTreeMermaidRenderer
             : $"{node.Name} — {node.DisplayLine}";
 
     private static string EscapeLabel(string label) =>
-        label.Replace("\"", "'");
+        label.Replace("\r", " ").Replace("\n", " ").Replace("\"", "'");
 }

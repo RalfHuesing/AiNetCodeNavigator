@@ -11,5 +11,6 @@
 - [Get Symbol Body](navigation/get-symbol-body.md): AST declaration extraction, batching, line windows, and unavailable-source cases.
 - [Get File Skeleton](navigation/get-file-skeleton.md): Top-level declarations without method bodies, structured Core results, Markdown rendering, and handoff IDs.
 - [Get Class Structure](navigation/get-class-structure.md): Declared members, visibility, records and interfaces, filters, truncation, and handoffs.
+- [Call Tree Core Engine](navigation/get-call-tree.md): Bounded Roslyn call graph traversal, source handoffs, and ASCII/Mermaid rendering.
 - [Test Context](navigation/test-context.md): Test project/file/class detection and heuristic fixture and method recommendations.
 - [Get Feature Context](navigation/get-feature-context.md): Combined declaration, caller and test candidate context, scope, handoffs, errors, and result limits.

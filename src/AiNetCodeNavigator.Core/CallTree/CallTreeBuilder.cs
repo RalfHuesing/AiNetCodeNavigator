@@ -26,11 +26,15 @@ public static class CallTreeBuilder
         CallTreeBuildRequest request,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Solution);
+        ArgumentNullException.ThrowIfNull(request.SeedSymbol);
+
         var depth = Math.Clamp(request.RequestedDepth, 1, MaxCallTreeDepth);
         var solutionDir = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
         var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
 
-        var state = new BuilderState(request.Solution, solutionDir, depth, request.TopN, request.IncludeBcl, handoffIdentity);
+        var state = new BuilderState(request.Solution, solutionDir, depth, Math.Max(request.TopN, 1), request.IncludeBcl, handoffIdentity);
 
         if (request.SeedSymbol is INamedTypeSymbol namedType)
         {
@@ -119,8 +123,12 @@ public static class CallTreeBuilder
 
         foreach (var (caller, callSites) in shown)
         {
-            var callerNode = state.GetOrAddNode(caller);
-            var targetNode = state.GetOrAddNode(targetSymbol);
+            if (!state.TryGetOrAddNode(caller, out var callerNode)
+                || !state.TryGetOrAddNode(targetSymbol, out var targetNode))
+            {
+                state.AddHiddenEdges(1);
+                continue;
+            }
 
             state.AddEdge(callerNode.NodeId, targetNode.NodeId, callSites);
 
@@ -152,15 +160,13 @@ public static class CallTreeBuilder
             var body = GetBodyNode(syntax);
             if (body is null) continue;
 
-            foreach (var invocation in body.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            void AddTarget(ISymbol? target, SyntaxNode callSite)
             {
-                var symbolInfo = semanticModel.GetSymbolInfo(invocation, ct);
-                var target = symbolInfo.Symbol ?? symbolInfo.CandidateSymbols.FirstOrDefault();
-                if (target is null) continue;
+                if (target is null) return;
 
-                if (!state.IncludeBcl && !target.Locations.Any(l => l.IsInSource)) continue;
+                if (!state.IncludeBcl && !target.Locations.Any(l => l.IsInSource)) return;
 
-                var lineSpan = invocation.GetLocation().GetLineSpan();
+                var lineSpan = callSite.GetLocation().GetLineSpan();
                 var relPath = PathNormalizer.ToRelative(state.SolutionDir, lineSpan.Path);
                 var line = lineSpan.StartLinePosition.Line + 1;
 
@@ -171,6 +177,37 @@ public static class CallTreeBuilder
                 }
 
                 list.Add(new CallSiteInfo(relPath, line));
+            }
+
+            foreach (var invocation in body.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                var symbolInfo = semanticModel.GetSymbolInfo(invocation, ct);
+                var target = symbolInfo.Symbol ?? symbolInfo.CandidateSymbols.FirstOrDefault();
+                if (target is null && invocation.Expression is MemberAccessExpressionSyntax memberAccess)
+                {
+                    target = ResolveMemberAccess(memberAccess, semanticModel, ct);
+                }
+                AddTarget(target, invocation);
+            }
+
+            foreach (var creation in body.DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
+            {
+                var symbolInfo = semanticModel.GetSymbolInfo(creation, ct);
+                AddTarget(symbolInfo.Symbol ?? symbolInfo.CandidateSymbols.FirstOrDefault()
+                    ?? semanticModel.GetTypeInfo(creation, ct).Type, creation);
+            }
+
+            foreach (var creation in body.DescendantNodes().OfType<ImplicitObjectCreationExpressionSyntax>())
+            {
+                var symbolInfo = semanticModel.GetSymbolInfo(creation, ct);
+                AddTarget(symbolInfo.Symbol ?? symbolInfo.CandidateSymbols.FirstOrDefault()
+                    ?? semanticModel.GetTypeInfo(creation, ct).Type, creation);
+            }
+
+            foreach (var memberAccess in body.DescendantNodes().OfType<MemberAccessExpressionSyntax>())
+            {
+                if (memberAccess.Parent is InvocationExpressionSyntax) continue;
+                AddTarget(ResolveMemberAccess(memberAccess, semanticModel, ct), memberAccess);
             }
         }
 
@@ -187,8 +224,12 @@ public static class CallTreeBuilder
 
         foreach (var (callee, callSites) in shown)
         {
-            var sourceNode = state.GetOrAddNode(sourceSymbol);
-            var calleeNode = state.GetOrAddNode(callee);
+            if (!state.TryGetOrAddNode(sourceSymbol, out var sourceNode)
+                || !state.TryGetOrAddNode(callee, out var calleeNode))
+            {
+                state.AddHiddenEdges(1);
+                continue;
+            }
 
             state.AddEdge(sourceNode.NodeId, calleeNode.NodeId, callSites);
 
@@ -197,6 +238,14 @@ public static class CallTreeBuilder
                 state.Enqueue(callee, level + 1);
             }
         }
+    }
+
+    private static ISymbol? ResolveMemberAccess(MemberAccessExpressionSyntax memberAccess, SemanticModel semanticModel, CancellationToken ct)
+    {
+        var symbolInfo = semanticModel.GetSymbolInfo(memberAccess, ct);
+        if (symbolInfo.Symbol is not null) return symbolInfo.Symbol;
+        if (symbolInfo.CandidateSymbols.Length > 0) return symbolInfo.CandidateSymbols[0];
+        return semanticModel.GetMemberGroup(memberAccess, ct).FirstOrDefault();
     }
 
     private static SyntaxNode? GetBodyNode(SyntaxNode node) =>
@@ -267,6 +316,19 @@ public static class CallTreeBuilder
             return node;
         }
 
+        public bool TryGetOrAddNode(ISymbol symbol, out CallGraphNode node)
+        {
+            if (_nodesBySymbol.TryGetValue(symbol, out node!)) return true;
+            if (_nodes.Count >= MaxCallTreeNodes)
+            {
+                node = null!;
+                return false;
+            }
+
+            node = GetOrAddNode(symbol);
+            return true;
+        }
+
         public void AddEdge(string fromNodeId, string toNodeId, IReadOnlyList<CallSiteInfo> callSites)
         {
             var existing = _edges.FirstOrDefault(e => e.FromNodeId == fromNodeId && e.ToNodeId == toNodeId);
@@ -315,6 +377,11 @@ public static class CallTreeBuilder
         private static string FormatSymbolName(ISymbol symbol)
         {
             var typeName = symbol.ContainingType?.Name;
+            if (symbol is IMethodSymbol { MethodKind: MethodKind.Constructor or MethodKind.StaticConstructor })
+            {
+                return typeName ?? symbol.Name;
+            }
+
             return typeName != null ? $"{typeName}.{symbol.Name}" : symbol.Name;
         }
 

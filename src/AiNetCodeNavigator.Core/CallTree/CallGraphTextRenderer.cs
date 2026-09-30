@@ -14,6 +14,7 @@ public static class CallGraphTextRenderer
 {
     public static string RenderAscii(CallGraphPayload graph)
     {
+        ArgumentNullException.ThrowIfNull(graph);
         if (graph.Nodes.Count == 0) return "Keine Aufrufe gefunden.";
 
         var nodes = graph.Nodes.ToDictionary(n => n.NodeId, StringComparer.Ordinal);
