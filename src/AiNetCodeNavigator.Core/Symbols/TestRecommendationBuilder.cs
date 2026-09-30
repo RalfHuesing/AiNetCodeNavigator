@@ -127,7 +127,10 @@ public static class TestRecommendationBuilder
             Line: line,
             Framework: framework,
             Methods: methods,
-            HandoffId: classHandoff);
+            HandoffId: classHandoff)
+        {
+            SourceProjectId = solution.GetDocument(syntaxRef.SyntaxTree)?.Project.Id
+        };
     }
 
     private static string DetectFramework(INamedTypeSymbol testClass)

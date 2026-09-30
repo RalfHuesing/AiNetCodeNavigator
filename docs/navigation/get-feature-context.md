@@ -2,7 +2,7 @@
 
 `FeatureContextScanner.ScanAsync` resolves one source symbol and combines its declaration/signature, incoming callers, and statically matched test recommendations. The declaration and source callers carry opaque `h:` handoffs when a stable source identity is available; test-method handoffs point to the attributed method. These IDs can be passed back to the scanner to resolve those symbols.
 
-Caller scope is applied before totals and limits are calculated. `all` includes callers from every source file, `production` excludes files classified as tests, and `tests` keeps those files. The request defaults to 20 callers and 20 test candidates. Each requested maximum is clamped to 1 through 50, results are sorted deterministically before truncation, and the payload reports scoped totals plus truncation flags.
+Scope is applied to caller locations and test candidate source documents before totals and limits are calculated. `all` includes every source, `production` excludes sources classified as tests, and `tests` keeps those sources. Classification uses the Roslyn project and document path, so a neutral file name such as `Shared.cs` in a test project remains in the test scope. The request defaults to 20 callers and 20 test candidates. Each requested maximum is clamped to 1 through 50, results are sorted deterministically before truncation, and the payload reports scoped totals plus truncation flags.
 
 An unresolved ordinary name returns `null`. Invalid or unresolvable handoffs return a payload with a structured navigation error. Null requests/solutions and blank identifiers throw argument exceptions. Markdown rendering rejects a null payload with `ArgumentNullException`.
 

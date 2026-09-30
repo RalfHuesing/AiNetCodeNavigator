@@ -1,6 +1,7 @@
 #nullable enable
 
 using System.Collections.Generic;
+using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.Symbols;
 
@@ -18,7 +19,10 @@ public sealed record TestFixtureMatch(
     int Line,
     string Framework,
     IReadOnlyList<TestMethodMatch> Methods,
-    string? HandoffId = null);
+    string? HandoffId = null)
+{
+    internal ProjectId? SourceProjectId { get; init; }
+}
 
 /// <summary>
 /// Statically inferred test candidates for a symbol; this payload is not evidence of test execution or coverage.

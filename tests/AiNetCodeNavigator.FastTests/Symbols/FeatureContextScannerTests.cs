@@ -120,6 +120,73 @@ public sealed class FeatureContextScannerTests
     }
 
     [Fact]
+    public async Task ScanAsync_UsesDocumentProjectForNeutralTestCallerScope()
+    {
+        const string testSource = "using System; namespace Xunit { public sealed class FactAttribute : Attribute { } } namespace Sample.App.Tests { public class TestRunner { [Xunit.Fact] public void Exercise(Sample.Core.TargetService target) => target.Run(); } }";
+        const string pathSource = "namespace Sample.PathProject { public class PathRunner { public void ExercisePath(Sample.Core.TargetService target) => target.Run(); } }";
+        using var handle = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\FeatureProjectScopes.slnx",
+            new ProjectSpec("Sample.Core", [("TargetService.cs", "namespace Sample.Core; public class TargetService { public void Run() { } }")]),
+            new ProjectSpec("Sample.App", [("Caller.cs", "namespace Sample.App; public class Caller { public void Invoke(Sample.Core.TargetService target) => target.Run(); }")], ProjectReferences: ["Sample.Core"]),
+            new ProjectSpec("Sample.App.Tests", [("Shared.cs", testSource)], ProjectReferences: ["Sample.Core"], VirtualProjectDirectory: "src"),
+            new ProjectSpec("Sample.PathProject", [("tests/PathCaller.cs", pathSource)], ProjectReferences: ["Sample.Core"]));
+
+        var all = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(
+            handle.Solution, "Run", Scope: SymbolScopeType.All));
+        var production = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(
+            handle.Solution, "Run", Scope: SymbolScopeType.Production));
+        var tests = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(
+            handle.Solution, "Run", Scope: SymbolScopeType.Tests));
+
+        Assert.NotNull(all);
+        Assert.NotNull(production);
+        Assert.NotNull(tests);
+        Assert.Equal(3, all.TotalCallers);
+        Assert.Equal(3, all.Callers.Count);
+        Assert.Equal(1, production.TotalCallers);
+        Assert.Single(production.Callers);
+        Assert.Equal(2, tests.TotalCallers);
+        Assert.Equal(2, tests.Callers.Count);
+        Assert.Contains(production.Callers, caller => caller.CallerName.EndsWith("Invoke", StringComparison.Ordinal));
+        Assert.DoesNotContain(production.Callers, caller => caller.CallerName.EndsWith("Exercise", StringComparison.Ordinal));
+        Assert.Contains(tests.Callers, caller => caller.CallerName.EndsWith("ExercisePath", StringComparison.Ordinal));
+        Assert.Contains(tests.Callers, caller => caller.CallerName.EndsWith("Exercise", StringComparison.Ordinal));
+        Assert.DoesNotContain(tests.Callers, caller => caller.CallerName.EndsWith("Invoke", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ScanAsync_FiltersTestRecommendationsByScopeBeforeCounting()
+    {
+        const string fixtureSources = "using System; namespace Xunit { public sealed class FactAttribute : Attribute { } } namespace Sample.Tests { public class TargetServiceTest { [Xunit.Fact] public void Single() { } } public class TargetServiceTests { [Xunit.Fact] public void Plural() { } } }";
+        const string pathFixtureSource = "using System; namespace Xunit { public sealed class FactAttribute : Attribute { } } namespace Sample.PathProject { public class TargetServiceSpec { [Xunit.Fact] public void PathBased() { } } }";
+        using var handle = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\FeatureRecommendationScopes.slnx",
+            new ProjectSpec("Sample.Core", [("TargetService.cs", "namespace Sample.Core; public class TargetService { }")]),
+            new ProjectSpec("Sample.App.Tests", [("Shared.cs", fixtureSources)], ProjectReferences: ["Sample.Core"], VirtualProjectDirectory: "src"),
+            new ProjectSpec("Sample.PathProject", [("tests/PathFixtures.cs", pathFixtureSource)], ProjectReferences: ["Sample.Core"]));
+
+        var all = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(
+            handle.Solution, "Sample.Core.TargetService", MaxTests: 1, Scope: SymbolScopeType.All));
+        var production = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(
+            handle.Solution, "Sample.Core.TargetService", MaxTests: 1, Scope: SymbolScopeType.Production));
+        var tests = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(
+            handle.Solution, "Sample.Core.TargetService", MaxTests: 1, Scope: SymbolScopeType.Tests));
+
+        Assert.NotNull(all);
+        Assert.NotNull(production);
+        Assert.NotNull(tests);
+        Assert.Equal(3, all.TotalTests);
+        Assert.Single(all.Tests);
+        Assert.True(all.TestsTruncated);
+        Assert.Empty(production.Tests);
+        Assert.Equal(0, production.TotalTests);
+        Assert.False(production.TestsTruncated);
+        Assert.Equal(3, tests.TotalTests);
+        Assert.Single(tests.Tests);
+        Assert.True(tests.TestsTruncated);
+    }
+
+    [Fact]
     public async Task ScanAsync_ClampsLimitsAndReportsTruncation()
     {
         const int callCount = 60;

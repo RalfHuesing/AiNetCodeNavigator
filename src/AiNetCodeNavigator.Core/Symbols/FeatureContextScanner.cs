@@ -64,19 +64,19 @@ public static class FeatureContextScanner
         var solutionDir = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
         var declaration = ExtractDeclaration(symbol, solutionDir, identity, request.Solution);
 
-        var allCallers = await CollectCallersAsync(symbol, request.Solution, solutionDir, identity, ct).ConfigureAwait(false);
-        var scopedCallers = FilterCallersByScope(allCallers, request.Scope)
+        var scopedCallers = await CollectCallersAsync(symbol, request.Solution, solutionDir, identity, request.Scope, ct).ConfigureAwait(false);
+        var orderedCallers = scopedCallers
             .OrderBy(c => PathNormalizer.NormalizeSeparators(c.FilePath), StringComparer.OrdinalIgnoreCase)
             .ThenBy(c => c.Line)
             .ThenBy(c => c.ProjectName, StringComparer.Ordinal)
             .ThenBy(c => c.CallerName, StringComparer.Ordinal)
             .ToList();
         var maxCallers = Math.Clamp(request.MaxCallers, 1, MaxCallersLimit);
-        var callersTruncated = scopedCallers.Count > maxCallers;
-        var shownCallers = scopedCallers.Take(maxCallers).ToList();
+        var callersTruncated = orderedCallers.Count > maxCallers;
+        var shownCallers = orderedCallers.Take(maxCallers).ToList();
 
         var testContext = await TestRecommendationBuilder.BuildAsync(symbol, request.Solution, ct).ConfigureAwait(false);
-        var allTests = FlattenTestRecommendations(testContext)
+        var allTests = FlattenTestRecommendations(testContext, request.Solution, request.Scope)
             .OrderBy(t => PathNormalizer.NormalizeSeparators(t.FilePath), StringComparer.OrdinalIgnoreCase)
             .ThenBy(t => t.Line)
             .ThenBy(t => t.FixtureName, StringComparer.Ordinal)
@@ -90,7 +90,7 @@ public static class FeatureContextScanner
             Declaration: declaration,
             Callers: shownCallers,
             Tests: shownTests,
-            TotalCallers: scopedCallers.Count,
+            TotalCallers: orderedCallers.Count,
             TotalTests: allTests.Count,
             CallersTruncated: callersTruncated,
             TestsTruncated: testsTruncated);
@@ -206,6 +206,7 @@ public static class FeatureContextScanner
         Solution solution,
         string solutionDir,
         AnalysisSymbolIdentity? identity,
+        SymbolScopeType scope,
         CancellationToken ct)
     {
         var callers = new List<FeatureContextCallerEntry>();
@@ -232,6 +233,8 @@ public static class FeatureContextScanner
 
                 var lineSpan = loc.Location.GetLineSpan();
                 var relPath = PathNormalizer.ToRelative(solutionDir, lineSpan.Path);
+                if (!MatchesScope(IsTestDocument(doc, relPath), scope)) continue;
+
                 var line = lineSpan.StartLinePosition.Line + 1;
                 var projName = doc.Project.Name;
 
@@ -261,29 +264,37 @@ public static class FeatureContextScanner
         return callers;
     }
 
-    private static List<FeatureContextCallerEntry> FilterCallersByScope(
-        List<FeatureContextCallerEntry> callers,
-        SymbolScopeType scope)
+    private static bool MatchesScope(bool isTest, SymbolScopeType scope)
     {
-        if (scope == SymbolScopeType.All) return callers;
-
-        return callers.Where(c =>
+        return scope switch
         {
-            var isTest = TestDetector.IsTestFile(c.FilePath);
-            return scope switch
-            {
-                SymbolScopeType.Production => !isTest,
-                SymbolScopeType.Tests => isTest,
-                _ => true
-            };
-        }).ToList();
+            SymbolScopeType.Production => !isTest,
+            SymbolScopeType.Tests => isTest,
+            _ => true
+        };
     }
 
-    private static List<FeatureContextTestRecommendation> FlattenTestRecommendations(TestContextPayload testContext)
+    private static bool IsTestDocument(Document document, string relativePath)
+    {
+        return TestDetector.IsTestProject(document.Project) ||
+               TestDetector.IsTestFile(document.FilePath) ||
+               TestDetector.IsTestFile(relativePath);
+    }
+
+    private static List<FeatureContextTestRecommendation> FlattenTestRecommendations(
+        TestContextPayload testContext,
+        Solution solution,
+        SymbolScopeType scope)
     {
         var result = new List<FeatureContextTestRecommendation>();
         foreach (var fixture in testContext.TestFixtures)
         {
+            var isTest = TestDetector.IsTestFile(fixture.FilePath) ||
+                         (fixture.SourceProjectId is { } projectId &&
+                          solution.GetProject(projectId) is { } project &&
+                          TestDetector.IsTestProject(project));
+            if (!MatchesScope(isTest, scope)) continue;
+
             if (fixture.Methods.Count == 0)
             {
                 result.Add(new FeatureContextTestRecommendation(

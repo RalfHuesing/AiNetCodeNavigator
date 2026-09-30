@@ -40,8 +40,8 @@
   - [x] Handoff-Roundtrips für Deklaration, Aufrufer und Testmethode sowie `production`-/`tests`-Scope der Aufrufer prüfen.
   - [x] Null-/Leer-Eingaben, auflösbare Fehler, Ergebnislimits 1–50 und Trunkierungsangaben prüfen.
   - [x] Feature-Kontext bleibt frei von Linter-Violations und Qualitätsmetriken.
-  - [ ] Classify callers from their Roslyn document and project, not only the relative file name; test neutral file names in a test project and scoped totals.
-  - [ ] Apply the requested scope to static test recommendations before totals, sorting, and truncation; test production/tests/all outcomes with both project- and path-based test evidence.
+  - [x] Classify callers from their Roslyn document and project, not only the relative file name; test neutral file names in a test project and scoped totals.
+  - [x] Apply the requested scope to static test recommendations before totals, sorting, and truncation; test production/tests/all outcomes with both project- and path-based test evidence.
   - [ ] Review/Audit zu 4.6 durchführen; Findings ergänzen und umsetzen.
 - [ ] 4.7 Gemeinsame Symbolauflösung für Folge-Tools fertigstellen: eindeutige qualifizierte Namen, Doc-IDs, Positionen und `h:...`-IDs unterstützen; bei mehrdeutigen Kurznamen auswählbare Treffer statt eines zufälligen ersten Symbols liefern. Die Tool-Verträge und Fehlerfälle mit FastTests belegen.
   - [ ] Review/Audit zu 4.7 durchführen; Findings ergänzen und umsetzen.
