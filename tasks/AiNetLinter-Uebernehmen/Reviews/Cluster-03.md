@@ -29,6 +29,24 @@ A later FastTests rerun transiently failed in the unrelated `HandoffHandleRegist
 
 - The point 3.1 audit checkbox remains open for independent follow-up. No 3.2 or 3.3 implementation work was included.
 
+### Audit 2 Finding Fix
+
+- Fix base: `a976b89b906130e0134766eb0b1a83863717c14a`.
+- Regression tests were run before the production change. Two projects with identical project path/options and a shared declaration produced the same handoff when their metadata references differed; the same collision occurred when their project references differed. The Windows case-variant assertions now also prove each handoff is non-null, parses successfully, and has the requested source or assembly origin.
+- **P1 — Reference-context project collisions — fixed.** Stable markers now include each project's stable metadata-reference descriptors (normalized absolute file path, module version IDs, metadata reference kind, interop setting, and aliases) and the transitive project-reference graph (target project path/context and edge aliases/interop setting). Traversal uses `ProjectId` only to detect revisits; it is never serialized. Missing project references, unstable project paths, or metadata references without a stable PE identity fail closed with no marker. If multiple projects still have the exact same marker, all are suppressed to avoid selecting one arbitrarily. Regression tests independently vary metadata and project references while preserving the root path, options, and declaration ID, verify distinct handoffs remain stable across equivalent solution reloads, and verify indistinguishable contexts produce no handoff.
+- **P3 — Case-variant assertions — fixed.** Source and assembly tests require both generated handoffs to be non-null and parse to the expected origin before asserting equality.
+- Current-state documentation updated: [build-and-tests.md](../../../docs/development/build-and-tests.md).
+
+| Gate | Result |
+|---|---|
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 236/236 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 248/248 across both test projects |
+| `git diff --check` | Passed before commit |
+
+- The point 3.1 audit checkbox remains open for the final audit after this fix. No 3.2 or 3.3 implementation work was included.
+
 ### Independent audit 1/3 of point 3.1
 
 - Reviewed commit: `3afd5c80e468510428c49c1f869d0d669917b9a3` (clean working tree before review).

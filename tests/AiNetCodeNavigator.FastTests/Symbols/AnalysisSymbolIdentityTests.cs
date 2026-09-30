@@ -94,6 +94,42 @@ public sealed class AnalysisSymbolIdentityTests
     }
 
     [Fact]
+    public async Task FormatHandoff_SameProjectPathAndOptions_DistinguishesMetadataReferencesStably()
+    {
+        using var firstSnapshot = CreateReferenceContextSolution(varyMetadataReferences: true, varyProjectReferences: false);
+        using var reloadedSnapshot = CreateReferenceContextSolution(varyMetadataReferences: true, varyProjectReferences: false);
+        var firstIds = await GetRootHandoffsAsync(firstSnapshot.Solution);
+        var reloadedIds = await GetRootHandoffsAsync(reloadedSnapshot.Solution);
+
+        Assert.Equal(firstIds[0].DocumentationId, firstIds[1].DocumentationId);
+        Assert.NotEqual(firstIds[0].Handoff, firstIds[1].Handoff);
+        Assert.Equal(firstIds, reloadedIds);
+    }
+
+    [Fact]
+    public async Task FormatHandoff_SameProjectPathAndOptions_DistinguishesProjectReferencesStably()
+    {
+        using var firstSnapshot = CreateReferenceContextSolution(varyMetadataReferences: false, varyProjectReferences: true);
+        using var reloadedSnapshot = CreateReferenceContextSolution(varyMetadataReferences: false, varyProjectReferences: true);
+        var firstIds = await GetRootHandoffsAsync(firstSnapshot.Solution);
+        var reloadedIds = await GetRootHandoffsAsync(reloadedSnapshot.Solution);
+
+        Assert.Equal(firstIds[0].DocumentationId, firstIds[1].DocumentationId);
+        Assert.NotEqual(firstIds[0].Handoff, firstIds[1].Handoff);
+        Assert.Equal(firstIds, reloadedIds);
+    }
+
+    [Fact]
+    public async Task FormatHandoff_IndistinguishableProjectContexts_SuppressesAmbiguousHandoffs()
+    {
+        using var snapshot = CreateReferenceContextSolution(varyMetadataReferences: false, varyProjectReferences: false);
+
+        var handoffs = await GetRootHandoffsAsync(snapshot.Solution);
+
+        Assert.All(handoffs, result => Assert.Null(result.Handoff));
+    }
+
+    [Fact]
     public Task FormatHandoff_CaseVariantSourceTargetPaths_UseTheSameHandoffId() =>
         AssertCaseVariantTargetPathsAsync(SymbolHandoffOrigin.Source);
 
@@ -134,6 +170,12 @@ public sealed class AnalysisSymbolIdentityTests
             ? lowerCaseIdentity.FormatHandoff(symbol, fixture.Solution)
             : lowerCaseIdentity.FormatHandoff(symbol);
 
+        Assert.NotNull(mixedCaseHandoff);
+        Assert.NotNull(lowerCaseHandoff);
+        Assert.True(SymbolHandoffIdentifier.TryParse(mixedCaseHandoff, out var parsedMixedCase));
+        Assert.True(SymbolHandoffIdentifier.TryParse(lowerCaseHandoff, out var parsedLowerCase));
+        Assert.Equal(origin, parsedMixedCase.Origin);
+        Assert.Equal(origin, parsedLowerCase.Origin);
         Assert.Equal(mixedCaseHandoff, lowerCaseHandoff);
     }
 
@@ -328,6 +370,121 @@ public sealed class AnalysisSymbolIdentityTests
     {
         var results = new System.Collections.Generic.List<(string? DocumentationId, string? Handoff)>();
         foreach (var project in solution.Projects)
+        {
+            var compilation = await project.GetCompilationAsync();
+            Assert.NotNull(compilation);
+            var symbol = Assert.IsAssignableFrom<ISymbol>(compilation.GetTypeByMetadataName("Shared.Worker"));
+            results.Add((DocumentationCommentId.CreateDeclarationId(symbol), identity.FormatHandoff(symbol, solution)));
+        }
+
+        return results.ToArray();
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Reliability",
+        "CA2000:Dispose objects before losing scope",
+        Justification = "The workspace lifetime is transferred to the returned TestSolutionHandle.")]
+    private static TestSolutionHandle CreateReferenceContextSolution(bool varyMetadataReferences, bool varyProjectReferences)
+    {
+        const string solutionPath = @"C:\VirtualRepo\References.slnx";
+        const string rootProjectPath = @"C:\VirtualRepo\Root\Root.csproj";
+        const string rootSourcePath = @"C:\VirtualRepo\Root\Worker.cs";
+        const string rootSource = "namespace Shared; public class Worker { public void Run() {} }";
+        var workspace = new AdhocWorkspace();
+        try
+        {
+            var solution = workspace.AddSolution(SolutionInfo.Create(
+                SolutionId.CreateNewId(),
+                VersionStamp.Create(),
+                filePath: solutionPath));
+            var libraryOneId = ProjectId.CreateNewId("LibraryOne");
+            var libraryTwoId = ProjectId.CreateNewId("LibraryTwo");
+            solution = AddReferenceTestProject(
+                solution,
+                libraryOneId,
+                "LibraryOne",
+                @"C:\VirtualRepo\LibraryOne\LibraryOne.csproj",
+                "namespace References; public class One {}",
+                TestWorkspaceBuilder.CoreReferences);
+            solution = AddReferenceTestProject(
+                solution,
+                libraryTwoId,
+                "LibraryTwo",
+                @"C:\VirtualRepo\LibraryTwo\LibraryTwo.csproj",
+                "namespace References; public class Two {}",
+                TestWorkspaceBuilder.CoreReferences);
+
+            var uriReference = MetadataReference.CreateFromFile(typeof(System.Uri).Assembly.Location);
+            var consoleReference = MetadataReference.CreateFromFile(typeof(System.Console).Assembly.Location);
+            for (var index = 0; index < 2; index++)
+            {
+                var projectId = ProjectId.CreateNewId("Root");
+                var metadataReferences = TestWorkspaceBuilder.CoreReferences
+                    .Concat([varyMetadataReferences && index == 1 ? consoleReference : uriReference]);
+                solution = AddReferenceTestProject(
+                    solution,
+                    projectId,
+                    "Root",
+                    rootProjectPath,
+                    rootSource,
+                    metadataReferences,
+                    rootSourcePath);
+                if (varyProjectReferences)
+                {
+                    solution = solution.AddProjectReference(
+                        projectId,
+                        new ProjectReference(index == 0 ? libraryOneId : libraryTwoId));
+                }
+            }
+
+            if (!workspace.TryApplyChanges(solution))
+            {
+                throw new System.InvalidOperationException("The test workspace rejected the reference-context solution.");
+            }
+
+            return new TestSolutionHandle(workspace.CurrentSolution, workspace);
+        }
+        catch
+        {
+            workspace.Dispose();
+            throw;
+        }
+    }
+
+    private static Solution AddReferenceTestProject(
+        Solution solution,
+        ProjectId projectId,
+        string name,
+        string projectPath,
+        string source,
+        System.Collections.Generic.IEnumerable<MetadataReference> metadataReferences,
+        string? sourcePath = null)
+    {
+        solution = solution.AddProject(
+            ProjectInfo.Create(
+                    projectId,
+                    VersionStamp.Create(),
+                    name,
+                    name,
+                    LanguageNames.CSharp,
+                    filePath: projectPath)
+                .WithMetadataReferences(metadataReferences)
+                .WithParseOptions(new CSharpParseOptions()));
+        return solution.AddDocument(
+            DocumentId.CreateNewId(projectId),
+            System.IO.Path.GetFileNameWithoutExtension(projectPath) + ".cs",
+            SourceText.From(source),
+            filePath: sourcePath ?? System.IO.Path.ChangeExtension(projectPath, ".cs"));
+    }
+
+    private static async Task<(string? DocumentationId, string? Handoff)[]> GetRootHandoffsAsync(Solution solution)
+    {
+        var identity = AnalysisSymbolIdentity.ForSource(
+            @"C:\VirtualRepo\References.slnx",
+            new string('f', 64),
+            solution);
+        var results = new System.Collections.Generic.List<(string? DocumentationId, string? Handoff)>();
+        foreach (var project in solution.Projects.Where(project => project.Name == "Root"))
         {
             var compilation = await project.GetCompilationAsync();
             Assert.NotNull(compilation);

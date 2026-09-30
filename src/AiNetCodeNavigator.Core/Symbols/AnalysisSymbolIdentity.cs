@@ -162,10 +162,34 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
         {
             CanonicalPath = canonicalPath,
             IsAssembly = false,
-            SourceProjectMarkers = solution?.Projects
-                .Where(project => project.FilePath is { Length: > 0 } projectPath && Path.IsPathFullyQualified(projectPath))
-                .ToDictionary(project => project.Id, GetStableProjectMarker),
+            SourceProjectMarkers = solution is null ? null : BuildSourceProjectMarkers(solution),
         };
+
+    private static IReadOnlyDictionary<ProjectId, string> BuildSourceProjectMarkers(Solution solution)
+    {
+        var candidates = new List<(ProjectId ProjectId, string Marker)>();
+        foreach (var project in solution.Projects)
+        {
+            if (project.FilePath is not { Length: > 0 } projectPath || !Path.IsPathFullyQualified(projectPath))
+            {
+                continue;
+            }
+
+            try
+            {
+                candidates.Add((project.Id, GetStableProjectMarker(project)));
+            }
+            catch (ArgumentException)
+            {
+                // Projects without a stable reference context cannot safely receive handoff IDs.
+            }
+        }
+
+        return candidates
+            .GroupBy(candidate => candidate.Marker, StringComparer.Ordinal)
+            .Where(group => group.Count() == 1)
+            .ToDictionary(group => group.Single().ProjectId, group => group.Key);
+    }
 
     public static string GetStableProjectMarker(Project project)
     {
@@ -216,6 +240,57 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
 
     private static string GetStableProjectContext(Project project)
     {
+        var nodes = new List<string>();
+        var edges = new List<string>();
+        var pending = new Queue<Project>();
+        var visited = new HashSet<ProjectId>();
+        pending.Enqueue(project);
+
+        while (pending.Count > 0)
+        {
+            var current = pending.Dequeue();
+            if (!visited.Add(current.Id))
+            {
+                continue;
+            }
+
+            var node = GetStableProjectNode(current);
+            nodes.Add(node);
+            foreach (var projectReference in current.ProjectReferences)
+            {
+                var referencedProject = current.Solution.GetProject(projectReference.ProjectId);
+                if (referencedProject is null)
+                {
+                    throw new ArgumentException("A stable project marker requires all project references to resolve.", nameof(project));
+                }
+
+                var targetPath = GetCanonicalProjectPath(referencedProject);
+                var targetNode = GetStableProjectNode(referencedProject);
+                var aliases = string.Join(";", projectReference.Aliases.OrderBy(alias => alias, StringComparer.Ordinal));
+                edges.Add($"{node}=>{targetPath}\0{targetNode}\0{projectReference.EmbedInteropTypes}\0{aliases}");
+                pending.Enqueue(referencedProject);
+            }
+        }
+
+        return string.Join("\n", nodes.OrderBy(value => value, StringComparer.Ordinal))
+            + "\n--references--\n"
+            + string.Join("\n", edges.OrderBy(value => value, StringComparer.Ordinal));
+    }
+
+    private static string GetCanonicalProjectPath(Project project)
+    {
+        if (project.FilePath is not { Length: > 0 } projectPath
+            || !Path.IsPathFullyQualified(projectPath)
+            || !SymbolHandoffToken.TryNormalizeTargetPath(projectPath, out var canonicalPath))
+        {
+            throw new ArgumentException("A stable project marker requires absolute paths for the full project reference graph.", nameof(project));
+        }
+
+        return canonicalPath;
+    }
+
+    private static string GetStableProjectNode(Project project)
+    {
         var properties = new SortedDictionary<string, string>(StringComparer.Ordinal)
         {
             ["assembly"] = project.AssemblyName ?? string.Empty,
@@ -256,6 +331,51 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
             }
         }
 
+        var metadataReferences = new List<string>();
+        foreach (var metadataReference in project.MetadataReferences)
+        {
+            if (metadataReference is not PortableExecutableReference portableReference
+                || !TryGetStableMetadataReferenceDescriptor(portableReference, out var descriptor))
+            {
+                throw new ArgumentException("A stable project marker requires stable metadata reference identities.", nameof(project));
+            }
+
+            metadataReferences.Add(descriptor);
+        }
+
+        properties["metadataReferences"] = string.Join("\n", metadataReferences.OrderBy(value => value, StringComparer.Ordinal));
+
         return string.Join("\n", properties.Select(property => $"{property.Key}={property.Value}"));
+    }
+
+    private static bool TryGetStableMetadataReferenceDescriptor(
+        PortableExecutableReference reference,
+        out string descriptor)
+    {
+        descriptor = string.Empty;
+        var referencePath = reference.FilePath;
+        if (string.IsNullOrWhiteSpace(referencePath) || !Path.IsPathFullyQualified(referencePath)
+            || !SymbolHandoffToken.TryNormalizeTargetPath(referencePath, out var canonicalPath))
+        {
+            return false;
+        }
+
+        var moduleIds = reference.GetMetadata() switch
+        {
+            AssemblyMetadata assemblyMetadata => assemblyMetadata.GetModules()
+                .Select(module => module.GetModuleVersionId().ToString("D")),
+            ModuleMetadata moduleMetadata => [moduleMetadata.GetModuleVersionId().ToString("D")],
+            _ => [],
+        };
+        var stableModuleIds = moduleIds.OrderBy(value => value, StringComparer.Ordinal).ToArray();
+        if (stableModuleIds.Length == 0 || stableModuleIds.Any(string.IsNullOrWhiteSpace))
+        {
+            return false;
+        }
+
+        var properties = reference.Properties;
+        var aliases = string.Join(";", properties.Aliases.OrderBy(alias => alias, StringComparer.Ordinal));
+        descriptor = $"{canonicalPath}\0{string.Join(";", stableModuleIds)}\0{properties.Kind}\0{properties.EmbedInteropTypes}\0{aliases}";
+        return true;
     }
 }
