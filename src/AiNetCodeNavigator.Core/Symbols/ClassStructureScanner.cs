@@ -447,14 +447,20 @@ public static class ClassStructureScanner
             return sb.ToString().TrimEnd();
         }
 
-        sb.AppendLine("| Kind | Name | Visibility | Lines | Signature | Handoff |");
-        sb.AppendLine("| :--- | :--- | :--- | :---: | :--- | :--- |");
+        var isMultiFile = p.Files.Count > 1;
+        sb.AppendLine(isMultiFile
+            ? "| Kind | Name | Visibility | File | Lines | Signature | Handoff |"
+            : "| Kind | Name | Visibility | Lines | Signature | Handoff |");
+        sb.AppendLine(isMultiFile
+            ? "| :--- | :--- | :--- | :--- | :---: | :--- | :--- |"
+            : "| :--- | :--- | :--- | :---: | :--- | :--- |");
 
         foreach (var m in p.Members)
         {
-            var handoffText = m.HandoffId != null ? $"`{m.HandoffId}`" : "-";
+            var handoffText = m.HandoffId != null ? $"`{EscapeTableCell(m.HandoffId)}`" : "-";
             var linesText = m.LineCount > 0 ? $"{m.StartLine}-{m.EndLine} ({m.LineCount})" : "-";
-            sb.AppendLine($"| {m.Kind} | {m.Name} | {m.Visibility} | {linesText} | `{m.Signature}` | {handoffText} |");
+            var fileText = isMultiFile ? $"{EscapeTableCell(Path.GetFileName(m.FilePath))} | " : string.Empty;
+            sb.AppendLine($"| {EscapeTableCell(m.Kind)} | {EscapeTableCell(m.Name)} | {EscapeTableCell(m.Visibility)} | {fileText}{linesText} | `{EscapeTableCell(m.Signature)}` | {handoffText} |");
         }
 
         if (p.Truncated)
@@ -471,4 +477,10 @@ public static class ClassStructureScanner
         : SymbolDisplay.FormatPrimitive(value, quoteStrings: true, useHexadecimalNumbers: false)
             ?? Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture)
             ?? string.Empty;
+
+    private static string EscapeTableCell(string value) => value
+        .Replace("\r\n", " ", StringComparison.Ordinal)
+        .Replace('\r', ' ')
+        .Replace('\n', ' ')
+        .Replace("|", "\\|", StringComparison.Ordinal);
 }

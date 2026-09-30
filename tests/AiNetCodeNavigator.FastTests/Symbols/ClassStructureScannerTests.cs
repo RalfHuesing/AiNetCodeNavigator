@@ -91,6 +91,95 @@ public sealed class ClassStructureScannerTests
     }
 
     [Fact]
+    public async Task RenderMarkdown_MultiFilePartialTypeShowsDeclaringFileForSameLineMembers()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var project = fixture.Solution.Projects.Single(p => p.Name == "Sample.Core");
+        var first = project.AddDocument("Partial.First.cs", "namespace StructureTests; public partial class Shared { public void First() { } }");
+        var second = first.Project.AddDocument("Partial.Second.cs", "namespace StructureTests; public partial class Shared { public void Second() { } }");
+
+        var payload = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(second.Project.Solution, "StructureTests.Shared"));
+        Assert.NotNull(payload);
+
+        var markdown = ClassStructureScanner.RenderMarkdown(payload);
+
+        Assert.Contains("| Kind | Name | Visibility | File | Lines | Signature | Handoff |", markdown);
+        Assert.Contains("| Method | First | public | Partial.First.cs | 1-1 (1) |", markdown);
+        Assert.Contains("| Method | Second | public | Partial.Second.cs | 1-1 (1) |", markdown);
+    }
+
+    [Fact]
+    public async Task RenderMarkdown_EscapesPipesInOperatorAndConstantSignatures()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var project = fixture.Solution.Projects.Single(p => p.Name == "Sample.Core");
+        var document = project.AddDocument("PipedSignatures.cs", """
+            namespace StructureTests;
+            public sealed class PipeValue
+            {
+                public const string Delimited = "left|right";
+                public static PipeValue operator |(PipeValue left, PipeValue right) => left;
+            }
+            """);
+
+        var payload = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(document.Project.Solution, "StructureTests.PipeValue"));
+        Assert.NotNull(payload);
+
+        var markdown = ClassStructureScanner.RenderMarkdown(payload);
+        var operatorRow = markdown.Split('\n').Single(row => row.Contains("operator", System.StringComparison.Ordinal));
+        var constantRow = markdown.Split('\n').Single(row => row.Contains("Delimited", System.StringComparison.Ordinal));
+        var operatorEntry = Assert.Single(payload.Members, member => member.Signature.Contains("operator |", System.StringComparison.Ordinal));
+
+        Assert.Equal(7, CountUnescapedPipes(operatorRow));
+        Assert.Equal(7, CountUnescapedPipes(constantRow));
+        Assert.Contains("operator \\|", operatorRow);
+        Assert.Contains($"`{operatorEntry.HandoffId}`", operatorRow);
+        Assert.Contains("left\\|right", constantRow);
+    }
+
+    [Fact]
+    public void RenderMarkdown_NormalizesLineBreaksInDynamicCells()
+    {
+        var payload = new ClassStructurePayload(
+            "StructureTests.LineBreaks",
+            "Class",
+            new[] { "LineBreaks.cs" },
+            1,
+            1,
+            1,
+            false,
+            new[]
+            {
+                new ClassStructureMemberEntry(
+                    "Method", "Name\r\nBreak", "public", 1, 1, 1,
+                    "void Name()\r\n{ }", "LineBreaks.cs", null)
+            },
+            System.Array.Empty<string>());
+
+        var markdown = ClassStructureScanner.RenderMarkdown(payload);
+        var memberRow = markdown.Split('\n').Single(row => row.StartsWith("| Method | Name", System.StringComparison.Ordinal));
+
+        Assert.DoesNotContain('\r', memberRow);
+        Assert.Contains("Name Break", memberRow);
+        Assert.Contains("void Name() { }", memberRow);
+        Assert.Equal(7, CountUnescapedPipes(memberRow));
+    }
+
+    private static int CountUnescapedPipes(string value)
+    {
+        var count = 0;
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (value[i] == '|' && (i == 0 || value[i - 1] != '\\'))
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    [Fact]
     public async Task ScanAsync_IncludesRecordPrimaryConstructorParametersAndSpecificRecordKinds()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();

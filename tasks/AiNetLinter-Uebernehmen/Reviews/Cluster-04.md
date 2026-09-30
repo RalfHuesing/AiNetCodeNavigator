@@ -233,3 +233,12 @@ Point 4.3 is accepted after the third and final audit; no open finding or techni
 2. **P2 — Unescaped member signatures can break the Markdown table.** `RenderMarkdown` interpolates `m.Signature` and `m.Name` directly into pipe-delimited rows (`ClassStructureScanner.cs:453-457`). A valid `operator |` signature or a constant string containing `|` adds an unintended column; a newline in a literal can split the row. The reference uses `MarkdownTableBuilder.EscapeCell`, which removes line breaks and escapes pipes. **Acceptance:** escape dynamic table cells without losing the signature content or handoff, and assert a stable column count for an operator signature and a constant string containing a pipe (plus line-break handling).
 
 The point 4.4 audit checkbox remains open pending fixes and a follow-up audit. No product code or external repository was changed in this audit.
+
+### Point 4.4 audit finding fixes
+
+- Added a `File` Markdown column for multi-file types, populated from each member's retained `FilePath`; the regression uses two partial declarations whose member rows both start on line 1 and checks the corresponding file name on each row.
+- Markdown table cells now escape `|` and normalize CR/LF to spaces. FastTests scan a legal `operator |` and a constant string containing `left|right`, verify the original signature content remains visible, preserve the operator's handoff, and assert the row has exactly the expected table separators. A DTO-level renderer test exercises CRLF values in both the name and signature.
+- Read-only AiNetLinter comparison: `GetClassStructureTool.AppendMemberRows` (`h:gwT2`) adds the file column only for multi-file payloads; its Markdown table builder escapes pipe characters and removes line breaks.
+- Before-fix reproductions: both the missing multi-file header and the extra unescaped operator separator failed; the CRLF renderer test failed because a carriage return remained in the row.
+- Verification: focused ClassStructureScanner FastTests passed 15/15; `pwsh -File ./scripts/build.ps1` passed with 0 warnings/errors; `pwsh -File ./scripts/test-fast.ps1` passed 303/303; `pwsh -File ./scripts/test-integration.ps1` passed 12/12; `pwsh -File ./scripts/test.ps1` passed 315/315; `git diff --check` passed.
+- The point 4.4 audit checkbox remains open for independent follow-up.
