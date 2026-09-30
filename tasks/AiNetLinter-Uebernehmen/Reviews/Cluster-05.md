@@ -231,3 +231,15 @@
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 375/375 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Independent audit 2/3 of point 5.3
+
+- Audited commit: `4c7cd3f7e03387f9896753d6766c7b50ef59f7ea` (clean working tree before review edits).
+- Reviewer: `gpt-6-sol`, medium reasoning effort. Scope was limited to the audit-1 partial-location finding and its related Core changes/tests. No build or tests were run in this audit; the remediation gates above belong to the implementation turn.
+- **Accepted:** `TypeHierarchyScanner.cs:86-101` now emits every source entry for bases and interfaces via `CreateEntries`; `:104-144` retains a single pathless entry for metadata, while subtype projection at `:59-65` still takes one entry per type before applying `maxResults`. `TypeHierarchyTests.cs:141-186` covers partial base and interface declarations in separate files across Contracts/App projects, resolves their project-bound handoffs, and asserts the partial derived class counts once. Existing metadata tests at `:247-270` verify pathless BCL base/interface entries and null handoffs.
+- No point-5.3 findings remain open. The point audit checkbox is complete at audit 2/3. Public MCP transport remains later integration work.
+
+### Review verification
+
+- Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
+- The documentation diff was inspected and `git diff --check` passed before commit.

@@ -23,8 +23,8 @@
   - [x] `TypeHierarchyScanner`: Basisklassen, Schnittstellen und abgeleitete Typen ermitteln
   - [x] `GetTypeHierarchyFormatter`: Formatierung als Baumstruktur
   - [x] FastTests für Typ-Hierarchien
-  - [ ] Preserve all partial source declaration locations for base classes and interfaces.
-  - [ ] Review/Audit zu 5.3 durchführen; Findings ergänzen und umsetzen.
+  - [x] Preserve all partial source declaration locations for base classes and interfaces.
+  - [x] Review/Audit zu 5.3 durchführen; Findings ergänzen und umsetzen.
 - [x] 5.4 Transitive Impact-Analyse (`get_impact`-Engine):
   - [x] Ermittlung des transitiven Blast Radius bei Änderungen an Symbolen
   - [x] FastTests für Impact-Berechnung
