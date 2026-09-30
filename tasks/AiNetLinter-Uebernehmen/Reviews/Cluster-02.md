@@ -209,3 +209,23 @@
 - **Existing P2 retained for cluster fix round 1:** point 2.3's nested conditional `ImportGroup` path is not collected; see the [final point audit](#final-independent-point-audit-for-23) and [open Findings](../Findings.md). It can leave the project-reference graph stale after an initially absent nested import appears. The first cluster fix round should add a real `.slnx` regression and include supported nested import declarations. No separate cluster-wide finding was found in this review.
 - Boundary: no production MCP tool currently composes TargetResolver, Registry, and snapshot result into a public call, so this review does not claim transport-level `targetPath`, `operation=retry`, or error-format acceptance. That remains the later host/tool and end-to-end gate, not an additional 2.3 point audit.
 - Verification provenance: source, tests, and earlier read-only AiNetLinter comparisons reviewed; no build or tests were run by this reviewer. The latest point 2.3 implementation table above records the implementer's gates. This review changed documentation only; its diff was reviewed and `git diff --check` passed before commit.
+
+### Cluster fix round 1
+
+- Fix base: `7779f0c93e9303b04befa35a98e2a423690e1367`.
+- Implementation commit: `1d8179709407aef27aca819faba13fb5f8200235`.
+- This is a cluster integration-review fix, not another point audit. Point 2.3 remains at its final audit count of 3 of 3; no fourth point audit was performed or is planned.
+- The real-`.slnx` regression failed before the fix: App had no project reference after `Optional.props` was created, because its import declaration was nested inside `<ImportGroup>` and did not enter the fingerprint.
+- **P2 — nested conditional imports — implemented.** `MSBuildStructureInputCollector` now walks project element containers recursively and collects `ProjectImportElement`s below the project root, including `ImportGroup` children and nested containers. It fingerprints the declared exact path even while missing, so creating the file triggers the same full reload as a direct conditional import. No directory scanning or condition guessing was added.
+- Added a real-`.slnx` test for an absent `Optional.props` referenced from a conditioned `ImportGroup`. Creating the file adds a `ProjectReference`; the next snapshot resolves App's reference to `Extra`. The matching Cluster-02 subtask is checked, and the resolved nested-import item was removed from the open Findings register.
+- The point 2.3 parent checkbox remains open: current-state docs still state that wildcard or unresolved declared import expressions are not collected as exact candidate paths, and public MCP composition is a later cluster gate. This fix closes the named nested-container Tech Debt without claiming those remaining boundaries or a new independent point audit.
+
+#### Fix Verification
+
+| Gate | Result |
+|---|---|
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 223/223 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 including nested conditional ImportGroup activation |
+| `pwsh -File ./scripts/test.ps1` | Passed, 235/235 across both test projects |
+| `git diff --check` | Passed |
