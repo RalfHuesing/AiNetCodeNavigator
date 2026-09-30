@@ -1,0 +1,11 @@
+# Symbol Impact Core Engine
+
+`ImpactAnalyzer.AnalyzeSymbolImpactAsync` accepts an already-resolved Roslyn symbol and searches its references across every source project in the solution, including test projects. Each reference location is assigned to its enclosing method or property and expanded breadth-first to find callers of those callers. The Core API has no project or production/test filter; its scope is the whole solution.
+
+Call-site entries carry a solution-relative file path, one-based line, calling member, project name, traversal depth, and a project-bound `h:` handoff when a source identity is available. Call sites are de-duplicated by project, path, line, caller, and depth, so linked source files in different projects remain distinct and separate relationships at different traversal levels are preserved. Handoffs resolve to the calling member, while the line identifies the reference location.
+
+`DirectCallersCount` counts distinct depth-one call sites. `TransitiveCallSitesCount` counts distinct call sites beyond the first level. `TransitiveImpactCount` preserves the original total-impact meaning and includes both direct and transitive sites. Affected project and file summaries cover all discovered sites before the display limit, so the summary can include projects omitted from `CallSites`.
+
+Depth defaults to three and is clamped to 1–3. The expanded-symbol budget defaults to 200; a lower `maxNodes` narrows it and a higher value is clamped to 200. `maxResults` defaults to 50 and is normalized to at least one. Symbol equality prevents repeated expansion in cycles. `RequestedDepth`, `EffectiveDepth`, `VisitedSymbolCount`, `EffectiveNodeLimit`, `IsTruncatedByNodeLimit`, and `IsDepthClamped` describe traversal bounds. `IsTruncated` reports display-limit truncation, and `IsComplete` is false when results were hidden, queued symbols remained at the node cap, or the requested depth was clamped.
+
+Null symbols and solutions throw `ArgumentNullException`; `maxNodes` below one throws `ArgumentOutOfRangeException`. Cancellation is checked during traversal and reference collection. Identifier lookup, ambiguity, and stale or invalid handoff errors belong to the shared symbol-resolution layer, which runs before this Core API.

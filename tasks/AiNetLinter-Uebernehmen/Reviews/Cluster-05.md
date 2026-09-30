@@ -243,3 +243,23 @@
 
 - Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
 - The documentation diff was inspected and `git diff --check` passed before commit.
+
+## Point 5.4 implementation
+
+- Base commit: `c9a2675c03c836051e066526b042f5d7d9d762ea`; the working tree was clean before this slice.
+- Read-only AiNetLinter comparison used `GetImpactTool`, `CallGraphTraversal`, and `GetImpactToolTests`. The symbol branch traverses callers breadth-first across the solution, distinguishes direct from deeper call sites, preserves project identity in call-site deduplication, counts projects from the complete result, normalizes `maxResults` to at least one, caps depth at three and nodes at 200, prevents cycles, emits caller handoffs, and reports depth and node-limit completeness separately.
+- Before-fix tests reproduced four defects: same-path call sites in two projects collapsed into one; `maxResults=0` hid every result; pending BFS symbols at the node cap were reported as complete; and the existing impact total did not expose the indirect-only count separately. A cycle reproduction also showed that repeated source-line/member pairs at separate traversal depths were collapsed.
+- `ImpactAnalyzer` now counts distinct direct and indirect call sites, preserves project/depth identity, keeps whole-solution project/file summaries independent of the display limit, and returns requested/effective depth, visited-node and effective-limit metadata, and `IsComplete`. The node cap is 200 by default, lower `maxNodes` values are supported, and larger values are clamped. Input errors are explicit and recursive graphs terminate by symbol identity. Existing `TransitiveImpactCount` remains the total impact-site count; `TransitiveCallSitesCount` reports only sites beyond depth one.
+- Added [Symbol Impact Core Engine](../../../docs/navigation/impact-analysis.md) and indexed it in `docs/README.md`. The 5.4 audit checkbox remains open pending independent review.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| Before-fix cross-project path/dedup, nonpositive-result-limit, pending-node, and direct/transitive-count reproductions | Failed as expected |
+| Focused ImpactAnalyzer FastTests after fix | Passed, 8/8 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 370/370 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 382/382 across both test projects |
+| `git diff --check` | Passed before commit |

@@ -21,4 +21,14 @@ public sealed record SymbolImpactPayload(
     IReadOnlyList<ImpactCallSiteEntry> CallSites,
     IReadOnlyList<string> AffectedProjects,
     IReadOnlyList<string> AffectedFiles,
-    bool IsTruncated);
+    bool IsTruncated,
+    int RequestedDepth = 1,
+    int EffectiveDepth = 1,
+    int VisitedSymbolCount = 1,
+    bool IsTruncatedByNodeLimit = false,
+    bool IsDepthClamped = false,
+    int EffectiveNodeLimit = 200,
+    int TransitiveCallSitesCount = 0)
+{
+    public bool IsComplete => !IsTruncated && !IsTruncatedByNodeLimit && !IsDepthClamped;
+}

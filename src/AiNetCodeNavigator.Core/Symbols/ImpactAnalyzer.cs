@@ -18,15 +18,25 @@ namespace AiNetCodeNavigator.Core.Symbols;
 public static class ImpactAnalyzer
 {
     public const int MaxAllowedDepth = 3;
-    public const int MaxNodes = 100;
+    public const int MaxNodes = 200;
 
     public static async Task<SymbolImpactPayload> AnalyzeSymbolImpactAsync(
         ISymbol symbol,
         Solution solution,
         int maxDepth = 3,
         int maxResults = 50,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        int maxNodes = MaxNodes)
     {
+        ArgumentNullException.ThrowIfNull(symbol);
+        ArgumentNullException.ThrowIfNull(solution);
+        if (maxNodes < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxNodes), "The node limit must be at least one.");
+        }
+
+        var effectiveNodeLimit = Math.Min(maxNodes, MaxNodes);
+        var effectiveResultLimit = Math.Max(maxResults, 1);
         var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var depth = Math.Clamp(maxDepth, 1, MaxAllowedDepth);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
@@ -36,11 +46,10 @@ public static class ImpactAnalyzer
         queue.Enqueue((symbol, 1));
 
         var allSites = new List<ImpactCallSiteEntry>();
-        var directCallersCount = 0;
         var maxDepthReached = 0;
         var totalNodesExplored = 0;
 
-        while (queue.Count > 0 && totalNodesExplored < MaxNodes)
+        while (queue.Count > 0 && totalNodesExplored < effectiveNodeLimit)
         {
             ct.ThrowIfCancellationRequested();
             var (currentSymbol, currentLevel) = queue.Dequeue();
@@ -72,8 +81,6 @@ public static class ImpactAnalyzer
                     }
                     if (caller is null) caller = enclosing;
 
-                    if (SymbolEqualityComparer.Default.Equals(caller, currentSymbol)) continue;
-
                     var lineSpan = loc.Location.GetLineSpan();
                     var relPath = PathNormalizer.ToRelative(solutionDir, lineSpan.Path);
                     var line = lineSpan.StartLinePosition.Line + 1;
@@ -86,11 +93,6 @@ public static class ImpactAnalyzer
                     };
 
                     var handoff = SourceHandoffFormatter.Format(caller, solution, handoffIdentity);
-
-                    if (currentLevel == 1)
-                    {
-                        directCallersCount++;
-                    }
 
                     allSites.Add(new ImpactCallSiteEntry(
                         FilePath: relPath,
@@ -109,15 +111,18 @@ public static class ImpactAnalyzer
         }
 
         var distinctSites = allSites
-            .GroupBy(s => (s.FilePath, s.Line, s.CallingMember))
+            .GroupBy(s => (s.ProjectName, s.FilePath, s.Line, s.CallingMember, s.Depth))
             .Select(g => g.OrderBy(s => s.Depth).First())
             .OrderBy(s => s.Depth)
+            .ThenBy(s => s.ProjectName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(s => s.FilePath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(s => s.FilePath, StringComparer.Ordinal)
             .ThenBy(s => s.Line)
             .ToList();
 
-        var isTruncated = distinctSites.Count > maxResults;
-        var shownSites = distinctSites.Take(maxResults).ToList();
+        var isTruncated = distinctSites.Count > effectiveResultLimit;
+        var truncatedByNodeLimit = queue.Count > 0 && totalNodesExplored >= effectiveNodeLimit;
+        var shownSites = distinctSites.Take(effectiveResultLimit).ToList();
 
         var affectedProjects = distinctSites
             .Select(s => s.ProjectName)
@@ -134,12 +139,19 @@ public static class ImpactAnalyzer
         return new SymbolImpactPayload(
             TargetSymbol: symbol.Name,
             TargetKind: symbol.Kind.ToString().ToLowerInvariant(),
-            DirectCallersCount: directCallersCount,
+            DirectCallersCount: distinctSites.Count(site => site.Depth == 1),
             TransitiveImpactCount: distinctSites.Count,
             MaxDepthReached: maxDepthReached,
             CallSites: shownSites,
             AffectedProjects: affectedProjects,
             AffectedFiles: affectedFiles,
-            IsTruncated: isTruncated);
+            IsTruncated: isTruncated,
+            RequestedDepth: maxDepth,
+            EffectiveDepth: depth,
+            VisitedSymbolCount: totalNodesExplored,
+            IsTruncatedByNodeLimit: truncatedByNodeLimit,
+            IsDepthClamped: maxDepth != depth,
+            EffectiveNodeLimit: effectiveNodeLimit,
+            TransitiveCallSitesCount: distinctSites.Count(site => site.Depth > 1));
     }
 }
