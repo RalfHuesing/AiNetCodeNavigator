@@ -97,6 +97,7 @@ No public MCP stdio acceptance is claimed. The three findings are resolved by th
 
 ## Point 8.3 implementation evidence — independent audit pending
 
+- Implementation commit: `73f17fe` (`feat(mcp): add bounded long-running calls and continuations`), with a clean working tree after implementation.
 - Implementation introduces an internal `LongRunningToolCallStore` and a separate `McpResponseContinuationStore`; it does not start the MCP host or register public tools.
 - Operation records use opaque tokens bound to tool name, target path, and stable argument key. The default running/completed limits are 4/32, with 30-minute idle expiry. Delegates run on the thread pool so synchronous work cannot hold the store lock. A running CTS timer cancels abandoned work without needing another call; a valid poll resets it. Initial-request cancellation cancels owned work; polling cancellation only stops that wait. Store disposal and its linked lifetime token cancel and await work. Delegate exceptions become recoverable errors without exposing exception details.
 - Completed text uses immutable snapshots and opaque continuation tokens bound to request identity and byte/token budgets. The status, visible token, and page text go through the shared formatter together. Replay returns the same page; subsequent pages retain newline units and Unicode, without exposing formatter UTF-16 offsets. Snapshot count/source bytes/page-token count and idle lifetime are bounded and configurable. Partial structured results are rejected without `StructuredContent`.
