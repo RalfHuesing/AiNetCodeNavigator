@@ -242,3 +242,16 @@ The point 4.4 audit checkbox remains open pending fixes and a follow-up audit. N
 - Before-fix reproductions: both the missing multi-file header and the extra unescaped operator separator failed; the CRLF renderer test failed because a carriage return remained in the row.
 - Verification: focused ClassStructureScanner FastTests passed 15/15; `pwsh -File ./scripts/build.ps1` passed with 0 warnings/errors; `pwsh -File ./scripts/test-fast.ps1` passed 303/303; `pwsh -File ./scripts/test-integration.ps1` passed 12/12; `pwsh -File ./scripts/test.ps1` passed 315/315; `git diff --check` passed.
 - The point 4.4 audit checkbox remains open for independent follow-up.
+
+## Independent audit 2/3 of point 4.4
+
+- Reviewed commit: `069656674556331552182025af02a4c9d9ba6036` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Narrow read-only review of the two Markdown findings, changed tests, and current-state documentation. The implementation slice's gate results are recorded above; this audit did not run a build or tests.
+
+### Finding disposition
+
+1. **P2 member file in multi-file output — closed.** `RenderMarkdown` adds a `File` column when `p.Files.Count > 1` and uses each member's existing `FilePath`; the single-file table shape stays the same. A new partial-type test places methods on the same source line in two files and checks their separate filenames in the rendered rows.
+2. **P2 table escaping — closed.** `EscapeTableCell` replaces CRLF, CR, and LF with spaces and escapes pipe characters for dynamic row values. New tests inspect an `operator |` signature, a constant string containing `|`, the retained handoff, row delimiter counts, and CRLF normalization in a synthetic payload.
+
+No open finding remains for point 4.4. The audit checkbox is complete after two audits. No product code or external repository was changed in this audit.

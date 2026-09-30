@@ -25,7 +25,7 @@
   - [x] Class/Record-Kinds, Handoffs, Filter, Trunkierung und wichtige Fehlerfälle mit FastTests abdecken
   - [x] Show each member's declaring file in Markdown for multi-file/partial types; cover same-line members in distinct files with a FastTest.
   - [x] Escape Markdown table cells for signatures and names containing `|` or line breaks; cover an operator signature and a constant string value with a FastTest.
-  - [ ] Review/Audit zu 4.4 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 4.4 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.5 Test-Erkennung & Test-Kontext (`get_test_context`-Engine):
   - [x] `TestDetector`: Erkennung von Testprojekten und Testframeworks (xUnit, NUnit, MSTest)
   - [x] `TestRecommendationBuilder`: Verknüpfung von Produktionscode mit abdeckenden Tests
