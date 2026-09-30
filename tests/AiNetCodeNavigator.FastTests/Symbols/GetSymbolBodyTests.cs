@@ -24,7 +24,8 @@ public sealed class GetSymbolBodyTests
 
         var greetMethod = greeterType.GetMembers("Greet").OfType<IMethodSymbol>().First();
 
-        var result = SourceSymbolBodyResolver.Resolve(greetMethod, maxBodyLines: 50);
+        var identity = await AnalysisSymbolIdentity.ForSourceAsync(fixture.Solution);
+        var result = SourceSymbolBodyResolver.Resolve(greetMethod, maxBodyLines: 50, handoffIdentity: identity, solution: fixture.Solution);
 
         Assert.Equal("available", result.Availability);
         Assert.Equal("source", result.ContentMode);
@@ -33,6 +34,7 @@ public sealed class GetSymbolBodyTests
         Assert.False(result.HasMore);
         Assert.True(result.TotalLines > 0);
         Assert.NotNull(result.HandoffId);
+        Assert.StartsWith("h:", result.HandoffId);
     }
 
     [Fact]

@@ -21,6 +21,7 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
     private readonly SemanticModel _semanticModel;
     private readonly string _relativePath;
     private readonly Func<string?, string?>? _formatSymbolId;
+    private readonly Func<ISymbol, string?>? _formatSymbol;
     private readonly List<SkeletonTypeInfo> _types = [];
     private string _currentNamespace = "";
 
@@ -29,12 +30,14 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
     public SkeletonSyntaxWalker(
         SemanticModel semanticModel,
         string relativePath,
-        Func<string?, string?>? formatSymbolId = null)
+        Func<string?, string?>? formatSymbolId = null,
+        Func<ISymbol, string?>? formatSymbol = null)
         : base(SyntaxWalkerDepth.Node)
     {
         _semanticModel = semanticModel;
         _relativePath = relativePath;
         _formatSymbolId = formatSymbolId;
+        _formatSymbol = formatSymbol;
     }
 
     public override void VisitNamespaceDeclaration(NamespaceDeclarationSyntax node)
@@ -80,13 +83,13 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
     {
         if (IsNestedType(node)) return;
         var typeSymbol = _semanticModel.GetDeclaredSymbol(node);
-        var typeId = FormatSymbolId(typeSymbol?.GetDocumentationCommentId());
+        var typeId = FormatSymbolId(typeSymbol);
         var members = node.Members
             .Select(m => new SkeletonMemberInfo(
                 SkeletonMemberKind.Field,
                 m.Identifier.Text,
                 null,
-                FormatSymbolId(TryCreateEnumFieldId(typeSymbol, m.Identifier.Text))))
+                FormatSymbolId(TryCreateEnumField(typeSymbol, m.Identifier.Text))))
             .ToList();
 
         _types.Add(new SkeletonTypeInfo(
@@ -108,7 +111,7 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
         var fullName = node.Identifier.Text + (node.TypeParameterList?.ToString() ?? "");
         var typeSymbol = _semanticModel.GetDeclaredSymbol(node);
         var baseTypes = BuildBaseTypesDisplay(node, typeSymbol);
-        var typeId = FormatSymbolId(typeSymbol?.GetDocumentationCommentId());
+        var typeId = FormatSymbolId(typeSymbol);
         var memberInfos = ExtractMembers(node.Members);
 
         if (node is RecordDeclarationSyntax recordDecl && recordDecl.ParameterList != null && typeSymbol is INamedTypeSymbol recordSymbol)
@@ -123,7 +126,7 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
                     SkeletonMemberKind.Property,
                     NormalizeWhitespace(sig),
                     null,
-                    FormatSymbolId(TryCreateRecordParameterId(recordSymbol, propName))));
+                    FormatSymbolId(TryCreateRecordParameter(recordSymbol, propName))));
             }
         }
 
@@ -180,7 +183,7 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
         var sig = NormalizeWhitespace(node.ToString().Trim().TrimEnd(';') + ";");
         var firstVar = node.Declaration.Variables.FirstOrDefault();
         var symbol = firstVar is null ? null : _semanticModel.GetDeclaredSymbol(firstVar);
-        return new SkeletonMemberInfo(SkeletonMemberKind.Field, sig, null, FormatSymbolId(symbol?.GetDocumentationCommentId()));
+        return new SkeletonMemberInfo(SkeletonMemberKind.Field, sig, null, FormatSymbolId(symbol));
     }
 
     private SkeletonMemberInfo BuildPropertyInfo(PropertyDeclarationSyntax node)
@@ -190,7 +193,7 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
             : "=> /* computed */";
         var sig = $"{BuildModifiers(node.Modifiers, node.Parent)} {node.Type} {node.Identifier.Text} {accessors}";
         var symbol = _semanticModel.GetDeclaredSymbol(node) as IPropertySymbol;
-        return new SkeletonMemberInfo(SkeletonMemberKind.Property, NormalizeWhitespace(sig), null, FormatSymbolId(symbol?.GetDocumentationCommentId()));
+        return new SkeletonMemberInfo(SkeletonMemberKind.Property, NormalizeWhitespace(sig), null, FormatSymbolId(symbol));
     }
 
     private SkeletonMemberInfo BuildConstructorInfo(ConstructorDeclarationSyntax node)
@@ -198,7 +201,7 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
         var paramList = FormatParameters(node.ParameterList);
         var sig = $"{BuildModifiers(node.Modifiers, node.Parent)} {node.Identifier.Text}({paramList})";
         var symbol = _semanticModel.GetDeclaredSymbol(node) as IMethodSymbol;
-        return new SkeletonMemberInfo(SkeletonMemberKind.Constructor, NormalizeWhitespace(sig), null, FormatSymbolId(symbol?.GetDocumentationCommentId()));
+        return new SkeletonMemberInfo(SkeletonMemberKind.Constructor, NormalizeWhitespace(sig), null, FormatSymbolId(symbol));
     }
 
     private SkeletonMemberInfo BuildMethodInfo(MethodDeclarationSyntax node)
@@ -209,7 +212,7 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
         var sig = $"{BuildModifiers(node.Modifiers, node.Parent)} {returnType} {node.Identifier.Text}{typeParams}({paramList})";
         var symbol = _semanticModel.GetDeclaredSymbol(node) as IMethodSymbol;
         var kind = ClassifyMethodKind(node.Modifiers, node.Parent);
-        return new SkeletonMemberInfo(kind, NormalizeWhitespace(sig), null, FormatSymbolId(symbol?.GetDocumentationCommentId()));
+        return new SkeletonMemberInfo(kind, NormalizeWhitespace(sig), null, FormatSymbolId(symbol));
     }
 
     private SkeletonMemberInfo BuildEventInfo(EventFieldDeclarationSyntax node)
@@ -217,7 +220,7 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
         var sig = NormalizeWhitespace(node.ToString().Trim().TrimEnd(';') + ";");
         var firstVar = node.Declaration.Variables.FirstOrDefault();
         var symbol = firstVar is null ? null : _semanticModel.GetDeclaredSymbol(firstVar);
-        return new SkeletonMemberInfo(SkeletonMemberKind.Event, sig, null, FormatSymbolId(symbol?.GetDocumentationCommentId()));
+        return new SkeletonMemberInfo(SkeletonMemberKind.Event, sig, null, FormatSymbolId(symbol));
     }
 
     private static SkeletonMemberKind ClassifyMethodKind(SyntaxTokenList modifiers, SyntaxNode? parent)
@@ -249,35 +252,34 @@ public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
         return string.Join(" ", list);
     }
 
+    private string? FormatSymbolId(ISymbol? symbol)
+    {
+        if (symbol is null) return null;
+        if (_formatSymbol is not null) return _formatSymbol(symbol);
+        return FormatSymbolId(symbol.GetDocumentationCommentId());
+    }
+
     private string? FormatSymbolId(string? rawId)
     {
         if (string.IsNullOrWhiteSpace(rawId)) return null;
         if (_formatSymbolId != null) return _formatSymbolId(rawId);
-
-        try
-        {
-            return HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(rawId);
-        }
-        catch
-        {
-            return rawId;
-        }
+        return null;
     }
 
-    private static string? TryCreateEnumFieldId(INamedTypeSymbol? enumSymbol, string fieldName)
+    private static ISymbol? TryCreateEnumField(INamedTypeSymbol? enumSymbol, string fieldName)
     {
         if (enumSymbol is null) return null;
         var field = enumSymbol.GetMembers().OfType<IFieldSymbol>()
             .FirstOrDefault(f => f.Name == fieldName);
-        return field?.GetDocumentationCommentId();
+        return field;
     }
 
-    private static string? TryCreateRecordParameterId(INamedTypeSymbol? recordSymbol, string parameterName)
+    private static ISymbol? TryCreateRecordParameter(INamedTypeSymbol? recordSymbol, string parameterName)
     {
         if (recordSymbol is null) return null;
         var prop = recordSymbol.GetMembers().OfType<IPropertySymbol>()
             .FirstOrDefault(p => p.Name == parameterName);
-        return prop?.GetDocumentationCommentId();
+        return prop;
     }
 
     private static string NormalizeWhitespace(string input) =>

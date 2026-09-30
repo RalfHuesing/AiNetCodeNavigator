@@ -24,10 +24,11 @@ public static class TypeHierarchyScanner
         int maxResults = 50,
         CancellationToken ct = default)
     {
+        var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
 
-        var baseTypes = CollectBaseTypes(type, solutionDir);
-        var interfaces = CollectInterfaces(type, solutionDir);
+        var baseTypes = CollectBaseTypes(type, solution, solutionDir, handoffIdentity);
+        var interfaces = CollectInterfaces(type, solution, solutionDir, handoffIdentity);
 
         var isInterface = type.TypeKind == TypeKind.Interface;
         var subtypesHeading = isInterface ? "Implementierende Typen:" : "Abgeleitete Klassen:";
@@ -37,7 +38,7 @@ public static class TypeHierarchyScanner
             : (await SymbolFinder.FindDerivedClassesAsync(type, solution, cancellationToken: ct).ConfigureAwait(false)).ToList();
 
         var subtypeEntries = subtypesSymbols
-            .Select(s => CreateEntry(s, solutionDir))
+            .Select(s => CreateEntry(s, solution, solutionDir, handoffIdentity))
             .OrderBy(e => e.FilePath, StringComparer.OrdinalIgnoreCase)
             .ThenBy(e => e.Line)
             .ThenBy(e => e.Name, StringComparer.Ordinal)
@@ -56,29 +57,29 @@ public static class TypeHierarchyScanner
             IsTruncated: isTruncated);
     }
 
-    private static List<TypeHierarchyEntry> CollectBaseTypes(INamedTypeSymbol type, string solutionDir)
+    private static List<TypeHierarchyEntry> CollectBaseTypes(INamedTypeSymbol type, Solution solution, string solutionDir, AnalysisSymbolIdentity? identity)
     {
         var list = new List<TypeHierarchyEntry>();
         var current = type.BaseType;
 
         while (current != null)
         {
-            list.Add(CreateEntry(current, solutionDir));
+            list.Add(CreateEntry(current, solution, solutionDir, identity));
             current = current.BaseType;
         }
 
         return list;
     }
 
-    private static List<TypeHierarchyEntry> CollectInterfaces(INamedTypeSymbol type, string solutionDir)
+    private static List<TypeHierarchyEntry> CollectInterfaces(INamedTypeSymbol type, Solution solution, string solutionDir, AnalysisSymbolIdentity? identity)
     {
         return type.AllInterfaces
             .OrderBy(i => i.Name, StringComparer.Ordinal)
-            .Select(i => CreateEntry(i, solutionDir))
+            .Select(i => CreateEntry(i, solution, solutionDir, identity))
             .ToList();
     }
 
-    private static TypeHierarchyEntry CreateEntry(INamedTypeSymbol symbol, string solutionDir)
+    private static TypeHierarchyEntry CreateEntry(INamedTypeSymbol symbol, Solution solution, string solutionDir, AnalysisSymbolIdentity? identity)
     {
         var loc = symbol.Locations.FirstOrDefault(l => l.IsInSource);
         var filePath = loc?.SourceTree?.FilePath is not null
@@ -86,14 +87,7 @@ public static class TypeHierarchyScanner
             : string.Empty;
 
         var line = loc?.GetLineSpan().StartLinePosition.Line + 1 ?? 0;
-        var docId = symbol.GetDocumentationCommentId();
-        string? handoff = null;
-
-        if (docId != null)
-        {
-            try { handoff = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(docId); }
-            catch { handoff = docId; }
-        }
+        var handoff = SourceHandoffFormatter.Format(symbol, solution, identity);
 
         var kind = symbol.IsRecord
             ? (symbol.TypeKind == TypeKind.Struct ? "record struct" : "record")

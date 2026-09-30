@@ -19,6 +19,7 @@ public static class SkeletonMapBuilder
         Document document,
         string solutionDir,
         Func<string?, string?>? formatSymbolId = null,
+        Func<ISymbol, string?>? formatSymbol = null,
         CancellationToken ct = default)
     {
         var syntaxTree = await document.GetSyntaxTreeAsync(ct).ConfigureAwait(false);
@@ -28,7 +29,7 @@ public static class SkeletonMapBuilder
         if (semanticModel is null) return Array.Empty<SkeletonTypeInfo>();
 
         var relativePath = PathNormalizer.ToRelative(solutionDir, document.FilePath ?? document.Name);
-        var walker = new SkeletonSyntaxWalker(semanticModel, relativePath, formatSymbolId);
+        var walker = new SkeletonSyntaxWalker(semanticModel, relativePath, formatSymbolId, formatSymbol);
 
         var root = await syntaxTree.GetRootAsync(ct).ConfigureAwait(false);
         walker.Visit(root);
@@ -40,13 +41,14 @@ public static class SkeletonMapBuilder
         Project project,
         string solutionDir,
         Func<string?, string?>? formatSymbolId = null,
+        Func<ISymbol, string?>? formatSymbol = null,
         CancellationToken ct = default)
     {
         var result = new List<SkeletonTypeInfo>();
         foreach (var doc in project.Documents)
         {
             ct.ThrowIfCancellationRequested();
-            var types = await BuildForDocumentAsync(doc, solutionDir, formatSymbolId, ct).ConfigureAwait(false);
+            var types = await BuildForDocumentAsync(doc, solutionDir, formatSymbolId, formatSymbol, ct).ConfigureAwait(false);
             result.AddRange(types);
         }
 

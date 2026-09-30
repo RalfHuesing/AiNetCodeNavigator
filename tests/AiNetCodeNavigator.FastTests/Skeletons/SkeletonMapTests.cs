@@ -2,7 +2,9 @@
 
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Core.Skeletons;
 using AiNetCodeNavigator.TestKit.Fixtures;
 using Xunit;
@@ -67,5 +69,24 @@ public sealed class SkeletonMapTests
         Assert.Contains("```csharp", markdown);
         Assert.Contains("public string Greet(string name)", markdown);
         Assert.Contains("// handoffId:", markdown);
+    }
+
+    [Fact]
+    public async Task MarkdownRenderer_HandoffRoundTripsToFeatureContext()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var project = fixture.Solution.Projects.Single(p => p.Name == "Sample.Core");
+        var doc = project.Documents.Single(d => d.Name == "Greeter.cs");
+        var markdown = await FileSkeletonBuilder.BuildMarkdownForDocumentAsync(doc, fixture.Solution.FilePath ?? "");
+        var match = new Regex(
+            @"handoffId: `(?<id>h:[A-Za-z0-9_-]+)`",
+            RegexOptions.CultureInvariant,
+            System.TimeSpan.FromSeconds(1)).Match(markdown);
+        Assert.True(match.Success, markdown);
+
+        var context = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(fixture.Solution, match.Groups["id"].Value));
+        Assert.NotNull(context);
+        Assert.Null(context.Error);
+        Assert.Equal("Greeter", context.Declaration.SymbolName);
     }
 }

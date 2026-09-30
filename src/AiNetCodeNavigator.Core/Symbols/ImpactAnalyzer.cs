@@ -27,6 +27,7 @@ public static class ImpactAnalyzer
         int maxResults = 50,
         CancellationToken ct = default)
     {
+        var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var depth = Math.Clamp(maxDepth, 1, MaxAllowedDepth);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
 
@@ -84,13 +85,7 @@ public static class ImpactAnalyzer
                         _ => caller.Name
                     };
 
-                    var docId = caller.GetDocumentationCommentId();
-                    string? handoff = null;
-                    if (docId != null)
-                    {
-                        try { handoff = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(docId); }
-                        catch { handoff = docId; }
-                    }
+                    var handoff = SourceHandoffFormatter.Format(caller, solution, handoffIdentity);
 
                     if (currentLevel == 1)
                     {

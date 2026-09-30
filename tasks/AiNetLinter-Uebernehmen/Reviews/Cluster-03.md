@@ -144,3 +144,22 @@ A later FastTests rerun transiently failed in the unrelated `HandoffHandleRegist
 - **P1 resolved.** Both mapping dictionaries are now read and written under `syncLock` (`src/AiNetCodeNavigator.Core/Symbols/HandoffHandleRegistry.cs:19-21`, `:36-45`, `:59-102`, `:139-146`). A successful `GetOrCreateOpaqueHandleForOutput` cannot expose a forward mapping before the reverse mapping to another registry call. The test restores each returned handle during concurrent creation and checks the resolved internal ID and final count (`tests/AiNetCodeNavigator.FastTests/Symbols/HandoffHandleRegistryTests.cs:143-164`). Its scheduling is nondeterministic, but the shared-lock code establishes the publication guarantee.
 - **P2 resolved.** `SymbolHandoffIdentifier.Format` now checks origin, both tokens, and DocumentationCommentId before formatting (`src/AiNetCodeNavigator.Core/Symbols/SymbolHandoffIdentifier.cs:31-47`). New tests reject malformed direct-constructor values and check a valid format/parse value roundtrip (`tests/AiNetCodeNavigator.FastTests/Symbols/SymbolHandoffIdentifierTests.cs:12-34`, `:66-85`).
 - No point 3.2 finding remains open. The audit checkbox is closed after two audits. Producer/consumer composition and stale-snapshot behavior remain point 3.3 and were not audited here.
+
+## Point 3.3: Producer and Consumer Contract
+
+- Implementation base: `fe317d75f1e3a610e9261616f88ed77771a44ed6`; working tree was clean before this slice.
+- **P1 resolved for source navigation.** `find_symbol`, `get_file_skeleton`, feature context, class structure, references, implementations, impact, hierarchy, test recommendations, call trees, and source-body resolution no longer register a raw DocumentationCommentId as an opaque handle. Source producers format target-, solution-snapshot-, and stable-project-bound identifiers. `SourceHandoffResolver` checks the current target, content snapshot, project marker, and symbol before returning a source symbol. Unknown handles return `HANDOFF_UNKNOWN`; different targets return `TARGET_MISMATCH`; changed snapshots return `STALE_SNAPSHOT`. Feature-context and class-structure responses preserve these typed errors.
+- **Source roundtrips verified.** FastTests follow `find_symbol` handles into feature context and class structure, and `get_file_skeleton` handles into feature context. They assert the source origin, project marker, target binding, symbol result, and typed unknown/foreign/stale failures. `inspect_assembly` tests verify that its visible `h:` and structured internal DTO ID map to the same Assembly-origin identifier bound to the inspected assembly path.
+- **Assembly follow-up blocker remains.** Assembly IDs are already produced with target/content identity by `InspectAssemblyScanner`, but no assembly handoff resolver or stable resident assembly-session follow-up path exists in this slice; those APIs and the session lifecycle are assigned to Cluster 7. Therefore the `inspect_assembly` to follow-up-tool roundtrip remains open and is recorded in `Cluster-03.md`; no claim is made that assembly handles are consumable yet.
+- The point 3.3 audit checkbox remains open for an independent audit. AiNetLinter source files were inspected read-only; no reference files or tests were changed.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| Focused source/assembly handoff tests | Passed, 31/31 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 258/258 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 270/270 across both test projects |
+| `git diff --check` | Pending before commit |

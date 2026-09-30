@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
+using AiNetCodeNavigator.Core.Symbols;
 
 namespace AiNetCodeNavigator.Core.Skeletons;
 
@@ -20,7 +21,21 @@ public static class FileSkeletonBuilder
         CancellationToken ct = default)
     {
         var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
-        var types = await SkeletonMapBuilder.BuildForDocumentAsync(document, solutionDir, formatSymbolId, ct).ConfigureAwait(false);
+        Func<ISymbol, string?>? formatSymbol = null;
+        if (formatSymbolId is null)
+        {
+            var identity = await AnalysisSymbolIdentity.ForSourceAsync(document.Project.Solution, ct).ConfigureAwait(false);
+            if (identity is not null)
+            {
+                formatSymbol = symbol =>
+                {
+                    var internalId = identity.FormatHandoff(symbol, document.Project.Solution);
+                    return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
+                };
+            }
+        }
+
+        var types = await SkeletonMapBuilder.BuildForDocumentAsync(document, solutionDir, formatSymbolId, formatSymbol, ct).ConfigureAwait(false);
         return SkeletonMarkdownRenderer.Render(types, solutionPath);
     }
 }

@@ -64,6 +64,21 @@ public sealed class InspectAssemblyScannerTests
         Assert.Contains("Vollständigkeit: `complete`", text, StringComparison.Ordinal);
         Assert.Contains("Quelle: Dekompilat", text, StringComparison.Ordinal);
         Assert.Contains("`Probe.Api.PublicApi`; handoffId: `h:", text, StringComparison.Ordinal);
+        var apiType = Assert.Single(payload.Types);
+        Assert.True(apiType.Handoff);
+        Assert.NotNull(apiType.Id);
+        var exposedHandle = Regex.Match(
+            text,
+            @"`Probe\.Api\.PublicApi`; handoffId: `(?<id>h:[A-Za-z0-9_-]+)`",
+            RegexOptions.CultureInvariant,
+            TimeSpan.FromSeconds(1)).Groups["id"].Value;
+        var restored = AiNetCodeNavigator.Core.Symbols.HandoffHandleRegistry.Default.RestoreInternalHandoffForInput(exposedHandle);
+        Assert.True(restored.IsSuccess);
+        Assert.Equal(apiType.Id, restored.Value);
+        Assert.True(AiNetCodeNavigator.Core.Symbols.SymbolHandoffIdentifier.TryParse(restored.Value!, out var parsedHandoff));
+        Assert.Equal(AiNetCodeNavigator.Core.Symbols.SymbolHandoffOrigin.Assembly, parsedHandoff.Origin);
+        Assert.True(AiNetCodeNavigator.Core.Symbols.SymbolHandoffToken.TryCreateTarget(assemblyPath, out var expectedTarget));
+        Assert.Equal(expectedTarget, parsedHandoff.TargetToken);
         Assert.Contains("property: `Probe.Api.PublicApi.Name`", text, StringComparison.Ordinal);
         Assert.Contains("event: `Probe.Api.PublicApi.Changed`", text, StringComparison.Ordinal);
         Assert.Contains("Convert(string value)", text, StringComparison.Ordinal);

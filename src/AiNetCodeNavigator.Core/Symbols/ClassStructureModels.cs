@@ -1,6 +1,7 @@
 #nullable enable
 
 using System.Collections.Generic;
+using AiNetCodeNavigator.Core.Models;
 using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.Symbols;
@@ -25,7 +26,8 @@ public sealed record ClassStructurePayload(
     int ShownMemberCount,
     bool Truncated,
     IReadOnlyList<ClassStructureMemberEntry> Members,
-    IReadOnlyList<string> TruncatedBy);
+    IReadOnlyList<string> TruncatedBy,
+    ResultError? Error = null);
 
 public sealed record ClassStructureScanRequest(
     Solution Solution,

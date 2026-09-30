@@ -1,6 +1,7 @@
 #nullable enable
 
 using System.Collections.Generic;
+using AiNetCodeNavigator.Core.Models;
 using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.Symbols;
@@ -39,11 +40,13 @@ public sealed record FeatureContextPayload(
     int TotalCallers,
     int TotalTests,
     bool CallersTruncated,
-    bool TestsTruncated);
+    bool TestsTruncated,
+    ResultError? Error = null);
 
 public sealed record FeatureContextRequest(
     Solution Solution,
     string SymbolIdentifier,
     int MaxCallers = 20,
     int MaxTests = 20,
-    SymbolScopeType Scope = SymbolScopeType.All);
+    SymbolScopeType Scope = SymbolScopeType.All,
+    AnalysisSymbolIdentity? HandoffIdentity = null);

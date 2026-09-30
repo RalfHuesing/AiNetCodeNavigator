@@ -44,7 +44,9 @@ public static class FindSymbolScanner
         }
 
         var outputRoot = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
-        var allEntries = (await BuildVisibleEntriesAsync(request, filtered, outputRoot, ct).ConfigureAwait(false))
+        var sourceIdentity = request.SourceIdentity
+            ?? await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
+        var allEntries = (await BuildVisibleEntriesAsync(request, filtered, outputRoot, sourceIdentity, ct).ConfigureAwait(false))
             .OrderBy(entry => GetMatchRank(entry, request.NamePattern))
             .ThenBy(entry => GetScopeRank(entry))
             .ThenBy(entry => entry.FilePath, StringComparer.OrdinalIgnoreCase)
@@ -82,6 +84,7 @@ public static class FindSymbolScanner
         FindSymbolScanRequest request,
         IReadOnlyList<ISymbol> symbols,
         string outputRoot,
+        AnalysisSymbolIdentity? sourceIdentity,
         CancellationToken ct)
     {
         var grouped = GroupSymbols(symbols);
@@ -107,19 +110,10 @@ public static class FindSymbolScanner
 
             var primaryLoc = locations[0];
             var docCommentId = symbol.GetDocumentationCommentId();
-            string? handoffId = null;
-
-            if (docCommentId != null)
-            {
-                try
-                {
-                    handoffId = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(docCommentId);
-                }
-                catch
-                {
-                    handoffId = null;
-                }
-            }
+            var internalHandoffId = sourceIdentity?.FormatHandoff(symbol, request.Solution);
+            var handoffId = internalHandoffId is null
+                ? null
+                : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalHandoffId);
 
             var kindName = DescribeKind(symbol);
             var signature = symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);

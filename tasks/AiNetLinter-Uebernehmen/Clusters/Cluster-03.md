@@ -18,6 +18,7 @@
   - [x] Formatierung öffentlich konstruierter Identifier gegen ungültige Tokens und DocIDs absichern.
   - [x] Review/Audit zu 3.2 durchführen; Findings ergänzen und umsetzen.
 - [ ] 3.3 Handoff-Vertrag über Producer und Consumer schließen:
-  - [ ] Alle ausgegebenen `h:...`-IDs aus Source- und Assembly-Tools auf dieselbe kanonische, ziel- und snapshotgebundene Identität zurückführen; rohe DocumentationCommentIds nicht als scheinbar gültige Handoffs ausgeben.
-  - [ ] Roundtrip-Tests von `find_symbol`, `get_file_skeleton` und `inspect_assembly` zu den jeweils erlaubten Folge-Tools ergänzen; unbekannte, fremde und nach Änderung veraltete Handles als typisierte Fehler behandeln.
+  - [x] Source-Produzenten binden `h:...` an kanonische Lösungssnapshots und stabile Projektmarker; rohe DocumentationCommentIds werden nicht als Handoffs ausgegeben.
+  - [x] Roundtrips von `find_symbol` und `get_file_skeleton` zu Source-Folge-Tools sowie typisierte Fehler für unbekannte, fremde und veraltete Source-Handles ergänzen.
+  - [ ] Assembly-Folge-Tools und Roundtrips für `inspect_assembly` abschließen (Auflösung und Sitzungslebenszyklus siehe Cluster 7).
   - [ ] Review/Audit zu 3.3 durchführen; Findings ergänzen und umsetzen.

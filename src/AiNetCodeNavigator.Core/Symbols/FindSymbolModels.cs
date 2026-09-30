@@ -51,7 +51,8 @@ public sealed record FindSymbolScanRequest(
     SymbolKindFilter Kind = SymbolKindFilter.All,
     SymbolScopeType ScopeType = SymbolScopeType.All,
     int MaxResults = 50,
-    AnalysisSymbolIdentity? AssemblyIdentity = null);
+    AnalysisSymbolIdentity? AssemblyIdentity = null,
+    AnalysisSymbolIdentity? SourceIdentity = null);
 
 public sealed record FindSymbolScanResult(
     string Text,

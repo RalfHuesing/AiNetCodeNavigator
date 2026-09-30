@@ -8,6 +8,8 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Common;
+using AiNetCodeNavigator.Core.Models;
+using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
 
@@ -24,13 +26,22 @@ public static class FeatureContextScanner
         FeatureContextRequest request,
         CancellationToken ct = default)
     {
-        var symbol = await ResolveSymbolAsync(request.Solution, request.SymbolIdentifier, ct).ConfigureAwait(false);
+        var identity = request.HandoffIdentity ?? await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
+        var resolved = await ResolveSymbolResultAsync(request.Solution, request.SymbolIdentifier, identity, ct).ConfigureAwait(false);
+        if (!resolved.IsSuccess)
+        {
+            return new FeatureContextPayload(
+                new FeatureContextDeclaration(string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0, 0),
+                Array.Empty<FeatureContextCallerEntry>(), Array.Empty<FeatureContextTestRecommendation>(), 0, 0, false, false, resolved.Error);
+        }
+
+        var symbol = resolved.Value;
         if (symbol is null) return null;
 
         var solutionDir = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
-        var declaration = ExtractDeclaration(symbol, solutionDir);
+        var declaration = ExtractDeclaration(symbol, solutionDir, identity, request.Solution);
 
-        var allCallers = await CollectCallersAsync(symbol, request.Solution, solutionDir, ct).ConfigureAwait(false);
+        var allCallers = await CollectCallersAsync(symbol, request.Solution, solutionDir, identity, ct).ConfigureAwait(false);
         var scopedCallers = FilterCallersByScope(allCallers, request.Scope);
         var callersTruncated = scopedCallers.Count > request.MaxCallers;
         var shownCallers = scopedCallers.Take(request.MaxCallers).ToList();
@@ -55,27 +66,27 @@ public static class FeatureContextScanner
         string symbolIdentifier,
         CancellationToken ct = default)
     {
+        var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
+        var result = await ResolveSymbolResultAsync(solution, symbolIdentifier, identity, ct).ConfigureAwait(false);
+        return result.IsSuccess ? result.Value : null;
+    }
+
+    public static async Task<Result<ISymbol?>> ResolveSymbolResultAsync(
+        Solution solution,
+        string symbolIdentifier,
+        AnalysisSymbolIdentity? identity,
+        CancellationToken ct = default)
+    {
         var cleanId = InputNormalizer.NormalizeSymbolIdentifier(symbolIdentifier);
 
-        // 1. Try resolve through handoff handle registry
         if (cleanId.StartsWith("h:", StringComparison.Ordinal) || cleanId.StartsWith("i:", StringComparison.Ordinal))
         {
-            var restoreResult = HandoffHandleRegistry.Default.RestoreInternalHandoffForInput(cleanId);
-            var internalId = restoreResult.IsSuccess ? restoreResult.Value! : cleanId;
-
-            if (SymbolHandoffIdentifier.TryParse(internalId, out var parsed))
+            if (identity is null)
             {
-                var targetDocId = parsed.DocumentationCommentId;
-                foreach (var project in solution.Projects)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    var compilation = await project.GetCompilationAsync(ct).ConfigureAwait(false);
-                    if (compilation is null) continue;
-
-                    var s = DocumentationCommentId.GetFirstSymbolForDeclarationId(targetDocId, compilation);
-                    if (s != null) return s;
-                }
+                return Result<ISymbol?>.Failure(NavigationErrorCodes.InvalidHandoff, "A canonical source identity could not be created for this solution.");
             }
+
+            return await SourceHandoffResolver.ResolveAsync(solution, cleanId, identity, ct).ConfigureAwait(false);
         }
 
         // 2. Exact metadata name lookup
@@ -86,7 +97,7 @@ public static class FeatureContextScanner
             if (compilation is null) continue;
 
             var type = compilation.GetTypeByMetadataName(cleanId);
-            if (type != null) return type;
+            if (type != null) return Result<ISymbol?>.Success(type);
         }
 
         // 3. Search declarations
@@ -97,11 +108,11 @@ public static class FeatureContextScanner
             SymbolFilter.TypeAndMember,
             ct).ConfigureAwait(false);
 
-        return symbols.FirstOrDefault(s => string.Equals(s.Name, cleanId, StringComparison.OrdinalIgnoreCase))
-            ?? symbols.FirstOrDefault(s => SymbolNameMatcher.MatchesSymbol(s, cleanId));
+        return Result<ISymbol?>.Success(symbols.FirstOrDefault(s => string.Equals(s.Name, cleanId, StringComparison.OrdinalIgnoreCase))
+            ?? symbols.FirstOrDefault(s => SymbolNameMatcher.MatchesSymbol(s, cleanId)));
     }
 
-    private static FeatureContextDeclaration ExtractDeclaration(ISymbol symbol, string solutionDir)
+    private static FeatureContextDeclaration ExtractDeclaration(ISymbol symbol, string solutionDir, AnalysisSymbolIdentity? identity, Solution solution)
     {
         var syntaxRef = symbol.DeclaringSyntaxReferences.FirstOrDefault();
         var loc = syntaxRef?.GetSyntax().GetLocation() ?? symbol.Locations.FirstOrDefault(l => l.IsInSource);
@@ -120,12 +131,8 @@ public static class FeatureContextScanner
         }
 
         var docCommentId = symbol.GetDocumentationCommentId();
-        string? handoffId = null;
-        if (docCommentId != null)
-        {
-            try { handoffId = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(docCommentId); }
-            catch { handoffId = docCommentId; }
-        }
+        var internalId = identity?.FormatHandoff(symbol, solution);
+        var handoffId = internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
 
         var kind = symbol switch
         {
@@ -157,6 +164,7 @@ public static class FeatureContextScanner
         ISymbol symbol,
         Solution solution,
         string solutionDir,
+        AnalysisSymbolIdentity? identity,
         CancellationToken ct)
     {
         var callers = new List<FeatureContextCallerEntry>();
@@ -188,11 +196,9 @@ public static class FeatureContextScanner
 
                 var callerDocId = enclosingSymbol.GetDocumentationCommentId();
                 string? callerHandoff = null;
-                if (callerDocId != null)
-                {
-                    try { callerHandoff = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(callerDocId); }
-                    catch { callerHandoff = callerDocId; }
-                }
+                var callerInternalId = identity?.FormatHandoff(enclosingSymbol, solution);
+                if (callerInternalId is not null)
+                    callerHandoff = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(callerInternalId);
 
                 var callerKind = enclosingSymbol switch
                 {
@@ -268,6 +274,13 @@ public static class FeatureContextScanner
     public static string RenderMarkdown(FeatureContextPayload p)
     {
         var sb = new StringBuilder();
+        if (p.Error is { } error)
+        {
+            sb.AppendLine("# Feature Context unavailable");
+            sb.AppendLine($"- Error: `{error.Code}` — {error.Message}");
+            return sb.ToString().TrimEnd();
+        }
+
         var d = p.Declaration;
 
         sb.AppendLine($"# Feature Context: {d.SymbolName}");

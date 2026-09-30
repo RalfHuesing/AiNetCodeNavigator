@@ -19,24 +19,15 @@ public static class SourceSymbolBodyResolver
         ISymbol symbol,
         int maxBodyLines,
         int startLine = 1,
-        string? handoffId = null)
+        string? handoffId = null,
+        AnalysisSymbolIdentity? handoffIdentity = null,
+        Solution? solution = null)
     {
         var hasSyntax = symbol.DeclaringSyntaxReferences.Any();
         var unavailable = HasUnavailableBody(symbol, hasSyntax);
         var hint = GetHint(symbol, hasSyntax, unavailable);
         var docCommentId = symbol.GetDocumentationCommentId();
-
-        if (handoffId == null && docCommentId != null)
-        {
-            try
-            {
-                handoffId = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(docCommentId);
-            }
-            catch
-            {
-                handoffId = null;
-            }
-        }
+        handoffId ??= solution is null ? null : SourceHandoffFormatter.Format(symbol, solution, handoffIdentity);
 
         var (body, totalLines, displayedStart, displayedEnd, hasMore) = Extract(symbol, maxBodyLines, startLine);
 

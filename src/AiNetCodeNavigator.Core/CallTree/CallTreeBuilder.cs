@@ -28,8 +28,9 @@ public static class CallTreeBuilder
     {
         var depth = Math.Clamp(request.RequestedDepth, 1, MaxCallTreeDepth);
         var solutionDir = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
+        var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
 
-        var state = new BuilderState(request.Solution, solutionDir, depth, request.TopN, request.IncludeBcl);
+        var state = new BuilderState(request.Solution, solutionDir, depth, request.TopN, request.IncludeBcl, handoffIdentity);
 
         if (request.SeedSymbol is INamedTypeSymbol namedType)
         {
@@ -215,6 +216,7 @@ public static class CallTreeBuilder
         public int MaxDepth { get; }
         public int TopN { get; }
         public bool IncludeBcl { get; }
+        public AnalysisSymbolIdentity? HandoffIdentity { get; }
 
         private readonly Dictionary<ISymbol, CallGraphNode> _nodesBySymbol = new(SymbolEqualityComparer.Default);
         private readonly List<CallGraphNode> _nodes = [];
@@ -223,13 +225,14 @@ public static class CallTreeBuilder
         private readonly HashSet<ISymbol> _visited = new(SymbolEqualityComparer.Default);
         private int _hiddenEdgeCount;
 
-        public BuilderState(Solution solution, string solutionDir, int maxDepth, int topN, bool includeBcl)
+        public BuilderState(Solution solution, string solutionDir, int maxDepth, int topN, bool includeBcl, AnalysisSymbolIdentity? handoffIdentity)
         {
             Solution = solution;
             SolutionDir = solutionDir;
             MaxDepth = maxDepth;
             TopN = topN;
             IncludeBcl = includeBcl;
+            HandoffIdentity = handoffIdentity;
         }
 
         public bool HasQueuedNodes => _queue.Count > 0;
@@ -249,16 +252,7 @@ public static class CallTreeBuilder
             var name = FormatSymbolName(symbol);
             var displayLine = FormatDisplayLine(symbol, SolutionDir);
             var docCommentId = symbol.GetDocumentationCommentId() ?? symbol.ToDisplayString();
-            string? handoffId = null;
-
-            try
-            {
-                handoffId = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(docCommentId);
-            }
-            catch
-            {
-                handoffId = docCommentId;
-            }
+            var handoffId = SourceHandoffFormatter.Format(symbol, Solution, HandoffIdentity);
 
             var node = new CallGraphNode(
                 NodeId: nodeId,

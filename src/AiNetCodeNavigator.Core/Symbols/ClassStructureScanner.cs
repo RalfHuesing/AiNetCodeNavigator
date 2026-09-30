@@ -8,6 +8,8 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Common;
+using AiNetCodeNavigator.Core.Models;
+using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
 
@@ -27,12 +29,20 @@ public static class ClassStructureScanner
         ClassStructureScanRequest request,
         CancellationToken ct = default)
     {
-        var namedType = await ResolveTypeSymbolAsync(request.Solution, request.SymbolIdentifier, ct).ConfigureAwait(false);
+        var identity = request.HandoffIdentity ?? await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
+        var resolveResult = await ResolveTypeSymbolResultAsync(request.Solution, request.SymbolIdentifier, identity, ct).ConfigureAwait(false);
+        if (!resolveResult.IsSuccess)
+        {
+            return new ClassStructurePayload(
+                string.Empty, string.Empty, Array.Empty<string>(), 0, 0, 0, false,
+                Array.Empty<ClassStructureMemberEntry>(), Array.Empty<string>(), resolveResult.Error);
+        }
+        var namedType = resolveResult.IsSuccess ? resolveResult.Value : null;
         if (namedType is null) return null;
 
         var solutionDir = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
         var (files, totalLines) = CollectDeclarationFiles(namedType, solutionDir);
-        var extractedMembers = ExtractMembers(namedType, request.Solution, solutionDir, request.HandoffIdentity);
+        var extractedMembers = ExtractMembers(namedType, request.Solution, solutionDir, identity);
 
         var filteredMembers = FilterMembers(extractedMembers, request.KindFilter, request.NameFilter);
         var sortedMembers = SortMembers(filteredMembers, request.SortBy);
@@ -59,31 +69,27 @@ public static class ClassStructureScanner
         string symbolIdentifier,
         CancellationToken ct = default)
     {
+        var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
+        var result = await ResolveTypeSymbolResultAsync(solution, symbolIdentifier, identity, ct).ConfigureAwait(false);
+        return result.IsSuccess ? result.Value : null;
+    }
+
+    public static async Task<Result<INamedTypeSymbol?>> ResolveTypeSymbolResultAsync(
+        Solution solution,
+        string symbolIdentifier,
+        AnalysisSymbolIdentity? identity,
+        CancellationToken ct = default)
+    {
         var cleanId = InputNormalizer.NormalizeSymbolIdentifier(symbolIdentifier);
 
-        // 1. Try resolve through handoff handle registry if it starts with h: or is an internal id
         if (cleanId.StartsWith("h:", StringComparison.Ordinal) || cleanId.StartsWith("i:", StringComparison.Ordinal))
         {
-            var restoreResult = HandoffHandleRegistry.Default.RestoreInternalHandoffForInput(cleanId);
-            var internalId = restoreResult.IsSuccess ? restoreResult.Value! : cleanId;
-
-            if (SymbolHandoffIdentifier.TryParse(internalId, out var parsed))
-            {
-                var targetDocId = parsed.DocumentationCommentId;
-                foreach (var project in solution.Projects)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    var compilation = await project.GetCompilationAsync(ct).ConfigureAwait(false);
-                    if (compilation is null) continue;
-
-                    var symbol = Microsoft.CodeAnalysis.DocumentationCommentId.GetFirstSymbolForDeclarationId(targetDocId, compilation);
-                    if (symbol != null)
-                    {
-                        if (symbol is INamedTypeSymbol nts) return nts;
-                        if (symbol.ContainingType is not null) return symbol.ContainingType;
-                    }
-                }
-            }
+            if (identity is null)
+                return Result<INamedTypeSymbol?>.Failure(NavigationErrorCodes.InvalidHandoff, "A canonical source identity could not be created for this solution.");
+            var handoffResult = await SourceHandoffResolver.ResolveAsync(solution, cleanId, identity, ct).ConfigureAwait(false);
+            if (!handoffResult.IsSuccess) return Result<INamedTypeSymbol?>.Failure(handoffResult.Error!.Value);
+            var handoffSymbol = handoffResult.Value;
+            return Result<INamedTypeSymbol?>.Success(handoffSymbol as INamedTypeSymbol ?? handoffSymbol?.ContainingType as INamedTypeSymbol);
         }
 
         // 2. Exact metadata name lookup across project compilations
@@ -94,7 +100,7 @@ public static class ClassStructureScanner
             if (compilation is null) continue;
 
             var type = compilation.GetTypeByMetadataName(cleanId);
-            if (type != null) return type;
+            if (type != null) return Result<INamedTypeSymbol?>.Success(type);
         }
 
         // 3. Search declarations via SymbolFinder
@@ -112,7 +118,7 @@ public static class ClassStructureScanner
             .OfType<INamedTypeSymbol>()
             .FirstOrDefault(s => SymbolNameMatcher.MatchesSymbol(s, cleanId));
 
-        if (match != null) return match;
+        if (match != null) return Result<INamedTypeSymbol?>.Success(match);
 
         // 4. Try searching for member and resolving its containing type
         var memberSymbols = await SymbolFinder.FindSourceDeclarationsAsync(
@@ -126,7 +132,7 @@ public static class ClassStructureScanner
             ?? memberSymbols
             .FirstOrDefault(s => SymbolNameMatcher.MatchesSymbol(s, cleanId));
 
-        return memberMatch?.ContainingType;
+        return Result<INamedTypeSymbol?>.Success(memberMatch?.ContainingType);
     }
 
     private static (List<string> Files, int TotalLines) CollectDeclarationFiles(
@@ -246,17 +252,8 @@ public static class ClassStructureScanner
             return null;
         }
 
-        var docCommentId = symbol.GetDocumentationCommentId();
-        if (docCommentId is null) return null;
-
-        try
-        {
-            return HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(docCommentId);
-        }
-        catch
-        {
-            return docCommentId;
-        }
+        var internalId = handoffIdentity?.FormatHandoff(symbol, solution);
+        return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
     }
 
     private static string ResolveMemberKind(ISymbol m)
@@ -346,6 +343,13 @@ public static class ClassStructureScanner
     public static string RenderMarkdown(ClassStructurePayload p)
     {
         var sb = new StringBuilder();
+        if (p.Error is { } error)
+        {
+            sb.AppendLine("# Class Structure unavailable");
+            sb.AppendLine($"- Error: `{error.Code}` — {error.Message}");
+            return sb.ToString().TrimEnd();
+        }
+
         sb.AppendLine($"# Typ: {p.TypeName}");
         sb.AppendLine($"- Kind: {p.Kind}");
         var filesStr = p.Files.Count == 0 ? "unbekannt" : string.Join(", ", p.Files);

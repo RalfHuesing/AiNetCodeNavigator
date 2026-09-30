@@ -23,6 +23,7 @@ public static class FindReferencesResolver
         int maxResults = 50,
         CancellationToken ct = default)
     {
+        var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
         var references = await SymbolFinder.FindReferencesAsync(targetSymbol, solution, ct).ConfigureAwait(false);
 
@@ -58,13 +59,7 @@ public static class FindReferencesResolver
                     _ => enclosing?.Name ?? string.Empty
                 };
 
-                var callerDocId = enclosing?.GetDocumentationCommentId();
-                string? callerHandoff = null;
-                if (callerDocId != null)
-                {
-                    try { callerHandoff = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(callerDocId); }
-                    catch { callerHandoff = callerDocId; }
-                }
+                var callerHandoff = SourceHandoffFormatter.Format(enclosing, solution, handoffIdentity);
 
                 entries.Add(new ReferenceLocationEntry(
                     FilePath: relPath,
@@ -100,6 +95,7 @@ public static class FindReferencesResolver
         int maxResults = 50,
         CancellationToken ct = default)
     {
+        var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
         var implementations = new List<ISymbol>();
 
@@ -139,13 +135,7 @@ public static class FindReferencesResolver
                 : string.Empty;
 
             var line = loc?.GetLineSpan().StartLinePosition.Line + 1 ?? 0;
-            var docId = impl.GetDocumentationCommentId();
-            string? handoff = null;
-            if (docId != null)
-            {
-                try { handoff = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(docId); }
-                catch { handoff = docId; }
-            }
+            var handoff = SourceHandoffFormatter.Format(impl, solution, handoffIdentity);
 
             var projectName = impl.ContainingAssembly?.Name ?? string.Empty;
             var signature = impl.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);

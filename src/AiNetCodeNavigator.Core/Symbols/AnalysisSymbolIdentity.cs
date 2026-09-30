@@ -6,6 +6,8 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.CodeAnalysis.CSharp;
 using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.CodeAnalysis;
@@ -164,6 +166,50 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
             IsAssembly = false,
             SourceProjectMarkers = solution is null ? null : BuildSourceProjectMarkers(solution),
         };
+
+    public static async Task<AnalysisSymbolIdentity?> ForSourceAsync(Solution solution, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(solution);
+        if (string.IsNullOrWhiteSpace(solution.FilePath) || !Path.IsPathFullyQualified(solution.FilePath))
+        {
+            return null;
+        }
+
+        var documents = new List<(string Key, string Hash)>();
+        foreach (var project in solution.Projects.OrderBy(project => project.FilePath, StringComparer.OrdinalIgnoreCase).ThenBy(project => project.Name, StringComparer.Ordinal))
+        {
+            string projectMarker;
+            try
+            {
+                projectMarker = GetStableProjectMarker(project);
+            }
+            catch (ArgumentException)
+            {
+                continue;
+            }
+            foreach (var document in project.Documents.OrderBy(document => document.FilePath, StringComparer.OrdinalIgnoreCase).ThenBy(document => document.Name, StringComparer.Ordinal))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var text = await document.GetTextAsync(cancellationToken).ConfigureAwait(false);
+                var textHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString())));
+                var path = document.FilePath is { Length: > 0 } filePath
+                    && SymbolHandoffToken.TryNormalizeTargetPath(filePath, out var normalizedFilePath)
+                        ? normalizedFilePath
+                        : document.FilePath ?? document.Name;
+                documents.Add(($"{projectMarker}\\0{path}", textHash));
+            }
+        }
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        Append(hash, solution.FilePath);
+        foreach (var document in documents.OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            Append(hash, document.Key);
+            Append(hash, document.Hash);
+        }
+
+        return ForSource(solution.FilePath, Convert.ToHexString(hash.GetHashAndReset()), solution);
+    }
 
     private static IReadOnlyDictionary<ProjectId, string> BuildSourceProjectMarkers(Solution solution)
     {

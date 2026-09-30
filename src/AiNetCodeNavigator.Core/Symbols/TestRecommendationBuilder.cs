@@ -27,6 +27,7 @@ public static class TestRecommendationBuilder
         Solution solution,
         CancellationToken ct = default)
     {
+        var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var targetType = targetSymbol as INamedTypeSymbol ?? targetSymbol.ContainingType;
         var targetTypeName = targetType?.Name ?? targetSymbol.Name;
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
@@ -58,7 +59,7 @@ public static class TestRecommendationBuilder
                         continue;
                     }
 
-                    var fixture = CreateFixtureMatch(symbol, solutionDir);
+                    var fixture = CreateFixtureMatch(symbol, solution, solutionDir, handoffIdentity);
                     if (fixture != null)
                     {
                         fixtures.Add(fixture);
@@ -88,7 +89,7 @@ public static class TestRecommendationBuilder
         return candidates;
     }
 
-    private static TestFixtureMatch? CreateFixtureMatch(INamedTypeSymbol testClass, string solutionDir)
+    private static TestFixtureMatch? CreateFixtureMatch(INamedTypeSymbol testClass, Solution solution, string solutionDir, AnalysisSymbolIdentity? identity)
     {
         var syntaxRef = testClass.DeclaringSyntaxReferences.FirstOrDefault();
         if (syntaxRef is null) return null;
@@ -109,25 +110,13 @@ public static class TestRecommendationBuilder
             {
                 var memberLoc = member.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax().GetLocation();
                 var memberLine = memberLoc?.GetLineSpan().StartLinePosition.Line + 1 ?? 0;
-                var memberDocId = member.GetDocumentationCommentId();
-                string? memberHandoff = null;
-                if (memberDocId != null)
-                {
-                    try { memberHandoff = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(memberDocId); }
-                    catch { memberHandoff = memberDocId; }
-                }
+                var memberHandoff = SourceHandoffFormatter.Format(member, solution, identity);
 
                 methods.Add(new TestMethodMatch(member.Name, memberLine, memberHandoff));
             }
         }
 
-        var docCommentId = testClass.GetDocumentationCommentId();
-        string? classHandoff = null;
-        if (docCommentId != null)
-        {
-            try { classHandoff = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(docCommentId); }
-            catch { classHandoff = docCommentId; }
-        }
+        var classHandoff = SourceHandoffFormatter.Format(testClass, solution, identity);
 
         return new TestFixtureMatch(
             ClassName: testClass.Name,
