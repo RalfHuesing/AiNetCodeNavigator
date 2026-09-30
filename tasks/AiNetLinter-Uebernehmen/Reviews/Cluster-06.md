@@ -1,5 +1,24 @@
 # Cluster 6 Review Log
 
+## Point 6.3 implementation record
+
+- Starting commit: `a16692571c79b195f2b756f77fac9c31a1f782e9`, clean working tree. Scope is only point 6.3; its independent audit checkbox remains open.
+- Read-only AiNetLinter comparison covered `GetIndexScopeScanner`, its tool contract tests, and output rendering. AiNetLinter's tool includes physical non-C# project assets and generated/build categories as well as Roslyn document counts, and reports compile-error documents in the inventory. The Core scanner here reports the loaded Roslyn `Project.Documents` inventory only. It does not read document text, touch the filesystem, or modify the workspace, and does not compile documents. The reference contract has no result bounds or cursor pagination.
+- Before-fix focused repros: 4 of 6 `IndexScopeScannerTests` failed. The scanner returned all 205 projects and all 70 file types without limits, emitted German report labels, and dereferenced a null solution instead of throwing `ArgumentNullException`. Cancellation and the original inventory test passed.
+- `IndexScopeScanner` now supports solution and case-insensitive project scope. It counts the full selected scope before projecting at most 100 projects and 64 file types by default (hard caps 500 and 128). Complete totals remain available alongside shown counts, truncation reasons, effective/requested bounds, and a next action. Unknown projects return a recoverable error; cancellation propagates. Reports and scanner-authored guidance are English. C# counts include only `.cs` Roslyn document entries from C# projects; malformed source remains counted because the scan does not compile. No cursor or offset pagination is provided.
+- Added FastTests for project/file-type bounds and deterministic projection, scope selection, unknown-project errors, bound clamping, compile-error inventory, English output, source immutability, null input, and cancellation. Added current-state documentation at `docs/navigation/get-index-scope.md` and linked it from `docs/README.md`. The 6.3 implementation subtasks are checked; the independent audit checkbox remains open.
+
+### Point 6.3 verification
+
+| Gate | Result |
+|---|---|
+| Before-fix focused `IndexScopeScannerTests` | 4 expected failures, 2 passed |
+| Focused `IndexScopeScannerTests` after fix | Passed, 8/8 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 412/412 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 424/424 across both test projects |
+
 ## Point 6.1 implementation record
 
 - Starting commit: `4068706a60cd00c9d13137384a572db196bb10a6`, clean working tree.

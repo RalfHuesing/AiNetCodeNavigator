@@ -6,6 +6,7 @@
 
 ## Navigation
 
+- [Index Scope](navigation/get-index-scope.md): Roslyn solution and project document inventory, bounds, completeness, errors, and read-only behavior.
 - [Get File Tree Core Scanner](navigation/get-file-tree.md): Physical tree traversal, summary aggregates, filters, bounds, and read-only behavior.
 - [Namespace Tree Core Scanner](navigation/get-namespace-tree.md): Source namespace hierarchy, project aggregation, depth and result bounds, truncation, and read-only behavior.
 - [Shared Symbol Resolution](navigation/symbol-resolution.md): Identifier forms, ambiguity candidates, handoff roundtrips, and recoverable errors for follow-up scanners.

@@ -23,4 +23,7 @@
 - [x] 6.3 Index-Scope (`get_index_scope`-Engine):
   - [x] `IndexScopeScanner`: Status der C#-Indizierung und Dokumentenübersicht
   - [x] FastTests für Index-Scope
+  - [x] Project-/Solution-Scope, vollständige Gesamtsummen und begrenzte Projekt-/Dateityplisten mit Truncation-Metadaten abdecken.
+  - [x] Unbekannte Projekte als Fehler behandeln, Cancellation weiterreichen und den Dokumentbestand unverändert lassen.
+  - [x] Current-State-Dokumentation zu Roslyn-Dokumentumfang, Grenzen und AiNetLinter-Unterschieden ergänzen.
   - [ ] Review/Audit zu 6.3 durchführen; Findings ergänzen und umsetzen.
