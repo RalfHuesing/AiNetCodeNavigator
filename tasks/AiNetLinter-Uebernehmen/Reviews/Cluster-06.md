@@ -54,3 +54,23 @@
 - **P2 absolute-root validation — accepted.** `GetFileTreeScanner.cs:31-36` now checks the original `RootDirectory` with `Path.IsPathFullyQualified` before normalization; `GetFileTreeScannerTests.cs:129-137` covers a relative `"."` root and its recoverable error.
 - **P2 selected-view result budget — accepted.** `GetFileTreeScanner.cs:174-207` projects only entries for the selected view. Files and summary views use their respective counts for truncation; tree view builds one sorted item list and applies a single `MaxResults` limit before splitting the returned files and directories. `GetFileTreeScannerTests.cs:138-174` covers both the prior false truncation and the combined tree budget. The summary limit also remains covered by the existing recursive summary test.
 - All three audit-1 findings meet their acceptance conditions. The 6.1 audit checkbox is marked complete. No new finding was identified within this targeted follow-up; 6.2 and 6.3 were outside its scope.
+
+## Point 6.2 scanner implementation
+
+- Starting commit: `3535d2ca0db9883a34dfb42696031c85d6cbab60`, clean working tree. Scope is only point 6.2; the independent audit checkbox remains open, and 6.3 was not changed.
+- The read-only AiNetLinter comparison covered `GetNamespaceTreeScanner`, `RenderNamespaceTree`, `CollectNamespaceTreeNodes`, `GetNamespaceTreeTool`, and the scanner FastTests. AiNetLinter limits namespace traversal by depth, defaults `maxResults` to 50 with a hard cap of 200, applies the active result limit to the namespace projection, returns truncation guidance, and propagates cancellation while converting other scan exceptions to a recoverable compilation error. Its project-scoped scan derives allowed syntax trees from project documents and does not provide offset/cursor pagination.
+- Before-fix reproductions: the focused FastTests had four expected failures out of five. The scanner counted 2 namespace entries where the output hierarchy contained 3 (the parent was omitted from the total); a 41-segment namespace produced depth 80; an unknown project name returned a success-shaped empty payload; and a large result had 205 nodes while the total omitted its synthesized root. The hierarchy fixture also covers block-scoped and file-scoped declarations, partial types, and aggregation across projects.
+- `NamespaceTreeScanner` now limits depth to 32 and defaults the result budget to 50 with a 200-node cap. One result budget covers all namespace nodes, including ancestors; the structured tree and formatted output share the same projection. Namespace totals include synthesized parents within the effective depth. Source types are restricted to the target project's document syntax trees; partial types count once per project, while matching namespace names aggregate across solution projects. A namespace containing source types below the depth cap adds its visible prefix and reports `maxDepth`. Unknown project names and scan exceptions return an error payload; cancellation is rethrown. No offset/cursor pagination was added, matching the reference tool's continuation model.
+- Added FastTests for declared namespace hierarchy, file-scoped and nested namespaces, partial-type de-duplication, multi-project aggregation, result and depth truncation, bound clamping, unknown project errors, cancellation, and unchanged document text. Added current-state documentation at `docs/navigation/get-namespace-tree.md` and linked it from `docs/README.md`.
+- No independent audit has been performed for 6.2. Its checklist item remains open. Point 6.3 was not touched.
+
+### Point 6.2 verification
+
+| Gate | Result |
+|---|---|
+| Before-fix focused `NamespaceTreeScannerTests` | 4 expected failures, 1 passed |
+| Focused `NamespaceTreeScannerTests` after fix | Passed, 7/7 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 403/403 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 415/415 across both test projects |

@@ -13,6 +13,9 @@
 - [x] 6.2 Namespace-Baum (`get_namespace_tree`-Engine):
   - [x] `NamespaceTreeScanner`: Deklarierte Namespaces hierarchisch strukturieren
   - [x] FastTests für Namespace-Trees
+  - [x] Namespaces über Projekt-Dokumente zusammenführen; verschachtelte, file-scoped und partielle Deklarationen abdecken.
+  - [x] Tiefe und Gesamtzahl der Namespace-Knoten begrenzen; strukturierte und formatierte Ergebnisse konsistent kürzen.
+  - [x] Unbekannte Projekte als Fehler ausgeben und Cancellation an den Aufrufer weiterreichen.
   - [ ] Review/Audit zu 6.2 durchführen; Findings ergänzen und umsetzen.
 - [x] 6.3 Index-Scope (`get_index_scope`-Engine):
   - [x] `IndexScopeScanner`: Status der C#-Indizierung und Dokumentenübersicht

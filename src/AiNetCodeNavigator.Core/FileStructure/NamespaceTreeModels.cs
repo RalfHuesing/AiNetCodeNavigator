@@ -25,4 +25,18 @@ public sealed record NamespaceTreePayload(
     IReadOnlyList<NamespaceNode> RootNamespaces,
     int TotalNamespaces,
     int TotalTypes,
-    string FormattedText);
+    string FormattedText,
+    int ShownNamespaces = 0,
+    bool Truncated = false,
+    IReadOnlyList<string>? TruncatedBy = null,
+    string? Error = null,
+    int RequestedMaxDepth = 32,
+    int EffectiveMaxDepth = 32,
+    int RequestedMaxResults = 200,
+    int EffectiveMaxResults = 200,
+    bool BoundsWereClamped = false,
+    string? NextAction = null);
+
+public sealed record NamespaceTreeScanOptions(
+    int MaxDepth = NamespaceTreeScanner.MaxDepthCap,
+    int MaxResults = NamespaceTreeScanner.DefaultMaxResults);

@@ -1,8 +1,12 @@
 #nullable enable
 
 using System.Linq;
+using System.Collections.Generic;
+using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.FileStructure;
+using AiNetCodeNavigator.TestKit.Builders;
 using AiNetCodeNavigator.TestKit.Fixtures;
 using Xunit;
 
@@ -36,5 +40,143 @@ public sealed class NamespaceTreeScannerTests
         Assert.Contains("# Namespace Tree:", payload.FormattedText);
         Assert.Contains("- SampleNamespace", payload.FormattedText);
         Assert.Contains("Hierarchy", payload.FormattedText);
+    }
+
+    [Fact]
+    public async Task ScanSolutionAsync_CountsDeclaredHierarchyAndCombinesPartialNamespaces()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\virtual\NamespaceSolution.slnx",
+            new ProjectSpec("First", [
+                ("Nested.cs", "namespace Company { namespace Product { public partial class Item {} } }"),
+                ("FileScoped.cs", "namespace Company.Product; public partial class Item {}"),
+            ]),
+            new ProjectSpec("Second", [
+                ("Other.cs", "namespace Company.Product.Other; public class OtherType {}"),
+            ]));
+
+        var payload = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution);
+
+        var company = Assert.Single(payload.RootNamespaces);
+        Assert.Equal("Company", company.FullName);
+        var product = Assert.Single(company.Children);
+        Assert.Equal("Company.Product", product.FullName);
+        Assert.Equal(1, product.TypeCount); // The partial type is one declaration symbol.
+        Assert.Single(product.Children);
+        Assert.Equal("Company.Product.Other", product.Children[0].FullName);
+        Assert.Equal(3, payload.TotalNamespaces); // Includes the synthesized parent namespaces.
+        Assert.Equal(2, payload.TotalTypes);
+        Assert.Contains("- Product (1 Typen)", payload.FormattedText);
+    }
+
+    [Fact]
+    public async Task ScanSolutionAsync_BoundsNamespaceTreeAndReportsTruncation()
+    {
+        var documents = new List<(string FileName, string Content)>();
+        for (var index = 0; index < 205; index++)
+        {
+            documents.Add((
+                $"Type{index}.cs",
+                $"namespace Root.N{index:D3}; public class Type{index} {{}}"));
+        }
+
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\virtual\LargeNamespaceSolution.slnx",
+            new ProjectSpec("Large", documents));
+
+        var defaultPayload = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution);
+        Assert.True(defaultPayload.Truncated);
+        Assert.Equal(50, defaultPayload.ShownNamespaces);
+        Assert.Contains("maxResults", defaultPayload.TruncatedBy!);
+        Assert.Contains("MaxResults erhöhen", defaultPayload.NextAction);
+        Assert.Contains("Nächster Schritt", defaultPayload.FormattedText);
+
+        var payload = await NamespaceTreeScanner.ScanSolutionAsync(
+            fixture.Solution,
+            options: new NamespaceTreeScanOptions(MaxResults: NamespaceTreeScanner.MaxResultsCap));
+
+        Assert.True(payload.TotalNamespaces == 206, payload.FormattedText);
+        Assert.Equal(205, payload.TotalTypes);
+        Assert.Equal(200, CountNodes(payload.RootNamespaces));
+        Assert.Contains("206 Namespaces", payload.FormattedText);
+        Assert.Contains("200 gezeigt", payload.FormattedText);
+    }
+
+    [Fact]
+    public async Task ScanSolutionAsync_RejectsUnknownProjectWithRecoverableError()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+
+        var payload = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution, "Missing.Project");
+
+        Assert.Contains("Missing.Project", payload.Error);
+        Assert.Contains("Projekt 'Missing.Project' wurde nicht gefunden", payload.FormattedText);
+        Assert.Empty(payload.RootNamespaces);
+    }
+
+    [Fact]
+    public async Task ScanSolutionAsync_ClampsDeepNamespaceTraversal()
+    {
+        var source = new StringBuilder();
+        for (var index = 0; index < 40; index++)
+        {
+            source.Append("namespace N").Append(index).Append(".");
+        }
+        source.AppendLine("N40; public class DeepType {}");
+
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\virtual\DeepNamespaceSolution.slnx",
+            new ProjectSpec("Deep", [("Deep.cs", source.ToString())]));
+
+        var payload = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution);
+
+        Assert.True(MaxDepth(payload.RootNamespaces) == 32, payload.FormattedText);
+        Assert.Contains("maxDepth", payload.FormattedText);
+    }
+
+    [Fact]
+    public async Task ScanSolutionAsync_ClampsRequestedBoundsAndKeepsCompleteSmallResults()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\virtual\SmallNamespaceSolution.slnx",
+            new ProjectSpec("Small", [("One.cs", "namespace Small; public class One {}") ]));
+
+        var payload = await NamespaceTreeScanner.ScanSolutionAsync(
+            fixture.Solution,
+            options: new NamespaceTreeScanOptions(MaxDepth: 40, MaxResults: 250));
+
+        Assert.True(payload.BoundsWereClamped);
+        Assert.Equal(32, payload.EffectiveMaxDepth);
+        Assert.Equal(200, payload.EffectiveMaxResults);
+        Assert.False(payload.Truncated);
+        Assert.Empty(payload.TruncatedBy!);
+        Assert.Equal(1, payload.ShownNamespaces);
+    }
+
+    [Fact]
+    public async Task ScanSolutionAsync_HonorsCancellationAndLeavesDocumentTextUnchanged()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\virtual\ReadOnlyNamespaceSolution.slnx",
+            new ProjectSpec("ReadOnly", [("Source.cs", "namespace ReadOnly; public class Source {}") ]));
+        var document = fixture.Solution.Projects.Single().Documents.Single();
+        var before = await document.GetTextAsync();
+
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution, ct: cancellation.Token));
+
+        await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution);
+        var after = await document.GetTextAsync();
+        Assert.Equal(before.ToString(), after.ToString());
+    }
+
+    private static int CountNodes(IReadOnlyList<NamespaceNode> nodes) =>
+        nodes.Sum(node => 1 + CountNodes(node.Children));
+
+    private static int MaxDepth(IReadOnlyList<NamespaceNode> roots)
+    {
+        return roots.Count == 0 ? 0 : roots.Max(node => 1 + MaxDepth(node.Children));
     }
 }
