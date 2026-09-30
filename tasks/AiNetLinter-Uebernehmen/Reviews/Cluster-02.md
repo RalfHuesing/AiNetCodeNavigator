@@ -143,3 +143,24 @@
 - Positive evidence: the real `.slnx` tests at `WorkspaceLoadingIntegrationTests.cs:53-145` cover source edits, in-project file addition/removal, solution and project edits, a missing-project load cause, and retry after repair; `ResidentSolution.cs:221-259,263-310` returns a structured `PROJECT_LOAD_FAILED` result and retries after failed reload even when the target fingerprint is restored. The Core result is not yet a public MCP tool response; that composition is a later gate.
 - AiNetLinter was inspected read-only: `McpCodeGraphServerRefresh.cs:75-127,251-293` bounds its source sweep to known project directories, so its behavior is not proof that external include globs are handled; its registry and server refresh preserve retryable load behavior but do not resolve these new-snapshot cases. The documented custom-import boundary is therefore accepted as an implementation limitation, not as completion of the stated 2.3 criterion.
 - Verification: code, tests, documentation, and reference inspected read-only. No build or tests were run by this auditor; the gate table above is the implementer's record. Documentation-only diff reviewed and `git diff --check` passed before commit.
+
+### Audit 1 Finding Fix
+
+- Fix base: `bc12305146204fbc551ddfa9ae1f31b19a4723b1`.
+- The new real-`.slnx` regression cases were run before the production changes. The external-glob case failed because `Added.cs` was absent from the next snapshot. Both custom import cases failed because the App project still referenced `Library` after the import changed to `Extra` with the original timestamp and file length preserved.
+- **P1 — new files matched by external `Compile` wildcards — fixed.** The resident loader evaluates each loaded project's effective MSBuild imports and `Compile` definitions. It records the directory roots before wildcard segments, including roots outside the project directory, and fingerprints the C# file membership under those roots. Addition or removal of a matched source file triggers a full solution reload. The regression uses `<Compile Include="../Shared/*.cs" />` and adds a matching source in the sibling directory.
+- **P2 — custom import changes do not refresh project references — fixed.** The loaded structure inputs now include effective imported files from MSBuild evaluation. Their fingerprint combines modification time, length, and SHA-256, while checking metadata before and after the read and retrying transient IO failures. The `.props` and `.targets` regressions each change an imported `ProjectReference` while restoring both timestamp and file length, then assert the refreshed Roslyn project graph points to `Extra`.
+- The reference check against AiNetLinter remained read-only. Its source refresh scans known project directories and does not establish external wildcard coverage; the implemented behavior is verified by this repository's real MSBuild integration test. MSBuild evaluation uses the SDK's matching 18.9.6 engine package for compile-time APIs, with runtime assets excluded so MSBuild Locator supplies the loaded SDK runtime.
+- Updated current-state documentation and removed both resolved 2.3 items from the open Findings register. The 2.3 audit checkbox remains open for independent follow-up.
+
+#### Fix Verification
+
+| Gate | Result |
+|---|---|
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 223/223 on retry; the first run had an unrelated concurrent handoff test fail 19/20 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 10/10 including external glob and `.props`/`.targets` reload cases |
+| `pwsh -File ./scripts/test.ps1` | Passed, 233/233 across both test projects |
+| `git diff --check` | Passed after the review update |
+
+- Remaining boundary: the collector tracks effective imports and wildcard roots from evaluated project definitions. Conditional imports not active for the loaded project evaluation are not effective inputs of that loaded snapshot.
