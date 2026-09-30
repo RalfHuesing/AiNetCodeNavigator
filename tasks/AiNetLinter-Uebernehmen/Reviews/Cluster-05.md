@@ -104,3 +104,25 @@
 
 - Inspected the committed source and regression tests; no production files were changed by this audit.
 - The documentation diff was inspected and `git diff --check` passed before commit.
+
+## Point 5.2 implementation
+
+- Base commit: `a028777123b51709134c3f9f3bb1af3f79c0cb69`; the working tree was clean before this slice.
+- Read-only AiNetLinter comparison covered `FindReferencesTool`, `FindImplementationsTool`, and their FastTests. The reference clamps result limits to at least one, reports total and truncation for implementations, searches interface type implementations transitively across the solution, finds interface method implementations and virtual/abstract method overrides, and emits opaque follow-up handles.
+- Before the fix, `maxResults=0` reproduced empty reference and implementation lists even when matches existed. Added tests also verify `-1` normalization, null argument failures, handoff roundtrips, same-name types in two implementing projects, and interface/abstract member implementations across project references. A BaseProcessor → FastProcessor → SafeProcessor contract test confirms indirect derived types are returned; this passed before a code change because Roslyn's current default is already transitive.
+- Both Core resolver entry points now validate required Roslyn inputs and clamp nonpositive limits to one. `FindImplementationsResult` reports `IsTruncated` while preserving the full `TotalCount`. References and implementations remain ordered and retain their project-bound source handoffs.
+- Added the current-state page [Find References and Implementations Core Engines](../../../docs/navigation/find-references-and-implementations.md) and indexed it in `docs/README.md`. It documents Core behavior separately from future MCP tool contracts.
+- The 5.2 audit checkbox remains `[ ]`; this implementation record is not an independent audit.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| `maxResults=0` before-fix reproductions | Failed as expected for references and implementations (empty results) |
+| Focused FindReferencesResolver FastTests after fix | Passed, 11/11 |
+| Indirect derived class contract test | Passed, 1/1 (existing resolver behavior) |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 350/350 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 362/362 across both test projects |
+| `git diff --check` | Passed before commit |

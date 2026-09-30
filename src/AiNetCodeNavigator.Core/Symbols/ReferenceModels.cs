@@ -33,4 +33,5 @@ public sealed record FindImplementationsResult(
     string TargetSymbolName,
     string TargetKind,
     IReadOnlyList<ImplementationLocationEntry> Implementations,
-    int TotalCount);
+    int TotalCount,
+    bool IsTruncated = false);

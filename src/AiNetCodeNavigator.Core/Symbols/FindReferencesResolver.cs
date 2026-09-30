@@ -23,6 +23,10 @@ public static class FindReferencesResolver
         int maxResults = 50,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(targetSymbol);
+        ArgumentNullException.ThrowIfNull(solution);
+
+        var normalizedMaxResults = Math.Max(maxResults, 1);
         var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
         var references = await SymbolFinder.FindReferencesAsync(targetSymbol, solution, ct).ConfigureAwait(false);
@@ -78,8 +82,8 @@ public static class FindReferencesResolver
             .ThenBy(e => e.Column)
             .ToList();
 
-        var isTruncated = sorted.Count > maxResults;
-        var shown = sorted.Take(maxResults).ToList();
+        var isTruncated = sorted.Count > normalizedMaxResults;
+        var shown = sorted.Take(normalizedMaxResults).ToList();
 
         return new FindReferencesResult(
             TargetSymbolName: targetSymbol.Name,
@@ -95,6 +99,10 @@ public static class FindReferencesResolver
         int maxResults = 50,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(targetSymbol);
+        ArgumentNullException.ThrowIfNull(solution);
+
+        var normalizedMaxResults = Math.Max(maxResults, 1);
         var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
         var implementations = new List<ISymbol>();
@@ -154,13 +162,15 @@ public static class FindReferencesResolver
             .OrderBy(e => e.FilePath, StringComparer.OrdinalIgnoreCase)
             .ThenBy(e => e.Line)
             .ThenBy(e => e.SymbolName, StringComparer.Ordinal)
-            .Take(maxResults)
             .ToList();
+        var isTruncated = sorted.Count > normalizedMaxResults;
+        var shown = sorted.Take(normalizedMaxResults).ToList();
 
         return new FindImplementationsResult(
             TargetSymbolName: targetSymbol.Name,
             TargetKind: targetSymbol.Kind.ToString().ToLowerInvariant(),
-            Implementations: sorted,
-            TotalCount: distinctImpls.Count);
+            Implementations: shown,
+            TotalCount: sorted.Count,
+            IsTruncated: isTruncated);
     }
 }
