@@ -26,7 +26,7 @@ public static class FindReferencesResolver
         int maxResults = 50,
         CancellationToken ct = default)
         => await FindReferencesAsyncCore(
-            targetSymbol, solution, maxResults, requestedDepth: 1, DefaultMaxVisitedSymbols, ct).ConfigureAwait(false);
+            targetSymbol, solution, maxResults, requestedDepth: 1, DefaultMaxVisitedSymbols, ct, SymbolScopeType.All, includeGenerated: false).ConfigureAwait(false);
 
     public static async Task<FindReferencesResult> FindReferencesAsync(
         ISymbol targetSymbol,
@@ -34,8 +34,10 @@ public static class FindReferencesResolver
         int maxResults,
         int depth,
         CancellationToken ct = default,
-        int maxNodes = DefaultMaxVisitedSymbols)
-        => await FindReferencesAsyncCore(targetSymbol, solution, maxResults, depth, maxNodes, ct).ConfigureAwait(false);
+        int maxNodes = DefaultMaxVisitedSymbols,
+        SymbolScopeType scope = SymbolScopeType.All,
+        bool includeGenerated = false)
+        => await FindReferencesAsyncCore(targetSymbol, solution, maxResults, depth, maxNodes, ct, scope, includeGenerated).ConfigureAwait(false);
 
     private static async Task<FindReferencesResult> FindReferencesAsyncCore(
         ISymbol targetSymbol,
@@ -43,7 +45,9 @@ public static class FindReferencesResolver
         int maxResults,
         int requestedDepth,
         int maxNodes,
-        CancellationToken ct)
+        CancellationToken ct,
+        SymbolScopeType scope,
+        bool includeGenerated)
     {
         ArgumentNullException.ThrowIfNull(targetSymbol);
         ArgumentNullException.ThrowIfNull(solution);
@@ -60,6 +64,7 @@ public static class FindReferencesResolver
         queue.Enqueue((targetSymbol, 1));
         var truncatedByNodeLimit = false;
         var expandedSymbolCount = 0;
+        var generatedDocuments = new Dictionary<DocumentId, bool>();
 
         while (queue.Count > 0)
         {
@@ -80,6 +85,17 @@ public static class FindReferencesResolver
                 {
                     ct.ThrowIfCancellationRequested();
                     if (loc.Document is not { } doc || !loc.Location.IsInSource) continue;
+                    var isTest = TestDetector.IsTestProject(doc.Project) || TestDetector.IsTestFile(doc.FilePath);
+                    if ((scope == SymbolScopeType.Production && isTest) || (scope == SymbolScopeType.Tests && !isTest)) continue;
+                    if (!includeGenerated)
+                    {
+                        if (!generatedDocuments.TryGetValue(doc.Id, out var isGenerated))
+                        {
+                            isGenerated = await GeneratedDocumentDetector.IsGeneratedDocumentAsync(doc, ct).ConfigureAwait(false);
+                            generatedDocuments[doc.Id] = isGenerated;
+                        }
+                        if (isGenerated) continue;
+                    }
 
                     var lineSpan = loc.Location.GetLineSpan();
                     var relPath = PathNormalizer.ToRelative(solutionDir, lineSpan.Path);
@@ -180,7 +196,9 @@ public static class FindReferencesResolver
         ISymbol targetSymbol,
         Solution solution,
         int maxResults = 50,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        SymbolScopeType scope = SymbolScopeType.All,
+        bool includeGenerated = false)
     {
         ArgumentNullException.ThrowIfNull(targetSymbol);
         ArgumentNullException.ThrowIfNull(solution);
@@ -260,10 +278,26 @@ public static class FindReferencesResolver
 
         var entries = new List<ImplementationLocationEntry>();
         var distinctImpls = implementations.Distinct(SymbolEqualityComparer.Default).ToList();
+        var generatedDocuments = new Dictionary<DocumentId, bool>();
 
         foreach (var impl in distinctImpls)
         {
             var loc = impl.Locations.FirstOrDefault(l => l.IsInSource);
+            var sourceDocument = loc?.SourceTree is { } tree ? solution.GetDocument(tree) : null;
+            if (sourceDocument is not null)
+            {
+                var isTest = TestDetector.IsTestProject(sourceDocument.Project) || TestDetector.IsTestFile(sourceDocument.FilePath);
+                if ((scope == SymbolScopeType.Production && isTest) || (scope == SymbolScopeType.Tests && !isTest)) continue;
+                if (!includeGenerated)
+                {
+                    if (!generatedDocuments.TryGetValue(sourceDocument.Id, out var isGenerated))
+                    {
+                        isGenerated = await GeneratedDocumentDetector.IsGeneratedDocumentAsync(sourceDocument, ct).ConfigureAwait(false);
+                        generatedDocuments[sourceDocument.Id] = isGenerated;
+                    }
+                    if (isGenerated) continue;
+                }
+            }
             var filePath = loc?.SourceTree?.FilePath is not null
                 ? PathNormalizer.ToRelative(solutionDir, loc.SourceTree.FilePath)
                 : string.Empty;

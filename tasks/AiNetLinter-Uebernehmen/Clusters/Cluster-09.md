@@ -16,6 +16,7 @@
 - [ ] 9.2 Tool-Registrierungen:
   - [x] Initial symbol slice: `find_symbol`, `get_symbol_body` (source and assembly routing; assembly follow-up via `get_symbol_body`).
   - [x] Initial structure slice: `get_file_skeleton`, `get_class_structure`, `get_file_tree`, `get_namespace_tree`, `get_index_scope`.
+  - [x] Register the remaining thirteen navigation handlers and exercise their source/assembly happy paths through real MCP stdio; full public contracts remain open below.
   - [ ] Complete all twenty navigation contracts, including public budget/error recovery, assembly-reference consumer closure, and full parameter/filter parity.
   - [ ] Beziehungs-Tools: `get_call_tree`, `find_references`, `get_type_hierarchy`, `find_implementations`, `get_impact`, `dependency_graph`, `resolve_type_origin`
   - [ ] Assembly-Tools: `get_assembly_context`, `inspect_assembly`, `search_assembly`, `find_assembly_extensions`

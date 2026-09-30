@@ -67,7 +67,7 @@ public static class FeatureContextScanner
         var solutionDir = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
         var declaration = ExtractDeclaration(symbol, solutionDir, identity, request.Solution);
 
-        var scopedCallers = await CollectCallersAsync(symbol, request.Solution, solutionDir, identity, request.Scope, ct).ConfigureAwait(false);
+        var scopedCallers = await CollectCallersAsync(symbol, request.Solution, solutionDir, identity, request.Scope, request.IncludeGenerated, ct).ConfigureAwait(false);
         var orderedCallers = scopedCallers
             .OrderBy(c => PathNormalizer.NormalizeSeparators(c.FilePath), StringComparer.OrdinalIgnoreCase)
             .ThenBy(c => c.Line)
@@ -78,7 +78,7 @@ public static class FeatureContextScanner
         var callersTruncated = orderedCallers.Count > maxCallers;
         var shownCallers = orderedCallers.Take(maxCallers).ToList();
 
-        var testContext = await TestRecommendationBuilder.BuildAsync(symbol, request.Solution, ct).ConfigureAwait(false);
+        var testContext = await TestRecommendationBuilder.BuildAsync(symbol, request.Solution, ct, request.IncludeGenerated, request.Scope).ConfigureAwait(false);
         var allTests = FlattenTestRecommendations(testContext, request.Solution, request.Scope)
             .OrderBy(t => PathNormalizer.NormalizeSeparators(t.FilePath), StringComparer.OrdinalIgnoreCase)
             .ThenBy(t => t.Line)
@@ -177,10 +177,12 @@ public static class FeatureContextScanner
         string solutionDir,
         AnalysisSymbolIdentity? identity,
         SymbolScopeType scope,
+        bool includeGenerated,
         CancellationToken ct)
     {
         var callers = new List<FeatureContextCallerEntry>();
         var references = await SymbolFinder.FindReferencesAsync(symbol, solution, ct).ConfigureAwait(false);
+        var generatedDocuments = new Dictionary<DocumentId, bool>();
 
         foreach (var reference in references)
         {
@@ -189,6 +191,15 @@ public static class FeatureContextScanner
             {
                 ct.ThrowIfCancellationRequested();
                 if (loc.Document is not { } doc) continue;
+                if (!includeGenerated)
+                {
+                    if (!generatedDocuments.TryGetValue(doc.Id, out var isGenerated))
+                    {
+                        isGenerated = await GeneratedDocumentDetector.IsGeneratedDocumentAsync(doc, ct).ConfigureAwait(false);
+                        generatedDocuments[doc.Id] = isGenerated;
+                    }
+                    if (isGenerated) continue;
+                }
 
                 var semanticModel = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false);
                 var enclosingSymbol = semanticModel?.GetEnclosingSymbol(loc.Location.SourceSpan.Start);

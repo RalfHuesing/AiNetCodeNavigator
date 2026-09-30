@@ -56,4 +56,5 @@ public sealed record FeatureContextRequest(
     int MaxCallers = 20,
     int MaxTests = 20,
     SymbolScopeType Scope = SymbolScopeType.All,
-    AnalysisSymbolIdentity? HandoffIdentity = null);
+    AnalysisSymbolIdentity? HandoffIdentity = null,
+    bool IncludeGenerated = false);

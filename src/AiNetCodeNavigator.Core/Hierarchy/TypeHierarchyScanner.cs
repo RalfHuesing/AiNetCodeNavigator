@@ -22,7 +22,9 @@ public static class TypeHierarchyScanner
         INamedTypeSymbol type,
         Solution solution,
         int maxResults = 50,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        SymbolScopeType scope = SymbolScopeType.All,
+        bool includeGenerated = false)
     {
         ArgumentNullException.ThrowIfNull(type);
         ArgumentNullException.ThrowIfNull(solution);
@@ -56,7 +58,22 @@ public static class TypeHierarchyScanner
                 ? (await SymbolFinder.FindDerivedClassesAsync(type, solution, transitive: true, cancellationToken: ct).ConfigureAwait(false)).ToList()
                 : [];
 
-        var subtypeEntries = subtypesSymbols
+        var visibleSubtypes = new List<INamedTypeSymbol>();
+        foreach (var subtype in subtypesSymbols)
+        {
+            ct.ThrowIfCancellationRequested();
+            var document = subtype.DeclaringSyntaxReferences.Select(reference => solution.GetDocument(reference.SyntaxTree)).FirstOrDefault(item => item is not null);
+            if (document is not null)
+            {
+                var isTest = TestDetector.IsTestProject(document.Project) || TestDetector.IsTestFile(document.FilePath);
+                if ((scope == SymbolScopeType.Production && isTest) || (scope == SymbolScopeType.Tests && !isTest)) continue;
+                if (!includeGenerated && await GeneratedDocumentDetector.IsGeneratedDocumentAsync(document, ct).ConfigureAwait(false)) continue;
+            }
+            else if (scope != SymbolScopeType.All) continue;
+            visibleSubtypes.Add(subtype);
+        }
+
+        var subtypeEntries = visibleSubtypes
             .Select(s => CreateEntries(s, solution, solutionDir, handoffIdentity).First())
             .OrderBy(e => e.FilePath, StringComparer.OrdinalIgnoreCase)
             .ThenBy(e => e.FilePath, StringComparer.Ordinal)

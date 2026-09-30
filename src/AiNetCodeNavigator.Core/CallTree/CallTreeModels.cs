@@ -50,4 +50,6 @@ public sealed record CallTreeBuildRequest(
     int RequestedDepth = 2,
     int TopN = 10,
     CallTreeDirection Direction = CallTreeDirection.Incoming,
-    bool IncludeBcl = false);
+    bool IncludeBcl = false,
+    AiNetCodeNavigator.Core.Symbols.SymbolScopeType Scope = AiNetCodeNavigator.Core.Symbols.SymbolScopeType.All,
+    bool IncludeGenerated = false);

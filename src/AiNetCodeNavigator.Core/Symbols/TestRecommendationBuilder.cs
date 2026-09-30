@@ -26,7 +26,9 @@ public static class TestRecommendationBuilder
     public static async Task<TestContextPayload> BuildAsync(
         ISymbol targetSymbol,
         Solution solution,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool includeGenerated = false,
+        SymbolScopeType scope = SymbolScopeType.All)
     {
         ArgumentNullException.ThrowIfNull(targetSymbol);
         ArgumentNullException.ThrowIfNull(solution);
@@ -61,6 +63,9 @@ public static class TestRecommendationBuilder
             {
                 continue;
             }
+            var isTestDocument = TestDetector.IsTestProject(sourceProject) || TestDetector.IsTestFile(sourceDocument!.FilePath);
+            if ((scope == SymbolScopeType.Production && isTestDocument) || (scope == SymbolScopeType.Tests && !isTestDocument)) continue;
+            if (!includeGenerated && await GeneratedDocumentDetector.IsGeneratedDocumentAsync(sourceDocument!, ct).ConfigureAwait(false)) continue;
 
             var fixture = CreateFixtureMatch(symbol, solution, solutionDir, handoffIdentity);
             if (fixture is not null) fixtures.Add(fixture);

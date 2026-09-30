@@ -34,7 +34,7 @@ public static class CallTreeBuilder
         var solutionDir = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
         var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
 
-        var state = new BuilderState(request.Solution, solutionDir, depth, Math.Max(request.TopN, 1), request.IncludeBcl, handoffIdentity);
+        var state = new BuilderState(request.Solution, solutionDir, depth, Math.Max(request.TopN, 1), request.IncludeBcl, handoffIdentity, request.Scope, request.IncludeGenerated);
 
         if (request.SeedSymbol is INamedTypeSymbol namedType)
         {
@@ -82,6 +82,9 @@ public static class CallTreeBuilder
             {
                 ct.ThrowIfCancellationRequested();
                 if (loc.Document is not { } doc) continue;
+                var isTest = TestDetector.IsTestProject(doc.Project) || TestDetector.IsTestFile(doc.FilePath);
+                if ((state.Scope == SymbolScopeType.Production && isTest) || (state.Scope == SymbolScopeType.Tests && !isTest)) continue;
+                if (!state.IncludeGenerated && await GeneratedDocumentDetector.IsGeneratedDocumentAsync(doc, ct).ConfigureAwait(false)) continue;
 
                 var semanticModel = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false);
                 var enclosing = semanticModel?.GetEnclosingSymbol(loc.Location.SourceSpan.Start);
@@ -158,6 +161,9 @@ public static class CallTreeBuilder
             var syntax = await syntaxRef.GetSyntaxAsync(ct).ConfigureAwait(false);
             var doc = state.Solution.GetDocument(syntax.SyntaxTree);
             if (doc is null) continue;
+            var isTestDocument = TestDetector.IsTestProject(doc.Project) || TestDetector.IsTestFile(doc.FilePath);
+            if ((state.Scope == SymbolScopeType.Production && isTestDocument) || (state.Scope == SymbolScopeType.Tests && !isTestDocument)) continue;
+            if (!state.IncludeGenerated && await GeneratedDocumentDetector.IsGeneratedDocumentAsync(doc, ct).ConfigureAwait(false)) continue;
 
             var semanticModel = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false);
             if (semanticModel is null) continue;
@@ -302,7 +308,10 @@ public static class CallTreeBuilder
         private readonly HashSet<ISymbol> _visited = new(SymbolEqualityComparer.Default);
         private int _hiddenEdgeCount;
 
-        public BuilderState(Solution solution, string solutionDir, int maxDepth, int topN, bool includeBcl, AnalysisSymbolIdentity? handoffIdentity)
+        public SymbolScopeType Scope { get; }
+        public bool IncludeGenerated { get; }
+
+        public BuilderState(Solution solution, string solutionDir, int maxDepth, int topN, bool includeBcl, AnalysisSymbolIdentity? handoffIdentity, SymbolScopeType scope, bool includeGenerated)
         {
             Solution = solution;
             SolutionDir = solutionDir;
@@ -310,6 +319,8 @@ public static class CallTreeBuilder
             TopN = topN;
             IncludeBcl = includeBcl;
             HandoffIdentity = handoffIdentity;
+            Scope = scope;
+            IncludeGenerated = includeGenerated;
         }
 
         public bool HasQueuedNodes => _queue.Count > 0;

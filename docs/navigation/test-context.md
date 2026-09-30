@@ -6,4 +6,6 @@
 
 `TestContextPayload.EvidenceMode` is always `static-test-candidates-only`. These results are static heuristic candidates. A name or path match does not establish that a test is related to the target, that it runs, or that it covers the target. Validate candidates before treating them as test evidence.
 
+The public `get_test_context` handler defaults to 30 candidates, supports `scopeType` and `includeGenerated` (false by default), and filters before applying the limit. Its source result is exercised over stdio. Public response-budget and reference parity remain under verification; see [MCP navigation registration status](mcp-registration-status.md).
+
 `BuildAsync` requires a non-null target symbol and solution and throws `ArgumentNullException` when either is missing.

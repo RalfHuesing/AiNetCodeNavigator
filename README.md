@@ -4,7 +4,7 @@ AiNetCodeNavigator is a .NET project for an MCP server that helps agents navigat
 
 ## Status
 
-The project is under development. The MCP stdio host currently exposes `get_server_health`, `reload_config`, and an initial seven-tool navigation slice: `find_symbol`, `get_symbol_body`, `get_file_skeleton`, `get_class_structure`, `get_file_tree`, `get_namespace_tree`, and `get_index_scope`. The other thirteen navigation tools and complete public contract verification remain open. The core library contains components for loading solutions, resolving symbols, examining code structure and relationships, and inspecting assemblies.
+The project is under development. The MCP stdio host currently exposes `get_server_health`, `reload_config`, and all twenty navigation tool registrations. Real-stdio integration paths exercise the initial seven tools and the thirteen relationship, impact, dependency, origin, context, and assembly handlers; full public contract verification remains open. See [MCP host](docs/mcp-host.md) for current tested paths and limits. The core library contains components for loading solutions, resolving symbols, examining code structure and relationships, and inspecting assemblies.
 
 The [implementation roadmap](tasks/AiNetLinter-Uebernehmen/Konzept.md) tracks planned work. Check the code and tests for the current implementation state.
 
