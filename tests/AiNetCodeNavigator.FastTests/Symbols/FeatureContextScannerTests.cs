@@ -400,19 +400,26 @@ public sealed class FeatureContextScannerTests
     [Fact]
     public async Task RenderMarkdown_FormatsCleanMarkdownWithoutViolationsOrMetrics()
     {
-        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
-        var request = new FeatureContextRequest(
-            Solution: fixture.Solution,
-            SymbolIdentifier: "Greeter");
+        const string testSource = "using System; namespace Xunit { public sealed class FactAttribute : Attribute { } } namespace Sample.Tests { public class GreeterTests { [Xunit.Fact] public void NameMatch() { } } public class GreeterTest { public void LooksLikeTest() { } } }";
+        using var handle = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\FeatureTestEvidence.slnx",
+            new ProjectSpec("Sample.Core", [("Greeter.cs", "namespace Sample.Core; public class Greeter { }")]),
+            new ProjectSpec("Sample.Tests", [("GreeterTests.cs", testSource)]));
 
-        var payload = await FeatureContextScanner.ScanAsync(request);
+        var payload = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(handle.Solution, "Sample.Core.Greeter"));
         Assert.NotNull(payload);
+        Assert.Equal(2, payload.TotalTests);
+        Assert.Contains(payload.Tests, test => test.Framework == "xUnit" && test.TestMethod == "NameMatch");
+        Assert.Contains(payload.Tests, test => test.Framework == "Unknown" && test.TestMethod == "(all)");
 
         var markdown = FeatureContextScanner.RenderMarkdown(payload);
 
         Assert.Contains("# Feature Context: Greeter", markdown);
         Assert.Contains("## Incoming Callers", markdown);
         Assert.Contains("## Associated Tests", markdown);
+        Assert.Contains("static heuristic candidates only", markdown);
+        Assert.Contains("static-test-candidates-only", markdown);
+        Assert.Contains("test execution and coverage are not verified", markdown);
         Assert.DoesNotContain("Violations", markdown);
         Assert.DoesNotContain("Metrics", markdown);
         Assert.DoesNotContain("QualityGate", markdown);

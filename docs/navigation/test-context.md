@@ -4,6 +4,6 @@
 
 `TestRecommendationBuilder.BuildAsync` searches solution projects for fixture names formed from the target type name and common test prefixes or suffixes. It returns matching fixture and attributed test-method locations with the source project name and optional source handoffs. Same-named fixtures from separate projects remain separate candidates, and the result order is deterministic. Recognized method attributes identify xUnit (`Fact`/`Theory`), NUnit (`Test`/`TestCase`), and MSTest (`TestMethod`/`DataTestMethod`); MSTest's `TestMethodAttribute` is included in both framework classification and attributed-method collection. A name-only match without a recognized framework attribute reports `Unknown`.
 
-These results are static heuristic candidates. A name or path match does not establish that a test is related to the target, that it runs, or that it covers the target. Validate candidates before treating them as test evidence.
+`TestContextPayload.EvidenceMode` is always `static-test-candidates-only`. These results are static heuristic candidates. A name or path match does not establish that a test is related to the target, that it runs, or that it covers the target. Validate candidates before treating them as test evidence.
 
 `BuildAsync` requires a non-null target symbol and solution and throws `ArgumentNullException` when either is missing.

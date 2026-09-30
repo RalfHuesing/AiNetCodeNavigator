@@ -189,6 +189,7 @@ public sealed class TestDetectorTests
         Assert.Equal("OrderServiceTests", fixture.ClassName);
         Assert.Equal("Unknown", fixture.Framework);
         Assert.Empty(fixture.Methods);
+        Assert.Equal(TestContextPayload.StaticTestCandidatesOnlyEvidenceMode, recommendation.EvidenceMode);
     }
 
     [Fact]

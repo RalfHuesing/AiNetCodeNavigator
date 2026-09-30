@@ -6,4 +6,4 @@ Scope is applied to caller locations and test candidate source documents before 
 
 Unresolved identifiers return a payload with a structured navigation error; ambiguous identifiers include selectable resolution candidates. Invalid or unresolvable handoffs return the same error form. Null requests/solutions and blank identifiers throw argument exceptions. Markdown rendering rejects a null payload with `ArgumentNullException`.
 
-Test entries are heuristic candidates produced by `TestRecommendationBuilder`; they do not establish execution, coverage, or a semantic relationship. The feature-context result contains navigation data only and does not include Linter violations or quality metrics.
+Test entries are heuristic candidates produced by `TestRecommendationBuilder`; the Markdown labels them `static-test-candidates-only` and states that execution and coverage are not verified. They do not establish a semantic relationship either. The feature-context result contains navigation data only and does not include Linter violations or quality metrics.

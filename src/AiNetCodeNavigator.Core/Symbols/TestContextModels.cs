@@ -33,4 +33,10 @@ public sealed record TestContextPayload(
     string TargetKind,
     IReadOnlyList<TestFixtureMatch> TestFixtures,
     int TotalTestFixtures,
-    int TotalTestMethods);
+    int TotalTestMethods)
+{
+    public const string StaticTestCandidatesOnlyEvidenceMode = "static-test-candidates-only";
+
+    /// <summary>Identifies the payload as static heuristic candidates, not execution or coverage evidence.</summary>
+    public string EvidenceMode { get; } = StaticTestCandidatesOnlyEvidenceMode;
+}

@@ -337,7 +337,9 @@ public static class FeatureContextScanner
         }
         sb.AppendLine();
 
-        sb.AppendLine($"## Associated Tests ({p.TotalTests})");
+        sb.AppendLine("- Test evidence: `static-test-candidates-only`; test execution and coverage are not verified.");
+        sb.AppendLine();
+        sb.AppendLine($"## Associated Tests ({p.TotalTests}) — static heuristic candidates only");
         if (p.Tests.Count == 0)
         {
             sb.AppendLine("Keine zugehörigen Tests gefunden.");

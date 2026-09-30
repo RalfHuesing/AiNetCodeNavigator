@@ -53,5 +53,6 @@
   - [x] Fixture-Kandidaten genau einmal solutionweit sammeln, gleichnamige Typen projektbezogen getrennt halten und Projektname/Pfad/Handoff als Auswahlkontext ausgeben.
   - [x] xUnit-/NUnit-/MSTest-Attribute über getrennte Projekte klassifizieren; `TestMethodAttribute` auch in Methodenliste und Handoff-Vertrag prüfen.
   - [x] Name-only Treffer ohne Framework-Attribut ausdrücklich als `Unknown`/Heuristik dokumentieren und mit Core-Vertragstest belegen.
+  - [x] Statischen Heuristikmodus als `TestContextPayload.EvidenceMode` und im Feature-Context-Markdown sichtbar ausgeben.
   - [x] AiNetLinter read-only mit der projekt-/dateibezogenen Kandidatenausgabe und dem `static-test-candidates-only`-Vertrag vergleichen.
   - [ ] Review/Audit zu 4.8 durchführen; Findings ergänzen und umsetzen.
