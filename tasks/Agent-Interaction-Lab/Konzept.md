@@ -32,6 +32,26 @@ Der Nutzer hat den Kommandozeilenzugang bestätigt. Verbraucher ist ein Agent hi
 
 Die Werkzeugdefinitionen, inklusive Beschreibungen, Parameterbeschreibungen und Schemas, stammen aus derselben Registrierung wie beim Produkt. Validierung, SDK-Bindesemantik, Defaults, Handler, Fehlerklassifikation, Formatierung und Budgets dürfen nicht unabhängig nachgebaut werden. Eine gemeinsame Verarbeitung muss gegebenenfalls im Hostbereich zugänglich gemacht werden; Core erhält keine MCP-Abhängigkeiten. SDK-Typen oder SDK-Metadaten lokal zu verwenden verletzt das Transport-Nicht-Ziel nicht.
 
+### Eigenständiges Lab-Programm und Projektgrenze
+
+Der Nutzer verlangt, dass die reguläre Anwendung keine Lab-Parameter und im Regelbetrieb unnötige Testfunktionen erhält. Empfehlung: genau ein zusätzliches .NET-Konsolenprojekt unter `tests/AiNetCodeNavigator.AgentLab/`, dessen Windows-Ausgabe `AiNetCodeNavigator.AgentLab.exe` heißt. Es ist Entwicklungs-/Testinfrastruktur im gleichen Repository und kein zweites Navigationsprodukt. Diese Packaging-Empfehlung ist noch nicht ausdrücklich bestätigt.
+
+Das Lab besitzt seinen eigenen Einstieg, seine Kommandozeilenparameter, lokale Sitzungssteuerung, Target-/Aufgabenkonfiguration, Request-/Response-Dateien, Markdown-Renderer und Messdaten. Die reguläre `AiNetCodeNavigator.exe` erhält dafür weder einen Lab-Modus noch Dump-, Replay-, Aufgaben- oder Sitzungsparameter. Das Lab wird nicht als Bestandteil der regulären Produktverteilung benötigt.
+
+Das Lab referenziert den produktiven Toolcode als Assembly und verwendet dessen Registrierung und Verarbeitung direkt im eigenen Prozess. Es ruft nicht `Program.Main` auf, startet nicht die reguläre Exe und baut keine MCP-Verbindung auf. Ein ProjectReference auf das vorhandene Anwendungsprojekt ist der empfohlene Einstieg; die vorhandenen FastTests und IntegrationTests verwenden bereits solche Referenzen. Dadurch ist zunächst kein zusätzliches gemeinsames Bibliotheksprojekt erforderlich. Die notwendige transportunabhängige Wiederverwendung von Registrierung, Validierung und Dispatch ist noch herzustellen und nachzuweisen; die Projektdateireferenz allein belegt sie nicht.
+
+Die Abhängigkeitsrichtung ist ausschließlich Lab → produktiver Toolcode → Core. Produktionsprojekte dürfen das Lab nicht referenzieren. Gemeinsamer Toolcode und dessen Abhängigkeitsaufbau enthalten keine Dump-Pfade, Testaufgaben, Lab-Schalter oder eigenen Lab-Handler. Wo interne produktive Bausteine zugänglich gemacht werden müssen, geschieht das durch eine begrenzte Assembly-Freigabe entsprechend den bestehenden Testprojekten oder einen fachlich gemeinsamen Einstieg; Toolverträge werden dafür nicht kopiert.
+
+Eine eigenständige Exe trennt Betrieb und Bedienung, nicht die Implementierung der zu prüfenden Tools. Eine Kopie von Toolbeschreibungen, Schemas oder Dispatch im Lab würde die Aussagekraft trotz getrennter Projekte zerstören.
+
+| Form | Einschätzung für diesen Umfang |
+|---|---|
+| Eigenes .NET-Konsolenprojekt | Empfehlung: direkte Wiederverwendung der .NET-Toolverarbeitung, langlebiger Sitzungszustand und klare Trennung aller Lab-Funktionen. Kosten: ein weiteres kleines Projekt samt passenden Tests. |
+| PowerShell als gesamte Infrastruktur | Geeignet für Start-/Build-Befehle; als Besitzer von .NET-Toolbindung, Sitzungszustand und Artefaktverträgen weniger passend als ein typisiertes .NET-Programm. |
+| Python als gesamte Infrastruktur | Führt einen zusätzlichen Laufzeit-/Interop-Weg zu den .NET-Tools ein; für diese Aufgabe kein erkennbarer Vorteil. |
+
+Ein PowerShell-Startwrapper und eine weitere gemeinsame Bibliothek gehören nicht zum vereinbarten ersten Umfang. Ein eigenes Lab-Projekt ist für Sitzung, Katalog und Dumps angemessen; mehrere neue Infrastrukturprojekte würden den Einstieg unnötig vergrößern.
+
 Der Zugang benötigt einen langlebigen lokalen Sitzungsprozess über mehrere Agentenaufrufe. Registry, Handoff-Handles, laufende Operationen und Fortsetzungen gehören zu dieser Sitzung. Ein neuer Produktprozess pro Aufruf würde die zu untersuchenden Workflows verfälschen. Sitzungsstart und -ende sind Lab-Bedienung, keine zusätzlichen Navigationstools. Der konkrete lokale Kommunikationsmechanismus ist vor Konzeptfreigabe zu entscheiden.
 
 Der Agent erhält die produktiven Ergebnisinhalte und Statusfelder ohne erklärende Lab-Zusätze oder nachträgliche Kürzung. Rohresultat und tatsächlich sichtbare Darstellung werden getrennt aufgezeichnet; insbesondere darf strukturierter Inhalt nicht unbemerkt verschwinden oder als zusätzlicher Text doppelt gezählt werden. Lab-Messdaten und technische Logs gelangen nicht in die Navigationsergebnisse. Ein eigener Testzugang darf das für MCP reservierte stdout des Produktstarts nicht verändern.
@@ -133,6 +153,7 @@ Die folgenden Grenzen beschreiben den Entwurf für den bestätigten Kommandozeil
 ### Muss
 
 - Transportloser lokaler Testzugang zum gemeinsamen produktiven Katalog und Aufrufpfad; keine zweite Definition der Navigations-API.
+- Getrennter Lab-Einstieg: gemäß Empfehlung ein eigenes .NET-Konsolenprojekt unter `tests/AiNetCodeNavigator.AgentLab/`. Alle Lab-Parameter, Dump-Funktionen und Testkonfigurationen gehören ausschließlich dorthin; die reguläre Anwendung erhält keinen Lab-Modus.
 - Zusammenhängende Sitzung mit echter produktiver Zustandsverwaltung, explizitem Ende und begrenzter Laufdauer.
 - Konfigurierte Source-Solution-Ziele, einschließlich des eigenen Repositories und mindestens eines vom Nutzer benannten externen C#-Repositories; Navigation ausschließlich lesend.
 - Vier getrennte Agentenrollen für Aufgabenerstellung, Test, nachgelagerte Analyse und spätere Behebung; verdeckte Referenzkriterien und begrenzte Laufbudgets.
@@ -147,6 +168,8 @@ Die folgenden Grenzen beschreiben den Entwurf für den bestätigten Kommandozeil
 - Ersatz der produktiven MCP-Integrationstests und der bestehenden Ende-zu-Ende-Abnahme.
 - Neue Navigationssemantik, Linting, Refactoring oder Schreiben in analysierte Repositories.
 - Ein selbstständiges alternatives CLI-Produkt; der Zugang ist Entwicklungs-/Testinfrastruktur.
+- Lab-Parameter, Dump-/Aufgabenlogik oder Abhängigkeiten auf das Lab in der regulären Anwendung oder im Core.
+- Eine kopierte Toolimplementierung, ein zusätzlicher Python-Laufzeitweg, ein PowerShell-Startwrapper oder mehrere neue Infrastrukturprojekte im ersten Umfang.
 - Harte Sandbox-Garantie durch bloße Agentenanweisungen.
 - Assembly- und Wartungsszenarien im vorgeschlagenen ersten Source-Umfang.
 - Separater Modellanbieter-Runner in der vorgeschlagenen Codex-Variante.
@@ -159,6 +182,8 @@ Die folgenden Grenzen beschreiben den Entwurf für den bestätigten Kommandozeil
 
 Der Zugang ist erst belastbar, wenn die beabsichtigte gemeinsame Verarbeitung im Code belegt ist. Automatisierte Vergleiche mit dem echten SDK-/MCP-Testpfad müssen den freigegebenen Toolumfang abdecken: Katalog, Defaults/Bindung, gültige und ungültige Argumente, Erfolg, Fehler, Budget/Recovery und sitzungsabhängige Folgeaufrufe. Diese Paritätsprüfungen dürfen als separate Produkt-/Integrationstests MCP verwenden; die Agentenläufe selbst verwenden es nicht. Flüchtige IDs werden über ihre Bedeutung und Folgeaufrufe verglichen, nicht über gleiche Tokenstrings.
 
+Die Projektgrenze wird am Referenzgraphen und an den Einstiegen geprüft: Das Lab verwendet produktiven Code, Produktionsprojekte referenzieren das Lab nicht. Die reguläre CLI bekommt keine Lab-Befehle oder Lab-Optionen; ihre Startlogik registriert weder Dump-Writer noch Lab-Konfiguration. Die reguläre Produktverteilung benötigt keine Lab-Artefakte. Wiederverwendung wird durch gemeinsamen Code und passende Vertragsprüfungen nachgewiesen, nicht durch ähnliche Ausgaben zweier unabhängiger Implementierungen.
+
 Zur Lab-Abnahme gehört ein aufgezeichneter frischer Agentenlauf auf jedem vereinbarten Repository, eine unabhängig bewertete Aufgabenlösung und ein nachvollziehbarer Fehler-/Recovery-Verlauf. Ein bewusst ausgelöster Fehler muss als solcher erkennbar bleiben. Zugriff außerhalb der erlaubten Navigation, fehlende Ereignisse oder nicht eingefrorene Vergleichsstände werden im Bericht als ungültig beziehungsweise nicht vergleichbar ausgewiesen.
 
 Der erste Bericht liefert Beobachtungen mit Belegen und sichtbarer Toolabdeckung. Er muss keine statistische Stabilität oder fertige automatische Verbesserungsschleife nachweisen. Wird später eine Verbesserung behauptet, braucht sie dieselben Aufgaben, Targets und bekannten Agenteneinstellungen vor und nach der Änderung sowie erhaltene Korrektheit. Ein einzelner erfolgreicher Lauf ist eine Beobachtung, kein Stabilitätsnachweis.
@@ -169,6 +194,7 @@ Implementierungsabnahme verwendet die passenden offiziellen Build-/Testskripte. 
 
 - Nutzer hat den Kommandozeilenmodus bestätigt: vorhandene Codex-Agenten bedienen ein lokales Testprogramm; keine zusätzliche Modell-API.
 - Nutzer wünscht Infrastruktur für die JSON-Dateien und deterministische Verarbeitung. Empfehlung konkretisiert: automatisch erzeugtes JSON-Laufprotokoll, daraus vollständige Markdown-Dumps; freie Agentenwahl und flüchtige IDs sind davon getrennt.
+- Nutzer verlangt klare Trennung vom Regelbetrieb: keine zusätzlichen Lab-Parameter oder unnötige Lab-Funktionen in der primären Anwendung. Empfehlung: genau ein eigenes .NET-Konsolenprojekt unter `tests/AiNetCodeNavigator.AgentLab/`, das produktiven Toolcode referenziert. Noch keine ausdrückliche Bestätigung der Projektwahl; die Trennung selbst ist verbindlich.
 - Nutzer hat festgelegt: Aufgabenagent → Testagent → vollständige Markdown-Dumps → separater Analyseagent → anderer Umsetzungsagent. Zunächst grob flächig untersuchen; kurze A→B-Ketten ergänzen, keine vollständige automatische Schleife.
 - Vor Freigabe festzulegen: lokaler Sitzungs-/Kommunikationsmechanismus und dessen beobachtbarer Zugriffsumfang; keine transportlose Parität behaupten, bevor die gemeinsame Verarbeitung belegbar ist.
 - Vor Freigabe festzulegen: erstes externes Repository, konkrete Szenarien und Toolumfang sowie Call-/Zeitgrenzen. Eine statistische Wiederholungsstudie gehört nicht zum ersten Umfang.
