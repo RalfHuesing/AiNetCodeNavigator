@@ -30,6 +30,7 @@ public sealed class SymbolHandoffIdentifierTests
         Assert.Equal(identifier.TargetToken, parsed.TargetToken);
         Assert.Equal(identifier.ContentToken, parsed.ContentToken);
         Assert.Equal(docCommentId, parsed.DocumentationCommentId);
+        Assert.Equal(identifier, parsed);
     }
 
     [Fact]
@@ -60,6 +61,24 @@ public sealed class SymbolHandoffIdentifierTests
     public void TokenValidator_RejectsNull()
     {
         Assert.False(SymbolHandoffToken.IsValid(null!));
+    }
+
+    [Theory]
+    [InlineData("bad", "AAAAAAAAAAAAAAAAAAAAAA", "T:Probe.Type")]
+    [InlineData("AAAAAAAAAAAAAAAAAAAAAA", "bad", "T:Probe.Type")]
+    [InlineData("AAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAA", "Probe.Type")]
+    public void Format_RejectsFieldsThatCannotBeParsed(
+        string targetToken,
+        string contentToken,
+        string documentationCommentId)
+    {
+        var identifier = new SymbolHandoffIdentifier(
+            SymbolHandoffOrigin.Source,
+            targetToken,
+            contentToken,
+            documentationCommentId);
+
+        Assert.Throws<System.InvalidOperationException>(() => identifier.Format());
     }
 
     [Theory]

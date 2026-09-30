@@ -117,3 +117,23 @@ A later FastTests rerun transiently failed in the unrelated `HandoffHandleRegist
 - **P1 — A newly returned handle can briefly fail reverse lookup.** `HandoffHandleRegistry.GetOrCreateOpaqueHandleForOutput` reads `internalToExternal` without `syncLock` (`src/AiNetCodeNavigator.Core/Symbols/HandoffHandleRegistry.cs:50-53`), while a writer publishes that map before `externalToInternal` (`:68-70`). A second thread can observe the first entry, return the handle, and call `RestoreInternalHandoffForInput` before the reverse entry exists, receiving `HANDOFF_UNKNOWN` (`:113-121`). The concurrency test restores handles only after `Parallel.For` completes (`tests/AiNetCodeNavigator.FastTests/Symbols/HandoffHandleRegistryTests.cs:121-140`), so it misses the publication window. AiNetLinter has the same map ordering; this is a reference limitation. **Reproduction/acceptance:** Add a concurrent get-and-immediate-restore regression that exercises publication overlap, then make every successfully returned handle immediately resolvable without a transient unknown error. Preserve per-ID deduplication and bijection.
 - **P2 — Public identifier formatting can emit an invalid internal ID.** `SymbolHandoffIdentifier` is a public record struct with a public constructor (`src/AiNetCodeNavigator.Core/Symbols/SymbolHandoffIdentifier.cs:19-23`). `Format` now rejects unknown origins but does not validate `TargetToken`, `ContentToken`, or `DocumentationCommentId` (`:31-40`). For example, `new SymbolHandoffIdentifier(Source, "bad", "bad", "bad").Format()` returns an `i:0:` string that `TryParse` rejects (`:94-103`). The origin-only regression test does not cover these fields (`tests/AiNetCodeNavigator.FastTests/Symbols/SymbolHandoffIdentifierTests.cs:47-57`). AiNetLinter also formats unchecked fields, but this public API should maintain its own format/parse invariant. **Reproduction/acceptance:** Add malformed-token and malformed-DocID constructor cases; formatting must reject them or construction must prevent them. Every formatted identifier must parse back to the same value.
 - Counter reservation, persisted high-water mark, corruption handling, case-sensitive handle validation, and the repaired parallel-allocation test had no additional finding in this audit. Producer/consumer wiring, snapshot staleness, and public MCP roundtrips remain point 3.3. The point 3.2 audit checkbox stays open pending fixes and a follow-up audit.
+
+### Audit 1 Finding Fixes
+
+- Fix base: `b860f684d412a1da6d6ed860b16d95875a17c2d2`.
+- Regression tests were run before the production changes. A parallel test that resolves each returned handle immediately failed with `HANDOFF_UNKNOWN`; direct construction of invalid token or documentation-ID fields produced `i:` strings rejected by `TryParse`.
+- **P1 — Atomic registry publication — fixed.** Registry maps now use ordinary dictionaries behind one synchronization gate. Creation checks mappings under the gate, obtains a counter without holding it, then double-checks and publishes both directions together. `RestoreInternalHandoffForInput` and `Count` read under that same gate. The deterministic parallel test gives each of 128 IDs 128 requests and resolves each returned handle immediately, checking deduplication and the complete registry count. The test passed in five repeated focused runs after the fix.
+- **P2 — Identifier format/parse invariant — fixed.** `Format` now validates both opaque tokens, the canonical documentation comment ID, and the origin before emitting an internal ID. Invalid public constructor values throw `InvalidOperationException`; valid identifiers roundtrip by value through `TryParse`.
+- Current-state documentation updated: [build-and-tests.md](../../../docs/development/build-and-tests.md).
+- The point 3.2 audit checkbox remains open for the required follow-up audit. No 3.3 implementation work was included.
+
+### Fix Verification
+
+| Gate | Result |
+|---|---|
+| Focused registry and identifier tests | Passed, 25/25 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 256/256 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 268/268 across both test projects |
+| `git diff --check` | Passed before commit |

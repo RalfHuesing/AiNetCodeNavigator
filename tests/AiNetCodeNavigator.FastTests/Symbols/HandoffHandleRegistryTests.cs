@@ -139,4 +139,27 @@ public sealed class HandoffHandleRegistryTests
             Assert.Equal(result.InternalId, restored.Value);
         }
     }
+
+    [Fact]
+    public void ConcurrentOutputHandles_AreRestorableImmediately()
+    {
+        using var temp = TestTempDirectory.Create("registry-immediate-restore-");
+        var store = new HandoffCounterStore(temp.GetPath("counter.json"), batchSize: 128);
+        var registry = new HandoffHandleRegistry(store);
+        const int uniqueKeys = 128;
+        const int requestsPerKey = 128;
+
+        Parallel.For(0, uniqueKeys * requestsPerKey, index =>
+        {
+            var key = $"i:0:target:content:M:Class.Method{index % uniqueKeys}";
+            var output = registry.GetOrCreateOpaqueHandleForOutput(key);
+            Assert.True(output.IsSuccess);
+
+            var restored = registry.RestoreInternalHandoffForInput(output.Value!);
+            Assert.True(restored.IsSuccess);
+            Assert.Equal(key, restored.Value);
+        });
+
+        Assert.Equal(uniqueKeys, registry.Count);
+    }
 }

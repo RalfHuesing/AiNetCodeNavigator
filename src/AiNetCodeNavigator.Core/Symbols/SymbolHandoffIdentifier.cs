@@ -37,6 +37,13 @@ public readonly record struct SymbolHandoffIdentifier(
             _ => throw new InvalidOperationException("The handoff origin is not supported."),
         };
 
+        if (!SymbolHandoffToken.IsValid(TargetToken)
+            || !SymbolHandoffToken.IsValid(ContentToken)
+            || !IsCanonicalDocumentationCommentId(DocumentationCommentId))
+        {
+            throw new InvalidOperationException("The handoff identifier fields are not canonical.");
+        }
+
         return $"{InternalPrefix}{originCode}:{TargetToken}:{ContentToken}:{DocumentationCommentId}";
     }
 

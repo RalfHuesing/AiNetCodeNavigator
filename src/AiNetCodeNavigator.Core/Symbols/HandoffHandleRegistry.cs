@@ -1,7 +1,7 @@
 #nullable enable
 
 using System;
-using System.Collections.Concurrent;
+using System.Collections.Generic;
 using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Core.Workspace;
 
@@ -16,8 +16,8 @@ public sealed class HandoffHandleRegistry
     private static readonly Lazy<HandoffHandleRegistry> DefaultInstance =
         new(() => new HandoffHandleRegistry(HandoffCounterStore.Default));
 
-    private readonly ConcurrentDictionary<string, string> internalToExternal = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, string> externalToInternal = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> internalToExternal = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> externalToInternal = new(StringComparer.Ordinal);
     private readonly Lock syncLock = new();
     private readonly IHandoffCounterStore counterStore;
 
@@ -33,7 +33,16 @@ public sealed class HandoffHandleRegistry
 
     public static HandoffHandleRegistry Default => DefaultInstance.Value;
 
-    public int Count => internalToExternal.Count;
+    public int Count
+    {
+        get
+        {
+            lock (syncLock)
+            {
+                return internalToExternal.Count;
+            }
+        }
+    }
 
     /// <summary>
     /// Erzeugt oder liefert ein kompaktes, opaques Handle für eine interne Handoff-ID.
@@ -47,28 +56,45 @@ public sealed class HandoffHandleRegistry
                 "Die interne Handoff-ID darf nicht leer sein.");
         }
 
-        if (internalToExternal.TryGetValue(internalHandoffId, out var existingHandle))
-        {
-            return Result<string>.Success(existingHandle);
-        }
-
         lock (syncLock)
         {
-            if (internalToExternal.TryGetValue(internalHandoffId, out existingHandle))
+            if (internalToExternal.TryGetValue(internalHandoffId, out var existingHandle))
+            {
+                return Result<string>.Success(existingHandle);
+            }
+        }
+
+        var nextCounterResult = counterStore.Next();
+        if (!nextCounterResult.IsSuccess)
+        {
+            return Result<string>.Failure(nextCounterResult.Error!.Value);
+        }
+
+        var counter = nextCounterResult.Value!;
+        if (!HandoffCounterAlphabet.IsValidCounter(counter))
+        {
+            return Result<string>.Failure(
+                NavigationErrorCodes.HandoffCounterUnavailable,
+                "Der Counter-Speicher hat einen ungültigen Handoff-Zähler geliefert.");
+        }
+
+        var handle = HandoffCounterAlphabet.FormatHandle(counter);
+        lock (syncLock)
+        {
+            if (internalToExternal.TryGetValue(internalHandoffId, out var existingHandle))
             {
                 return Result<string>.Success(existingHandle);
             }
 
-            var nextCounterResult = counterStore.Next();
-            if (!nextCounterResult.IsSuccess)
+            if (externalToInternal.ContainsKey(handle))
             {
-                return Result<string>.Failure(nextCounterResult.Error!.Value);
+                return Result<string>.Failure(
+                    NavigationErrorCodes.HandoffCounterUnavailable,
+                    "Der Counter-Speicher hat einen bereits verwendeten Handoff-Zähler geliefert.");
             }
 
-            var handle = HandoffCounterAlphabet.FormatHandle(nextCounterResult.Value!);
-            internalToExternal[internalHandoffId] = handle;
-            externalToInternal[handle] = internalHandoffId;
-
+            internalToExternal.Add(internalHandoffId, handle);
+            externalToInternal.Add(handle, internalHandoffId);
             return Result<string>.Success(handle);
         }
     }
@@ -110,9 +136,12 @@ public sealed class HandoffHandleRegistry
                     hint: "Ein gültiges Handle aus der aktuellen Tool-Antwort verwenden (Format: h:...).");
             }
 
-            if (externalToInternal.TryGetValue(externalHandleOrSemanticInput, out var internalId))
+            lock (syncLock)
             {
-                return Result<string>.Success(internalId);
+                if (externalToInternal.TryGetValue(externalHandleOrSemanticInput, out var internalId))
+                {
+                    return Result<string>.Success(internalId);
+                }
             }
 
             return Result<string>.Failure(

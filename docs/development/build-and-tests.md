@@ -33,7 +33,7 @@ Core, Host, and TestKit expose internal members to the test assemblies via `Inte
 
 ## Opaque Handoff Handles
 
-`HandoffCounterAlphabet` validates ASCII alphanumeric counters and formats them as `h:...` handles. `HandoffCounterStore` reserves counter batches under an exclusive lock file and atomically persists the high-water mark under local application data so later store instances do not reuse an issued counter. A corrupt counter file is preserved and returns `HANDOFF_COUNTER_UNAVAILABLE`. `HandoffHandleRegistry` keeps the current process's bidirectional mapping between internal identifiers and opaque handles; handles from a previous process are unknown. The primitives and their failure paths have FastTests; public producer and consumer wiring remains a separate integration step.
+`HandoffCounterAlphabet` validates ASCII alphanumeric counters and formats them as `h:...` handles. `HandoffCounterStore` reserves counter batches under an exclusive lock file and atomically persists the high-water mark under local application data so later store instances do not reuse an issued counter. A corrupt counter file is preserved and returns `HANDOFF_COUNTER_UNAVAILABLE`. `HandoffHandleRegistry` keeps the current process's bidirectional mapping between internal identifiers and opaque handles; it publishes each mapping under one synchronization gate, so every returned handle can be resolved immediately. Handles from a previous process are unknown. `SymbolHandoffIdentifier.Format` only emits identifiers that satisfy the same canonical token and documentation-ID rules as its parser. The primitives and their failure paths have FastTests; public producer and consumer wiring remains a separate integration step.
 
 ## Resident Solutions
 
