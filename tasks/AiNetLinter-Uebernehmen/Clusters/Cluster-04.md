@@ -17,7 +17,7 @@
   - [x] `SkeletonSyntaxWalker` & `SkeletonMapBuilder`: top-level Typ- und Member-Deklarationen aus AST/`SemanticModel` erfassen, Bodies und Field-/Event-Initializers auslassen, verschachtelte Namespaces zusammensetzen
   - [x] `SkeletonMarkdownRenderer`: sortierte Markdown-Ausgabe mit verfügbaren Handoff-IDs
   - [x] FastTests für deklarative Struktur, getrennte Multi-Variable-Handoffs/Roundtrips und wichtige Fehlerfälle
-  - [ ] Exclude executable field and event initializer expressions from skeleton DTO signatures and Markdown; cover lambda/block initializers with FastTests.
+  - [x] Exclude executable field and event initializer expressions from skeleton DTO signatures and Markdown; cover lambda/block initializers with FastTests.
   - [ ] Give every variable in a multi-variable field or event declaration an unambiguous own entry and handoff; test DTO and Markdown roundtrips for later variables.
   - [ ] Review/Audit zu 4.3 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.4 Klassen-Struktur (`get_class_structure`-Engine):

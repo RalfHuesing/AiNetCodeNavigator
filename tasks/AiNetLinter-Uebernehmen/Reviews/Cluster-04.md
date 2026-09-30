@@ -156,3 +156,16 @@ The point 4.2 audit checkbox is complete after one audit. No product code or ext
 2. **P2 — A multi-variable declaration has one handoff that identifies only its first variable.** `SkeletonSyntaxWalker.cs:185-188` and `222-225` select `Variables.FirstOrDefault()` while the signature contains every variable (`int First, Second;` or `event Action First, Second;`). The ID beside that line resolves only to `First`, leaving `Second` without a navigable entry and making the printed association ambiguous. Current handoff tests (`SkeletonMapTests.cs:133-170`) use one type and one single-variable member. **Acceptance:** emit a separate DTO and Markdown entry or another explicit ID-to-name association for each declared variable, and verify that the later field and event variable handoffs roundtrip to their own symbols.
 
 The point 4.3 audit checkbox remains open pending fixes and a follow-up audit. No product code or external repository was changed in this audit.
+
+## Independent audit 2/3 of point 4.3
+
+- Reviewed commit: `855b7eb6abbc696112b98d2ad353cfa351cc35a9` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Read-only comparison: the local walker, builder, renderer, updated FastTests and documentation against the two point 4.3 findings. The implementation slice's gate results are recorded above; this audit did not run a build or tests.
+
+### Finding disposition
+
+1. **P2 initializer-body leakage — closed.** `BuildVariableMemberInfos` constructs field/event signatures from modifiers, type, and each variable declarator without `Initializer`; the renderer receives those DTO signatures unchanged. The new structured-result test asserts absence of both field and event lambda body markers, and the Markdown test asserts absence of those markers in rendered text. Ordinary field/event names and declaration forms remain present.
+2. **P2 multi-variable handoff association — implementation fixed, one test obligation open.** `ExtractMembers` now emits one `SkeletonMemberInfo` per field or event declarator and calls `GetDeclaredSymbol(variable)` for each. The Markdown test verifies four distinct `h:...` IDs for two fields and two events and follows each through `FeatureContextScanner` to its own symbol name. **P3 residual test gap:** the structured DTO path is exercised only with one field and one event, without a symbol formatter (`SkeletonMapTests.cs:97-119`); the multi-variable test starts at `FileSkeletonBuilder.BuildMarkdownForDocumentAsync` (`SkeletonMapTests.cs:122-160`). The audit's acceptance also calls for DTO handoff associations for later variables. **Acceptance:** build a multi-variable DTO with an ID formatter and assert separate entries/IDs for later field and event variables, resolving those IDs to the corresponding symbols. Keep the existing Markdown roundtrip test.
+
+The point 4.3 audit checkbox remains open for the residual DTO test obligation. No product code or external repository was changed in this audit.
