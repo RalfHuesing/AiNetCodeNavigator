@@ -198,3 +198,18 @@
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 374/374 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Independent audit 1/3 of point 5.3
+
+- Audited commit: `efcafcd8cc38848e9a117a18dd6aedf6a2db0996` (clean working tree before review edits).
+- Reviewer: `gpt-6-sol`, medium reasoning effort. Read-only comparison covered AiNetLinter's `GetTypeHierarchyFormatter` base/interface/subtype projection and tool contract. No build or tests were run in this audit; the gates above were reported by the implementation turn.
+- Cross-project direct and indirect derived classes and interface implementers, source Handoff roundtrips, metadata-only base/interface display, nonpositive subtype limits, malformed base cycles, null arguments, and unsupported enum status are covered by the current Core tests. One source-location fidelity finding remains, so the point 5.3 audit checkbox stays unchecked.
+
+### Finding
+
+1. **P2 — Partial base/interface declarations lose all but one source location.** `src/AiNetCodeNavigator.Core/Hierarchy/TypeHierarchyScanner.cs:104-117` selects `FirstOrDefault()` from a type's source locations, and `CollectBaseTypes`/`CollectInterfaces` call that single-entry formatter (`:80-101`). AiNetLinter's `GetTypeHierarchyFormatter.FormatHierarchyTypeReference` returns all `FormatSymbolLocationEntries` for base types and interfaces; only its subtype formatter takes the first entry because subtype limits count types. For a partial base class or interface declared in two files, the Core payload exposes only one navigable declaration. Acceptance: emit each source declaration location for base and interface entries, keep metadata-only types as one locationless entry, preserve project-bound handoffs, and test a cross-project hierarchy with a partial base and partial interface in separate files. Subtype count/limit must remain per type, as in the reference.
+
+### Review verification
+
+- Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
+- The documentation diff was inspected and `git diff --check` passed before commit.
