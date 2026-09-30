@@ -1,4 +1,6 @@
-using System.Collections.Concurrent;
+using System.Globalization;
+using System.Numerics;
+using System.Security.Cryptography;
 using System.Text;
 using AiNetCodeNavigator.Mcp.Formatting;
 using ModelContextProtocol.Protocol;
@@ -27,6 +29,7 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
     private readonly TimeSpan _completedIdleTtl;
     private readonly int _maxRunning;
     private readonly int _maxCompleted;
+    private readonly int _maxFinalResponseVariants;
     private readonly CancellationTokenSource _lifetime;
     private bool _disposed;
 
@@ -57,6 +60,7 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         if (_completedIdleTtl <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(completedIdleTtl));
         _maxRunning = maxRunning;
         _maxCompleted = maxCompleted;
+        _maxFinalResponseVariants = maxContinuationBudgetVariants;
         _continuations = new McpResponseContinuationStore(continuationIdleTtl ?? TimeSpan.FromMinutes(30), maxContinuationSnapshots, maxContinuationBytes, maxContinuationPages, maxContinuationBudgetVariants);
         _lifetime = CancellationTokenSource.CreateLinkedTokenSource(lifetimeToken);
     }
@@ -75,7 +79,7 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         }
 
         ThrowIfDisposed();
-        ExpireEntries();
+        await ExpireEntriesAsync().ConfigureAwait(false);
         if (request.ContinuationToken is { } continuationToken)
         {
             return _continuations.GetPage(continuationToken, request);
@@ -123,7 +127,7 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         await _lifetime.CancelAsync().ConfigureAwait(false);
         try { await Task.WhenAll(entries.Select(static entry => entry.Task)).ConfigureAwait(false); }
         catch { /* Individual operation failures are translated at the result boundary. */ }
-        foreach (var entry in entries) entry.Cancellation.Dispose();
+        foreach (var entry in entries) entry.DisposeCancellationSource();
         _lifetime.Dispose();
         _continuations.Dispose();
     }
@@ -138,7 +142,7 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
             if (entry is not null)
             {
                 entry.LastAccess = DateTimeOffset.UtcNow;
-                if (!entry.Task.IsCompleted) entry.ResetIdleDeadline(_runningIdleTtl);
+                if (!entry.WorkCompleted && !entry.Cancellation.IsCancellationRequested) entry.ResetIdleDeadline(_runningIdleTtl);
             }
         }
 
@@ -161,7 +165,7 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
                 entry.LastAccess = DateTimeOffset.UtcNow;
                 TrimCompleted();
             }
-            return _continuations.CreateFirstPage(result, request);
+            return GetFinalResponse(entry, result, request);
         }
         catch (TimeoutException)
         {
@@ -169,12 +173,12 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            if (initialRequest) await entry.Cancellation.CancelAsync().ConfigureAwait(false);
+            if (initialRequest) await entry.RequestCancellationAsync().ConfigureAwait(false);
             throw;
         }
         catch (OperationCanceledException) when (entry.Cancellation.IsCancellationRequested)
         {
-            if (DateTimeOffset.UtcNow >= entry.IdleDeadline)
+            if (entry.WasCancelledByOwner && DateTimeOffset.UtcNow >= entry.IdleDeadline)
             {
                 return McpToolResults.Recoverable("OPERATION_EXPIRED", "The operation was idle for too long and was cancelled.", "Start the tool call again.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
             }
@@ -184,6 +188,7 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
 
     private async Task<CallToolResult> ExecuteAsync(OperationEntry entry)
     {
+        var cancelledBeforeCompletion = false;
         try
         {
             return await Task.Run(
@@ -201,16 +206,44 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         }
         finally
         {
+            cancelledBeforeCompletion = entry.Cancellation.IsCancellationRequested;
+            entry.Cancellation.CancelAfter(Timeout.InfiniteTimeSpan);
+            try { await entry.RequestCancellationAsync().ConfigureAwait(false); }
+            catch { /* A faulty cancellation callback must not corrupt store retention. */ }
+
             lock (_gate)
             {
                 _running.Remove(entry);
-                if (entry.Cancellation.IsCancellationRequested) _operations.Remove(entry.Token);
-                if (!_operations.ContainsKey(entry.Token) && !_disposed) entry.Cancellation.Dispose();
+                entry.WorkCompleted = true;
+                entry.WasCancelledByOwner = cancelledBeforeCompletion;
+                entry.LastAccess = DateTimeOffset.UtcNow;
+                entry.CancellationDispatched = true;
+                if (cancelledBeforeCompletion) _operations.Remove(entry.Token);
+                else TrimCompleted();
+                DisposeCancellationWhenSafe(entry);
             }
         }
     }
 
-    private void ExpireEntries()
+    private CallToolResult GetFinalResponse(OperationEntry entry, CallToolResult result, LongRunningToolCallRequest request)
+    {
+        lock (entry.ResponseGate)
+        {
+            var budgetKey = (request.MaxResponseBytes, request.MaxResponseTokens);
+            if (entry.FinalResponses.TryGetValue(budgetKey, out var cached)) return cached;
+            if (entry.FinalResponses.Count >= _maxFinalResponseVariants)
+            {
+                return McpToolResults.Recoverable("OPERATION_RESPONSE_CAPACITY", "This operation reached its response-budget variant limit.",
+                    "Reuse a previously used byte/token budget pair or start a narrower query.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
+            }
+
+            var response = _continuations.CreateFirstPage(result, request, entry.SnapshotId);
+            entry.FinalResponses.Add(budgetKey, response);
+            return response;
+        }
+    }
+
+    private async Task ExpireEntriesAsync()
     {
         List<OperationEntry> expired = [];
         lock (_gate)
@@ -219,23 +252,54 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
             foreach (var pair in _operations.ToArray())
             {
                 var entry = pair.Value;
-                var ttl = entry.Task.IsCompleted ? _completedIdleTtl : _runningIdleTtl;
+                var ttl = entry.WorkCompleted ? _completedIdleTtl : _runningIdleTtl;
                 if (now - entry.LastAccess <= ttl) continue;
                 _operations.Remove(pair.Key);
-                if (!entry.Task.IsCompleted) expired.Add(entry);
-                else entry.Cancellation.Dispose();
+                if (!entry.WorkCompleted)
+                {
+                    entry.ExpirationCancelPending = true;
+                    expired.Add(entry);
+                }
+                else
+                {
+                    entry.Retired = true;
+                    DisposeCancellationWhenSafe(entry);
+                }
             }
         }
-        foreach (var entry in expired) entry.Cancellation.Cancel();
+        foreach (var entry in expired)
+        {
+            try { await entry.RequestCancellationAsync().ConfigureAwait(false); }
+            catch { /* Expiring an entry must not fail an unrelated tool call. */ }
+            finally
+            {
+                lock (_gate)
+                {
+                    entry.CancellationDispatched = true;
+                    entry.ExpirationCancelPending = false;
+                    DisposeCancellationWhenSafe(entry);
+                }
+            }
+        }
     }
 
     private void TrimCompleted()
     {
-        var completed = _operations.Values.Where(static entry => entry.Task.IsCompleted).OrderBy(static entry => entry.LastAccess).ToArray();
+        var completed = _operations.Values.Where(static entry => entry.WorkCompleted && !entry.WasCancelledByOwner)
+            .OrderBy(static entry => entry.LastAccess).ToArray();
         foreach (var entry in completed.Take(Math.Max(0, completed.Length - _maxCompleted)))
         {
             _operations.Remove(entry.Token);
-            entry.Cancellation.Dispose();
+            entry.Retired = true;
+            DisposeCancellationWhenSafe(entry);
+        }
+    }
+
+    private void DisposeCancellationWhenSafe(OperationEntry entry)
+    {
+        if (entry.WorkCompleted && entry.CancellationDispatched && !entry.ExpirationCancelPending)
+        {
+            entry.DisposeCancellationSource();
         }
     }
 
@@ -246,16 +310,51 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
 
     private sealed class OperationEntry(string token, LongRunningToolCallRequest request, CancellationToken lifetimeToken, DateTimeOffset lastAccess, TimeSpan runningIdleTtl)
     {
+        private readonly object _cancellationGate = new();
+        private Task? _cancellationTask;
+        private bool _cancellationSourceDisposed;
         internal string Token { get; } = token;
         internal LongRunningToolCallRequest Request { get; } = request;
         internal CancellationTokenSource Cancellation { get; } = CancellationTokenSource.CreateLinkedTokenSource(lifetimeToken);
+        internal string SnapshotId { get; } = McpResponseContinuationStore.CreateOpaqueToken();
+        internal object ResponseGate { get; } = new();
+        internal Dictionary<(int Bytes, int? Tokens), CallToolResult> FinalResponses { get; } = [];
         internal DateTimeOffset LastAccess { get; set; } = lastAccess;
         internal DateTimeOffset IdleDeadline { get; private set; } = lastAccess + runningIdleTtl;
         internal Task<CallToolResult> Task { get; set; } = System.Threading.Tasks.Task.FromResult(new CallToolResult());
+        internal bool WorkCompleted { get; set; }
+        internal bool WasCancelledByOwner { get; set; }
+        internal bool CancellationDispatched { get; set; }
+        internal bool ExpirationCancelPending { get; set; }
+        internal bool Retired { get; set; }
+
+        internal Task RequestCancellationAsync()
+        {
+            lock (_cancellationGate)
+            {
+                if (_cancellationSourceDisposed) return System.Threading.Tasks.Task.CompletedTask;
+                return _cancellationTask ??= Cancellation.CancelAsync();
+            }
+        }
+
+        internal void DisposeCancellationSource()
+        {
+            lock (_cancellationGate)
+            {
+                if (_cancellationSourceDisposed) return;
+                _cancellationSourceDisposed = true;
+                Cancellation.Dispose();
+            }
+        }
+
         internal void ResetIdleDeadline(TimeSpan ttl)
         {
-            IdleDeadline = DateTimeOffset.UtcNow + ttl;
-            Cancellation.CancelAfter(ttl);
+            lock (_cancellationGate)
+            {
+                if (_cancellationSourceDisposed) return;
+                IdleDeadline = DateTimeOffset.UtcNow + ttl;
+                Cancellation.CancelAfter(ttl);
+            }
         }
         internal bool Matches(LongRunningToolCallRequest other) =>
             string.Equals(Request.ToolName, other.ToolName, StringComparison.Ordinal)
@@ -306,7 +405,7 @@ internal sealed class McpResponseContinuationStore : IDisposable
         }
     }
 
-    internal CallToolResult CreateFirstPage(CallToolResult result, LongRunningToolCallRequest request)
+    internal CallToolResult CreateFirstPage(CallToolResult result, LongRunningToolCallRequest request, string snapshotId)
     {
         var source = ExtractText(result);
         if (result.IsError == true)
@@ -325,7 +424,7 @@ internal sealed class McpResponseContinuationStore : IDisposable
                 return McpToolResults.Success(source, result.StructuredContent, request.MaxResponseBytes, request.MaxResponseTokens);
             return McpToolResults.Recoverable("STRUCTURED_RESULT_TOO_LARGE", "Structured content cannot be returned with a partial text page.", "Narrow the query or increase the response budget.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
         }
-        return CreatePage(Guid.NewGuid().ToString("N"), source, offset: 0, request);
+        return CreatePage(snapshotId, source, offset: 0, request);
     }
 
     public void Dispose()
@@ -339,7 +438,7 @@ internal sealed class McpResponseContinuationStore : IDisposable
             startOffset: offset, responsePrefix: McpToolResults.SuccessStatusPrefix);
         if (complete.ErrorCode is null && !complete.IsTruncated)
             return McpToolResults.Success(source[offset..], maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
-        var token = Guid.NewGuid().ToString("N");
+        var token = CreateOpaqueToken();
         var prefix = McpToolResults.TruncatedSuccessStatusPrefix + $"continuationToken={token}\n";
         var page = McpResponseFormatter.Format(source, request.MaxResponseBytes, request.MaxResponseTokens,
             startOffset: offset, responsePrefix: prefix);
@@ -364,9 +463,17 @@ internal sealed class McpResponseContinuationStore : IDisposable
                 return McpToolResults.Recoverable("CONTINUATION_CAPACITY", "The continuation store is at its snapshot limit.", "Retry with a narrower query or after older pages expire.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
             if (_pages.Count >= _maxPages)
                 return McpToolResults.Recoverable("CONTINUATION_CAPACITY", "The continuation store reached its page-token limit.", "Retry with a narrower query or after older pages expire.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
-            _pages[token] = new PageEntry(token, snapshotId, source, page.NextOffset.Value, request, snapshotBytes, DateTimeOffset.UtcNow);
+            if (!_pages.TryAdd(token, new PageEntry(token, snapshotId, source, page.NextOffset.Value, request, snapshotBytes, DateTimeOffset.UtcNow)))
+                return McpToolResults.Recoverable("CONTINUATION_CAPACITY", "A continuation token collision prevented storing the next page.", "Repeat the original tool call.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
         }
         return response;
+    }
+
+    internal static string CreateOpaqueToken()
+    {
+        Span<byte> bytes = stackalloc byte[16];
+        RandomNumberGenerator.Fill(bytes);
+        return new BigInteger(bytes, isUnsigned: true, isBigEndian: true).ToString("D39", CultureInfo.InvariantCulture);
     }
 
     private static string ExtractText(CallToolResult result)

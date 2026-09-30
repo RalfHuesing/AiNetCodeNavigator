@@ -20,11 +20,11 @@
 - [ ] 8.3 Langläufer & Paginierung:
   - [x] `LongRunningToolCallStore`: Polling- und Fortsetzungs-Tokens (`operationToken`, `continuationToken`)
   - [x] Lifecycle-, Cancellation-, Tokenbindungs-, Capacity- und Pagination-Vertrag dokumentieren und testen.
-  - [ ] Review/Audit zu 8.3 durchführen; Findings ergänzen und umsetzen (audit 1/3: four P2 findings remain open).
-  - [ ] Audit 1 P2: Keep continuation retry minima executable across token projections and exact budget retries.
-  - [ ] Audit 1 P2: Replay completed operation pages without allocating new immutable snapshots.
-  - [ ] Audit 1 P2: Enforce completed retention when background operations finish without a poll.
-  - [ ] Audit 1 P2: Coordinate expiration cancellation and completion cleanup without disposed-CTS races.
+  - [ ] Review/Audit zu 8.3 durchführen; Findings ergänzen und umsetzen (audit 1/3 remediation recorded; independent audit 2/3 pending).
+  - [x] Audit 1 P2 (remediated; audit 2/3 pending): Keep continuation retry minima executable across token projections and exact budget retries.
+  - [x] Audit 1 P2 (remediated; audit 2/3 pending): Replay completed operation pages without allocating new immutable snapshots.
+  - [x] Audit 1 P2 (remediated; audit 2/3 pending): Enforce completed retention when background operations finish without a poll.
+  - [x] Audit 1 P2 (remediated; audit 2/3 pending): Coordinate expiration cancellation and completion cleanup without disposed-CTS races.
 - [ ] 8.4 Argument-Validierung:
   - [ ] `McpArgumentValidationFilter`: Schema- und Eingabevalidierung für alle Tools
   - [ ] FastTests für Budgeting, Formatting und Validierung

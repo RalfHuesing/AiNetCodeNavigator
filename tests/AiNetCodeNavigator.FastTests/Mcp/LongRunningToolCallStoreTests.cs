@@ -362,6 +362,169 @@ public sealed class LongRunningToolCallStoreTests
     }
 
     [Fact]
+    public async Task ExactContinuationMinimumRetryUsesTheSameProspectiveTokenProjection()
+    {
+        var source = $"short row\n{new string('x', 600)}\n{new string('y', 1_000)}\ntail row\n";
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1), maxContinuationSnapshots: 1);
+            var first = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", _ => Task.FromResult(
+                new CallToolResult { Content = [new TextContentBlock { Text = source }] }), maxResponseBytes: 512, maxResponseTokens: 120));
+            var continuation = TokenOf(first, "continuationToken");
+            var tooSmall = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", _ => Task.FromResult(new CallToolResult()),
+                continuationToken: continuation, maxResponseBytes: 512, maxResponseTokens: 120));
+            var retryBytes = IntField(tooSmall, "minimumResponseBytes");
+            var retryTokens = IntField(tooSmall, "minimumResponseTokens");
+            var retry = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", _ => Task.FromResult(new CallToolResult()),
+                continuationToken: continuation, maxResponseBytes: retryBytes, maxResponseTokens: retryTokens));
+
+            Assert.True(tooSmall.IsError);
+            Assert.False(retry.IsError ?? false);
+            Assert.True(Encoding.UTF8.GetByteCount(TextOf(retry)) <= retryBytes);
+            Assert.True(McpResponseFormatter.CountTokens(TextOf(retry)) <= retryTokens);
+        }
+    }
+
+    [Fact]
+    public void OpaqueContinuationTokensHaveStableBudgetProjection()
+    {
+        var prefixCosts = new HashSet<int>();
+        var tokens = new HashSet<string>(StringComparer.Ordinal);
+        for (var index = 0; index < 500; index++)
+        {
+            var token = McpResponseContinuationStore.CreateOpaqueToken();
+            Assert.Equal(39, token.Length);
+            Assert.All(token, character => Assert.InRange(character, '0', '9'));
+            Assert.True(tokens.Add(token));
+            var completePrefix = McpToolResults.TruncatedSuccessStatusPrefix + $"continuationToken={token}\n";
+            prefixCosts.Add(McpResponseFormatter.CountTokens(completePrefix));
+        }
+
+        Assert.Single(prefixCosts);
+    }
+
+    [Fact]
+    public async Task RepeatedFinalOperationPollsReuseOneSnapshotAndStablePage()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromMilliseconds(10), maxContinuationSnapshots: 1);
+        var release = new TaskCompletionSource<CallToolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var source = string.Join("\n", Enumerable.Range(0, 100).Select(index => $"row-{index:D3}: value"));
+        var starts = 0;
+        Task<CallToolResult> Work(CancellationToken _)
+        {
+            Interlocked.Increment(ref starts);
+            return release.Task;
+        }
+
+        var pending = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", Work, maxResponseBytes: 512));
+        var operationToken = TokenOf(pending, "operationToken");
+        release.SetResult(new CallToolResult { Content = [new TextContentBlock { Text = source }] });
+        var pollRequest = Request("get_call_tree", "target", "symbol=Foo", Work, operationToken: operationToken, maxResponseBytes: 512);
+        var concurrent = await Task.WhenAll(store.RunAsync(pollRequest), store.RunAsync(pollRequest));
+        var later = await store.RunAsync(pollRequest);
+
+        Assert.Equal(TextOf(concurrent[0]), TextOf(concurrent[1]));
+        Assert.Equal(TextOf(concurrent[0]), TextOf(later));
+        Assert.Equal(TokenOf(concurrent[0], "continuationToken"), TokenOf(later, "continuationToken"));
+        Assert.Equal(1, starts);
+        var changedBudget = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", Work,
+            operationToken: operationToken, maxResponseBytes: 513));
+        Assert.False(changedBudget.IsError ?? false);
+        Assert.Contains("continuationToken=", TextOf(changedBudget), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UnpolledBackgroundCompletionsRespectCompletedCapacity()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromMilliseconds(2), maxCompleted: 1);
+        var tokens = new string[5];
+        for (var index = 0; index < tokens.Length; index++)
+        {
+            var captured = index;
+            var release = new TaskCompletionSource<CallToolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            async Task<CallToolResult> Work(CancellationToken _)
+            {
+                var result = await release.Task;
+                completed.TrySetResult();
+                return result;
+            }
+
+            var pending = await store.RunAsync(Request("long_tool", "target", $"query={index}", Work));
+            tokens[index] = TokenOf(pending, "operationToken");
+            release.SetResult(new CallToolResult { Content = [new TextContentBlock { Text = $"done-{captured}" }] });
+            await completed.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            await SpinWaitAsync(() => RunningCount(store) == 0, TimeSpan.FromSeconds(1));
+        }
+
+        Task<CallToolResult> IgnoredWork(CancellationToken _) => Task.FromResult(new CallToolResult());
+        var evicted = await store.RunAsync(Request("long_tool", "target", "query=0", IgnoredWork, operationToken: tokens[0]));
+        var retained = await store.RunAsync(Request("long_tool", "target", "query=4", IgnoredWork, operationToken: tokens[4]));
+
+        Assert.True(evicted.IsError);
+        Assert.Contains("OPERATION_EXPIRED", TextOf(evicted), StringComparison.Ordinal);
+        Assert.Contains("done-4", TextOf(retained), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExpirationAndConcurrentCompletionDoNotCancelDisposedSources()
+    {
+        using var releaseFirstCancellation = new ManualResetEventSlim();
+        await using var store = new LongRunningToolCallStore(
+            TimeSpan.FromMilliseconds(10), runningIdleTtl: TimeSpan.FromMinutes(30));
+        var firstCancellationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSecond = new TaskCompletionSource<CallToolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async Task<CallToolResult> First(CancellationToken token)
+        {
+            await using var registration = token.Register(() =>
+            {
+                firstCancellationStarted.TrySetResult();
+                releaseFirstCancellation.Wait();
+            });
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return new CallToolResult();
+        }
+
+        async Task<CallToolResult> Second(CancellationToken _)
+        {
+            secondStarted.TrySetResult();
+            var result = await releaseSecond.Task;
+            secondCompleted.TrySetResult();
+            return result;
+        }
+
+        try
+        {
+            var firstPending = await store.RunAsync(Request("long_tool", "target", "first", First));
+            Assert.NotNull(TryTokenOf(firstPending, "operationToken"));
+            var secondPending = await store.RunAsync(Request("long_tool", "target", "second", Second));
+            Assert.NotNull(TryTokenOf(secondPending, "operationToken"));
+            await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            FreezeOperationEntriesForExpiry(store);
+
+            var expireAndRun = Task.Run(() => store.RunAsync(Request("quick_tool", "target", "unrelated", _ =>
+                Task.FromResult(new CallToolResult { Content = [new TextContentBlock { Text = "unrelated" }] }))));
+            await SpinWaitAsync(() => OperationCount(store) == 0, TimeSpan.FromSeconds(1));
+            await firstCancellationStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            releaseSecond.SetResult(new CallToolResult { Content = [new TextContentBlock { Text = "second done" }] });
+            await secondCompleted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            await SpinWaitAsync(() => RunningCount(store) <= 1, TimeSpan.FromSeconds(1));
+            releaseFirstCancellation.Set();
+
+            var unrelated = await expireAndRun.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Contains("unrelated", TextOf(unrelated), StringComparison.Ordinal);
+        }
+        finally
+        {
+            releaseFirstCancellation.Set();
+            releaseSecond.TrySetResult(new CallToolResult());
+        }
+    }
+
+    [Fact]
     public async Task RunningOperationExpiresWithoutAnotherStoreCall()
     {
         await using var store = new LongRunningToolCallStore(
@@ -434,6 +597,39 @@ public sealed class LongRunningToolCallStoreTests
         return value is not null && int.TryParse(value[prefix.Length..], out var parsed)
             ? parsed
             : throw new Xunit.Sdk.XunitException($"Missing {field}.");
+    }
+
+    private static int OperationCount(LongRunningToolCallStore store) =>
+        ((System.Collections.IDictionary)typeof(LongRunningToolCallStore).GetField("_operations", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(store)!).Count;
+
+    private static int RunningCount(LongRunningToolCallStore store) =>
+        (int)typeof(LongRunningToolCallStore).GetField("_running", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(store)!.GetType().GetProperty("Count")!.GetValue(typeof(LongRunningToolCallStore)
+                .GetField("_running", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(store)!)!;
+
+    private static void FreezeOperationEntriesForExpiry(LongRunningToolCallStore store)
+    {
+        var entries = (System.Collections.IDictionary)typeof(LongRunningToolCallStore)
+            .GetField("_operations", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(store)!;
+        foreach (System.Collections.DictionaryEntry pair in entries)
+        {
+            var entry = pair.Value!;
+            var entryType = entry.GetType();
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            ((CancellationTokenSource)entryType.GetProperty("Cancellation", flags)!.GetValue(entry)!).CancelAfter(Timeout.InfiniteTimeSpan);
+            entryType.GetProperty("LastAccess", flags)!.SetValue(entry, DateTimeOffset.UtcNow - TimeSpan.FromHours(1));
+        }
+    }
+
+    private static async Task SpinWaitAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (!condition())
+        {
+            if (DateTimeOffset.UtcNow >= deadline) throw new TimeoutException("Condition did not become true in time.");
+            await Task.Delay(5);
+        }
     }
 
     private static string BodyOf(CallToolResult result)
