@@ -23,7 +23,7 @@ Der Zugang arbeitet lokal gegen den Entwicklungsstand ohne MCP-Transport, Deploy
 
 ## Geprüfte Grundlage und Abhängigkeit
 
-Gelesener Stand am 2026-09-30: HEAD 89b51b9c88850beb02328c02bdb9ac49e3024f6e sowie gleichzeitig in Bearbeitung befindliche Hostdateien. Diese fremden Änderungen wurden weder geändert noch durch diese Konzeptarbeit verifiziert.
+Gelesener und durch den Verständnisreview erneut geprüfter Stand am 2026-09-30: HEAD 90adbfc9907a72f4f283041d319d74c2be520645. Die aufgeführten Produktionsdateien wurden gelesen, aber durch diese Konzeptarbeit weder geändert noch mit Builds oder Tests verifiziert.
 
 - [Host](../../src/AiNetCodeNavigator/Mcp/McpServerHost.cs) und [Runtime](../../src/AiNetCodeNavigator/Mcp/NavigatorHostRuntime.cs) enthalten im gelesenen Arbeitsbaum Stdio-Start, Dependency Injection und Prozesszustand. Der Host registriert zwei Wartungstools; die Navigationsklassen sind noch Platzhalter. [Cluster 9](../AiNetLinter-Uebernehmen/Clusters/Cluster-09.md) besitzt deren Umsetzung.
 - Die bestehenden FastTests und IntegrationTests referenzieren bereits das Anwendungsprojekt. InternalsVisibleTo wird für Testzugriff verwendet.
@@ -38,7 +38,13 @@ Die produktiven Registrierungen müssen für alle 22 Tools vor der vollständige
 
 Der Hostbereich erhält einen internen, transportunabhängigen Toolkatalog und einen gemeinsamen Dispatcher. Zugriff für das Lab erfolgt über InternalsVisibleTo für AiNetCodeNavigator.AgentLab; keine neue öffentliche Produkt-API und kein weiteres Bibliotheksprojekt.
 
-Der gemeinsame Katalog wird aus einer expliziten Liste der produktiven Toolklassen und deren annotierten Methoden aufgebaut. Keine Suche über sämtliche Repository-Assemblies. Er enthält je Tool die originale Methoden-/Bindungsmetadaten, genau eine SDK-Funktionsbindung, die SDK-Tooldefinition und den gemeinsamen Aufrufzugang. Namen müssen eindeutig sein.
+Der gemeinsame Katalog wird aus einer expliziten Liste der produktiven Toolklassen und deren annotierten Methoden aufgebaut. Keine Suche über sämtliche Repository-Assemblies. Namen müssen eindeutig sein. Jeder Registrierungseintrag besitzt genau eine originale AIFunction-Bindung, die validierende Hülle, die SDK-ProtocolTool-Definition und explizite BindingMetadata:
+
+- Method: die MethodInfo der originalen annotierten Handlermethode, nicht die Methode der Hülle.
+- SerializerOptions: exakt die Optionen, mit denen die originale Funktionsbindung erzeugt wurde.
+- JsonParameters: Zuordnung von veröffentlichtem Wire-Namen zur originalen ParameterInfo. AIParameterNameAttribute hat Vorrang, sonst gilt der CLR-Parametername. PropertyNamingPolicy benennt Objektmember um, nicht Methodensignaturparameter. CancellationToken und aus DI gebundene Dienste fehlen in dieser Zuordnung.
+
+Der produktive Registrierungsaufbau erstellt diese Metadaten selbst, bevor der Katalog veröffentlicht wird. Die gemeinsame Bindbarkeitsprüfung verwendet genau diese Zuordnung/Optionen. Sie gewinnt keine Informationen aus internen SDK-Funktionstypen per Reflection. Die SDK-Definition wird beim Registrierungsaufbau erzeugt und ihr InputSchema mit der Hülle verbunden; erst dann wird der vollständige Eintrag unveränderlich veröffentlicht. Ein halb initialisierter Eintrag darf nicht dispatcht werden.
 
 Verbindlicher Weg:
 
@@ -46,7 +52,9 @@ Verbindlicher Weg:
 2. Eine gemeinsame validierende Funktionshülle erhält Name, Beschreibung, Parameter-/Ergebnisschema und ursprüngliche Bindungsmetadaten. Sie validiert gegen die tatsächlich veröffentlichte SDK-InputSchema, führt anschließend genau die originale Funktionsbindung aus und liefert den produktiven CallToolResult.
 3. McpServerTool.Create(AIFunction, options) adaptiert diese Hülle für den regulären SDK-Host. Toolname, Beschreibung, Annotationen, Schemas und Metadaten stammen aus den originalen Registrierungsinformationen; das Lab schreibt sie nicht neu.
 4. Das Lab ruft dieselbe validierende Hülle direkt mit JSON-Argumenten und CancellationToken auf. Es erzeugt keinen RequestContext und keinen McpServer.
-5. Der bisherige Argumentfilter delegiert seine Validierungslogik an einen gemeinsamen Einstieg mit registrierter Tooldefinition, ursprünglicher Bindungsmetadaten und Argumenten. Die produktive Registrierung validiert nur einmal an der gemeinsamen Hülle. Der Filter bleibt für die vorhandenen direkten SDK-Fixturetests nutzbar; er wird nicht zusätzlich um die bereits validierten produktiven Hüllen gelegt.
+5. Der bisherige Argumentfilter delegiert seine Validierungslogik an einen gemeinsamen Einstieg mit registrierter Tooldefinition, expliziten BindingMetadata und Argumenten. Die produktive Registrierung validiert nur einmal an der gemeinsamen Hülle. Der Filter wird nicht zusätzlich um diese Hüllen gelegt.
+
+Der vorhandene TryGetBindingMetadata-Reflectionadapter bleibt ausschließlich für die bestehenden direkten SDK-Fixturetools aus McpServerTool.Create(Delegate) nutzbar. Deren Filtertests zu Zahlenbindung, umbenannten Parametern und Serializeroptionen bleiben erhalten. Weder der neue produktive Katalog noch das Lab verwenden diesen Adapter; die entsprechenden Tests weisen beide Wege getrennt nach. Das Verbot neuer Reflection-Zugriffe auf interne SDK-Typen ist kein Auftrag, die vorhandene Fixtureabdeckung abzuschaffen.
 
 Die gemeinsame Registrierung enthält ausschließlich Handler mit JSON-Parametern, CancellationToken und vorhandenen Anwendungsdiensten. Navigationstools dürfen für diese Verarbeitung keinen MCP-Server, RequestContext, Clientcallback oder Progress-Transport verlangen. Interne Loading-, Running- und Continuation-Ergebnisse bleiben produktive Resultate.
 
@@ -78,23 +86,31 @@ Der Client erzeugt die Call-ID vor dem Senden und gibt ID/Runpfad auf stderr aus
 
 Verbindungsaufbau wartet höchstens fünf Sekunden. call wartet nach Annahme bis zum terminalen Resultat, höchstens 160 Sekunden; der Worker beendet Produktarbeit gemäß den eigenen Call-/Gracegrenzen. Bei Clienttimeout ist der Erfolg unbekannt: keine neue Call-ID automatisch senden, sondern die gespeicherten Ereignisse/Artefakte der gemeldeten ID lesen. Fehlt der Worker nach seinem Tod, status markiert die Sitzung failed und nennt unvollständige Calls. stop und render führen keine neuen Produktaufrufe aus.
 
-Pro Sitzung läuft höchstens ein produktiver Call gleichzeitig. Ein weiterer Call erhält LAB_BUSY, ohne Produktdispatch und ohne Callverbrauch. Status und Stop bleiben während eines Calls bedienbar. Nach Clientverbindungsabbruch läuft ein bereits angenommener Call begrenzt weiter und speichert sein Resultat; der Client liest es über seine Call-ID. Es gibt keinen automatischen Retry.
+Pro Sitzung wird höchstens ein Call gleichzeitig angenommen/verarbeitet, einschließlich Archivierung und Produktdispatch. LAB_BUSY ist eine Ablehnung vor Annahme: keine ID-Reservierung, kein Callverzeichnis, keine call_received-/call_failed-Ereignisse, keine Änderung von Task-/Sitzungszählern, Taskstartzeit oder Idletimer. Der Client hält ausschließlich die typisierte Ablehnung unter client-errors/ fest. Eine noch nie angenommene Busy-ID kann bei einer internen Wiederholung später angenommen werden.
+
+Annahme reserviert unter einem gemeinsamen Gate die ID und ihre Task-/Tool-/Parentdaten sowie Argumentbytes und markiert die Sitzung als belegt. Schon reservierte IDs werden vor dem Busy-/Limitcheck erkannt: identische Wiederholung erhält denselben vorhandenen Zustand/dieselben Artefakte und startet nichts erneut; abweichende Daten ergeben LAB_CALL_ID_CONFLICT. Eine ID bleibt nach Annahme auch bei Lab-Eingabefehlern oder Absturz reserviert. Status und Stop bleiben während eines Calls bedienbar. Nach Clientverbindungsabbruch läuft ein bereits angenommener Call begrenzt weiter und speichert sein Resultat. Es gibt keinen automatischen Retry.
+
+Task-/Sitzungsbudgets zählen erst den Eintritt in den gemeinsamen produktiven Dispatcher, einschließlich Toollookup, Argumentfehler, Polls und Fortsetzungen, nicht nur erfolgreiche Handlerausführung. Genau an diesem Eintritt startet beim ersten Produktcall die Taskzeit und wird der Idletimer zurückgesetzt. Syntaktisch ungültige Argumentdateien und andere Lab-Fehler verbrauchen keinen Produktcall und starten keine Taskzeit. Vor Annahme werden die bestehenden Limits geprüft; Ablehnungen erzeugen limit_reached, aber keine Call-ID-Reservierung oder Produktcall-Artefakte. request.sequence zählt angenommene Calls; event.sequence zählt Ereignisse. Beide sind monoton, aber nicht derselbe Zähler.
 
 Feste Grenzen für Version 1:
 
 | Grenze | Wert |
 |---|---|
 | Produktcalls je Task | 8, inklusive Fehler, Polls und Fortsetzungen |
-| Zeit je Task | 5 Minuten ab ihrem ersten angenommenen Call |
+| Zeit je Task | 5 Minuten ab Eintritt ihres ersten Calls in den produktiven Dispatcher |
 | Zeit je Produktcall | 120 Sekunden; anschließend Cancellation |
 | Calls je Sitzung | 200 |
 | Gesamtdauer einer Sitzung | 60 Minuten |
-| Idle-Ende | 15 Minuten ohne angenommenen Call; reine Statusabfragen verlängern nicht |
+| Idle-Ende | 15 Minuten ab ready beziehungsweise dem letzten Eintritt in den produktiven Dispatcher; Ablehnungen und reine Statusabfragen verlängern nicht |
 | Cancellation-/Shutdown-Grace | 30 Sekunden; danach Worker beenden und Sitzung failed markieren |
 
-Erreichte Grenzen verhindern neue Calls und werden als Lab-Ereignis ausgewiesen. Sie sind keine Produktfehler. Alle Zähler und Zeiten stehen im Protokoll. Ein Calltimeout cancelt den Call; wenn dessen Arbeit binnen der Grace nicht endet, wird die gesamte Sitzung beendet. Beim regulären Stop/Timeout wird die bestehende Runtime entsorgt; nach einem Prozesscrash werden alte IDs/Tokens nicht in einem neuen Prozess wiederbelebt.
+Erreichte Grenzen verhindern neue Calls und werden als Lab-Ereignis ausgewiesen. Sie sind keine Produktfehler. Alle Zähler und Zeiten stehen im Protokoll. Taskzeit- oder Callzeitüberschreitung cancelt den aktiven Call; nach Rückkehr darf die Sitzung andere Tasks weiter bearbeiten. Wenn Arbeit binnen der Grace nicht endet, wird die gesamte Sitzung beendet. Nach einem Prozesscrash werden alte IDs/Tokens nicht in einem neuen Prozess wiederbelebt.
 
-CLI-Exitcodes: 0 für einen empfangenen CallToolResult, auch bei IsError=true; 1 für eine produktive ProtocolException; 2 für Lab-/Bedienfehler; 3 für Timeout, Cancellation oder unerwartetes Sitzungsende. stderr enthält nur Lab-Diagnostik. Beim call schreibt stdout die vollständig gespeicherte produktive Resultatdarstellung, ohne Toolerklärungen, Messdaten oder Erfolgskommentar; bei Lab-Fehlern einen klar bezeichneten Lab-Fehler. Die übrigen Befehle dürfen Lab-Metadaten ausgeben. Die stdout-Regeln des regulären MCP-Einstiegs werden nicht geändert.
+Reguläres Sitzungsende durch stop, Idle oder Gesamtdauer erfolgt in dieser Reihenfolge: Annahme schließen und stopping veröffentlichen → aktiven Call cancellen/drainen → produktive Runtime entsorgen und damit auch laufende Hintergrundoperationen beenden → Endfingerprints und summary.json schreiben → session_stopped und state=stopped veröffentlichen → Logger flushen und Worker beenden. Die 30-Sekunden-Grace gilt für Cancellation und Runtime-Dispose; für die anschließende Endfingerprint-Erfassung gelten weitere 30 Sekunden. Nicht rechtzeitig lesbare Snapshotdaten ergeben unknown; sie verlängern das Ende nicht unbegrenzt.
+
+Bei unkontrolliertem Workercrash oder erzwungener Beendigung darf status unter exklusivem, freiem Workerlock session.json als failed und eine eigene recovery.json mit beobachteter Ausfallzeit/Grund schreiben. Es verändert keine Ereignisspur und erfindet kein session_failed oder normales Sitzungsende. Fehlt summary.json, sind Endfingerprints und snapshotStatus ausdrücklich unknown. Ein bereits vollständig veröffentlichtes summary.json bleibt als Beleg erhalten; ein Crash danach ist weiterhin ein Lifecyclefehler und macht die Sitzung nicht stopped.
+
+CLI-Exitcodes: 0 für einen empfangenen CallToolResult, auch bei IsError=true; 1 für eine produktive ProtocolException; 2 für Lab-/Bedienfehler; 3 für Timeout, Cancellation oder unerwartetes Sitzungsende. stderr enthält nur Lab-Diagnostik. Beim call schreibt stdout exakt display.json inklusive abschließendem LF. Bei einem Resultat enthält diese Datei nur die originale produktive Resultatdarstellung; bei einer ProtocolException das unten definierte product_protocol_error-Envelope, bei Lab-Fehlern lab_error und bei Cancellation call_cancelled. Keine Toolerklärungen, Messdaten oder Erfolgskommentare in dieser Ausgabe. Die übrigen Befehle dürfen Lab-Metadaten ausgeben. Die stdout-Regeln des regulären MCP-Einstiegs werden nicht geändert.
 
 ## Konfiguration und Targets
 
@@ -117,18 +133,24 @@ Neue Targets sind über die gleiche lokale Konfiguration zulässig. Die vier ver
 
 Produktargumente werden nicht umgeschrieben: Der Testagent erhält die erlaubten absoluten Zielpfade und setzt targetPath selbst. Die Targetliste ist eine Experimentregel, keine Dateisystem-Sandbox. Ein Zugriff auf ein anderes echtes Repository wird als isolationStatus=violated bewertet; gezielte Fehlertests mit fehlendem oder ungültigem targetPath müssen in der zugehörigen Referenz ausdrücklich vorgesehen sein.
 
-Beim Start und Sitzungsende werden je Repository HEAD, git status --porcelain und SHA-256 für die vorhandenen versionierten und nicht ignorierten unversionierten Dateien erfasst; gelöschte Dateien werden als fehlend protokolliert. Assemblies erhalten zusätzlich Dateihash und Hashes der vom produktiven Resolver tatsächlich verwendeten Referenzen. Hash-/Snapshotaufwand wird getrennt von Toolzeit gemessen.
+Beim Start und Sitzungsende werden je Repository HEAD, git status --porcelain und SHA-256 für die vorhandenen versionierten und nicht ignorierten unversionierten Dateien erfasst; gelöschte Dateien werden als fehlend protokolliert. Startdaten liegen unveränderlich in run.json; Enddaten und Statuswerte in summary.json. Hash-/Snapshotaufwand wird getrennt von Toolzeit gemessen.
 
-snapshotStatus ist unchanged_observed, changed oder unknown. Eine Differenz ergibt changed; nicht lesbare Dateien oder nicht erfasste Referenzen ergeben unknown. Diese Vorher-/Nachher-Prüfung garantiert keine Erkennung vorübergehender Änderungen. Während eines bewerteten Runs finden keine Repositoryänderungen oder Rebuilds statt. changed/unknown schließt belastbare Vorher-/Nachher-Aussagen aus.
+Für jedes konfigurierte Assemblyziel erfasst der Worker vor ready zusätzlich dessen Hash und einen Referenzbestand. Er verwendet dafür den vorhandenen AssemblyReferenceResolver mit denselben Auflösungsregeln wie das Produkt, ohne Decompilation, Targetausführung, Build oder Befüllen der residenten Navigationsregistry. Er speichert kanonische Pfade, Identitäten/Auflösungszustände und SHA-256 aller erfolgreich aufgelösten Referenzen einschließlich der tatsächlich erzeugten MetadataReference-Dateipfade. Der Lab-Assembly wird dafür begrenzter InternalsVisibleTo-Zugriff auf diesen vorhandenen Core-Baustein gewährt; Core erhält keine Lab-Logik oder umgekehrte Projektabhängigkeit.
+
+Vor jedem Assemblydispatch wird der Bestand mit demselben Resolver erneut geprüft; bei regulärem Sitzungsende werden ursprüngliche Pfadmenge, Hashes und Auflösungszustände erneut verglichen. Nicht aufgelöste/nicht lesbare Referenzen, neu hinzukommende Pfade ohne Ausgangshash oder ein nicht verfügbarer Abschlussbestand ergeben unknown für die Referenzvergleichbarkeit. Ein nachweislich veränderter Ausgangshash oder eine gelöschte Ausgangsdatei ist changed. Lab und produktive Assemblynavigation müssen denselben Resolver und dieselbe Referenzfingerprintlogik verwenden; eine abweichende produktive Auflösung darf nicht als unverändert behauptet werden. Der Vorabvergleich wärmt keinen Decompilation-/Navigationcache; reine Metadaten-/OS-Cacheeffekte werden als Preflightaufwand dokumentiert.
+
+snapshotStatus ist unchanged_observed, changed oder unknown. changed hat Vorrang, sobald eine konkrete Differenz bewiesen ist; ansonsten ergibt unvollständige Erfassung unknown. unchanged_observed erfordert vollständige, gleiche Ausgangs-/Enddaten. Fehlende Enddaten sind nie unchanged_observed. Diese Vorher-/Nachher-Prüfung garantiert keine Erkennung vorübergehender Änderungen. Während eines bewerteten Runs finden keine Repositoryänderungen oder Rebuilds statt. changed/unknown schließt belastbare Vorher-/Nachher-Aussagen aus.
 
 ## Artefaktverträge
 
-Alle Lab-Metadaten verwenden schemaVersion 1, camelCase, UTC-Zeitangaben im ISO-8601-Format, UTF-8 ohne BOM und LF. Unbekannte Metadatenfelder, doppelte Keys und falsche Typen werden als Lab-Eingabefehler zurückgewiesen. Das ist unabhängig von der produktiven Argumentvalidierung; tatsächliche Toolargumente bleiben unverändert.
+Alle Lab-eigenen Envelopes und jede Eventzeile verwenden schemaVersion 1, camelCase, UTC-Zeitangaben im ISO-8601-Format, UTF-8 ohne BOM und LF. Unbekannte Metadatenfelder, doppelte Keys und falsche Typen werden als Lab-Eingabefehler zurückgewiesen. Davon ausdrücklich ausgenommen sind rohe arguments.json-Bytes, hostsettings.json im originalen Produkt-Konfigurationsformat, der originale CallToolResult in response.json, seine identische Darstellung in display.json und die originalen ProtocolTool-Objekte innerhalb von tools.json. Diese Produktdaten bekommen keine Lab-Felder. Tatsächliche Toolargumente bleiben unverändert; Syntax-/Formfehler des Lab-Eingabewegs bleiben davon getrennt.
 
 ~~~text
 temp/agent-interaction-lab/<runId>/
   run.json
+  summary.json
   session.json
+  recovery.json
   tools.json
   hostsettings.json
   events.jsonl
@@ -141,20 +163,23 @@ temp/agent-interaction-lab/<runId>/
   calls/<callId>/metrics.json
   calls/<callId>/call.md
   report.md
+  client-errors/<errorId>.json
 ~~~
 
 - run.json hält unveränderliche Startmetadaten: runId, Produkt-HEAD/Arbeitsbaum, Paket-/SDK-/Renderer-Versionen, Targets und Startfingerprints, Grenzen und bekannte Agentenangaben. Unbekanntes ist null, keine erfundene Modellangabe.
-- tools.json enthält alle originalen ProtocolTool-Definitionen, ordinal nach Toolname sortiert. Beschreibungen, Parameterbeschreibungen, Schemas, Annotationen und weitere SDK-Felder werden nicht verkürzt. Es ist der Katalog der aktuellen SDK-Definition, keine Simulation einer ausgehandelten alten MCP-Protokollversion.
+- summary.json enthält schemaVersion, runId, endedUtc, endSnapshots, snapshotStatus, die Endzähler und den Abschlussgrund. Es wird nur nach kontrolliertem Ende geschrieben. run.json wird dafür nicht nachträglich verändert. recovery.json dokumentiert ausschließlich einen nachträglich beobachteten Prozessausfall, keine wiederhergestellten Produktresultate oder Endfingerprints.
+- tools.json hat exakt die Hülle {schemaVersion: 1, tools: [...]} mit allen originalen ProtocolTool-Definitionen, ordinal nach Toolname sortiert. Beschreibungen, Parameterbeschreibungen, Schemas, Annotationen und weitere SDK-Felder werden nicht verkürzt. Es ist der Katalog der aktuellen SDK-Definition, keine Simulation einer ausgehandelten alten MCP-Protokollversion.
 - arguments.json ist eine bytegetreue Kopie der Eingabedatei, einschließlich ungültigen JSONs.
 - request.json enthält schemaVersion, runId, callId, sequence, taskId, parentCallId (oder null), toolName, receivedUtc, inputStatus und arguments. inputStatus ist valid_json für ein darstellbares Argumentobjekt, invalid_json für Syntaxfehler oder invalid_shape für eine andere JSON-Wurzel beziehungsweise doppelte Top-Level-Argumentnamen. arguments hält den geparsten unveränderten JSON-Wert oder bei Syntaxfehlern null; die originale Datei bleibt immer unter arguments.json erhalten.
-- response.json enthält ausschließlich den originalen CallToolResult mit den gemeinsamen SDK-Serializeroptionen. Keine Lab-Felder im Produktresultat. Eine produktive ProtocolException steht mit ursprünglichem Code und bereinigter Message in error.json; sie wird nicht zu einem normalen IsError-Resultat umgedeutet.
-- Bei syntaktisch ungültigem JSON, Nicht-Objekt als Argumentwurzel, doppelten Top-Level-Argumentnamen, fehlender Datei oder Lab-Fehler erfolgt kein Produktdispatch. Doppelte Top-Level-Argumentnamen sind im produktiven Dictionary-Vertrag nicht darstellbar; sie werden nicht still auf den letzten Wert reduziert. request/event/error kennzeichnen ausdrücklich lab_error. Bei einer vor Übertragung fehlenden/unlesbaren Datei speichert der Client einen vorbereitenden Lab-Eingabefehler; es gibt dann noch keinen angenommenen Produktcall. Ein falscher Wert innerhalb eines gültigen Argumentobjekts gelangt unverändert zur produktiven Schemavalidierung.
+- response.json enthält ausschließlich den originalen CallToolResult mit den gemeinsamen SDK-Serializeroptionen. Keine Lab-Felder im Produktresultat. Es existiert nur bei einem erhaltenen CallToolResult. Eine produktive ProtocolException steht in error.json und wird nicht zu einem normalen IsError-Resultat umgedeutet.
+- error.json enthält schemaVersion, kind, callId, code und message. kind=product_protocol_error verwendet den ursprünglichen numerischen Protokollcode und die vom gemeinsamen produktiven Pfad freigegebene Message, ohne Stacktrace/InnerException; kind=lab_error verwendet einen LAB_...-Stringcode. kind=call_cancelled verwendet LAB_CALL_TIMEOUT, LAB_TASK_TIMEOUT oder LAB_SESSION_STOPPED und Exitcode 3. Wenn noch kein angenommener Call existiert, darf callId null sein; Ablehnungen dürfen ihre vom Client erzeugte, nicht reservierte ID nennen. Die gleiche Hülle wird bei einem Callfehler byteidentisch als display.json/auf stdout ausgegeben. Bei einem empfangenen Resultat gibt es keine error.json; IsError=true bleibt ein CallToolResult.
+- Bei einem bereits angenommenen Call mit syntaktisch ungültigem JSON, Nicht-Objekt als Argumentwurzel oder doppelten Top-Level-Argumentnamen erfolgt kein Produktdispatch; request.json, das call_failed-Ereignis und error.json kennzeichnen ausdrücklich lab_error. Doppelte Top-Level-Argumentnamen sind im produktiven Dictionary-Vertrag nicht darstellbar und werden nicht still auf den letzten Wert reduziert. Fehlt die Eingabedatei vor Übertragung oder ist sie nicht lesbar, schreibt ausschließlich der Client eine typisierte Datei unter client-errors/. Es gibt dafür weder Annahme/ID-Reservierung noch Callverzeichnis oder Workerereignis. Ein falscher Wert innerhalb eines gültigen Argumentobjekts gelangt unverändert zur produktiven Schemavalidierung.
 - display.json ist die genaue kompakte UTF-8-Darstellung des Resultats, die call auf stdout ausgibt, einschließlich aller Textblöcke, StructuredContent und IsError. Die Ausgabe endet mit LF; diese Ausgabeform wird getrennt vom Produkttextbudget gemessen. Eine ProtocolException oder ein Lab-Fehler wird als eindeutig typisierter Fehler dargestellt.
 - metrics.json enthält Zeiten, Outputbytes und die unten definierten Tokenmessungen. Keine Messdaten werden in response.json eingefügt.
-- events.jsonl ist eine vom Worker seriell geschriebene Ereignisspur mit monotoner sequence, Zeitpunkt, taskId/callId und Typ. Typen: session_started, task_registered, call_received, dispatch_started, result_saved, call_failed, limit_reached, session_stopping, session_stopped, session_failed.
+- events.jsonl ist eine vom Worker seriell geschriebene Ereignisspur. Jede Zeile enthält schemaVersion, sequence, utc, runId, taskId/callId (oder null), eventType und data. event.sequence ist monoton; data enthält Ereignisdetails. Typen: session_started, task_registered, call_received, dispatch_started, result_saved, call_failed, limit_reached, session_stopping, session_stopped, session_failed. session_failed wird nur vom lebenden Worker für einen von ihm selbst beobachteten Fehler geschrieben; nach einem Crash bleibt ein fehlendes terminales Event fehlend.
 - Neue Artefakte werden unter temporärem Dateinamen geschrieben und atomar veröffentlicht. Existierende Call-/Taskinhalte werden nicht überschrieben. session.json wird atomar ersetzt, events.jsonl append-only geschrieben.
 - request.json und Eingabekopie müssen veröffentlicht sein, bevor ein Produktdispatch startet. Schlägt dies fehl, findet kein Call statt. Fehlt nach einem Crash ein terminales Ereignis, bleibt der Call incomplete; keine erfundene Antwort und kein stiller Replay.
-- start besitzt vorbereitende Run-/Konfigurationsdateien bis zur Workerübergabe. Danach ist der Worker alleiniger Autor der Laufartefakte. Der CLI-Client darf bei Fehlern vor Annahme ausschließlich einen eigenen, per GUID benannten Clientfehler unter client-errors/ speichern; er verändert keine Calls oder Ereignisspur. Nach Sitzungsende darf render ausschließlich erzeugte call.md-Dateien aktualisieren. status darf unter exklusivem Workerlock eine verwaiste session.json auf failed setzen. Der Analyseagent besitzt report.md; die Exe schreibt keine freie Analyse.
+- start besitzt vorbereitende Run-/Konfigurationsdateien bis zur Workerübergabe. Danach ist der Worker alleiniger Autor der Laufartefakte. Der CLI-Client darf bei Fehlern vor Annahme ausschließlich einen eigenen, per GUID benannten Clientfehler unter client-errors/ speichern; er verändert keine Calls oder Ereignisspur. Nach Sitzungsende darf render ausschließlich erzeugte call.md-Dateien aktualisieren. status darf unter exklusivem Workerlock eine verwaiste session.json auf failed setzen und recovery.json schreiben; es erfindet keine summary.json oder Workerereignisse. Der Analyseagent besitzt report.md; die Exe schreibt keine freie Analyse.
 
 call.md hat englische Überschriften in fester Reihenfolge: Identity, Task, Tool definition, Request, Outcome, Metrics. Tooldefinition und Request werden vollständig ausgegeben. Outcome erhält die originalen Textblöcke in ihrer Reihenfolge, StructuredContent und weitere Resultatfelder; bei Fehlern die typisierte Fehlerdarstellung. Es gibt keine freie Zusammenfassung oder nachträgliche Kürzung. Codefences sind mindestens drei Backticks und länger als jede Backtickfolge im eingeschlossenen Text. Das verhindert beschädigte Dumps bei Code oder Markdown im Ergebnis.
 
@@ -227,16 +252,18 @@ Kürzer gilt nur bei erhaltener Korrektheit und Aufgabenlösung als besser. Ein 
 
 ## Verifikation und Abschlussbedingungen
 
-### Infrastrukturabnahme
+### Gate 1: Infrastrukturabnahme
 
 Die bestehende Testinfrastruktur wird erweitert; kein zusätzliches Testprojekt. FastTests erhalten eine Referenz auf das Lab für Renderer, Metadatenvalidierung und Protokollzustände; IntegrationTests für Prozess-/Named-Pipe-Lifecycle und gemeinsame Aufrufparität. Das Lab erhält Zugriff für diese Testassemblies. Es wird in die Solution und damit die offiziellen Build-/Testgates aufgenommen.
+
+Dieses Gate darf vor Abschluss von Cluster 9 mit internen Fixture-Katalogen erfüllt werden. Es belegt die Infrastruktur und repräsentative gemeinsame Vertragsfälle, nicht die Vollständigkeit oder Qualität aller Produkttools. Der reguläre Lab-Start bleibt trotzdem an den vollständigen 22er-Katalog gebunden. Für Tests wird die Katalogquelle intern injiziert; kein öffentlicher Fixture-Schalter und kein alternativer Produktionskatalog.
 
 Verbindliche Nachweise:
 
 - Referenzgraph ohne Abhängigkeit von Produktionsprojekten auf das Lab; reguläre CLI ohne Lab-Befehle/-Parameter und keine Registrierung von Lab-Diensten im Produktstart.
 - Transportloser gemeinsamer Aufruf in Produktion und Lab; kein MCP-Client/-Server/Loopback im Lab.
-- Produktkatalogfelder stimmen mit einem separaten realen SDK-/MCP-Testpfad überein. Eingabe-/Ergebnisschemas und Annotationen werden vollständig verglichen; Protokollversion des Vergleichs entspricht der aktuellen SDK-Definition.
-- Pro Tool mindestens ein gültiger und ein ungültiger Aufruf im Paritätsvergleich. Zusätzlich repräsentative Fälle für Defaults, Null, unbekannte Felder, Enum-/Zahlenbindung, Budget, ProtocolException, Handoffs, Running und Fortsetzungen. Flüchtige Werte werden nur in ausdrücklich benannten Feldern normalisiert; deren Folgefunktion wird separat geprüft.
+- Fixture-Katalogfelder stimmen mit einem separaten realen SDK-/MCP-Testpfad überein. Eingabe-/Ergebnisschemas und Annotationen werden vollständig verglichen; Protokollversion des Vergleichs entspricht der aktuellen SDK-Definition.
+- Repräsentative Fixture-Paritätsfälle für Erfolg/Fehler, Defaults, Null, unbekannte Felder, Enum-/Zahlenbindung, Budget, ProtocolException, Handoffs, Running und Fortsetzungen. Flüchtige Werte werden nur in ausdrücklich benannten Feldern normalisiert; deren Folgefunktion wird separat geprüft.
 - A→B funktioniert in derselben Workerinstanz; fremde/abgelaufene/alte Handoffs erzeugen den vorgesehenen produktiven Fehler.
 - Busy, Clientabbruch, Timeout, Stop, doppelter Call-ID, Workercrash und unvollständige Artefakte sind nachvollziehbar und führen nicht zu Doppelcalls oder falschen Erfolgsmeldungen.
 - Gleiche Artefakte erzeugen byteidentisches Markdown; Codefences, Unicode, mehrteiliger Content und StructuredContent bleiben vollständig.
@@ -244,11 +271,15 @@ Verbindliche Nachweise:
 - Normale Navigation und Wartungsprüfung verändern keine analysierten Source-/Assemblydateien und keine Benutzerkonfiguration. Snapshotdifferenzen werden nicht als unveränderter Lauf gemeldet.
 - Offizielle Gates: scripts/build.ps1, scripts/test-fast.ps1, scripts/test-integration.ps1 und scripts/test.ps1. Ausführung und Ergebnisse werden gemäß Repository-Regeln dokumentiert; docs/ wird erst mit implementiertem Stand aktualisiert.
 
-### Erste Agentenuntersuchung
+### Gate 2: Produktintegration und erste Agentenuntersuchung
+
+Dieses Gate setzt Gate 1, alle produktiven Registrierungen aus Cluster 9 und die bereitgestellten vier Targets voraus. Vor den bewerteten Agentenläufen werden die Fixture-Paritätsprüfungen auf den echten Katalog erweitert: sämtliche Definitionsfelder sowie mindestens ein gültiger und ein ungültiger Aufruf pro Produkttool. Fehler der Lab-/SDK-Parität sind Infrastrukturfehler; ein fachlich falsches, auf beiden Wegen identisches produktives Resultat ist ein Produktfinding.
 
 Die Abnahme liefert Tasks, unveränderte JSON-/Markdown-Dumps, finale Agentenantworten und einen separat erstellten Bericht für beide Repositories und die vollständige Toolmenge. Ein erster Run pro Repository genügt; es werden keine statistischen Zusagen gemacht. Die Anzahl der Sitzungen darf an die festen Grenzen angepasst werden; keine Grenze wird still angehoben.
 
-Das Lab kann korrekt implementiert sein, obwohl die Untersuchung Produktdefekte oder Verständlichkeitsprobleme aufzeigt. Diese sind Findings, keine fehlgeschlagene Infrastrukturabnahme. Fehlende Tools, ungültige Tasks, beschädigte Spuren, Zieländerungen und nicht reproduzierte Spezialfälle bleiben sichtbar als Blocker/Lücken der Untersuchung. Keine vollständige Produktqualität oder vollständige qualitative Abdeckung behaupten, solange solche Lücken bestehen.
+Das Lab kann korrekt implementiert sein, obwohl die Untersuchung Produktdefekte oder Verständlichkeitsprobleme aufzeigt. Diese sind Findings, keine fehlgeschlagene Infrastrukturabnahme. Fehlende Tools/Targets, ungültige Tasks, beschädigte Spuren und Zieländerungen blockieren den Gesamtabschluss. Ein nach dokumentiertem gültigem Versuch nicht reproduzierter Spezialfall bleibt dagegen als not_observed eine Coverage-Lücke und blockiert Gate 2 nicht. Vollständige Produktqualität oder vollständige qualitative Abdeckung darf daraus nicht behauptet werden.
+
+Gesamtabschluss dieses Vorhabens verlangt beide Gates und einen Bericht zu allen geplanten Tool-/Target-Aufgaben. Jede gültige Aufgabe wurde tatsächlich versucht und ausgewertet; failed aufgrund eines Produktdefekts ist ein legitimes Ergebnis. Ein vom Agenten trotz gültiger Aufgabe nicht ausgewähltes Tool oder ein trotz dokumentiertem Versuch nicht beobachteter Loadingfall darf als not_observed abschließen, belegt aber keine erfolgreiche Abdeckung dieser Zelle. Unbearbeitete/blocked Aufgaben, ein fehlender Katalog, fehlende Targets oder invalide Spuren schließen den Gesamtabschluss aus. Dann lautet die Meldung ausdrücklich „Infrastruktur fertig, Produktintegration/Untersuchung blockiert oder unvollständig“, nicht „Lab-Vorhaben abgeschlossen“.
 
 Die Umsetzung umfasst die erste Agentenuntersuchung und das belegte Findingsregister. Behebung der Produktfindings erfolgt im getrennten späteren Auftrag an den Umsetzungsagenten; dieser Auftrag ist kein Bestandteil der Lab-Infrastrukturabnahme.
 
@@ -265,5 +296,7 @@ Die Umsetzung umfasst die erste Agentenuntersuchung und das belegte Findingsregi
 ## Arbeitsgedächtnis (nur Draft)
 
 Die Sachentscheidungen sind getroffen: separate .NET-Lab-Exe, AiNetCodeNavigator/AiNetLinter und alle 22 Tools. Technische Verträge, Grenzen und Nachweise sind in diesem Entwurf festgelegt; kein Implementierer soll aus offenen Varianten auswählen.
+
+Der Verständnisreview mit gpt-6-luna/high gegen 90adbfc hat sieben Vertragslücken belegt. Sie sind konkretisiert: BindingMetadata/Fixtureadapter, Abschluss-/Crashdaten, Referenzbaseline, Busy-/Zählerregeln, Raw-/Envelope-Versionierung, Protokollfehlerausgabe und zwei getrennte Abschlussgates. Im Nachcheck bestätigte Luna diese sieben Klärungen und benannte zwei verbleibende Textwidersprüche: not_observed als Lücke versus Blocker und Vorübertragungsfehler versus Call-Artefakte. Beide Stellen sind entsprechend präzisiert.
 
 Offen ist ausschließlich die ausdrückliche Freigabe dieses konkretisierten Gesamtkonzepts. Danach wird status auf ready gesetzt und dieser Abschnitt entfernt. Dies startet weder Roadmap noch Umsetzung; der Nutzer ruft den nächsten Workflow-Schritt selbst auf.
