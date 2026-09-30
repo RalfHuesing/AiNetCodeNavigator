@@ -10,7 +10,7 @@
   - [x] Audit 1 P2: `startOffset` auf vollständige Zeileneinheiten begrenzen oder verlustfrei kanonisieren.
   - [x] Audit 1 P2: Token-Budget-Vertrag für Fehlerantworten klären und durchsetzen/testen.
 - [ ] 8.2 Standardisiertes Result-Building:
-  - [ ] `McpToolResults`: Einheitliche Erzeugung von `CallToolResult`, `IsError`-Policy und Statusblöcken
+  - [x] `McpToolResults`: Einheitliche Erzeugung von `CallToolResult`, `IsError`-Policy und Statusblöcken
   - [ ] Review/Audit zu 8.2 durchführen; Findings ergänzen und umsetzen.
 - [ ] 8.3 Langläufer & Paginierung:
   - [ ] `LongRunningToolCallStore`: Polling- und Fortsetzungs-Tokens (`operationToken`, `continuationToken`)

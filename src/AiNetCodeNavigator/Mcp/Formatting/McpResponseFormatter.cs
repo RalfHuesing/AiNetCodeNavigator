@@ -19,9 +19,11 @@ internal static class McpResponseFormatter
         string text,
         int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
         int? maxResponseTokens = null,
-        int startOffset = 0)
+        int startOffset = 0,
+        string responsePrefix = "")
     {
         ArgumentNullException.ThrowIfNull(text);
+        ArgumentNullException.ThrowIfNull(responsePrefix);
         if (!McpResponseBudgetLimits.IsPublicBudget(maxResponseBytes))
         {
             throw new ArgumentOutOfRangeException(nameof(maxResponseBytes), maxResponseBytes,
@@ -34,12 +36,13 @@ internal static class McpResponseFormatter
         }
 
         ValidateUnicode(text);
+        ValidateUnicode(responsePrefix);
         ValidateOffset(text, startOffset);
 
         var remaining = text[startOffset..];
-        if (Fits(remaining, maxResponseBytes, maxResponseTokens))
+        if (Fits(responsePrefix + remaining, maxResponseBytes, maxResponseTokens))
         {
-            return Success(remaining, isTruncated: false, nextOffset: null, omittedBytes: 0, hint: null);
+            return Success(responsePrefix + remaining, isTruncated: false, nextOffset: null, omittedBytes: 0, hint: null);
         }
 
         var best = (Text: (string?)null, Offset: 0, OmittedBytes: 0, Hint: (string?)null);
@@ -61,7 +64,7 @@ internal static class McpResponseFormatter
             var prefix = text[startOffset..nextOffset];
             var omittedBytes = Encoding.UTF8.GetByteCount(text[nextOffset..]);
             var hint = CreateContinuationHint(nextOffset, omittedBytes);
-            var candidate = $"{prefix}\n{hint}";
+            var candidate = $"{responsePrefix}{prefix}\n{hint}";
             if (Fits(candidate, maxResponseBytes, maxResponseTokens))
             {
                 best = (candidate, nextOffset, omittedBytes, hint);
@@ -76,9 +79,9 @@ internal static class McpResponseFormatter
             var firstEnd = firstBoundary < 0 ? text.Length : firstBoundary + 1;
             var firstUnit = text[startOffset..firstEnd];
             var omittedBytes = Encoding.UTF8.GetByteCount(text[firstEnd..]);
-            var minimumText = omittedBytes == 0
+            var minimumText = responsePrefix + (omittedBytes == 0
                 ? firstUnit
-                : $"{firstUnit}\n{CreateContinuationHint(firstEnd, omittedBytes)}";
+                : $"{firstUnit}\n{CreateContinuationHint(firstEnd, omittedBytes)}");
             var minimumBytes = Encoding.UTF8.GetByteCount(minimumText);
             var minimumTokens = TokenEncoding.CountTokens(minimumText);
             var canRetryWithLargerBudget = minimumBytes > maxResponseBytes
@@ -88,7 +91,7 @@ internal static class McpResponseFormatter
                 : canRetryWithLargerBudget
                     ? $"retry: repeat with maxResponseBytes={minimumBytes} and maxResponseTokens at least {minimumTokens}."
                     : $"recovery: repeat with maxResponseTokens at least {minimumTokens}.";
-            var errorText = $"RESPONSE_BUDGET_TOO_SMALL\nminimumResponseBytes: {minimumBytes}\nminimumResponseTokens: {minimumTokens}\n{recoveryHint}";
+            var errorText = $"{responsePrefix}RESPONSE_BUDGET_TOO_SMALL\nminimumResponseBytes: {minimumBytes}\nminimumResponseTokens: {minimumTokens}\n{recoveryHint}";
             var errorTokenCount = TokenEncoding.CountTokens(errorText);
             if (maxResponseTokens is { } errorTokenBudget && errorTokenCount > errorTokenBudget)
             {

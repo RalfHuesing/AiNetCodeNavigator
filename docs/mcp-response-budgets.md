@@ -7,3 +7,5 @@ Formatting preserves complete newline-delimited units. A shortened response incl
 If the first complete unit and its continuation marker do not fit, formatting returns `RESPONSE_BUDGET_TOO_SMALL` with `minimumResponseBytes` and `minimumResponseTokens`. It offers a byte retry only when the required byte count is both larger than the current budget and within the supported 65,536-byte maximum. If a complete unit exceeds that maximum, the recovery hint asks the caller to narrow the query; it never recommends an invalid budget. If the byte budget is already sufficient but the token budget is not, the hint recommends raising the token budget. Error responses obey the requested token cap; when the cap cannot represent the error response, formatting throws `ArgumentOutOfRangeException` instead of returning an over-budget error.
 
 This formatter is an internal host utility. Public MCP tool registration and stdio invocation are not established by this component.
+
+The internal result builder includes its status block in the formatter's byte and token accounting. See [MCP Tool Results](mcp-tool-results.md) for the result classification and structured-content contract.

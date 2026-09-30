@@ -28,6 +28,16 @@ No public MCP stdio acceptance is claimed. The three findings are resolved by th
 - The implementer reported verification on the completed remediation: build 0 warnings/0 errors; fast tests 465/465; integration tests 12/12; full suite 465 fast + 12 integration; `git diff --check` before commit.
 - No implementer audit or public stdio invocation was performed.
 
+## Point 8.2: Standardized Result Building
+
+- Implementation base: `40bcbbcb105c73e27b83e1d470f62ffab708636d` (clean working tree).
+- Adapted the read-only AiNetLinter reference from `McpToolResults.cs`, `McpToolResults.NavigationText.cs`, `IsErrorPolicy.md`, and `McpToolResultsContentTests.cs`. The semantic MCP symbol query did not return during this turn; reference inspection continued through those direct read-only source and test files.
+- `McpToolResults` builds one text block and explicitly classifies success, semantic errors, recoverable failures, invalid arguments, loading/retry, and budget failures. Recoverable and invalid argument outcomes retain `IsError=true`; only transient loading uses `IsError=false` with `operation=retry`.
+- Successful results may carry optional `JsonElement` structured content. If text truncation occurs, the combination is rejected instead of attaching apparently complete structured data to partial text. Status text is passed through `McpResponseFormatter` so it counts toward UTF-8 byte and token limits.
+- Contract tests are in `McpToolResultsTests`, covering text and structured content, `IsError`, status/code/next action, recovery and invalid argument classification, loading, budget errors, completeness after truncation, and exact UTF-8 limits. The initial focused run was red because the result builder did not yet exist; the final focused run passed 9/9.
+- Required gates passed on the completed implementation: build 0 warnings/0 errors; fast tests 474/474; integration tests 12/12; full suite 474 fast + 12 integration. `git diff --check` is run before commit.
+- No public tool registration or stdio behavior is claimed. Independent point audit remains open; no implementer audit was performed.
+
 ### Point 8.1 independent audit 2/3
 
 - Audited fixed commit `a1f5b0b2b90bb3d0eaf82b9ad2d30737c5cc9327` with a clean working tree (`gpt-6-sol`, medium reasoning). Code, tests, and the current-state budget document were inspected; no build, test suite, or stdio call was run by the auditor. The 465/12/477 gate counts above are implementer reports.

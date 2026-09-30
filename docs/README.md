@@ -4,6 +4,7 @@
 
 - [Build and Tests](development/build-and-tests.md): Solution structure, PowerShell scripts, and static log files in `temp/`.
 - [MCP Response Budgets](mcp-response-budgets.md): Host-side UTF-8 limits, token accounting, explicit truncation, and recoverable undersized-budget results.
+- [MCP Tool Results](mcp-tool-results.md): Internal `CallToolResult` builders, status text, structured success content, and error classification.
 
 ## Navigation
 
