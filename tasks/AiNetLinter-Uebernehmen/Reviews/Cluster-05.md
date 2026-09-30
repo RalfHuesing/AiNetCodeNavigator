@@ -126,3 +126,20 @@
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 362/362 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Independent audit 1/3 of point 5.2
+
+- Audited commit: `a75ec0910e3729666c4497689ab25f5094b3fdf4` (clean working tree before review edits).
+- Reviewer: `gpt-6-sol`, medium reasoning effort. Read-only comparison covered AiNetLinter's `FindReferencesTool`, `CallGraphTraversal`, and `FindImplementationsTool`, including its type, method, and property dispatch. No build or tests were run in this audit; the implementation gate results above are from the prior turn.
+- Direct cross-project references, two identically named implementation types in distinct projects, interface and abstract method implementations, indirect derived classes, handoff roundtrips, nonpositive result limits, and null inputs have relevant Core tests. Public identifier-resolution and MCP error formatting remain later integration work. The point 5.2 audit checkbox stays unchecked for the findings below.
+
+### Findings
+
+1. **P1 — `find_references` depth contract is absent from the Core engine.** `src/AiNetCodeNavigator.Core/Symbols/FindReferencesResolver.cs:20-24` exposes only a direct-reference query; `:32-77` processes references to the seed once and cannot follow callers. AiNetLinter's `FindReferencesTool.ExecuteResolvedAsync` invokes `CallGraphTraversal.ExpandAsync` with the requested depth, and its `FindReferencesToolTests.cs:398-424` verifies a real A ← B ← C chain at depth two. A future MCP wrapper cannot provide that contract through this engine. Acceptance: support bounded depth traversal (reference cap three) with origin/depth per call site, cycle and node limits, and explicit completeness/truncation; test a cross-project caller chain at depths one and two and a capped request. Keep the result a navigation query without linter metrics.
+2. **P2 — Property implementations/overrides lack the reference's explicit dispatch.** `FindReferencesResolver.cs:123-133` applies `SymbolFinder.FindImplementationsAsync` to all non-type symbols and adds `FindOverridesAsync` only for `IMethodSymbol`. AiNetLinter's `FindImplementationsTool.FindPropertyImplementationsAsync` uses `FindOverridesAsync` for virtual/abstract/override properties and `FindImplementationsAsync` for interface properties. No Core test covers either property case. Acceptance: route supported property symbols by interface versus override semantics and cover a cross-project interface property implementation and an abstract/virtual property override; preserve distinct source handoffs.
+3. **P2 — Unsupported implementation targets have no recoverable result.** `FindReferencesResolver.cs:110-133` sends every non-interface named type to `FindDerivedClassesAsync` and every other symbol to `FindImplementationsAsync`, whereas AiNetLinter's `FindRawImplementationsAsync` rejects unsupported symbol kinds and non-virtual concrete methods with an explanatory error. The Core model has no status/error field and tests only null arguments. Acceptance: distinguish an unsupported target from a valid target with zero implementations using a typed result or documented exception that the MCP layer can map to a clear error; cover a struct and a non-virtual ordinary method without conflating them with empty interface results.
+
+### Review verification
+
+- Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
+- The documentation diff was inspected and `git diff --check` passed before commit.
