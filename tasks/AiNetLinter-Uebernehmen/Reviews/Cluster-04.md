@@ -400,3 +400,16 @@ No open finding remains for point 4.7. The audit checkbox is complete after two 
 - Kept name-only matches at `Unknown` and documented in the public builder XML contract and [Test Context](../../../docs/navigation/test-context.md) that recommendations are static heuristic candidates, not evidence of test execution or coverage.
 - Verification: the equal-name pre-fix regression failed with 1 result instead of 2; the focused `TestRecommendationBuilder` suite passed 5/5 after the fix. `pwsh -File ./scripts/build.ps1` passed with 0 warnings/errors; `pwsh -File ./scripts/test-fast.ps1` passed 331/331; `pwsh -File ./scripts/test-integration.ps1` passed 12/12; `pwsh -File ./scripts/test.ps1` passed 343/343; `git diff --check` passed.
 - The independent point 4.8 audit checkbox remains `[ ]`; no 4.9 work is included.
+
+## Independent audit 1/3 of point 4.8
+
+- Reviewed commit: `4969b1a7e8119961530240461380fadf3abe3536` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Read-only comparison inspected AiNetLinter `GetTestContextTool.BuildPayloadAsync`, its explicit `static-test-candidates-only` payload marker, and the local builder, detector, DTO, Feature Context consumer, tests, and current-state page. The implementation slice's gates are recorded above; this audit did not run a build or tests.
+- The builder now searches once across the solution and deduplicates by Roslyn symbol identity, preserving two equal-named fixture symbols from different projects. The regression asserts separate paths, project names, frameworks, methods, and distinct `h:` values. The xUnit/NUnit/MSTest fixture test checks attributed methods, including MSTest `TestMethodAttribute` and its method handoff. `Unknown` remains the framework for a name-only candidate. The local tests do not roundtrip the two equal-name project handoffs, but the common project-marked resolver has separate coverage under point 4.7; no failure was established here.
+
+### Open finding
+
+1. **P2 — The static heuristic boundary is absent from the emitted result.** `TestContextPayload` (`TestContextModels.cs:28-36`) has only a source comment, not a data field declaring the evidence mode. The actual Feature Context output renders the candidates under `Associated Tests` (`FeatureContextScanner.cs:340-350`) without a heuristic or non-coverage qualifier; its DTO likewise has no evidence marker. A consumer of the result can therefore read name/project matches as established associated tests even though the current-state page correctly calls them static heuristic candidates. AiNetLinter includes `static-test-candidates-only` in its test-context payload. **Acceptance:** expose an explicit static-candidate/evidence-mode marker in the machine-readable result and label the rendered test section as heuristic; test both a name-only `Unknown` candidate and an attributed candidate to ensure neither is presented as execution or coverage evidence.
+
+The point 4.8 audit checkbox remains open pending a focused fix and follow-up audit. No product code or external repository was changed in this audit.
