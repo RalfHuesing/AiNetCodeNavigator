@@ -12,7 +12,7 @@
   - [x] `SourceSymbolBodyResolver`: Syntax-Extraktion aus AST mit Paginierung (`startLine`, `maxBodyLines`)
   - [x] Batch-Extraktion für mehrere Symbole in einem Aufruf, in Eingabereihenfolge
   - [x] FastTests für Symbol-Body-Lesen (Partials, Zeilenfenster, Metadaten-Symbole und Batch-Fehlerfälle)
-  - [ ] Review/Audit zu 4.2 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 4.2 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.3 File-Skeletons (`get_file_skeleton`-Engine):
   - [x] `SkeletonSyntaxWalker` & `SkeletonMapBuilder`: Syntax-Knoten ohne Methodenrümpfe erfassen
   - [x] `SkeletonMarkdownRenderer`: Formatierte Markdown-Ausgabe mit Handoff-IDs

@@ -88,3 +88,16 @@ No open finding remains for point 4.1 on this reviewed Core implementation. The 
 | `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
 | `pwsh -File ./scripts/test.ps1` | Passed, 292/292 across both test projects |
 | `git diff --check` | Passed before commit |
+
+## Independent audit 1/3 of point 4.2
+
+- Reviewed commit: `810d6298d1741df8235928817fab09706f1df9c8` (clean working tree before audit).
+- Reviewer: `gpt-6-sol`, reasoning effort `medium`.
+- Read-only comparison: AiNetLinter `SourceSymbolBodyResolver` and its AST extraction, availability, and window behavior; inspected the local Core resolver, models, FastTests, and current-state documentation. The implementation slice's gate results are recorded separately. This audit did not run a build or tests.
+
+### Findings and acceptance
+
+- **No open finding for point 4.2.** `GetBodySyntaxReference` selects a partial method implementation when available, and `HasUnavailableBody` distinguishes a bodyless partial definition or abstract interface member from an executable default interface method. `Extract` uses the same one-based, normalized line window and continuation behavior as the reference. `ResolveBatch` projects the input in order and keeps metadata-only symbols as unavailable results; an empty input returns an empty list. FastTests cover those cases, ordinary and abstract members, null direct inputs, and out-of-range windows. The reviewed Core contract meets the listed point 4.2 acceptance criteria.
+- The future MCP tool contract, identifier resolution, and real transport remain subject to their later roadmap points and Cluster 11 end-to-end verification.
+
+The point 4.2 audit checkbox is complete after one audit. No product code or external repository was changed in this audit.
