@@ -163,3 +163,17 @@
 
 - Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
 - The documentation diff was inspected and `git diff --check` passed before commit.
+
+## Independent audit 2/3 of point 5.2
+
+- Audited commit: `61195aa02695bc40df3592263d84680bad4391a6` (clean working tree before review edits).
+- Reviewer: `gpt-6-sol`, medium reasoning effort. Reviewed only audit-1 findings and the related source, models, tests, and documentation. No build or tests were run in this audit; the remediation gates above belong to the implementation turn.
+- **Accepted — depth traversal:** `FindReferencesResolver.cs:20-168` retains the direct overload and adds bounded breadth-first traversal with depth 1–3, a 200-symbol ceiling, a visited set, call-site depth and reached-from provenance, and distinct display/node/depth completeness flags. `FindReferencesResolverTests.cs:43-133` covers a cross-project A ← B ← C chain, source handoff roundtrips, display and node caps, depth clamping, and a two-method cycle.
+- **Accepted — properties:** `FindReferencesResolver.cs:217-234` routes interface properties through `FindImplementationsAsync` and virtual/abstract/override properties through `FindOverridesAsync`. `FindReferencesResolverTests.cs:297-322` checks both cases across projects and resolves their handoffs.
+- **Accepted — unsupported targets:** `FindReferencesResolver.cs:182-248` distinguishes unsupported types and non-virtual methods with a typed `ErrorMessage`/`IsSuccess=false`; the test at `FindReferencesResolverTests.cs:325-351` also verifies that a valid interface with no implementations succeeds with an empty list.
+- No point-5.2 findings remain open. The point audit checkbox is complete at audit 2/3. Public MCP formatting and identifier errors remain later integration work, not claims of this Core audit.
+
+### Review verification
+
+- Inspected committed Core source/tests and the AiNetLinter reference; no production files were changed in this audit.
+- The documentation diff was inspected and `git diff --check` passed before commit.

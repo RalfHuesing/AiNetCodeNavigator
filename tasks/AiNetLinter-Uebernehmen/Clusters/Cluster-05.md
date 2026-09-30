@@ -15,10 +15,10 @@
   - [x] `FindReferencesResolver`: AST-Aufrufstellensuche über Solution-Grenzen
   - [x] Interface- und abstrakte Methoden-Implementierungssuche
   - [x] FastTests für Referenzen und Implementierungen
-  - [ ] Support bounded transitive `find_references` depth with completeness and cross-project caller-chain tests.
-  - [ ] Resolve interface property implementations and virtual/abstract property overrides with tests.
-  - [ ] Return a recoverable error for unsupported implementation targets.
-  - [ ] Review/Audit zu 5.2 durchführen; Findings ergänzen und umsetzen.
+  - [x] Support bounded transitive `find_references` depth with completeness and cross-project caller-chain tests.
+  - [x] Resolve interface property implementations and virtual/abstract property overrides with tests.
+  - [x] Return a recoverable error for unsupported implementation targets.
+  - [x] Review/Audit zu 5.2 durchführen; Findings ergänzen und umsetzen.
 - [x] 5.3 Typ-Hierarchien (`get_type_hierarchy`-Engine):
   - [x] `TypeHierarchyScanner`: Basisklassen, Schnittstellen und abgeleitete Typen ermitteln
   - [x] `GetTypeHierarchyFormatter`: Formatierung als Baumstruktur
