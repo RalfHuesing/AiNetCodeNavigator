@@ -169,3 +169,21 @@ The point 4.3 audit checkbox remains open pending fixes and a follow-up audit. N
 2. **P2 multi-variable handoff association — implementation fixed, one test obligation open.** `ExtractMembers` now emits one `SkeletonMemberInfo` per field or event declarator and calls `GetDeclaredSymbol(variable)` for each. The Markdown test verifies four distinct `h:...` IDs for two fields and two events and follows each through `FeatureContextScanner` to its own symbol name. **P3 residual test gap:** the structured DTO path is exercised only with one field and one event, without a symbol formatter (`SkeletonMapTests.cs:97-119`); the multi-variable test starts at `FileSkeletonBuilder.BuildMarkdownForDocumentAsync` (`SkeletonMapTests.cs:122-160`). The audit's acceptance also calls for DTO handoff associations for later variables. **Acceptance:** build a multi-variable DTO with an ID formatter and assert separate entries/IDs for later field and event variables, resolving those IDs to the corresponding symbols. Keep the existing Markdown roundtrip test.
 
 The point 4.3 audit checkbox remains open for the residual DTO test obligation. No product code or external repository was changed in this audit.
+
+## Point 4.3 audit 2 test obligation
+
+- Base commit: `907ea87d3052f7939166402a248507aecd68b616`; working tree was clean before this test-only slice.
+- **P3 structured DTO handoff coverage — closed by test.** Added a `SkeletonMapBuilder.BuildForDocumentAsync` contract test that supplies `formatSymbolId`, asserts four separate member DTOs for two fields and two events, and compares each formatted DTO ID to the documentation ID of the corresponding Roslyn declarator symbol. This explicitly covers the later field and event variables. The existing Markdown test still roundtrips every emitted opaque ID, including the later variables, through `FeatureContextScanner`.
+- No production change was needed: the new contract test passed against the current implementation. Updated the File Skeleton page to state that the ID formatter runs independently for every field/event variable, and marked the multi-variable acceptance item complete in Cluster 4.
+- The point 4.3 audit checkbox remains `[ ]` pending the requested final independent audit.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| Focused DTO formatter association test | Passed, 1/1 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 292/292 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 304/304 across both test projects |
+| `git diff --check` | Passed before commit |

@@ -7,6 +7,8 @@ using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Core.Skeletons;
 using AiNetCodeNavigator.TestKit.Fixtures;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Xunit;
 
 namespace AiNetCodeNavigator.FastTests.Skeletons;
@@ -155,6 +157,47 @@ public sealed class SkeletonMapTests
             Assert.Null(context.Error);
             Assert.Equal(expectedName, context.Declaration.SymbolName);
         }
+    }
+
+    [Fact]
+    public async Task BuildForDocumentAsync_FormatsDistinctHandoffsForEachFieldAndEventVariable()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var project = fixture.Solution.Projects.Single(p => p.Name == "Sample.Core");
+        var document = project.AddDocument("FormattedMultiVariables.cs", """
+            namespace SkeletonTests;
+            public class FormattedMultiVariableSample
+            {
+                private System.Action _first, _second;
+                public event System.Action Changed, Closed;
+            }
+            """);
+        var solutionDir = Path.GetDirectoryName(fixture.Solution.FilePath) ?? string.Empty;
+        var types = await SkeletonMapBuilder.BuildForDocumentAsync(
+            document,
+            solutionDir,
+            formatSymbolId: id => id is null ? null : $"formatted:{id}");
+        var type = Assert.Single(types);
+        var syntaxRoot = await document.GetSyntaxRootAsync();
+        var semanticModel = await document.GetSemanticModelAsync();
+        Assert.NotNull(syntaxRoot);
+        Assert.NotNull(semanticModel);
+
+        var expectedSymbolIds = syntaxRoot.DescendantNodes()
+            .OfType<VariableDeclaratorSyntax>()
+            .Select(variable => semanticModel.GetDeclaredSymbol(variable))
+            .Where(symbol => symbol is not null)
+            .ToDictionary(symbol => symbol!.Name, symbol => symbol!.GetDocumentationCommentId());
+
+        Assert.Equal(4, type.Members.Count);
+        foreach (var (name, documentationId) in expectedSymbolIds)
+        {
+            Assert.NotNull(documentationId);
+            var member = Assert.Single(type.Members, candidate => candidate.Signature.Contains(name, System.StringComparison.Ordinal));
+            Assert.Equal($"formatted:{documentationId}", member.Id);
+        }
+
+        Assert.Equal(4, type.Members.Select(member => member.Id).Distinct().Count());
     }
 
     [Fact]
