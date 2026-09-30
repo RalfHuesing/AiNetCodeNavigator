@@ -17,3 +17,5 @@ Cluster 8.1 independent point audit 1/3 found one P1 and two P2 contract gaps: a
 Point 8.2 is closed after [final independent audit 3/3](Reviews/Cluster-08.md#point-82-independent-audit-33--accepted) accepted remediation `b7895eef60e834443f0e094989a8f7c7924e09a9`. No point finding remains open; the three-audit limit is exhausted. Public registration and stdio acceptance remain later Cluster 9/11 work.
 
 Point 8.3 is closed after [final independent audit 3/3](Reviews/Cluster-08.md#point-83-independent-audit-33--accepted) accepted remediation `7db5c08a0e408df9fca2a921ea1191af86f8ba3f`. No point finding remains open; the three-audit limit is exhausted. Cluster 8 integration and public registration/stdio acceptance remain separate work.
+
+Point 8.4 remains open after [independent audit 1/3](Reviews/Cluster-08.md#point-84-independent-audit-13): four P2 findings cover root-reference unknown-argument rejection, SDK-renamed parameter binding checks, schema-unavailable error budgets, and precise dictionary required-field paths. Two point audits remain. Public host/tool registration and stdio acceptance remain later work.
