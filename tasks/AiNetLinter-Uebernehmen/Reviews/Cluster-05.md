@@ -164,27 +164,6 @@
 - Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
 - The documentation diff was inspected and `git diff --check` passed before commit.
 
-### Audit 1 remediation
-
-- At the audited baseline `a83f28f`, the Core API exposed no target, direction, depth, or document continuation fields. The before-fix executable generic repro also failed: the dependency edge for `Contracts.Box<Contracts.Item>` contained Item but omitted Box.
-- Added symbol-backed `DependencyTypeReference` edges with assembly-qualified IDs, fully qualified names, source/target type provenance, project, file, namespace, and depth. Type syntax collection includes identifier, generic, and qualified forms, while source-location checks continue to exclude BCL/package metadata.
-- Added `TargetFilePath`/`TargetTypeName`, optional project restriction, `Outgoing`/`Incoming`/`Both`, depth clamped to 1–3, and deterministic type-edge paging. Tests cover a two-type file with distinct outgoing edges, incoming traversal, a two-hop caller-to-target-to-dependency chain, file targets, and generic target matching.
-- Added `DocumentOffset` and `NextDocumentOffset`; continuation starts at the next stable-sorted document rather than repeating earlier documents. Results expose their starting offset and remain explicitly incomplete when a response covers only a later batch. The continuation regression checks offsets 0 then 1 and a null final cursor.
-- Continuation is stateless: target traversals operate on the current document batch. For a complete target traversal over more than one batch, callers must first gather unfiltered `TypeDependencies` from every document page and then traverse the combined edges. This limitation is documented; `IsComplete` does not claim the later page alone is a complete solution graph.
-- Updated [Dependency Graph Core Scanner](../../../docs/navigation/dependency-graph.md) and the 5.5 acceptance rows. The 5.5 audit checkbox remains open for the final independent review.
-
-### Audit 1 remediation verification
-
-| Gate | Result |
-|---|---|
-| Before-fix generic/qualified type regression | Failed as expected: generic Box edge missing |
-| Focused DependencyGraphScanner FastTests after remediation | Passed, 10/10 |
-| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
-| `pwsh -File ./scripts/test-fast.ps1` | Passed, 380/380 |
-| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
-| `pwsh -File ./scripts/test.ps1` | Passed, 392/392 across both test projects |
-| `git diff --check` | Passed before commit |
-
 ## Independent audit 2/3 of point 5.2
 
 - Audited commit: `61195aa02695bc40df3592263d84680bad4391a6` (clean working tree before review edits).
@@ -360,6 +339,47 @@
 1. **P1 — The target-centered dependency graph contract cannot be reconstructed from the snapshot.** `src/AiNetCodeNavigator.Core/Dependencies/DependencyGraphScanner.cs:23-26` accepts only a solution and paging options; `:110-145` aggregates usages into namespace/file pairs and loses which declaring type produced each edge. AiNetLinter's `DependencyGraphScanner.ScanTypeAsync` scans only the selected type's declarations (including partials), while `ScanFileAsync` supports a file target; both support incoming/outgoing/both traversal up to three hops with a visited-file cap. Filtering the current aggregate by file cannot produce a correct type-scoped first hop when a file has two types. Acceptance: provide a bounded Core query for file and type targets with direction and depth, preserving edge provenance, cycles, and truncation metadata; test two types in one file with different dependencies, plus incoming and multi-hop paths. The MCP layer may resolve identifiers and format the result later, but cannot infer discarded type provenance.
 2. **P1 — The 1000-document cap is not resumable.** `DependencyGraphScanner.cs:37-45` always takes the first `maxDocuments` documents; `:147-165` applies `Offset` only to completed relationship collections. Repeating calls with another relationship offset rescans the same first 1000 documents, so dependencies in document 1001+ cannot be queried through this Core API. `DocumentLimitReached` correctly reports incompleteness but supplies no document cursor. Acceptance: provide a deterministic document continuation/window or targeted bounded scan that can reach later documents, keep counts/completeness scoped accurately, and test a dependency whose declaring or consuming file lies beyond a small test document limit across continuation calls.
 3. **P2 — Generic type targets are absent from source dependency edges.** `DependencyGraphScanner.cs:110-113` inspects only `IdentifierNameSyntax` and uses `GetTypeInfo`; a reference to `Contracts.Box<int>` has a `GenericNameSyntax` for `Box`, so the target generic type is never considered. AiNetLinter's `CollectReferencedTypes` explicitly inspects identifier, generic, and qualified names using `GetSymbolInfo`. Acceptance: collect source-backed named types for generic and qualified forms without adding external metadata noise or duplicate edges; test a cross-project field or parameter of `Contracts.Box<int>` and a non-generic control.
+
+### Review verification
+
+- Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
+- The documentation diff was inspected and `git diff --check` passed before commit.
+
+### Audit 1 remediation
+
+- At the audited baseline `a83f28f`, the Core API exposed no target, direction, depth, or document continuation fields. The before-fix executable generic repro also failed: the dependency edge for `Contracts.Box<Contracts.Item>` contained Item but omitted Box.
+- Added symbol-backed `DependencyTypeReference` edges with assembly-qualified IDs, fully qualified names, source/target type provenance, project, file, namespace, and depth. Type syntax collection includes identifier, generic, and qualified forms, while source-location checks continue to exclude BCL/package metadata.
+- Added `TargetFilePath`/`TargetTypeName`, optional project restriction, `Outgoing`/`Incoming`/`Both`, depth clamped to 1–3, and deterministic type-edge paging. Tests cover a two-type file with distinct outgoing edges, incoming traversal, a two-hop caller-to-target-to-dependency chain, file targets, and generic target matching.
+- Added `DocumentOffset` and `NextDocumentOffset`; continuation starts at the next stable-sorted document rather than repeating earlier documents. Results expose their starting offset and remain explicitly incomplete when a response covers only a later batch. The continuation regression checks offsets 0 then 1 and a null final cursor.
+- Continuation is stateless: target traversals operate on the current document batch. For a complete target traversal over more than one batch, callers must first gather unfiltered `TypeDependencies` from every document page and then traverse the combined edges. This limitation is documented; `IsComplete` does not claim the later page alone is a complete solution graph.
+- Updated [Dependency Graph Core Scanner](../../../docs/navigation/dependency-graph.md) and the 5.5 acceptance rows. The 5.5 audit checkbox remains open for independent follow-up.
+
+### Audit 1 remediation verification
+
+| Gate | Result |
+|---|---|
+| Before-fix generic/qualified type regression | Failed as expected: generic Box edge missing |
+| Focused DependencyGraphScanner FastTests after remediation | Passed, 10/10 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 380/380 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 392/392 across both test projects |
+| `git diff --check` | Passed before commit |
+
+## Independent audit 2/3 of point 5.5
+
+- Audited commit: `a1cc7068ce559d4b6b55b1c119209cbca269d41d` (clean working tree before review edits).
+- Reviewer: `gpt-6-sol`, medium reasoning effort. Reviewed the three audit-1 findings in the changed Core code/tests and AiNetLinter's read-only target traversal and semantic collector. No build or tests were run in this audit; the remediation gate results above belong to the implementation turn.
+- **Accepted — generic/qualified type edges:** `DependencyGraphScanner.cs:101-143` now resolves `TypeSyntax` through Roslyn and preserves `DependencyTypeReference` source/target type identity. `DependencyGraphScannerTests.cs:121-142` covers `Contracts.Box<Contracts.Item>` across projects and a type target query. External metadata remains gated by source locations.
+- **Partial — document continuation:** `DocumentOffset`/`NextDocumentOffset` at `DependencyGraphScanner.cs:52-61` can advance the deterministic document window, and later pages correctly remain incomplete. The current test at `DependencyGraphScannerTests.cs:171-197` only advances across two empty-edge documents; it does not prove an edge is found after continuation or that document 1001+ is reachable.
+- **Open — complete target traversal:** `DependencyGraphScanner.cs:143-148` calls `Traverse` only on `rawEdges` collected from the current document batch. The target BFS at `:197-244` has no persisted frontier or public traversal over an accumulated edge set. A first-hop edge in batch one followed by the second hop in batch two cannot be returned by any targeted call, despite `NextDocumentOffset`; the documentation explicitly instructs callers to aggregate unfiltered pages but provides no Core operation to traverse them. The BFS also has no visited-node cap or cap-truncation signal comparable to AiNetLinter's 150-file bound. This does not meet the audit-1 bounded full-solution target-query acceptance.
+
+### Remaining acceptance
+
+1. **P1:** Make type/file targeted traversal cover the full solution across document windows through a resumable frontier or a public bounded traversal of accumulated edges. Preserve direction, depth, visited-cycle behavior, deterministic ordering, and explicit node-cap truncation. Test a target-to-middle-to-leaf path split across two document batches in both outgoing and incoming directions.
+2. **P2:** Add a continuation regression with a real source dependency in a later window, including a document beyond the default 1000-document cap; assert project/type/file identity, cursor progression, and completeness on partial versus final results.
+
+The point 5.5 audit checkbox remains unchecked for the final allowed point audit.
 
 ### Review verification
 
