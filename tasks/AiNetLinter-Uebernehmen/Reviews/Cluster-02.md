@@ -112,3 +112,25 @@
 - **P2 closed:** `src/AiNetCodeNavigator.Core/Workspace/ProjectRegistry.cs:40-63,91-143,263-330` tracks active lease operations, marks closure under the registry lock, waits for those operations before draining entries, and rejects a late publish while retiring its created resident. `tests/AiNetCodeNavigator.FastTests/Workspace/ProjectRegistryTests.cs:269-324` pauses creation before publication and verifies that disposal waits, the lease fails with `PROJECT_REGISTRY_DISPOSED`, no entry remains, and the resident is disposed once. New calls after closure are rejected at lease entry.
 - The targeted review found no further point 2.2 finding. Real `.slnx` loading and structural staleness remain point 2.3; public MCP response behavior and English product output remain later-cluster gates.
 - Audit verification: source, regression tests, and updated documentation inspected; no build or tests were run by this auditor. The fix verification table above records the implementer's runs only. The documentation-only diff was reviewed and `git diff --check` passed before commit.
+
+## Point 2.3 Implementation Status
+
+- Implementation base: `d43e3b9531c8f19c7d04fa484731b4e02a8226c3`; the working tree was clean before this slice.
+- Implementation commit: `7a3c2205b0c2ff3b9700339bc532ec7ea4e111fc`.
+- AiNetLinter was inspected read-only through its MCP server. Its project registry retries a failed resident load after a failed response is released; its solution reload retains the last good catalog and records the refresh error. Its MSBuild loader builds a design-time workspace and gathers workspace diagnostics. This implementation adapts those lifecycle contracts to Roslyn `Solution` snapshots without importing linting or diagnostic semantics.
+- Added `ProjectRegistryOptions.ForMSBuild()` and `MSBuildSolutionLoader.CreateResidentSolution()` as the registry-to-real-solution path. The loader observes `WorkspaceFailed` failure diagnostics and preserves their cause in a structured `PROJECT_LOAD_FAILED` result.
+- `ResidentSolution.GetCurrentSnapshotAsync()` now defines snapshot behavior: content-only changes update all documents for a shared source path; changes to the `.slnx`/`.sln`, project files, standard MSBuild property files, or the project's C# file inventory trigger a full MSBuildWorkspace reload. Added/removed projects and project references therefore appear in the next successful snapshot. A failed reload leaves the last good solution resident internally, returns an error result without exposing that stale snapshot as successful, and retries on each later snapshot request. Initial load failures expose the same error and can be retried through a new registry lease after the failed response is marked and released.
+- Added real `.slnx` integration coverage with two SDK projects and a project reference. It verifies changed source text, file addition and deletion, project addition and removal, reference changes, MSBuild failure cause, registry retry after repairing a missing project, and retry after a failed reload even when the target is restored to the prior fingerprint. Before the fixes, the added source did not appear in the resident snapshot, and the restored-fingerprint reload test failed because the old error prevented a retry.
+- Updated [build-and-tests.md](../../../docs/development/build-and-tests.md) and the 2.3 implementation checkboxes. The public MCP tool routing is not present at this cluster; the new Core snapshot result carries the error and retry fields for later tool composition. Custom MSBuild imports with resolved paths outside the project files and tracked standard property files are not independently fingerprinted.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 223/223 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 7/7 including real `.slnx` lifecycle and retry cases |
+| `pwsh -File ./scripts/test.ps1` | Passed, 230/230 across both test projects |
+| `git diff --check` | Passed |
+
+- The point 2.3 audit checkbox remains open for independent follow-up. The untracked-import limitation is recorded in [Findings.md](../Findings.md).
