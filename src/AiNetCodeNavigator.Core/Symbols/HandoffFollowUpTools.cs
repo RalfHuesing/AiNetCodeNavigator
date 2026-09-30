@@ -8,6 +8,8 @@ namespace AiNetCodeNavigator.Core.Symbols;
 /// <summary>Gemeinsamer Vertrag für erlaubte Folge-Tools kanonischer Handoff-IDs.</summary>
 public static class HandoffFollowUpTools
 {
+    public static IReadOnlyList<string> ForAssembly(ISymbol symbol) => ["get_symbol_body"];
+
     public static IReadOnlyList<string> For(ISymbol symbol) =>
         ForKind(symbol is INamedTypeSymbol ? "type" : "member");
 

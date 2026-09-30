@@ -35,46 +35,13 @@ public static class InspectAssemblyScanner
                 "targetPath muss ein existierender absoluter lokaler .dll- oder .exe-Pfad sein.");
         }
 
-        await using var session = new AssemblyAnalysisSession(fullPath);
-        var refreshResult = await session.RefreshAsync(cancellationToken).ConfigureAwait(false);
-        var generation = session.CurrentGeneration;
-
-        if (generation is null || refreshResult.Status == AssemblySessionStatus.Failed)
+        var opened = await AssemblyNavigationSessionScope.OpenAsync(fullPath, cancellationToken).ConfigureAwait(false);
+        if (!opened.IsSuccess)
         {
-            var message = refreshResult.Diagnostics.Count == 0
-                ? "Assembly konnte nicht analysiert werden."
-                : string.Join(" ", refreshResult.Diagnostics.Select(d => d.Message));
-
-            if (message.Contains(AssemblyReferenceResolver.NativeMetadataFailureMessage, StringComparison.Ordinal)
-                || message.Contains("BadImageFormatException", StringComparison.OrdinalIgnoreCase)
-                || refreshResult.Failure?.Kind == AssemblySessionFailureKind.MetadataUnavailable)
-            {
-                return Result<InspectAssemblyPayload>.Failure(
-                    NavigationErrorCodes.InvalidAssembly,
-                    $"Die Datei '{Path.GetFileName(fullPath)}' ist keine gültige verwaltete .NET-Assembly (keine .NET-Metadaten / IL).",
-                    "targetPath muss auf eine verwaltete .NET-.dll oder .exe mit IL zeigen.");
-            }
-
-            return Result<InspectAssemblyPayload>.Failure(
-                NavigationErrorCodes.WorkspaceDiagnostic,
-                message,
-                fullPath);
+            return Result<InspectAssemblyPayload>.Failure(opened.Error);
         }
-
-        var context = new AssemblyContext(
-            generation.Snapshot.Compilation.Assembly,
-            generation.Identity,
-            generation.References,
-            generation.Diagnostics.Select(d => d.Message).Distinct(StringComparer.Ordinal).ToList(),
-            generation.Snapshot.Compilation,
-            generation.Origin with
-            {
-                BodyAvailability = "available",
-                ContentMode = "decompiledProject",
-            },
-            generation.Number,
-            generation.Status,
-            generation.DecompiledProjectPaths);
+        await using var scope = opened.Value!;
+        var context = scope.Context;
 
         var binding = AssemblyPaging.CreateInspectBinding(fullPath, context.Origin.ContentHash, request);
         if (!AssemblyPaging.TryReadBoundOffset(request.Cursor, binding, out var offset))
@@ -232,7 +199,7 @@ public static class InspectAssemblyScanner
             members.Count < matchingMembers.Count ? ["maxMembers"] : [],
             stableId,
             Handoff: stableId is not null,
-            AllowedFollowUpTools: stableId is null ? Array.Empty<string>() : HandoffFollowUpTools.For(type));
+            AllowedFollowUpTools: stableId is null ? Array.Empty<string>() : HandoffFollowUpTools.ForAssembly(type));
     }
 
     private static AssemblyMemberDto ToMemberDto(ISymbol member, AnalysisSymbolIdentity handoffIdentity)
@@ -257,7 +224,7 @@ public static class InspectAssemblyScanner
             Attributes(member),
             stableId,
             Handoff: stableId is not null,
-            AllowedFollowUpTools: stableId is null ? Array.Empty<string>() : HandoffFollowUpTools.For(member));
+            AllowedFollowUpTools: stableId is null ? Array.Empty<string>() : HandoffFollowUpTools.ForAssembly(member));
     }
 
     private static string? StableId(ISymbol symbol, AnalysisSymbolIdentity? handoffIdentity) =>

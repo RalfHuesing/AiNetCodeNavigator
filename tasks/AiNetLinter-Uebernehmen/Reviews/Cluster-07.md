@@ -134,3 +134,20 @@
 - **P2 cached-source integrity resolved.** The v3 cache manifest records a SHA-256 digest per generated C# document (`AssemblyDecompilationCache.cs:355-363`); the converter requires the new field and rejects duplicate entries (`AssemblyDecompilationManifestJsonConverter.cs:24-29,220-243`). Cache reads validate the expected key set and digest format, then compare each decoded source with its published digest before constructing the returned document (`Coordinators/AssemblyCacheGenerationStorage.cs:119-126,154-166`). The new regression test changes a same-length source file after publication and requires a rejected cache read with a diagnostic (`AssemblyDecompilationBoundaryTests.cs:189-222`). The schema bump separates prior manifests. Normal cache hit and concurrent-identical-publish coverage remains in the focused suite.
 - **P2 timeout recovery resolved.** The adapter now passes a linked deadline token to decompilation, including the test override, and returns empty incomplete output directly after its own timeout (`AssemblyDecompilationAdapter.cs:44-73`). It no longer calls `ReadProjectOutput` on that branch. The new test stages an 8 MiB partial C# file and confirms the result contains no documents and has a timeout diagnostic (`AssemblyDecompilationBoundaryTests.cs:122-155`). The existing caller-cancellation test still covers propagation. Ordinary non-timeout errors still use the prior partial-output diagnostic path.
 - No point 7.1 finding remains open after this follow-up. The point 7.1 audit checkbox is closed. This audit did not review points 7.2 or 7.3.
+
+## Point 7.3: Assembly Handoffs and Session Lifecycle
+
+- Implementation base: `ea911379fc38ba48218d4bbedf0dadbf00220c5a` (clean working tree). The AiNetLinter reference was inspected read-only through MCP: `AssemblyAnalysisSession` and `AssemblySymbolResolver` use resident generation leases and reject mismatched target/content identities. No external repository files were changed.
+- `AssemblyAnalysisSessionRegistry` now retains sessions by canonical target path, reuses unchanged generations, leases the exact generation consumed by each operation, expires idle sessions after ten minutes, and evicts the oldest idle entry above 32 resident targets. Inspect and the other assembly scanners share this registry. A handoff lookup refreshes and fingerprints the current DLL before resolving its documentation-comment ID in the target assembly.
+- Added `AssemblySymbolHandoffResolver` and `AssemblySymbolBodyScanner`. The formatted opaque handle and the structured canonical ID both roundtrip for types; formatted handles roundtrip for members. Type and member DTOs now advertise only `get_symbol_body`. Other source relationship/structure scanners cannot currently consume Assembly-origin identities, so advertising them would be incorrect.
+- Tests cover exact advertised tool lists and body output, unchanged-session generation reuse, idle target-binding expiry, unknown opaque handles, source-origin foreign handles, stale content after replacing the DLL, unresolved target references, and native image errors. Existing boundary tests also verify that targets stay read-only.
+- MCP stdio dispatch is not claimed here: the current MCP tool classes are stubs and their registration/transport work is in later clusters. The verified follow-up is the Core consumer contract, ready for that layer.
+- This implementation does not conduct an audit. Point 7.3's audit checkbox remains open for the independent auditor. Point 7.2 is closed after audit 3/3; no additional audit of 7.2 or point 3.3 was performed.
+
+| Gate | Result |
+|---|---|
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 445/445 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 457/457 across both test projects |
+| `git diff --check` | Passed before commit |

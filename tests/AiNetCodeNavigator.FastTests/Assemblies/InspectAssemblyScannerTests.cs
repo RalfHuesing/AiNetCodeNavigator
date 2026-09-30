@@ -284,8 +284,8 @@ public sealed class InspectAssemblyScannerTests
 
         Assert.False(result.IsSuccess);
         Assert.Equal(NavigationErrorCodes.InvalidAssembly, result.Error!.Value.Code);
-        Assert.Contains("keine .NET-Metadaten", result.Error!.Value.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("verwaltete .NET-.dll oder .exe mit IL", result.Error!.Value.Hint ?? string.Empty, StringComparison.Ordinal);
+        Assert.Contains("not a valid managed .NET assembly", result.Error!.Value.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("managed .NET .dll or .exe containing IL", result.Error!.Value.Hint ?? string.Empty, StringComparison.Ordinal);
         Assert.Contains(Path.GetFileName(nativeAssemblyPath), result.Error!.Value.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(Path.GetDirectoryName(nativeAssemblyPath)!, result.Error!.Value.Message, StringComparison.OrdinalIgnoreCase);
     }
