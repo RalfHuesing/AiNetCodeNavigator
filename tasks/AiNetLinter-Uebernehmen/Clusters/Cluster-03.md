@@ -21,7 +21,7 @@
   - [x] Source-Produzenten binden `h:...` an kanonische Lösungssnapshots und stabile Projektmarker; rohe DocumentationCommentIds werden nicht als Handoffs ausgegeben.
   - [x] Roundtrips von `find_symbol` und `get_file_skeleton` zu Source-Folge-Tools sowie typisierte Fehler für unbekannte, fremde und veraltete Source-Handles ergänzen.
   - [x] Source-Snapshot-Pfade normalisieren und übergebene `find_symbol`-Identitäten gegen die aktuelle Lösung prüfen.
-  - [ ] Übergebene Feature-/Class-Structure-Identitäten validieren und Source-Roundtrips über Mehrprojekt- und Pfadvarianten abdecken.
+  - [x] Übergebene Feature-/Class-Structure-Identitäten validieren und Source-Roundtrips über Mehrprojekt- und Pfadvarianten abdecken.
   - [ ] Assembly-Folge-Tools und Roundtrips für `inspect_assembly` abschließen (Auflösung und Sitzungslebenszyklus siehe Cluster 7).
   - [x] Assembly-DTOs nur bei kanonischer Identität als Handoff mit Folge-Tools kennzeichnen.
-  - [ ] Review/Audit zu 3.3 durchführen; Findings ergänzen und umsetzen.
+  - [x] Review/Audit zu 3.3 durchführen; Findings ergänzen und umsetzen.
