@@ -278,3 +278,21 @@
 
 - Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
 - The documentation diff was inspected and `git diff --check` passed before commit.
+
+### Audit 1 remediation
+
+- Added a before-fix cross-project convergence regression: `Top.Go` calls `B.Call(); C.Call();` on one source line, while the branch methods both call `Contracts.Api.Run()`. The impact result expected four relationships but returned three because the two depth-two entries shared a de-duplication key.
+- Each `ImpactCallSiteEntry` now records `ReachedFromSymbolId` and a project-bound `ReachedFromSymbolHandoffId` for the symbol whose references produced the site. Stable origin identity participates in de-duplication and deterministic ordering, preserving converging branches even when the caller, file, and line are the same. The test resolves both origin handoffs separately to BranchB and BranchC, checks direct/indirect totals, and verifies affected-project summaries remain complete when `maxResults` truncates the displayed entries.
+- Updated [Symbol Impact Core Engine](../../../docs/navigation/impact-analysis.md) with reached-from provenance and its role in call-site identity. The 5.4 audit checkbox remains open pending independent follow-up.
+
+### Audit remediation verification
+
+| Gate | Result |
+|---|---|
+| Before-fix cross-project convergence regression | Failed as expected: 3 impact sites returned where 4 were expected |
+| Focused ImpactAnalyzer FastTests after fix | Passed, 9/9 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 371/371 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 383/383 across both test projects |
+| `git diff --check` | Passed before commit |

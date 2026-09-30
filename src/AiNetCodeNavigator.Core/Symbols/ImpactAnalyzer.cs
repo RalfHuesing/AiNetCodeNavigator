@@ -61,6 +61,8 @@ public static class ImpactAnalyzer
             }
 
             var references = await SymbolFinder.FindReferencesAsync(currentSymbol, solution, ct).ConfigureAwait(false);
+            var reachedFromSymbolId = GetStableSymbolId(currentSymbol);
+            var reachedFromSymbolHandoffId = SourceHandoffFormatter.Format(currentSymbol, solution, handoffIdentity);
 
             foreach (var reference in references)
             {
@@ -100,7 +102,9 @@ public static class ImpactAnalyzer
                         CallingMember: callerName,
                         CallingMemberHandoffId: handoff,
                         ProjectName: doc.Project.Name,
-                        Depth: currentLevel));
+                        Depth: currentLevel,
+                        ReachedFromSymbolId: reachedFromSymbolId,
+                        ReachedFromSymbolHandoffId: reachedFromSymbolHandoffId));
 
                     if (currentLevel < depth && visited.Add(caller))
                     {
@@ -111,13 +115,25 @@ public static class ImpactAnalyzer
         }
 
         var distinctSites = allSites
-            .GroupBy(s => (s.ProjectName, s.FilePath, s.Line, s.CallingMember, s.Depth))
+            .GroupBy(s => (
+                s.ProjectName,
+                s.FilePath,
+                s.Line,
+                s.CallingMember,
+                s.CallingMemberHandoffId,
+                s.Depth,
+                s.ReachedFromSymbolId,
+                s.ReachedFromSymbolHandoffId))
             .Select(g => g.OrderBy(s => s.Depth).First())
             .OrderBy(s => s.Depth)
             .ThenBy(s => s.ProjectName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(s => s.FilePath, StringComparer.OrdinalIgnoreCase)
             .ThenBy(s => s.FilePath, StringComparer.Ordinal)
             .ThenBy(s => s.Line)
+            .ThenBy(s => s.CallingMember, StringComparer.Ordinal)
+            .ThenBy(s => s.CallingMemberHandoffId, StringComparer.Ordinal)
+            .ThenBy(s => s.ReachedFromSymbolId, StringComparer.Ordinal)
+            .ThenBy(s => s.ReachedFromSymbolHandoffId, StringComparer.Ordinal)
             .ToList();
 
         var isTruncated = distinctSites.Count > effectiveResultLimit;
@@ -153,5 +169,27 @@ public static class ImpactAnalyzer
             IsDepthClamped: maxDepth != depth,
             EffectiveNodeLimit: effectiveNodeLimit,
             TransitiveCallSitesCount: distinctSites.Count(site => site.Depth > 1));
+    }
+
+    private static string GetStableSymbolId(ISymbol symbol)
+    {
+        if (symbol is IMethodSymbol { MethodKind: MethodKind.LocalFunction } localFunction)
+        {
+            var container = localFunction.ContainingSymbol;
+            while (container is IMethodSymbol { MethodKind: MethodKind.LocalFunction })
+            {
+                container = container.ContainingSymbol;
+            }
+
+            var location = localFunction.Locations.FirstOrDefault(candidate => candidate.IsInSource);
+            if (location is not null)
+            {
+                var start = location.GetLineSpan().StartLinePosition;
+                return $"{GetStableSymbolId(container!)}#lf:{localFunction.Name}@{start.Line + 1}:{start.Character + 1}";
+            }
+        }
+
+        return DocumentationCommentId.CreateDeclarationId(symbol)
+            ?? symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
     }
 }

@@ -10,7 +10,9 @@ public sealed record ImpactCallSiteEntry(
     string CallingMember,
     string? CallingMemberHandoffId,
     string ProjectName,
-    int Depth);
+    int Depth,
+    string ReachedFromSymbolId = "",
+    string? ReachedFromSymbolHandoffId = null);
 
 public sealed record SymbolImpactPayload(
     string TargetSymbol,

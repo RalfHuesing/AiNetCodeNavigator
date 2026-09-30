@@ -182,4 +182,52 @@ public sealed class ImpactAnalyzerTests
         Assert.Equal(3, impact.VisitedSymbolCount);
         Assert.False(impact.IsTruncatedByNodeLimit);
     }
+
+    [Fact]
+    public async Task AnalyzeSymbolImpactAsync_PreservesConvergingCallersOnTheSameLineAcrossProjects()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\ImpactConverging.slnx",
+            new ProjectSpec("Contracts", [("Api.cs", "namespace Contracts; public static class Api { public static void Run() { } }")], VirtualProjectDirectory: "src/Contracts"),
+            new ProjectSpec("BranchB", [("B.cs", "namespace BranchB; public class B { public void Call() => Contracts.Api.Run(); }")], ProjectReferences: ["Contracts"], VirtualProjectDirectory: "src/BranchB"),
+            new ProjectSpec("BranchC", [("C.cs", "namespace BranchC; public class C { public void Call() => Contracts.Api.Run(); }")], ProjectReferences: ["Contracts"], VirtualProjectDirectory: "src/BranchC"),
+            new ProjectSpec("Top", [("Top.cs", "namespace Top; public class Entry { public void Go(BranchB.B b, BranchC.C c) { b.Call(); c.Call(); } }")], ProjectReferences: ["BranchB", "BranchC"], VirtualProjectDirectory: "src/Top"));
+        var compilation = await fixture.Solution.Projects.Single(project => project.Name == "Contracts").GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var target = compilation.GetTypeByMetadataName("Contracts.Api")!.GetMembers("Run").OfType<IMethodSymbol>().Single();
+
+        var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, fixture.Solution, maxDepth: 2);
+
+        Assert.Equal(2, impact.DirectCallersCount);
+        Assert.Equal(4, impact.TransitiveImpactCount);
+        Assert.Equal(2, impact.TransitiveCallSitesCount);
+        Assert.Equal(4, impact.CallSites.Count);
+        Assert.Contains("BranchB", impact.AffectedProjects);
+        Assert.Contains("BranchC", impact.AffectedProjects);
+        Assert.Contains("Top", impact.AffectedProjects);
+        var convergedSites = impact.CallSites.Where(site => site.Depth == 2 && site.ProjectName == "Top").ToArray();
+        Assert.Equal(2, convergedSites.Length);
+        Assert.Equal(2, convergedSites.Select(site => site.ReachedFromSymbolId).Distinct().Count());
+        Assert.Equal(2, convergedSites.Select(site => site.ReachedFromSymbolHandoffId).Distinct().Count());
+        foreach (var site in convergedSites)
+        {
+            Assert.NotEmpty(site.ReachedFromSymbolId);
+            Assert.StartsWith("h:", site.ReachedFromSymbolHandoffId);
+            var resolvedReachedFrom = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.ReachedFromSymbolHandoffId!);
+            Assert.True(resolvedReachedFrom.IsSuccess);
+            Assert.Contains(resolvedReachedFrom.Symbol!.ContainingAssembly!.Name, new[] { "BranchB", "BranchC" });
+            Assert.StartsWith("h:", site.CallingMemberHandoffId);
+            var resolvedCaller = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.CallingMemberHandoffId!);
+            Assert.True(resolvedCaller.IsSuccess);
+            Assert.Equal("Top", resolvedCaller.Symbol!.ContainingAssembly!.Name);
+        }
+
+        var limited = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, fixture.Solution, maxDepth: 2, maxResults: 3);
+        Assert.Equal(3, limited.CallSites.Count);
+        Assert.True(limited.IsTruncated);
+        Assert.Equal(2, limited.TransitiveCallSitesCount);
+        Assert.Contains("BranchB", limited.AffectedProjects);
+        Assert.Contains("BranchC", limited.AffectedProjects);
+        Assert.Contains("Top", limited.AffectedProjects);
+    }
 }
