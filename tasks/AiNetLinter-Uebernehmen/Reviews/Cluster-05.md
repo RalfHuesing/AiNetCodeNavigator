@@ -385,3 +385,23 @@ The point 5.5 audit checkbox remains unchecked for the final allowed point audit
 
 - Inspected committed Core source/tests and the AiNetLinter read-only reference; no production files were changed.
 - The documentation diff was inspected and `git diff --check` passed before commit.
+
+### Audit 2 remediation
+
+- Added the public `DependencyGraphTraversal.MergeAndTraverse` path. It accepts unfiltered scanner payload pages, validates both document-window and relationship-page continuity, merges source/target type edges across document batches, then performs target-file/type traversal over the combined graph. It retains direction, depth, type provenance, and deterministic ordering.
+- Added a hard 200-type visited-node budget (lower limits are supported), plus `VisitedTypeCount`, `NodeLimitReached`, and `HiddenTypeDependencyCount`. `IsComplete` stays false when a document or relationship page is missing, when the merged input is not complete, when depth is clamped, or when the node budget cuts traversal short.
+- Added a real 1002-document fixture: the Caller→Target edge is in the first window; Target→Dependency is in the continued window at offset 1000. The test asserts the resumed window contains that second dependency, a first-window-only merge stays incomplete, and `MergeAndTraverse` reconstructs the two-hop path with depths 1 and 2 for outgoing type, incoming type, and outgoing file targets. The same graph verifies the node cap and hidden-edge count.
+- Clarified the documentation: bounded scan pages are stateless; callers gather all unfiltered document and relationship pages, then call the public merger/traverser. Incomplete or discontinuous batches cannot be reported complete. The final point-5.5 audit checkbox remains open.
+
+### Audit 2 remediation verification
+
+| Gate | Result |
+|---|---|
+| Before-fix generic/qualified type regression | Failed as expected: generic Box edge missing |
+| Before-fix 1002-document path / merge capability | Baseline had no merge/traversal API; scan pages could not yield the cross-window two-hop result |
+| Focused DependencyGraphScanner FastTests | Passed, 11/11 |
+| `pwsh -File ./scripts/build.ps1` | Passed, 0 warnings and 0 errors |
+| `pwsh -File ./scripts/test-fast.ps1` | Passed, 381/381 |
+| `pwsh -File ./scripts/test-integration.ps1` | Passed, 12/12 |
+| `pwsh -File ./scripts/test.ps1` | Passed, 393/393 across both test projects |
+| `git diff --check` | Passed before commit |

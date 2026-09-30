@@ -81,7 +81,9 @@ public sealed class DependencyGraphScannerTests
         Assert.True(firstPage.HasMoreProjectDependencies);
         Assert.False(secondPage.HasMoreProjectDependencies);
         Assert.True(firstPage.IsTruncated);
-        Assert.True(firstPage.IsComplete);
+        Assert.False(firstPage.IsComplete);
+        Assert.True(secondPage.IsTruncated);
+        Assert.False(secondPage.IsComplete);
     }
 
     [Fact]
@@ -215,5 +217,89 @@ public sealed class DependencyGraphScannerTests
         Assert.True(graph.IsDepthClamped);
         Assert.Equal(DependencyGraphScanner.MaximumDepth, graph.EffectiveDepth);
         Assert.All(graph.TypeDependencies!, edge => Assert.Equal("src/App/Callers.cs", edge.FromFile));
+    }
+
+    [Fact]
+    public async Task ScanAndMergeAsync_TraversesAcrossMoreThanOneThousandDocumentsAndReportsNodeCap()
+    {
+        var appDocuments = new System.Collections.Generic.List<(string FileName, string Content)>
+        {
+            ("AStart.cs", "namespace App; public class Caller { public Contracts.Target Value { get; set; } = new(); }")
+        };
+        appDocuments.AddRange(Enumerable.Range(0, 999).Select(index =>
+            ($"M{index:D4}.cs", $"namespace App; public class Filler{index:D4} {{ }}")));
+
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\DependencyLargeContinuation.slnx",
+            new ProjectSpec("App", appDocuments, ProjectReferences: ["Contracts"], VirtualProjectDirectory: "src/App"),
+            new ProjectSpec("Contracts", [("Types.cs", "namespace Contracts; public class Target { public Further.Dependency Link { get; set; } = new(); }")], ProjectReferences: ["Further"], VirtualProjectDirectory: "src/Contracts"),
+            new ProjectSpec("Further", [("Dependency.cs", "namespace Further; public class Dependency { }")], VirtualProjectDirectory: "src/Further"));
+
+        var firstWindow = await DependencyGraphScanner.ScanSolutionAsync(fixture.Solution);
+        var nextOffset = Assert.IsType<int>(firstWindow.NextDocumentOffset);
+        var secondWindow = await DependencyGraphScanner.ScanSolutionAsync(
+            fixture.Solution,
+            options: new DependencyGraphScanOptions(DocumentOffset: nextOffset));
+
+        Assert.Equal(1002, firstWindow.TotalDocumentCount);
+        Assert.Equal(1000, firstWindow.ScannedDocumentCount);
+        Assert.Single(firstWindow.TypeDependencies!);
+        Assert.Equal("global::Contracts.Target", firstWindow.TypeDependencies![0].ToType);
+        Assert.Equal(1000, secondWindow.DocumentOffset);
+        Assert.Equal(2, secondWindow.ScannedDocumentCount);
+        Assert.Null(secondWindow.NextDocumentOffset);
+        Assert.Contains(secondWindow.TypeDependencies!, edge =>
+            edge.FromType == "global::Contracts.Target" && edge.ToType == "global::Further.Dependency");
+
+        var partial = DependencyGraphTraversal.MergeAndTraverse(
+            [firstWindow],
+            new DependencyGraphTraversalOptions(TargetTypeName: "App.Caller", Direction: DependencyGraphDirection.Outgoing, Depth: 2));
+        Assert.Equal(1000, partial.NextDocumentOffset);
+        Assert.True(partial.DocumentLimitReached);
+        Assert.False(partial.IsComplete);
+
+        var complete = DependencyGraphTraversal.MergeAndTraverse(
+            [firstWindow, secondWindow],
+            new DependencyGraphTraversalOptions(
+                TargetTypeName: "App.Caller",
+                Direction: DependencyGraphDirection.Outgoing,
+                Depth: 2));
+        Assert.Equal(2, complete.TypeDependencies?.Count);
+        Assert.Contains(complete.TypeDependencies!, edge => edge.Depth == 1 && edge.FromType == "global::App.Caller");
+        Assert.Contains(complete.TypeDependencies!, edge => edge.Depth == 2 && edge.FromType == "global::Contracts.Target");
+        Assert.True(complete.IsComplete);
+
+        var incoming = DependencyGraphTraversal.MergeAndTraverse(
+            [firstWindow, secondWindow],
+            new DependencyGraphTraversalOptions(
+                TargetTypeName: "Further.Dependency",
+                Direction: DependencyGraphDirection.Incoming,
+                Depth: 2));
+        Assert.Equal(2, incoming.TypeDependencies?.Count);
+        Assert.Contains(incoming.TypeDependencies!, edge => edge.Depth == 1 && edge.ToType == "global::Further.Dependency");
+        Assert.Contains(incoming.TypeDependencies!, edge => edge.Depth == 2 && edge.FromType == "global::App.Caller");
+        Assert.True(incoming.IsComplete);
+
+        var fileTarget = DependencyGraphTraversal.MergeAndTraverse(
+            [firstWindow, secondWindow],
+            new DependencyGraphTraversalOptions(
+                TargetFilePath: "src/App/AStart.cs",
+                Direction: DependencyGraphDirection.Outgoing,
+                Depth: 2));
+        Assert.Equal(2, fileTarget.TypeDependencies?.Count);
+        Assert.True(fileTarget.IsComplete);
+
+        var capped = DependencyGraphTraversal.MergeAndTraverse(
+            [firstWindow, secondWindow],
+            new DependencyGraphTraversalOptions(
+                TargetTypeName: "App.Caller",
+                Direction: DependencyGraphDirection.Outgoing,
+                Depth: 2,
+                MaxNodes: 1));
+        Assert.True(capped.NodeLimitReached);
+        Assert.Equal(1, capped.VisitedTypeCount);
+        Assert.Equal(1, capped.HiddenTypeDependencyCount);
+        Assert.True(capped.IsTruncated);
+        Assert.False(capped.IsComplete);
     }
 }

@@ -31,7 +31,18 @@ public sealed record DependencyGraphScanOptions(
     string? TargetTypeName = null,
     string? TargetProject = null,
     DependencyGraphDirection Direction = DependencyGraphDirection.Both,
-    int Depth = 1);
+    int Depth = 1,
+    int MaxNodes = DependencyGraphScanner.MaximumNodes);
+
+public sealed record DependencyGraphTraversalOptions(
+    string? TargetFilePath = null,
+    string? TargetTypeName = null,
+    string? TargetProject = null,
+    DependencyGraphDirection Direction = DependencyGraphDirection.Both,
+    int Depth = 1,
+    int Offset = 0,
+    int PageSize = 100,
+    int MaxNodes = 200);
 
 public enum DependencyGraphDirection
 {
@@ -82,12 +93,21 @@ public sealed record DependencyGraphPayload(
     DependencyGraphDirection Direction = DependencyGraphDirection.Both,
     int RequestedDepth = 1,
     int EffectiveDepth = 1,
-    bool IsDepthClamped = false)
+    bool IsDepthClamped = false,
+    bool IsTargeted = false,
+    string? TargetFilePath = null,
+    string? TargetTypeName = null,
+    int VisitedTypeCount = 0,
+    int EffectiveNodeLimit = 200,
+    bool IsNodeLimitClamped = false,
+    bool NodeLimitReached = false,
+    int HiddenTypeDependencyCount = 0,
+    bool ContinuationInputIncomplete = false)
 {
     public bool HasMoreProjectDependencies => (long)Offset + ProjectDependencies.Count < TotalProjectDependencyCount;
     public bool HasMoreNamespaceDependencies => (long)Offset + NamespaceDependencies.Count < TotalNamespaceDependencyCount;
     public bool HasMoreFileDependencies => (long)Offset + FileDependencies.Count < TotalFileDependencyCount;
     public bool HasMoreTypeDependencies => (long)Offset + (TypeDependencies?.Count ?? 0) < TotalTypeDependencyCount;
-    public bool IsTruncated => DocumentOffset > 0 || NextDocumentOffset is not null || IsDepthClamped || (Errors?.Count ?? 0) > 0 || HasMoreProjectDependencies || HasMoreNamespaceDependencies || HasMoreFileDependencies || HasMoreTypeDependencies;
-    public bool IsComplete => DocumentOffset == 0 && NextDocumentOffset is null && !IsDepthClamped && (Errors?.Count ?? 0) == 0;
+    public bool IsTruncated => Offset > 0 || DocumentOffset > 0 || NextDocumentOffset is not null || IsDepthClamped || NodeLimitReached || ContinuationInputIncomplete || (Errors?.Count ?? 0) > 0 || HasMoreProjectDependencies || HasMoreNamespaceDependencies || HasMoreFileDependencies || HasMoreTypeDependencies;
+    public bool IsComplete => !IsTruncated;
 }

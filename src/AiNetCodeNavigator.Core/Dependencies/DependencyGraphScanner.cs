@@ -20,6 +20,7 @@ public static class DependencyGraphScanner
     public const int MaximumPageSize = 500;
     public const int MaximumDocuments = 1000;
     public const int MaximumDepth = 3;
+    public const int MaximumNodes = 200;
 
     public static async Task<DependencyGraphPayload> ScanSolutionAsync(
         Solution solution,
@@ -32,6 +33,7 @@ public static class DependencyGraphScanner
         if (options.DocumentOffset < 0) throw new ArgumentOutOfRangeException(nameof(options), "DocumentOffset must be zero or greater.");
         if (options.PageSize < 1) throw new ArgumentOutOfRangeException(nameof(options), "PageSize must be at least one.");
         if (options.MaxDocuments < 1) throw new ArgumentOutOfRangeException(nameof(options), "MaxDocuments must be at least one.");
+        if (options.MaxNodes < 1) throw new ArgumentOutOfRangeException(nameof(options), "MaxNodes must be at least one.");
         if (!Enum.IsDefined(options.Direction)) throw new ArgumentOutOfRangeException(nameof(options), "Direction is invalid.");
         if (options.TargetFilePath is not null && options.TargetTypeName is not null)
             throw new ArgumentException("Specify either TargetFilePath or TargetTypeName, not both.", nameof(options));
@@ -44,6 +46,7 @@ public static class DependencyGraphScanner
 
         var pageSize = Math.Min(options.PageSize, MaximumPageSize);
         var maxDocuments = Math.Min(options.MaxDocuments, MaximumDocuments);
+        var maxNodes = Math.Min(options.MaxNodes, MaximumNodes);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
         var allDocuments = solution.Projects
             .OrderBy(project => project.Name, StringComparer.Ordinal)
@@ -143,9 +146,10 @@ public static class DependencyGraphScanner
         var isTargeted = options.TargetFilePath is not null || options.TargetTypeName is not null;
         var requestedDepth = isTargeted ? options.Depth : 1;
         var effectiveDepth = Math.Clamp(requestedDepth, 1, MaximumDepth);
-        var selectedEdges = isTargeted
-            ? Traverse(rawEdges, options, solutionDir, effectiveDepth)
-            : rawEdges.Select(edge => edge with { Depth = 1 }).ToList();
+        var traversal = isTargeted
+            ? Traverse(rawEdges, options.TargetFilePath, options.TargetTypeName, options.TargetProject, options.Direction, solutionDir, effectiveDepth, maxNodes)
+            : new DependencyGraphTraversalOutcome(rawEdges.Select(edge => edge with { Depth = 1 }).ToList(), 0, false, 0);
+        var selectedEdges = traversal.Edges;
 
         var allNamespaceDeps = selectedEdges
             .Where(edge => !string.IsNullOrEmpty(edge.FromNamespace) && !string.IsNullOrEmpty(edge.ToNamespace) && edge.FromNamespace != edge.ToNamespace)
@@ -191,22 +195,37 @@ public static class DependencyGraphScanner
             Direction: isTargeted ? options.Direction : DependencyGraphDirection.Both,
             RequestedDepth: requestedDepth,
             EffectiveDepth: effectiveDepth,
-            IsDepthClamped: requestedDepth != effectiveDepth);
+            IsDepthClamped: requestedDepth != effectiveDepth,
+            IsTargeted: isTargeted,
+            TargetFilePath: options.TargetFilePath,
+            TargetTypeName: options.TargetTypeName,
+            VisitedTypeCount: traversal.VisitedTypeCount,
+            EffectiveNodeLimit: maxNodes,
+            IsNodeLimitClamped: options.MaxNodes != maxNodes,
+            NodeLimitReached: traversal.NodeLimitReached,
+            HiddenTypeDependencyCount: traversal.HiddenTypeDependencyCount);
     }
 
-    private static List<DependencyTypeReference> Traverse(
+    internal static DependencyGraphTraversalOutcome Traverse(
         IReadOnlyList<DependencyTypeReference> edges,
-        DependencyGraphScanOptions options,
+        string? targetFilePath,
+        string? targetTypeName,
+        string? targetProject,
+        DependencyGraphDirection direction,
         string solutionDir,
-        int maxDepth)
+        int maxDepth,
+        int maxNodes)
     {
-        var targetPath = NormalizeTargetPath(options.TargetFilePath, solutionDir);
-        var targetType = NormalizeTypeName(options.TargetTypeName);
+        var targetPath = NormalizeTargetPath(targetFilePath, solutionDir);
+        var targetType = NormalizeTypeName(targetTypeName);
+        bool CanTraverse(DependencyTypeReference edge, string node) =>
+            (edge.FromTypeId == node && direction is DependencyGraphDirection.Outgoing or DependencyGraphDirection.Both) ||
+            (edge.ToTypeId == node && direction is DependencyGraphDirection.Incoming or DependencyGraphDirection.Both);
         bool Matches(string type, string project, string file) =>
-            (options.TargetFilePath is not null && string.Equals(file, targetPath, StringComparison.OrdinalIgnoreCase) &&
-             (options.TargetProject is null || string.Equals(project, options.TargetProject, StringComparison.Ordinal))) ||
-            (options.TargetTypeName is not null && MatchesTypeName(type, targetType) &&
-             (options.TargetProject is null || string.Equals(project, options.TargetProject, StringComparison.Ordinal)));
+            (targetFilePath is not null && MatchesTargetPath(file, targetPath) &&
+             (targetProject is null || string.Equals(project, targetProject, StringComparison.Ordinal))) ||
+            (targetTypeName is not null && MatchesTypeName(type, targetType) &&
+             (targetProject is null || string.Equals(project, targetProject, StringComparison.Ordinal)));
 
         var seeds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var edge in edges)
@@ -216,8 +235,24 @@ public static class DependencyGraphScanner
         }
 
         var discovered = new Dictionary<(string From, string To), DependencyTypeReference>();
-        var visited = new HashSet<string>(seeds, StringComparer.Ordinal);
-        var frontier = seeds.ToList();
+        var hiddenEdges = new HashSet<(string From, string To)>();
+        var nodeLimitReached = false;
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var frontier = new List<string>();
+        foreach (var seed in seeds.OrderBy(seed => seed, StringComparer.Ordinal))
+        {
+            if (visited.Count < maxNodes)
+            {
+                visited.Add(seed);
+                frontier.Add(seed);
+            }
+            else
+            {
+                nodeLimitReached = true;
+                foreach (var edge in edges.Where(edge => CanTraverse(edge, seed)))
+                    hiddenEdges.Add((edge.FromTypeId, edge.ToTypeId));
+            }
+        }
         for (var depth = 1; depth <= maxDepth && frontier.Count > 0; depth++)
         {
             var next = new List<string>();
@@ -225,36 +260,57 @@ public static class DependencyGraphScanner
             {
                 foreach (var edge in edges)
                 {
-                    var outgoing = edge.FromTypeId == node && options.Direction is DependencyGraphDirection.Outgoing or DependencyGraphDirection.Both;
-                    var incoming = edge.ToTypeId == node && options.Direction is DependencyGraphDirection.Incoming or DependencyGraphDirection.Both;
-                    if (!outgoing && !incoming) continue;
+                    if (!CanTraverse(edge, node)) continue;
+                    var outgoing = edge.FromTypeId == node;
                     var key = (edge.FromTypeId, edge.ToTypeId);
                     if (!discovered.ContainsKey(key)) discovered[key] = edge with { Depth = depth };
                     var neighbor = outgoing ? edge.ToTypeId : edge.FromTypeId;
-                    if (visited.Add(neighbor)) next.Add(neighbor);
+                    if (visited.Contains(neighbor)) continue;
+                    if (visited.Count < maxNodes)
+                    {
+                        visited.Add(neighbor);
+                        next.Add(neighbor);
+                    }
+                    else
+                    {
+                        nodeLimitReached = true;
+                        foreach (var hiddenEdge in edges.Where(candidate => CanTraverse(candidate, neighbor)))
+                            hiddenEdges.Add((hiddenEdge.FromTypeId, hiddenEdge.ToTypeId));
+                    }
                 }
             }
             frontier = next;
         }
 
-        return discovered.Values
+        var sorted = discovered.Values
             .OrderBy(edge => edge.Depth)
             .ThenBy(edge => edge.FromProject, StringComparer.Ordinal).ThenBy(edge => edge.FromFile, StringComparer.Ordinal)
             .ThenBy(edge => edge.FromTypeId, StringComparer.Ordinal).ThenBy(edge => edge.ToTypeId, StringComparer.Ordinal)
             .ToList();
+        hiddenEdges.ExceptWith(discovered.Keys);
+        return new DependencyGraphTraversalOutcome(sorted, visited.Count, nodeLimitReached, hiddenEdges.Count);
     }
 
-    private static string NormalizeTargetPath(string? targetFilePath, string solutionDir)
+    internal static string NormalizeTargetPath(string? targetFilePath, string solutionDir)
     {
         if (string.IsNullOrWhiteSpace(targetFilePath)) return string.Empty;
         if (!Path.IsPathRooted(targetFilePath)) return PathNormalizer.NormalizeSeparators(targetFilePath.TrimStart('.', '/', '\\'));
+        if (string.IsNullOrWhiteSpace(solutionDir)) return PathNormalizer.NormalizeSeparators(targetFilePath);
         return PathNormalizer.ToRelative(solutionDir, targetFilePath);
     }
 
-    private static string NormalizeTypeName(string? typeName) =>
+    internal static bool MatchesTargetPath(string candidatePath, string targetPath)
+    {
+        if (string.Equals(candidatePath, targetPath, StringComparison.OrdinalIgnoreCase)) return true;
+        if (!Path.IsPathRooted(targetPath)) return false;
+        return targetPath.EndsWith("/" + candidatePath, StringComparison.OrdinalIgnoreCase) ||
+               targetPath.EndsWith("\\" + candidatePath.Replace('/', '\\'), StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static string NormalizeTypeName(string? typeName) =>
         (typeName ?? string.Empty).Replace("global::", string.Empty, StringComparison.Ordinal);
 
-    private static bool MatchesTypeName(string typeName, string targetTypeName)
+    internal static bool MatchesTypeName(string typeName, string targetTypeName)
     {
         var normalizedType = NormalizeTypeName(typeName);
         if (string.Equals(normalizedType, targetTypeName, StringComparison.Ordinal)) return true;
@@ -294,3 +350,9 @@ public static class DependencyGraphScanner
 
     private sealed record TypeReferenceEnd(string TypeId, string Type, string TypeName, string Namespace, string Project, string File);
 }
+
+internal sealed record DependencyGraphTraversalOutcome(
+    IReadOnlyList<DependencyTypeReference> Edges,
+    int VisitedTypeCount,
+    bool NodeLimitReached,
+    int HiddenTypeDependencyCount);
