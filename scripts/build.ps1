@@ -1,12 +1,12 @@
 #requires -Version 7.0
 <#
 .SYNOPSIS
-    Baut die AiNetCodeNavigator-Solution und schreibt den vollständigen Konsolen-Output
-    in eine statische Logdatei unter temp/build.log.
+    Builds the AiNetCodeNavigator solution and writes the complete console output
+    to a fixed log file at temp/build.log.
 
 .DESCRIPTION
-    Agenten und automatisierte Workflows können den vollständigen Output der Ausführung
-    unter folgendem Pfad einsehen:
+    Agents and automated workflows can inspect the complete execution output
+    at the following path:
     <RepoRoot>/temp/build.log
 #>
 [CmdletBinding()]
@@ -28,7 +28,7 @@ function Get-RepoRoot {
         if ($parent -eq $current) { break }
         $current = $parent
     }
-    throw "Repository-Root mit 'AiNetCodeNavigator.slnx' konnte nicht ermittelt werden."
+    throw "Could not locate the repository root containing 'AiNetCodeNavigator.slnx'."
 }
 
 $repoRoot = Get-RepoRoot
@@ -40,8 +40,8 @@ if (-not (Test-Path $tempDir)) {
 $logFile = Join-Path $tempDir 'build.log'
 $solutionPath = Join-Path $repoRoot 'AiNetCodeNavigator.slnx'
 
-Write-Host "[INFO] Starte Build für AiNetCodeNavigator.slnx..." -ForegroundColor Cyan
-Write-Host "[HINWEIS] Agenten können den vollständigen Output unter folgendem Pfad lesen: $logFile" -ForegroundColor Yellow
+Write-Host "[INFO] Starting build for AiNetCodeNavigator.slnx..." -ForegroundColor Cyan
+Write-Host "[NOTE] Agents can read the complete output at: $logFile" -ForegroundColor Yellow
 
 $buildArgs = @('build', $solutionPath)
 if ($AdditionalArgs) {
@@ -52,9 +52,9 @@ if ($AdditionalArgs) {
 $exitCode = $LASTEXITCODE
 
 if ($exitCode -eq 0) {
-    Write-Host "[INFO] Build erfolgreich abgeschlossen. Log: $logFile" -ForegroundColor Green
+    Write-Host "[INFO] Build completed successfully. Log: $logFile" -ForegroundColor Green
 } else {
-    Write-Host "[ERROR] Build fehlgeschlagen mit Exit-Code $exitCode. Log: $logFile" -ForegroundColor Red
+    Write-Host "[ERROR] Build failed with exit code $exitCode. Log: $logFile" -ForegroundColor Red
 }
 
 exit $exitCode

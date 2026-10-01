@@ -1,12 +1,12 @@
 #requires -Version 7.0
 <#
 .SYNOPSIS
-    Führt IntegrationTests für AiNetCodeNavigator aus und schreibt den vollständigen Konsolen-Output
-    in eine statische Datei unter temp/test-integration.log sowie Testergebnisse nach TestResults/IntegrationTests.trx.
+    Runs IntegrationTests for AiNetCodeNavigator and writes the complete console output
+    to a fixed file at temp/test-integration.log and test results to TestResults/IntegrationTests.trx.
 
 .DESCRIPTION
-    Agenten und automatisierte Workflows können den vollständigen Output der Ausführung
-    unter folgendem Pfad einsehen:
+    Agents and automated workflows can inspect the complete execution output
+    at the following path:
     <RepoRoot>/temp/test-integration.log
 #>
 [CmdletBinding()]
@@ -29,7 +29,7 @@ function Get-RepoRoot {
         if ($parent -eq $current) { break }
         $current = $parent
     }
-    throw "Repository-Root mit 'AiNetCodeNavigator.slnx' konnte nicht ermittelt werden."
+    throw "Could not locate the repository root containing 'AiNetCodeNavigator.slnx'."
 }
 
 $repoRoot = Get-RepoRoot
@@ -47,9 +47,9 @@ $logFile = Join-Path $tempDir 'test-integration.log'
 $trxFile = 'IntegrationTests.trx'
 $projectPath = Join-Path $repoRoot 'tests/AiNetCodeNavigator.IntegrationTests/AiNetCodeNavigator.IntegrationTests.csproj'
 
-Write-Host "[INFO] Starte IntegrationTests..." -ForegroundColor Cyan
-Write-Host "[HINWEIS] Agenten können den vollständigen Output unter folgendem Pfad lesen: $logFile" -ForegroundColor Yellow
-Write-Host "[HINWEIS] Statische Testergebnisdatei (TRX): $(Join-Path $resultsDir $trxFile)" -ForegroundColor DarkGray
+Write-Host "[INFO] Starting IntegrationTests..." -ForegroundColor Cyan
+Write-Host "[NOTE] Agents can read the complete output at: $logFile" -ForegroundColor Yellow
+Write-Host "[NOTE] Fixed test results file (TRX): $(Join-Path $resultsDir $trxFile)" -ForegroundColor DarkGray
 
 $testArgs = @(
     'test',
@@ -68,9 +68,9 @@ if ($AdditionalArgs) {
 $exitCode = $LASTEXITCODE
 
 if ($exitCode -eq 0) {
-    Write-Host "[INFO] IntegrationTests erfolgreich abgeschlossen. Log: $logFile" -ForegroundColor Green
+    Write-Host "[INFO] IntegrationTests completed successfully. Log: $logFile" -ForegroundColor Green
 } else {
-    Write-Host "[ERROR] IntegrationTests fehlgeschlagen mit Exit-Code $exitCode. Log: $logFile" -ForegroundColor Red
+    Write-Host "[ERROR] IntegrationTests failed with exit code $exitCode. Log: $logFile" -ForegroundColor Red
 }
 
 exit $exitCode
