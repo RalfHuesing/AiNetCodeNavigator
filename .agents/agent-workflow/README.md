@@ -13,7 +13,7 @@ Führe 03-roadmap-erstellung.md aus. Task: tasks/<name>
 Führe 04-orchestrierte-umsetzung.md aus. Task: tasks/<name>
 ```
 
-`@.cursor/agent-workflow/<datei>.md` plus Taskpfad ist gleichwertig. Ohne Taskverzeichnis: nur danach fragen.
+`@.agents/agent-workflow/<datei>.md` plus Taskpfad ist gleichwertig. Ohne Taskverzeichnis: nur danach fragen.
 
 | Datei | Schritt | Tut | Tut nicht |
 |---|---|---|---|
