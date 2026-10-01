@@ -4,7 +4,6 @@ using System.Linq;
 using AiNetCodeNavigator.Core.Assemblies;
 using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Core.Symbols;
-using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Mcp.Tools.Relationships;
@@ -14,187 +13,199 @@ internal sealed record AssemblyReferencesClosureScanResult(
     ResultError? Error,
     string? ErrorField,
     bool IsTruncated,
-    string? NextAction);
+    string? NextAction,
+    int DirectCount = 0,
+    int MaxDepthReached = 0,
+    IReadOnlyList<string>? AffectedProjects = null,
+    IReadOnlyList<string>? AffectedFiles = null);
 
 internal static class AssemblyReferencesClosureScanner
 {
-    private const int MaxAssemblies = 32;
+    private const int MaxVisitedSymbols = 200;
+    private const int LocalResultLimit = 1_000;
 
     internal static async Task<AssemblyReferencesClosureScanResult> ScanAsync(
-        string targetPath, string identifier, int maxResults, int depth, SymbolScopeType scopeType,
-        bool includeGenerated, CancellationToken ct)
+        string targetPath,
+        string identifier,
+        int maxResults,
+        int depth,
+        SymbolScopeType scopeType,
+        bool includeGenerated,
+        CancellationToken ct,
+        bool externalizeHandoffs = true)
     {
-        var rootResult = await AssemblyNavigationSessionScope.OpenAsync(targetPath, ct).ConfigureAwait(false);
-        if (!rootResult.IsSuccess) return Failure(rootResult.Error!.Value, "$.targetPath");
-        await using var root = rootResult.Value!;
-        var handoffResult = await AssemblySymbolHandoffResolver.ResolveAsync(identifier, ct).ConfigureAwait(false);
-        if (!handoffResult.IsSuccess) return Failure(handoffResult.Error!.Value, "$.symbolIdentifier");
-        await using var handoff = handoffResult.Value!;
+        var opened = await AssemblyReferenceClosureSession.OpenAsync(targetPath, identifier, ct).ConfigureAwait(false);
+        if (opened.Error is { } error) return Failure(error, opened.ErrorField!);
+        await using var session = opened.Session!;
 
-        var rootPath = Path.GetFullPath(root.Context.Origin.CanonicalPath);
-        var ownerPath = Path.GetFullPath(handoff.Origin.CanonicalPath);
-        var references = root.Context.References
-            .Where(reference => reference.Resolved && !string.IsNullOrWhiteSpace(reference.ResolvedPath))
-            .Select(reference => (Reference: reference, Path: Path.GetFullPath(reference.ResolvedPath!))).ToArray();
-        if (!string.Equals(rootPath, ownerPath, StringComparison.OrdinalIgnoreCase)
-            && !references.Any(item => string.Equals(item.Path, ownerPath, StringComparison.OrdinalIgnoreCase)))
-            return Failure(new ResultError(NavigationErrorCodes.TargetMismatch,
-                "The symbol handoff is not owned by the selected assembly or its current reference snapshot.",
-                "Use a handoff returned by this assembly's find_symbol(includeReferences=true) result."), "$.symbolIdentifier");
-        var declarationId = DocumentationCommentId.CreateDeclarationId(handoff.Symbol);
-        if (string.IsNullOrWhiteSpace(declarationId) || handoff.Symbol.ContainingAssembly is null)
-            return Failure(new ResultError(NavigationErrorCodes.InvalidArgument,
-                "The selected handoff has no stable assembly declaration identity.",
-                "Use a declaration returned by find_symbol(includeReferences=true)."), "$.symbolIdentifier");
+        var requestedDepth = Math.Clamp(depth, 1, 3);
+        var queue = new Queue<Frontier>();
+        var visited = new HashSet<FrontierKey>(FrontierKeyComparer.Instance);
+        var seed = new Frontier(session.HandoffOwnerPath, session.HandoffIdentity,
+            session.DeclarationCommentId, 0);
+        queue.Enqueue(seed);
+        visited.Add(new(seed.OwnerPath, seed.DeclarationId));
 
-        var paths = new List<string> { rootPath };
-        foreach (var item in references.OrderBy(item => item.Reference.Depth).ThenBy(item => item.Path, StringComparer.OrdinalIgnoreCase))
+        var locations = new List<ReferenceLocationEntry>();
+        var locationKeys = new HashSet<ReferenceLocationKey>(ReferenceLocationKeyComparer.Instance);
+        var nodeLimited = false;
+        var traversalLimited = false;
+        var depthClamped = false;
+        var effectiveNodeLimit = FindReferencesResolver.DefaultMaxVisitedSymbols;
+        var hiddenLocalResults = 0;
+        var directCount = 0;
+        var maxDepthReached = 0;
+        while (queue.TryDequeue(out var frontier))
         {
-            if (IsFrameworkPath(item.Path) || paths.Contains(item.Path, StringComparer.OrdinalIgnoreCase)) continue;
-            paths.Add(item.Path);
-        }
-        var ownerLimit = paths.Count > MaxAssemblies;
-        if (ownerLimit)
-        {
-            paths = paths.Take(MaxAssemblies).ToList();
-            if (!paths.Contains(ownerPath, StringComparer.OrdinalIgnoreCase))
-            {
-                paths[^1] = ownerPath;
-                paths = paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            }
-        }
-
-        var scans = new List<(string Path, AssemblyNavigationSessionScope Scope, FindReferencesResult References)>();
-        var scopes = new List<AssemblyNavigationSessionScope>();
-        var failedOwners = new List<string>();
-        try
-        {
-            foreach (var path in paths)
+            ct.ThrowIfCancellationRequested();
+            if (frontier.Depth >= requestedDepth) continue;
+            foreach (var owner in session.Owners)
             {
                 ct.ThrowIfCancellationRequested();
-                AssemblyNavigationSessionScope scope;
-                if (string.Equals(path, rootPath, StringComparison.OrdinalIgnoreCase)) scope = root;
-                else
+                var targetSymbol = session.ResolveDeclaration(owner, frontier.OwnerPath,
+                    frontier.DeclarationId, frontier.Identity);
+                if (targetSymbol is null)
                 {
-                    var opened = await AssemblyNavigationSessionScope.OpenAsync(path, ct).ConfigureAwait(false);
-                    if (!opened.IsSuccess) { failedOwners.Add(path); continue; }
-                    scope = opened.Value!;
-                    scopes.Add(scope);
+                    if (string.Equals(owner.TargetPath, frontier.OwnerPath, StringComparison.OrdinalIgnoreCase))
+                        traversalLimited = true;
+                    continue;
                 }
-                var symbol = string.Equals(path, ownerPath, StringComparison.OrdinalIgnoreCase)
-                    ? ResolveOwnedSourceSymbol(declarationId, scope)
-                    : ResolveMetadataSymbol(declarationId, handoff.Identity, scope.Context.Compilation);
-                if (symbol is null) continue;
-                if (scope.Context.Status is not AssemblySessionStatus.Complete) failedOwners.Add(path);
+
+                FindReferencesResult scan;
                 try
                 {
-                    var result = await FindReferencesResolver.FindReferencesAsync(symbol, scope.Solution,
-                        Math.Max(maxResults, 1), depth, ct, scope: scopeType, includeGenerated: includeGenerated,
-                        handoffFormatter: CreateInternalFormatter(scope), ownerTargetPath: path).ConfigureAwait(false);
-                    scans.Add((path, scope, result));
+                    scan = await FindReferencesResolver.FindReferencesAsync(targetSymbol, owner.Scope.Solution,
+                        LocalResultLimit, 1, ct, scope: scopeType, includeGenerated: includeGenerated,
+                        handoffFormatter: session.CreateInternalFormatter(owner), ownerTargetPath: owner.TargetPath).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException or ArgumentException)
                 {
-                    failedOwners.Add(path);
+                    traversalLimited = true;
+                    continue;
+                }
+
+                nodeLimited |= scan.IsTruncatedByNodeLimit;
+                depthClamped |= scan.IsDepthClamped;
+                effectiveNodeLimit = Math.Min(effectiveNodeLimit, scan.EffectiveNodeLimit);
+                traversalLimited |= scan.IsTruncated || scan.IsTruncatedByNodeLimit || scan.IsDepthClamped;
+                hiddenLocalResults += Math.Max(0, scan.TotalCount - scan.References.Count);
+                var nextDepth = frontier.Depth + 1;
+                if (scan.TotalCount > 0) maxDepthReached = Math.Max(maxDepthReached, nextDepth);
+                if (nextDepth == 1) directCount += scan.TotalCount;
+                foreach (var reference in scan.References)
+                {
+                    var entry = reference with { Depth = nextDepth, OwnerTargetPath = owner.TargetPath };
+                    if (locationKeys.Add(new(entry.OwnerTargetPath ?? owner.TargetPath, entry.FilePath,
+                        entry.Line, entry.Column, entry.EnclosingSymbolHandoffId, frontier.OwnerPath,
+                        entry.ReachedFromSymbolId, nextDepth)))
+                        locations.Add(entry);
+
+                    if (nextDepth >= requestedDepth) continue;
+                    var caller = session.ResolveInternalSourceHandoff(entry.EnclosingSymbolHandoffId);
+                    if (caller is null)
+                    {
+                        traversalLimited = true;
+                        continue;
+                    }
+                    var key = new FrontierKey(caller.Owner.TargetPath, caller.DocumentationCommentId);
+                    if (visited.Contains(key)) continue;
+                    if (visited.Count >= MaxVisitedSymbols)
+                    {
+                        nodeLimited = true;
+                        traversalLimited = true;
+                        continue;
+                    }
+                    visited.Add(key);
+                    if (caller.Owner.Scope.Context.Identity is not { } callerIdentity)
+                    {
+                        traversalLimited = true;
+                        continue;
+                    }
+                    queue.Enqueue(new(caller.Owner.TargetPath, callerIdentity,
+                        caller.DocumentationCommentId, nextDepth));
                 }
             }
+        }
 
-            var candidates = scans.SelectMany(scan => scan.References.References)
-                .OrderBy(entry => entry.Depth)
-                .ThenBy(entry => entry.OwnerTargetPath, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.FilePath, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(entry => entry.FilePath, StringComparer.Ordinal)
-                .ThenBy(entry => entry.Line)
-                .ThenBy(entry => entry.EnclosingSymbolName, StringComparer.Ordinal)
-                .ThenBy(entry => entry.ReachedFromSymbolName, StringComparer.Ordinal)
-                .ThenBy(entry => entry.Column)
-                .ToArray();
-            var selected = candidates.Take(Math.Max(maxResults, 1)).ToArray();
-            var visible = selected.Select(entry => entry with
+        var ordered = locations
+            .OrderBy(entry => entry.Depth)
+            .ThenBy(entry => entry.OwnerTargetPath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(entry => entry.FilePath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(entry => entry.FilePath, StringComparer.Ordinal)
+            .ThenBy(entry => entry.Line)
+            .ThenBy(entry => entry.Column)
+            .ThenBy(entry => entry.EnclosingSymbolName, StringComparer.Ordinal)
+            .ToArray();
+        var page = ordered.Take(Math.Max(maxResults, 1));
+        var selected = (externalizeHandoffs
+            ? page.Select(entry => entry with
             {
-                EnclosingSymbolHandoffId = Externalize(entry.EnclosingSymbolHandoffId),
-                ReachedFromSymbolHandoffId = Externalize(entry.ReachedFromSymbolHandoffId),
-            }).ToArray();
-            var totalCount = scans.Sum(scan => scan.References.TotalCount);
-            var nodeLimit = scans.Any(scan => scan.References.IsTruncatedByNodeLimit);
-            var depthClamped = scans.Any(scan => scan.References.IsDepthClamped);
-            var crossOwnerDepth = depth > 1;
-            var unresolved = root.Context.References.Any(reference => !reference.Resolved);
-            var truncated = crossOwnerDepth || ownerLimit || failedOwners.Count > 0 || unresolved
-                || scans.Any(scan => !scan.References.IsComplete) || totalCount > maxResults;
-            var resultPayload = new FindReferencesResult(handoff.Symbol.Name, handoff.Symbol.Kind.ToString().ToLowerInvariant(),
-                visible, totalCount, truncated, depth,
-                scans.Select(scan => scan.References.EffectiveDepth).DefaultIfEmpty(depth).Min(),
-                scans.Sum(scan => scan.References.VisitedSymbolCount), nodeLimit, depthClamped,
-                scans.Select(scan => scan.References.EffectiveNodeLimit).DefaultIfEmpty(FindReferencesResolver.DefaultMaxVisitedSymbols).Min());
-            var nextAction = crossOwnerDepth
-                ? "Cross-assembly caller chaining beyond each owner solution is not composed yet; this result covers direct owner scans and is incomplete."
-                : failedOwners.Count > 0 || ownerLimit || unresolved
-                    ? "The bounded reference-source closure is incomplete; inspect unresolved or unsupported references, then repeat the query."
-                    : "Increase maxResults or depth and repeat the query.";
-            return new(resultPayload, null, null, truncated, nextAction);
-        }
-        finally
-        {
-            foreach (var scope in scopes) await scope.DisposeAsync().ConfigureAwait(false);
-        }
+                EnclosingSymbolHandoffId = AssemblyReferenceClosureSession.Externalize(entry.EnclosingSymbolHandoffId),
+                ReachedFromSymbolHandoffId = AssemblyReferenceClosureSession.Externalize(entry.ReachedFromSymbolHandoffId),
+            })
+            : page).ToArray();
+
+        var totalCount = ordered.Length + hiddenLocalResults;
+        var ownerLimit = session.OwnerLimitReached || session.HasFailedOwners;
+        var unresolved = session.HasUnresolvedReferences;
+        var truncated = totalCount > maxResults || nodeLimited || depthClamped || traversalLimited || ownerLimit || unresolved;
+        var result = new FindReferencesResult(
+            session.HandoffSymbol.Name,
+            session.HandoffSymbol.Kind.ToString().ToLowerInvariant(),
+            selected,
+            totalCount,
+            truncated,
+            requestedDepth,
+            requestedDepth,
+            visited.Count,
+            nodeLimited,
+            depthClamped,
+            effectiveNodeLimit);
+        var nextAction = !truncated ? null
+            : ownerLimit || unresolved
+                ? "The bounded reference-source closure is incomplete; inspect unresolved or unsupported references, then repeat the query."
+                : nodeLimited || depthClamped || traversalLimited
+                    ? "Cross-assembly traversal reached an owner, result, or graph bound before completing the requested depth."
+                    : "Increase maxResults and repeat the query.";
+        return new(result, null, null, truncated, nextAction, directCount,
+            maxDepthReached,
+            ordered.Select(entry => entry.ProjectName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            ordered.Select(entry => entry.FilePath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
     }
-
-    private static ISymbol? ResolveOwnedSourceSymbol(string declarationId, AssemblyNavigationSessionScope scope)
-    {
-        var matches = DocumentationCommentId.GetSymbolsForDeclarationId(declarationId, scope.Context.Compilation)
-            .Where(symbol => SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, scope.Context.Assembly)
-                && HasSourceDeclaration(symbol, scope.Solution, scope.Context.DecompiledProjectPaths?.DecompiledSourceRoot))
-            .Distinct(SymbolEqualityComparer.Default).Take(2).ToArray();
-        return matches.Length == 1 ? matches[0] : null;
-    }
-
-    private static ISymbol? ResolveMetadataSymbol(string declarationId, AssemblyIdentityDto expected, Compilation compilation)
-    {
-        var matches = DocumentationCommentId.GetSymbolsForDeclarationId(declarationId, compilation)
-            .Where(symbol => symbol.ContainingAssembly is { } assembly && IdentityMatches(assembly.Identity, expected))
-            .Distinct(SymbolEqualityComparer.Default).Take(2).ToArray();
-        return matches.Length == 1 ? matches[0] : null;
-    }
-
-    private static Func<ISymbol, string?> CreateInternalFormatter(AssemblyNavigationSessionScope scope)
-    {
-        var identity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash,
-            scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
-        return symbol =>
-        {
-            if (!HasSourceDeclaration(symbol, scope.Solution, scope.Context.DecompiledProjectPaths?.DecompiledSourceRoot)) return null;
-            var id = DocumentationCommentId.CreateDeclarationId(symbol);
-            if (string.IsNullOrWhiteSpace(id)) return null;
-            var matches = DocumentationCommentId.GetSymbolsForDeclarationId(id, scope.Context.Compilation)
-                .Where(candidate => SymbolEqualityComparer.Default.Equals(candidate.ContainingAssembly, scope.Context.Assembly))
-                .Distinct(SymbolEqualityComparer.Default).Take(2).ToArray();
-            return matches.Length == 1 ? identity.FormatHandoff(matches[0]) : null;
-        };
-    }
-
-    private static bool HasSourceDeclaration(ISymbol symbol, Solution solution, string? sourceRoot)
-    {
-        if (string.IsNullOrWhiteSpace(sourceRoot)) return false;
-        var root = Path.GetFullPath(sourceRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return symbol.Locations.Any(location => location.IsInSource && location.SourceTree is { FilePath.Length: > 0 } tree
-            && Path.GetFullPath(tree.FilePath).StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-            && solution.GetDocument(tree) is not null);
-    }
-
-    private static bool IsFrameworkPath(string path) => path.Contains("\\shared\\Microsoft.NETCore.App\\", StringComparison.OrdinalIgnoreCase)
-        || path.Contains("\\packs\\Microsoft.NETCore.App.Ref\\", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IdentityMatches(AssemblyIdentity actual, AssemblyIdentityDto expected) =>
-        string.Equals(actual.Name, expected.Name, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(actual.Version?.ToString(), expected.Version, StringComparison.Ordinal)
-        && string.Equals(string.IsNullOrWhiteSpace(actual.CultureName) ? "neutral" : actual.CultureName,
-            string.IsNullOrWhiteSpace(expected.Culture) ? "neutral" : expected.Culture, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(Convert.ToHexString(actual.PublicKeyToken.ToArray()), expected.PublicKeyToken, StringComparison.OrdinalIgnoreCase);
-
-    private static string? Externalize(string? internalId) => string.IsNullOrWhiteSpace(internalId)
-        ? null
-        : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
 
     private static AssemblyReferencesClosureScanResult Failure(ResultError error, string field) => new(null, error, field, false, null);
+
+    private readonly record struct Frontier(string OwnerPath, AssemblyIdentityDto Identity, string DeclarationId, int Depth);
+    private readonly record struct FrontierKey(string OwnerPath, string DeclarationId);
+    private readonly record struct ReferenceLocationKey(string OwnerPath, string FilePath, int Line, int Column,
+        string? CallerIdentity, string ReachedOwnerPath, string ReachedFromSymbolId, int Depth);
+
+    private sealed class FrontierKeyComparer : IEqualityComparer<FrontierKey>
+    {
+        internal static FrontierKeyComparer Instance { get; } = new();
+        public bool Equals(FrontierKey x, FrontierKey y) =>
+            string.Equals(x.OwnerPath, y.OwnerPath, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(x.DeclarationId, y.DeclarationId, StringComparison.Ordinal);
+        public int GetHashCode(FrontierKey value) => HashCode.Combine(
+            StringComparer.OrdinalIgnoreCase.GetHashCode(value.OwnerPath),
+            StringComparer.Ordinal.GetHashCode(value.DeclarationId));
+    }
+
+    private sealed class ReferenceLocationKeyComparer : IEqualityComparer<ReferenceLocationKey>
+    {
+        internal static ReferenceLocationKeyComparer Instance { get; } = new();
+        public bool Equals(ReferenceLocationKey x, ReferenceLocationKey y) =>
+            string.Equals(x.OwnerPath, y.OwnerPath, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(x.FilePath, y.FilePath, StringComparison.OrdinalIgnoreCase)
+            && x.Line == y.Line && x.Column == y.Column && x.Depth == y.Depth
+            && string.Equals(x.CallerIdentity, y.CallerIdentity, StringComparison.Ordinal)
+            && string.Equals(x.ReachedOwnerPath, y.ReachedOwnerPath, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(x.ReachedFromSymbolId, y.ReachedFromSymbolId, StringComparison.Ordinal);
+        public int GetHashCode(ReferenceLocationKey value) => HashCode.Combine(
+            StringComparer.OrdinalIgnoreCase.GetHashCode(value.OwnerPath),
+            StringComparer.OrdinalIgnoreCase.GetHashCode(value.FilePath), value.Line, value.Column, value.Depth,
+            value.CallerIdentity is null ? 0 : StringComparer.Ordinal.GetHashCode(value.CallerIdentity),
+            StringComparer.OrdinalIgnoreCase.GetHashCode(value.ReachedOwnerPath),
+            StringComparer.Ordinal.GetHashCode(value.ReachedFromSymbolId));
+    }
 }

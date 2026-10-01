@@ -1,6 +1,7 @@
 #nullable enable
 
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace AiNetCodeNavigator.Core.Symbols;
 
@@ -15,7 +16,8 @@ public sealed record ReferenceLocationEntry(
     int Depth = 1,
     string? ReachedFromSymbolName = null,
     string? ReachedFromSymbolHandoffId = null,
-    string? OwnerTargetPath = null);
+    string? OwnerTargetPath = null,
+    [property: JsonIgnore] string ReachedFromSymbolId = "");
 
 public sealed record FindReferencesResult(
     string TargetSymbolName,

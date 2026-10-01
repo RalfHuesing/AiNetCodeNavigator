@@ -520,9 +520,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         return resolved;
     }
 
-    private const int MaxReferenceClosureAssemblies = 32;
-
-    private sealed record AssemblyCallTreeOwner(string TargetPath, AssemblyNavigationSessionScope Scope, CallGraphPayload Graph);
+    private sealed record AssemblyCallTreeOwner(string TargetPath, AssemblyNavigationSessionScope Scope, CallGraphPayload Graph, string RootKey);
     private sealed record AssemblyCallTreeSourceOwner(string TargetPath, AssemblyNavigationSessionScope Scope);
 
 
@@ -540,88 +538,87 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         int? maxResponseTokens,
         CancellationToken ct)
     {
-        var rootResult = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
-        if (!rootResult.IsSuccess)
-            return NavigationToolSupport.Failure(rootResult.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
-        await using var root = rootResult.Value!;
+        var opened = await AssemblyReferenceClosureSession.OpenAsync(target.CanonicalPath, identifier, ct).ConfigureAwait(false);
+        if (opened.Error is { } openError)
+            return NavigationToolSupport.Failure(openError, maxResponseBytes, maxResponseTokens, opened.ErrorField);
+        await using var session = opened.Session!;
 
-        var handoffResult = await AssemblySymbolHandoffResolver.ResolveAsync(identifier, ct).ConfigureAwait(false);
-        if (!handoffResult.IsSuccess)
-            return NavigationToolSupport.Failure(handoffResult.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
-        await using var handoff = handoffResult.Value!;
-
-        var rootPath = Path.GetFullPath(root.Context.Origin.CanonicalPath);
-        var handoffOwnerPath = Path.GetFullPath(handoff.Origin.CanonicalPath);
-        var referenceEntries = root.Context.References
-            .Where(reference => reference.Resolved && !string.IsNullOrWhiteSpace(reference.ResolvedPath))
-            .Select(reference => (Reference: reference, Path: Path.GetFullPath(reference.ResolvedPath!)))
-            .ToArray();
-        var belongsToClosure = string.Equals(rootPath, handoffOwnerPath, StringComparison.OrdinalIgnoreCase)
-            || referenceEntries.Any(item => string.Equals(item.Path, handoffOwnerPath, StringComparison.OrdinalIgnoreCase));
-        if (!belongsToClosure)
-            return NavigationToolSupport.Failure(new ResultError(NavigationErrorCodes.TargetMismatch,
-                "The symbol handoff is not owned by the selected assembly or its current reference snapshot.",
-                "Use a handoff returned by this assembly's find_symbol(includeReferences=true) result."),
-                maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
-
-        var declarationId = DocumentationCommentId.CreateDeclarationId(handoff.Symbol);
-        if (string.IsNullOrWhiteSpace(declarationId))
-            return McpToolResults.InvalidArgument("The selected handoff has no stable assembly declaration identity.", "$.symbolIdentifier",
-                "Use a declaration returned by find_symbol(includeReferences=true).", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-
-        var internalRootHandoff = AnalysisSymbolIdentity.ForAssembly(handoff.Origin.CanonicalPath,
-            handoff.Origin.ContentHash, handoff.Generation, handoff.ReferenceSnapshotHash).FormatHandoff(handoff.Symbol);
-        var ownerPaths = new List<string> { rootPath };
-        foreach (var item in referenceEntries.OrderBy(item => item.Reference.Depth).ThenBy(item => item.Path, StringComparer.OrdinalIgnoreCase))
-        {
-            if (IsFrameworkReferencePath(item.Path) || ownerPaths.Contains(item.Path, StringComparer.OrdinalIgnoreCase)) continue;
-            ownerPaths.Add(item.Path);
-        }
-        var ownerLimitReached = ownerPaths.Count > MaxReferenceClosureAssemblies;
-        if (ownerLimitReached)
-        {
-            ownerPaths = ownerPaths.Take(MaxReferenceClosureAssemblies).ToList();
-            if (!ownerPaths.Contains(handoffOwnerPath, StringComparer.OrdinalIgnoreCase))
-            {
-                ownerPaths[^1] = handoffOwnerPath;
-                ownerPaths = ownerPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            }
-        }
-
+        var handoffOwnerPath = session.HandoffOwnerPath;
+        var declarationId = session.DeclarationCommentId;
+        var handoffOwnerScope = session.Owners.Single(owner => string.Equals(owner.TargetPath, handoffOwnerPath,
+            StringComparison.OrdinalIgnoreCase)).Scope;
+        var internalRootHandoff = CreateAssemblyInternalHandoffFormatter(handoffOwnerScope.Solution,
+            handoffOwnerScope.Context)(session.HandoffSymbol);
+        if (internalRootHandoff is null)
+            return NavigationToolSupport.Failure(new ResultError(NavigationErrorCodes.StaleSnapshot,
+                "The selected assembly declaration no longer resolves to source in its owner assembly.",
+                "Repeat find_symbol for the current owner target and retry."), maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
+        var ownerLimitReached = session.OwnerLimitReached;
+        var unresolvedReferences = session.HasUnresolvedReferences;
+        var failedOwners = session.HasFailedOwners;
+        var sourceOwners = session.Owners.Select(owner => new AssemblyCallTreeSourceOwner(owner.TargetPath, owner.Scope)).ToList();
         var owners = new List<AssemblyCallTreeOwner>();
-        var sourceOwners = new List<AssemblyCallTreeSourceOwner>();
-        var ownedScopes = new List<AssemblyNavigationSessionScope>();
-        var failedOwners = new List<string>();
-        try
-        {
-            foreach (var ownerPath in ownerPaths)
+        var rootKey = AssemblyCallTreeNodeKey(handoffOwnerPath, declarationId);
+            var frontierQueue = new Queue<(string OwnerPath, AssemblyIdentityDto Identity, string DeclarationId, int Depth)>();
+            var visitedFrontiers = new HashSet<string>(StringComparer.Ordinal)
+            {
+                AssemblyCallTreeNodeKey(handoffOwnerPath, declarationId)
+            };
+            frontierQueue.Enqueue((handoffOwnerPath, session.HandoffIdentity, declarationId, 0));
+            var traversalLimited = false;
+            while (frontierQueue.TryDequeue(out var frontier))
             {
                 ct.ThrowIfCancellationRequested();
-                AssemblyNavigationSessionScope ownerScope;
-                if (string.Equals(ownerPath, rootPath, StringComparison.OrdinalIgnoreCase)) ownerScope = root;
-                else
+                if (frontier.Depth >= Math.Clamp(depth, 1, 3)) continue;
+                var frontierKey = AssemblyCallTreeNodeKey(frontier.OwnerPath, frontier.DeclarationId);
+                foreach (var scanOwner in sourceOwners)
                 {
-                    var opened = await AssemblyNavigationSessionScope.OpenAsync(ownerPath, ct).ConfigureAwait(false);
-                    if (!opened.IsSuccess) { failedOwners.Add(ownerPath); continue; }
-                    ownerScope = opened.Value!;
-                    ownedScopes.Add(ownerScope);
+                    ct.ThrowIfCancellationRequested();
+                    var targetSymbol = string.Equals(scanOwner.TargetPath, frontier.OwnerPath, StringComparison.OrdinalIgnoreCase)
+                        && AssemblyIdentityDtoMatches(scanOwner.Scope.Context.Identity, frontier.Identity)
+                        ? ResolveAssemblySourceSymbolInOwner(frontier.DeclarationId, scanOwner.Scope)
+                        : ResolveAssemblySymbolInCompilation(frontier.DeclarationId, frontier.Identity, scanOwner.Scope.Context.Compilation);
+                    if (targetSymbol is null) continue;
+
+                    CallGraphPayload graph;
+                    try
+                    {
+                        graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
+                            scanOwner.Scope.Solution, targetSymbol, 1, topN, direction, includeBcl, scope, includeGenerated,
+                            CreateAssemblyInternalHandoffFormatter(scanOwner.Scope.Solution, scanOwner.Scope.Context)), ct).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException or ArgumentException)
+                    {
+                        traversalLimited = true;
+                        continue;
+                    }
+                    owners.Add(new(scanOwner.TargetPath, scanOwner.Scope, graph, frontierKey));
+
+                    foreach (var node in graph.Nodes)
+                    {
+                        if (string.Equals(node.NodeId, graph.RootNodeId, StringComparison.Ordinal)) continue;
+                        var resolvedOwner = ResolveAssemblyCallTreeNodeOwner(node, sourceOwners);
+                        if (resolvedOwner is null)
+                        {
+                            if (frontier.Depth + 1 < Math.Clamp(depth, 1, 3)
+                                && node.ContainingAssemblyIdentity is { } unresolvedIdentity
+                                && sourceOwners.Any(candidate => AssemblyIdentityDtoMatches(candidate.Scope.Context.Identity, unresolvedIdentity)))
+                                traversalLimited = true;
+                            continue;
+                        }
+                        var nextKey = AssemblyCallTreeNodeKey(resolvedOwner.TargetPath, resolvedOwner.DeclarationId);
+                        if (!visitedFrontiers.Add(nextKey)) continue;
+                        if (visitedFrontiers.Count >= CallTreeBuilder.MaxCallTreeNodes)
+                        {
+                            traversalLimited = true;
+                            continue;
+                        }
+                        frontierQueue.Enqueue((resolvedOwner.TargetPath, resolvedOwner.Scope.Context.Identity!,
+                            resolvedOwner.DeclarationId, frontier.Depth + 1));
+                    }
                 }
-                sourceOwners.Add(new(ownerPath, ownerScope));
-
-                var isHandoffOwner = string.Equals(ownerPath, handoffOwnerPath, StringComparison.OrdinalIgnoreCase);
-                var seed = isHandoffOwner
-                    ? ResolveAssemblySourceSymbolInOwner(declarationId, ownerScope)
-                    : ResolveAssemblySymbolInCompilation(declarationId, handoff.Identity, ownerScope.Context.Compilation);
-                if (seed is null) continue;
-                if (ownerScope.Context.Status is not AssemblySessionStatus.Complete) failedOwners.Add(ownerPath);
-
-                var graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
-                    ownerScope.Solution, seed, depth, topN, direction, includeBcl, scope, includeGenerated,
-                    CreateAssemblyInternalHandoffFormatter(ownerScope.Solution, ownerScope.Context)), ct).ConfigureAwait(false);
-                owners.Add(new(ownerPath, ownerScope, graph));
             }
 
-            var rootKey = "target:" + handoffOwnerPath + "|" + declarationId;
             var nodeMap = new Dictionary<string, CallGraphNode>(StringComparer.Ordinal);
             var nodeOrder = new List<string>();
             var partKeys = new List<Dictionary<string, string>>();
@@ -634,31 +631,18 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 foreach (var node in owner.Graph.Nodes)
                 {
                     var isRoot = string.Equals(node.NodeId, owner.Graph.RootNodeId, StringComparison.Ordinal);
-                    var nodeHandoff = node.HandoffId;
-                    var nodeOwnerPath = nodeHandoff is null ? null : owner.TargetPath;
-                    if (!isRoot && nodeHandoff is null && node.ContainingAssemblyIdentity is { } containingIdentity)
-                    {
-                        var actualOwner = sourceOwners
-                            .Where(candidate => AssemblyIdentityDtoMatches(candidate.Scope.Context.Identity, containingIdentity))
-                            .Select(candidate => (Candidate: candidate, Symbol: ResolveAssemblySourceSymbolInOwner(node.SymbolId, candidate.Scope)))
-                            .Where(item => item.Symbol is not null)
-                            .Take(2)
-                            .ToArray();
-                        if (actualOwner.Length == 1)
-                        {
-                            nodeOwnerPath = actualOwner[0].Candidate.TargetPath;
-                            nodeHandoff = CreateAssemblyInternalHandoffFormatter(actualOwner[0].Candidate.Scope.Solution,
-                                actualOwner[0].Candidate.Scope.Context)(actualOwner[0].Symbol!);
-                        }
-                    }
-                    var key = isRoot ? rootKey : nodeHandoff is not null
-                        ? nodeOwnerPath + "|" + nodeHandoff
+                    var resolvedNodeOwner = isRoot ? null : ResolveAssemblyCallTreeNodeOwner(node, sourceOwners);
+                    var nodeHandoff = isRoot ? internalRootHandoff : resolvedNodeOwner?.HandoffId;
+                    var nodeOwnerPath = isRoot ? handoffOwnerPath : resolvedNodeOwner?.TargetPath;
+                    var declaration = isRoot ? declarationId : resolvedNodeOwner?.DeclarationId;
+                    var key = isRoot ? owner.RootKey : declaration is not null && nodeOwnerPath is not null
+                        ? AssemblyCallTreeNodeKey(nodeOwnerPath, declaration)
                         : owner.TargetPath + "|" + node.SymbolId + "|" + node.NodeId;
                     keys[node.NodeId] = key;
                     var visibleNode = node with
                     {
-                        OwnerTargetPath = isRoot ? handoffOwnerPath : nodeOwnerPath,
-                        HandoffId = isRoot ? internalRootHandoff : nodeHandoff,
+                        OwnerTargetPath = nodeOwnerPath,
+                        HandoffId = nodeHandoff,
                     };
                     if (!nodeMap.TryGetValue(key, out var prior))
                     {
@@ -740,24 +724,18 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 .Select(edge => edge.Edge with { FromNodeId = selectedNodeIds[edge.FromKey], ToNodeId = selectedNodeIds[edge.ToKey] })
                 .ToArray();
 
-            var crossOwnerDepthNotTraversed = depth > 1;
-            var unresolvedReferences = root.Context.References.Any(reference => !reference.Resolved);
-            var truncated = localTruncated || ownerLimitReached || failedOwners.Count > 0 || unresolvedReferences
+            var crossOwnerDepthNotTraversed = traversalLimited;
+            var truncated = localTruncated || ownerLimitReached || failedOwners || unresolvedReferences
                 || crossOwnerDepthNotTraversed || nodeOrder.Count > selectedNodeKeys.Length || hiddenEdges > 0;
             var graphResult = new CallGraphPayload(selectedNodeKeys.Length > 0 ? selectedNodeIds[selectedNodeKeys[0]] : string.Empty,
                 outputNodes, mergedEdges, methodHints, truncated, hiddenEdges, owners.Sum(owner => owner.Graph.PendingNodeCount));
             var body = format == "mermaid" ? CallTreeMermaidRenderer.RenderMermaid(graphResult) : CallGraphTextRenderer.RenderAscii(graphResult);
             var nextAction = crossOwnerDepthNotTraversed
                 ? "Cross-assembly call-chain expansion beyond each owner solution is not composed yet; this result is incomplete."
-                : failedOwners.Count > 0 || unresolvedReferences || ownerLimitReached
+                : failedOwners || unresolvedReferences || ownerLimitReached
                     ? "The bounded reference-source closure is incomplete; inspect unresolved or unsupported references, then repeat the query."
                     : truncated ? "Increase topN or reduce the graph scope and repeat the query." : null;
             return NavigationToolSupport.SuccessText(body, truncated, nextAction);
-        }
-        finally
-        {
-            foreach (var ownerScope in ownedScopes) await ownerScope.DisposeAsync().ConfigureAwait(false);
-        }
     }
 
     private static (List<(string FromKey, string ToKey, CallGraphEdge Edge)> Edges, int HiddenCount) ApplyGlobalProjection(
@@ -829,6 +807,40 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         return matches.Length == 1 ? matches[0] : null;
     }
 
+    private sealed record AssemblyCallTreeResolvedNodeOwner(
+        string TargetPath,
+        AssemblyNavigationSessionScope Scope,
+        string DeclarationId,
+        ISymbol Symbol,
+        string HandoffId);
+
+    private static AssemblyCallTreeResolvedNodeOwner? ResolveAssemblyCallTreeNodeOwner(
+        CallGraphNode node, IReadOnlyList<AssemblyCallTreeSourceOwner> sourceOwners)
+    {
+        if (string.IsNullOrWhiteSpace(node.SymbolId)) return null;
+        SymbolHandoffIdentifier? handoff = SymbolHandoffIdentifier.TryParse(node.HandoffId ?? string.Empty, out var parsed)
+            && parsed.Origin is SymbolHandoffOrigin.Assembly ? parsed : null;
+        var declarationId = handoff?.DocumentationCommentId ?? node.SymbolId;
+        var matches = new List<AssemblyCallTreeResolvedNodeOwner>();
+        foreach (var candidate in sourceOwners)
+        {
+            if (handoff is null && (node.ContainingAssemblyIdentity is not { } containingIdentity
+                || !AssemblyIdentityDtoMatches(candidate.Scope.Context.Identity, containingIdentity))) continue;
+            var symbol = ResolveAssemblySourceSymbolInOwner(declarationId, candidate.Scope);
+            if (symbol is null) continue;
+            var formatter = CreateAssemblyInternalHandoffFormatter(candidate.Scope.Solution, candidate.Scope.Context);
+            var internalHandoff = formatter(symbol);
+            if (internalHandoff is null || handoff is not null
+                && !string.Equals(internalHandoff, node.HandoffId, StringComparison.Ordinal)) continue;
+            matches.Add(new(candidate.TargetPath, candidate.Scope, declarationId, symbol, internalHandoff));
+            if (matches.Count > 1) return null;
+        }
+        return matches.Count == 1 ? matches[0] : null;
+    }
+
+    private static string AssemblyCallTreeNodeKey(string ownerPath, string declarationId) =>
+        Path.GetFullPath(ownerPath).ToUpperInvariant() + "\0" + declarationId;
+
     private static bool AssemblyIdentityMatches(AssemblyIdentity actual, AssemblyIdentityDto expected) =>
         string.Equals(actual.Name, expected.Name, StringComparison.OrdinalIgnoreCase)
         && string.Equals(actual.Version?.ToString(), expected.Version, StringComparison.Ordinal)
@@ -848,15 +860,6 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         string.IsNullOrWhiteSpace(internalHandoff)
             ? null
             : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalHandoff);
-
-    private static bool IsFrameworkReferencePath(string path)
-    {
-        var normalized = path.Replace('\\', '/');
-        return normalized.Contains("/shared/Microsoft.NETCore.App/", StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains("/packs/Microsoft.NETCore.App.Ref/", StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains("/packs/NETStandard.Library.Ref/", StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains("/Reference Assemblies/Microsoft/Framework/", StringComparison.OrdinalIgnoreCase);
-    }
 
     private static Func<ISymbol, string?> CreateAssemblyHandoffFormatter(AssemblySymbolHandoffAccess access)
         => CreateAssemblyHandoffFormatter(access.Solution, access.Origin.CanonicalPath, access.Origin.ContentHash,
