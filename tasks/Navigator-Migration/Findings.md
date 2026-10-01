@@ -8,7 +8,7 @@ The preserved host block remediates the P2 default-false assembly `get_impact` r
 
 ### Remaining work and findings
 
-The numbered roadmap still has **13 open points**. This table also records the outstanding audits, cluster reviews, and unnumbered limitations; implementation evidence does not replace independent acceptance.
+The numbered roadmap still has **9 open points**. This table also records the outstanding audits, cluster reviews, and unnumbered limitations; implementation evidence does not replace independent acceptance.
 
 | Scope | Remaining work or finding | Audit/review state |
 |---|---|---|
@@ -21,7 +21,6 @@ The numbered roadmap still has **13 open points**. This table also records the o
 | Cluster 9 integration | Initial independent integration review of the complete connected host/tool block is still outstanding. | No completed cluster integration review or fix round. |
 | Read-only boundary | Arbitrary MSBuild custom-target cold-workspace output redirection remains unverified. This is an untested boundary, not a newly reproduced defect. | No acceptance claimed. |
 | Integration-test runtime | Investigate suite runtime separately as requested by the user. Completed 30-test integration runs took about twelve minutes; the latest full-suite integration run was stopped. | No runtime investigation or new performance tests performed. |
-| [10.1–10.4](Clusters/Cluster-10.md) | Full authored-content inventory/acceptance, English translation, identifier/path/link migration, and migration verification remain open. Earlier linguistic research was read-only and did not complete or accept these points. | No implementation or point audits; Cluster 10 work was explicitly excluded. |
 | [11.1–11.4](Clusters/Cluster-11.md) | Full end-to-end acceptance, public schema/parameter catalogue and client setup, final acceptance, and the complete 22-tool acceptance matrix remain open. Existing stdio tests are partial evidence, not completion of these points. | No point audits; no Cluster 11 implementation performed. |
 
 ### Verification at the stop
