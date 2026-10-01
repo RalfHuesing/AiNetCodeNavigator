@@ -3,6 +3,7 @@
 using System.Linq;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Dependencies;
+using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.TestKit.Builders;
 using AiNetCodeNavigator.TestKit.Fixtures;
 using Xunit;
@@ -12,6 +13,37 @@ namespace AiNetCodeNavigator.FastTests.Dependencies;
 [Trait("Category", "Unit")]
 public sealed class DependencyGraphScannerTests
 {
+    [Fact]
+    public async Task ScanSolutionAsync_FiltersScopeAndGeneratedDocumentsBeforeDocumentLimits()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\DependencyScope.slnx",
+            new ProjectSpec("App", [
+                ("Consumer.cs", "namespace App; public class Consumer { public Target Value = new(); }"),
+                ("Generated.g.cs", "namespace App; public class GeneratedConsumer { public Target Value = new(); }"),
+                ("Target.cs", "namespace App; public class Target { }")], VirtualProjectDirectory: "src/App"),
+            new ProjectSpec("App.Tests", [
+                ("TestConsumer.cs", "namespace App.Tests; public class TestConsumer { public App.Target Value = new(); }")],
+                ProjectReferences: ["App"], VirtualProjectDirectory: "tests/App.Tests"));
+
+        var production = await DependencyGraphScanner.ScanSolutionAsync(fixture.Solution,
+            options: new DependencyGraphScanOptions(MaxDocuments: 1, ScopeType: SymbolScopeType.Production));
+        var productionWithGenerated = await DependencyGraphScanner.ScanSolutionAsync(fixture.Solution,
+            options: new DependencyGraphScanOptions(MaxDocuments: 1, ScopeType: SymbolScopeType.Production, IncludeGenerated: true));
+        var tests = await DependencyGraphScanner.ScanSolutionAsync(fixture.Solution,
+            options: new DependencyGraphScanOptions(MaxDocuments: 1, ScopeType: SymbolScopeType.Tests));
+
+        Assert.Equal(2, production.TotalDocumentCount);
+        Assert.Equal(3, productionWithGenerated.TotalDocumentCount);
+        Assert.Equal(1, tests.TotalDocumentCount);
+        Assert.Equal(1, production.ScannedDocumentCount);
+        Assert.Equal(1, productionWithGenerated.ScannedDocumentCount);
+        Assert.Equal(1, tests.ScannedDocumentCount);
+        Assert.Equal(1, production.NextDocumentOffset);
+        Assert.Equal(1, productionWithGenerated.NextDocumentOffset);
+        Assert.Null(tests.NextDocumentOffset);
+    }
+
     [Fact]
     public async Task ScanSolutionAsync_FindsProjectAndNamespaceDependencies()
     {

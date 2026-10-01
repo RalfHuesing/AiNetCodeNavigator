@@ -46,6 +46,22 @@ public sealed class NamespaceTreeScannerTests
     }
 
     [Fact]
+    public async Task ScanSolutionAsync_ReturnsBoundedProjectOverviewWhenRequested()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+
+        var payload = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution,
+            options: new NamespaceTreeScanOptions(IncludeProjectOverview: true));
+
+        Assert.Empty(payload.RootNamespaces);
+        Assert.Equal(fixture.Solution.Projects.Count(project => project.Language == LanguageNames.CSharp), payload.TotalProjects);
+        Assert.Equal(payload.TotalProjects, payload.Projects!.Count);
+        Assert.Contains("Projects:", payload.FormattedText, StringComparison.Ordinal);
+        Assert.Contains("namespaces", payload.FormattedText, StringComparison.Ordinal);
+        Assert.All(payload.Projects, project => Assert.True(project.NamespaceCount > 0));
+    }
+
+    [Fact]
     public async Task ScanSolutionAsync_AppliesPrefixKindAndIncludeTypesOptions()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
@@ -66,12 +82,13 @@ public sealed class NamespaceTreeScannerTests
             NamespacePrefix: "SampleNamespace.Hierarchy",
             Kind: "class",
             IncludeTypes: false));
-        Assert.Equal(0, Assert.Single(hiddenTypes.RootNamespaces).TypeCount);
+        Assert.Equal(Assert.Single(filtered.RootNamespaces).TypeCount, Assert.Single(hiddenTypes.RootNamespaces).TypeCount);
         Assert.Equal(filtered.TotalTypes, hiddenTypes.TotalTypes);
 
         var missingPrefix = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution, options: new NamespaceTreeScanOptions(
             NamespacePrefix: "SampleNamespace.DoesNotExist"));
         Assert.Contains("Namespace prefix", missingPrefix.Error, StringComparison.Ordinal);
+
     }
 
     private static IEnumerable<NamespaceNode> Descendants(IEnumerable<NamespaceNode> nodes)
@@ -108,6 +125,46 @@ public sealed class NamespaceTreeScannerTests
         Assert.Equal(3, payload.TotalNamespaces); // Includes the synthesized parent namespaces.
         Assert.Equal(2, payload.TotalTypes);
         Assert.Contains("- Product (1 types)", payload.FormattedText);
+        Assert.Contains(Descendants(payload.RootNamespaces).SelectMany(node => node.Types),
+            entry => entry.Name == "Item");
+
+        var parentNamespace = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution, "First", options: new NamespaceTreeScanOptions(
+            MaxDepth: 1,
+            NamespacePrefix: "Company"));
+        Assert.Null(parentNamespace.Error);
+        Assert.Equal("Company", Assert.Single(parentNamespace.RootNamespaces).FullName);
+        Assert.Equal(1, parentNamespace.TotalTypes);
+    }
+
+    [Fact]
+    public async Task ScanSolutionAsync_BoundsTypeEntriesAndRetainsTotalCounts()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\virtual\NamespaceTypeLimit.slnx",
+            new ProjectSpec("One", [
+                ("Types.cs", "namespace Limited; public sealed class Alpha {} public sealed class Beta {} public sealed class Gamma {}"),
+            ]));
+
+        var payload = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution, options: new NamespaceTreeScanOptions(
+            MaxDepth: 1,
+            MaxResults: 1,
+            NamespacePrefix: "Limited"));
+
+        var root = Assert.Single(payload.RootNamespaces);
+        Assert.Equal(3, payload.TotalTypes);
+        Assert.Equal(3, root.TypeCount);
+        Assert.Single(root.Types);
+        Assert.True(payload.Truncated);
+        Assert.Contains("maxResults", payload.TruncatedBy!);
+
+        var withoutTypeEntries = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution, options: new NamespaceTreeScanOptions(
+            MaxDepth: 1,
+            MaxResults: 1,
+            NamespacePrefix: "Limited",
+            IncludeTypes: false));
+        Assert.Equal(3, withoutTypeEntries.TotalTypes);
+        Assert.Equal(3, Assert.Single(withoutTypeEntries.RootNamespaces).TypeCount);
+        Assert.Empty(Assert.Single(withoutTypeEntries.RootNamespaces).Types);
     }
 
     [Fact]

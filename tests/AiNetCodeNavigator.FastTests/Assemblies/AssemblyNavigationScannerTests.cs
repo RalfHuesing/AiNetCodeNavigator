@@ -81,6 +81,43 @@ public sealed class AssemblyNavigationScannerTests
     }
 
     [Fact]
+    public async Task Search_AutoDetectsRegexAndAppliesFileAndDeclarationKindFilters()
+    {
+        using var temp = TestTempDirectory.Create("assembly-search-filters-");
+        var path = AssemblyTestHelper.EmitAssembly(temp, "SearchFilterProbe", """
+            namespace Probe.Search;
+            public sealed class Searchable
+            {
+                public string NeedleValue = "needle";
+                public const string WildcardMarker = "Searchable[";
+                public void Run() { NeedleValue.Trim(); }
+            }
+            """);
+
+        var result = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(
+            path,
+            Query: "Searchable|Missing",
+            FileFilter: "^.*$",
+            MaxResults: 50,
+            Kind: "type"));
+
+        Assert.True(result.IsSuccess, result.Error?.ToString());
+        var hit = Assert.Single(result.Value!.Results);
+        Assert.Contains("Searchable", hit.Text, StringComparison.Ordinal);
+        Assert.Equal("Searchable", hit.Symbol);
+
+        var methodHeader = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(
+            path, Query: "public", Kind: "method", MaxResults: 50));
+        Assert.True(methodHeader.IsSuccess, methodHeader.Error?.ToString());
+        var methodHit = Assert.Single(methodHeader.Value!.Results);
+        Assert.Equal("Run", methodHit.Symbol);
+
+        var wildcard = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, Query: "Searchable[*"));
+        Assert.True(wildcard.IsSuccess, wildcard.Error?.ToString());
+        Assert.Contains(wildcard.Value!.Results, match => match.Text.Contains("Searchable[", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Search_DeclarationOnlyIncludesFieldsEventFieldsAndEnumMembers()
     {
         using var temp = TestTempDirectory.Create("assembly-search-declarations-");

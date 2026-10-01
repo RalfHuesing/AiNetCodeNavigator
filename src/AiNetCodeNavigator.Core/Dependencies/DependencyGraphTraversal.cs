@@ -108,6 +108,8 @@ public static class DependencyGraphTraversal
             options.TargetFilePath,
             options.TargetTypeName,
             options.TargetProject,
+            options.TargetTypeId,
+            options.TargetTypeIds,
             options.Direction,
             string.Empty,
             effectiveDepth,

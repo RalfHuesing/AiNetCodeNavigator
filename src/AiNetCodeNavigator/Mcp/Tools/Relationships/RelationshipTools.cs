@@ -167,36 +167,88 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "dependency_graph", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    public async Task<CallToolResult> DependencyGraph([Required] string targetPath, string? filePath = null,
-        string? symbolIdentifier = null, string? project = null, string direction = "both", [Range(1, 3)] int depth = 1,
+    public async Task<CallToolResult> DependencyGraph([Required] string targetPath,
+        string? filePath = null,
+        string? symbolIdentifier = null, string direction = "both", [Range(1, 3)] int depth = 1,
         [Range(1, 500)] int maxResults = 50, string scopeType = "all", bool includeGenerated = false,
         [Range(512, 65536)] int maxResponseBytes = 24576, [Range(1, int.MaxValue)] int? maxResponseTokens = null,
         string? operationToken = null, string? continuationToken = null, CancellationToken cancellationToken = default)
     {
         if ((filePath is null) == (symbolIdentifier is null)) return Invalid("filePath", "Specify exactly one of filePath or symbolIdentifier.");
         if (!TryDependencyDirection(direction, out var parsedDirection)) return Invalid("direction", "Use incoming, outgoing, or both.");
-        if (!TryScope(scopeType, out _)) return Invalid("scopeType", "Use all, production, or tests.");
+        if (!TryScope(scopeType, out var parsedScope)) return Invalid("scopeType", "Use all, production, or tests.");
         return await NavigationToolSupport.RouteAsync(runtime, "dependency_graph", targetPath,
-            new { filePath, symbolIdentifier, project, direction, depth, maxResults, scopeType, includeGenerated }, operationToken,
+            new { filePath, symbolIdentifier, direction, depth, maxResults, scopeType, includeGenerated }, operationToken,
             continuationToken, maxResponseBytes, maxResponseTokens,
             async (target, ct) => await WithSource(target, async solution =>
             {
                 string? typeName = null;
+                string? typeId = null;
+                IReadOnlyCollection<string>? fileTypeIds = null;
                 if (symbolIdentifier is not null)
                 {
                     var resolved = await Resolve(solution, symbolIdentifier, ct).ConfigureAwait(false);
                     if (resolved.Error is not null) return NavigationToolSupport.Failure(resolved.Error.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
-                    typeName = resolved.Symbol is INamedTypeSymbol type ? type.ToDisplayString() : resolved.Symbol!.ContainingType?.ToDisplayString();
-                    if (typeName is null) return McpToolResults.InvalidArgument("The symbol has no containing type.", "$.symbolIdentifier", "Choose a type or member declared in a type.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                    var type = resolved.Symbol is INamedTypeSymbol namedType ? namedType : resolved.Symbol!.ContainingType;
+                    typeName = type?.ToDisplayString();
+                    if (type is null) return McpToolResults.InvalidArgument("The symbol has no containing type.", "$.symbolIdentifier", "Choose a type or member declared in a type.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                    typeId = DependencyGraphScanner.GetSourceTypeId(solution, type);
+                }
+                else if (filePath is not null)
+                {
+                    var selectedDocument = ResolveDependencyDocument(solution, filePath);
+                    if (selectedDocument.Document is null)
+                        return McpToolResults.InvalidArgument("The requested source file could not be selected.", "$.filePath", selectedDocument.Error!, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                    fileTypeIds = await DependencyGraphScanner.GetDocumentTypeIdsAsync(selectedDocument.Document, ct).ConfigureAwait(false);
                 }
                 var scan = await DependencyGraphScanner.ScanSolutionAsync(solution, ct,
                     new DependencyGraphScanOptions(PageSize: maxResults, TargetFilePath: filePath, TargetTypeName: typeName,
-                        TargetProject: project, Direction: parsedDirection, Depth: depth)).ConfigureAwait(false);
+                        TargetTypeId: typeId, TargetTypeIds: fileTypeIds, Direction: parsedDirection, Depth: depth,
+                        ScopeType: parsedScope, IncludeGenerated: includeGenerated)).ConfigureAwait(false);
                 return NavigationToolSupport.Success(scan, scan.IsTruncated, "Increase maxResults, depth, or document coverage and repeat the query.");
             }, maxResponseBytes, maxResponseTokens, ct), AnalysisTargetType.Project, cancellationToken);
 
         CallToolResult Invalid(string field, string hint) => McpToolResults.InvalidArgument("The requested value is not supported.", "$." + field, hint,
             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+    }
+
+    private static (Document? Document, string? Error) ResolveDependencyDocument(Solution solution, string filePath)
+    {
+        var solutionDirectory = Path.GetDirectoryName(solution.FilePath) ?? Environment.CurrentDirectory;
+        string requestedPath;
+        try
+        {
+            requestedPath = Path.GetFullPath(Path.IsPathRooted(filePath) ? filePath : Path.Combine(solutionDirectory, filePath));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return (null, "Provide a valid path relative to the solution or an absolute document path.");
+        }
+
+        var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var exactMatches = solution.Projects.SelectMany(project => project.Documents)
+            .Where(document => !string.IsNullOrWhiteSpace(document.FilePath))
+            .Where(document =>
+            {
+                try { return pathComparer.Equals(Path.GetFullPath(document.FilePath!), requestedPath); }
+                catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
+            })
+            .ToList();
+        if (exactMatches.Count == 1) return (exactMatches[0], null);
+        if (exactMatches.Count > 1) return (null, "The path is linked into multiple projects; use a symbolIdentifier or a unique source path.");
+
+        var suffix = filePath.Replace('\\', '/').TrimStart('.', '/');
+        var suffixMatches = solution.Projects.SelectMany(project => project.Documents)
+            .Where(document => !string.IsNullOrWhiteSpace(document.FilePath))
+            .Where(document => document.FilePath!.Replace('\\', '/').EndsWith("/" + suffix, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(Path.GetFileName(document.FilePath), suffix, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        return suffixMatches.Count switch
+        {
+            1 => (suffixMatches[0], null),
+            > 1 => (null, "The relative path matches multiple documents; pass a longer solution-relative path or an absolute document path."),
+            _ => (null, "The path does not identify a source document in the loaded solution."),
+        };
     }
 
     [McpServerTool(Name = "resolve_type_origin", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]

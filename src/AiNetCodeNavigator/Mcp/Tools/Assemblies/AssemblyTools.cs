@@ -82,9 +82,11 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                 if (!TryDetail(detailLevel)) return Invalid("detailLevel", "Use compact, standard, or full.");
                 if (kind is not (null or "method" or "type" or "property")) return Invalid("kind", "Use method, type, or property.");
                 var result = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(target.CanonicalPath, pattern,
-                    searchKind, caseSensitive, isRegex ?? false, fileFilter, declarationOnly, contextLines, maxResults), ct).ConfigureAwait(false);
+                    searchKind, caseSensitive, isRegex, fileFilter, declarationOnly, contextLines, maxResults, maxFiles, kind), ct).ConfigureAwait(false);
                 return result.IsSuccess ? NavigationToolSupport.Success(result.Value!, result.Value!.Truncated,
-                    "Increase maxResults and repeat the same query.")
+                    result.Value.TruncatedBy?.Contains("maxFiles", StringComparer.Ordinal) == true
+                        ? "Increase maxFiles and repeat the same query."
+                        : "Increase maxResults and repeat the same query.")
                     : NavigationToolSupport.Failure(result.Error!.Value, maxResponseBytes, maxResponseTokens, "$.pattern");
             }, AnalysisTargetType.Assembly, cancellationToken);
 

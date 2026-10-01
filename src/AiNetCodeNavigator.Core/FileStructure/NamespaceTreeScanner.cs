@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Symbols;
+using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.FileStructure;
@@ -44,18 +45,58 @@ public static class NamespaceTreeScanner
             || prefix is not null && scanDepth < effectiveDepth + prefixDepth;
         var solutionName = Path.GetFileName(solution.FilePath) ?? "Solution";
         var requestedProjectName = string.IsNullOrWhiteSpace(projectName) ? null : projectName.Trim();
-        var namedProjects = requestedProjectName is null
-            ? solution.Projects.ToList()
-            : solution.Projects.Where(p => string.Equals(p.Name, requestedProjectName, StringComparison.OrdinalIgnoreCase)).ToList();
+        var allProjects = solution.Projects.ToList();
+        IReadOnlyList<Project> namedProjects = allProjects;
+        Project? prefixProject = null;
 
-        if (requestedProjectName is not null && namedProjects.Count == 0)
+        if (requestedProjectName is not null)
         {
-            var error = $"Project '{requestedProjectName}' was not found.";
-            return CreatePayload(solutionName, requestedProjectName, [], 0, 0, false, [], error,
-                requestedOptions, effectiveDepth, effectiveResults, boundsWereClamped);
+            Project[] selectedByPath = [];
+            try
+            {
+                var requestedPath = Path.GetFullPath(Path.IsPathRooted(requestedProjectName)
+                    ? requestedProjectName
+                    : Path.Combine(Path.GetDirectoryName(solution.FilePath) ?? string.Empty, requestedProjectName));
+                selectedByPath = allProjects.Where(project => !string.IsNullOrWhiteSpace(project.FilePath)
+                    && PathEquals(project.FilePath!, requestedPath)).ToArray();
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { }
+
+            var exact = selectedByPath.Length > 0
+                ? selectedByPath
+                : allProjects.Where(project => string.Equals(project.Name, requestedProjectName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            var candidates = exact.Length > 0 ? exact : allProjects.Where(project => project.Name.Contains(requestedProjectName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (candidates.Length == 0)
+                return CreatePayload(solutionName, requestedProjectName, [], 0, 0, false, [],
+                    $"Project '{requestedProjectName}' was not found.", requestedOptions, effectiveDepth, effectiveResults, boundsWereClamped);
+            if (candidates.Length > 1)
+                return CreateProjectSelectionError(solutionName, requestedProjectName, candidates, requestedOptions,
+                    effectiveDepth, effectiveResults, boundsWereClamped);
+            namedProjects = candidates;
+        }
+        else if (prefix is not null)
+        {
+            var prefixCandidates = new List<Project>();
+            foreach (var candidate in allProjects.Where(project => string.Equals(project.Language, LanguageNames.CSharp, StringComparison.Ordinal)))
+            {
+                var namespaceCounts = await GetNamespaceCountsAsync(candidate, requestedOptions.IncludeGenerated, ct).ConfigureAwait(false);
+                if (namespaceCounts.Error is not null)
+                    return CreatePayload(solutionName, null, [], 0, 0, false, [], namespaceCounts.Error,
+                        requestedOptions, effectiveDepth, effectiveResults, boundsWereClamped);
+                if (FindNode(BuildTree(namespaceCounts.Counts!), prefix) is { } prefixNode
+                    && CountTypeMembersInTree(prefixNode) > 0) prefixCandidates.Add(candidate);
+            }
+            if (prefixCandidates.Count == 0)
+                return CreatePayload(solutionName, null, [], 0, 0, false, [], $"Namespace prefix '{prefix}' was not found in a C# project.",
+                    requestedOptions, effectiveDepth, effectiveResults, boundsWereClamped, errorCode: NavigationErrorCodes.SymbolNotFound);
+            if (prefixCandidates.Count > 1)
+                return CreateProjectSelectionError(solutionName, prefix, prefixCandidates, requestedOptions,
+                    effectiveDepth, effectiveResults, boundsWereClamped, NavigationErrorCodes.AmbiguousSymbol);
+            prefixProject = prefixCandidates[0];
+            namedProjects = [prefixProject];
         }
 
-        var selectedProject = requestedProjectName is null ? null : namedProjects[0];
+        var selectedProject = requestedProjectName is null ? prefixProject : namedProjects[0];
         if (selectedProject is not null && !string.Equals(selectedProject.Language, LanguageNames.CSharp, StringComparison.Ordinal))
         {
             var error = $"Project '{selectedProject.Name}' is not a C# project.";
@@ -68,7 +109,11 @@ public static class NamespaceTreeScanner
             .Where(project => string.Equals(project.Language, LanguageNames.CSharp, StringComparison.Ordinal))
             .ToList();
 
+        if (requestedOptions.IncludeProjectOverview && requestedProjectName is null && prefix is null)
+            return await BuildProjectOverviewAsync(solution, solutionName, projects, requestedOptions, ct).ConfigureAwait(false);
+
         var nsTypeCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var namespaceTypes = new Dictionary<string, List<NamespaceTypeEntry>>(StringComparer.Ordinal);
         var totalTypes = 0;
         var depthWasTruncated = false;
 
@@ -92,11 +137,13 @@ public static class NamespaceTreeScanner
                     [],
                     scanDepth,
                     nsTypeCounts,
+                    namespaceTypes,
                     ref totalTypes,
                     ref depthWasTruncated,
                     ct,
                     kind,
-                    requestedOptions.IncludeTypes);
+                    requestedOptions.IncludeTypes,
+                    requestedOptions.FormatTypeHandoff);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -107,6 +154,7 @@ public static class NamespaceTreeScanner
         }
 
         var fullTree = BuildTree(nsTypeCounts);
+        if (requestedOptions.IncludeTypes) AttachTypes(fullTree, namespaceTypes);
         if (prefix is not null)
         {
             var prefixNode = FindNode(fullTree, prefix);
@@ -117,12 +165,13 @@ public static class NamespaceTreeScanner
             fullTree = [scopedNode];
             depthWasTruncated |= prefixDepthTruncated;
         }
+        var typeLimitWasReached = requestedOptions.IncludeTypes && LimitTypeEntries(fullTree, effectiveResults);
         var totalNamespaces = CountNodes(fullTree);
         var rootNodes = TakeTree(fullTree, effectiveResults, out var shownNamespaces);
         var resultLimitWasReached = shownNamespaces < totalNamespaces;
         var truncatedBy = new List<string>(2);
         if (depthWasTruncated) truncatedBy.Add("maxDepth");
-        if (resultLimitWasReached) truncatedBy.Add("maxResults");
+        if (resultLimitWasReached || typeLimitWasReached) truncatedBy.Add("maxResults");
 
         var nextAction = GetNextAction(truncatedBy);
         var formatted = FormatTree(solutionName, selectedProjectName, rootNodes, totalNamespaces, shownNamespaces, totalTypes,
@@ -142,6 +191,123 @@ public static class NamespaceTreeScanner
             boundsWereClamped,
             formatted,
             shownNamespaces);
+    }
+
+    private static NamespaceTreePayload CreateProjectSelectionError(string solutionName, string query,
+        IReadOnlyList<Project> projects, NamespaceTreeScanOptions options, int effectiveDepth, int effectiveResults,
+        bool boundsWereClamped, string errorCode = NavigationErrorCodes.AmbiguousSymbol)
+    {
+        var candidates = string.Join(", ", projects.Select(project => string.IsNullOrWhiteSpace(project.FilePath)
+            ? project.Name
+            : $"{project.Name} ({project.FilePath})"));
+        return CreatePayload(solutionName, query, [], 0, 0, false, [],
+            $"The selection '{query}' matches multiple projects: {candidates}. Pass one project name or project path.",
+            options, effectiveDepth, effectiveResults, boundsWereClamped, errorCode: errorCode);
+    }
+
+    private static async Task<(Dictionary<string, int>? Counts, string? Error)> GetNamespaceCountsAsync(Project project,
+        bool includeGenerated, CancellationToken ct)
+    {
+        var compilation = await project.GetCompilationAsync(ct).ConfigureAwait(false);
+        if (compilation is null) return (null, $"Project '{project.Name}' could not be compiled.");
+        var sourceTrees = await GetProjectSourceTreesAsync(project, includeGenerated, ct).ConfigureAwait(false);
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var typeCount = 0;
+        var depthTruncated = false;
+        CollectNamespacesAndTypes(compilation.GlobalNamespace, sourceTrees, [], MaxDepthCap, counts, new Dictionary<string, List<NamespaceTypeEntry>>(StringComparer.Ordinal),
+            ref typeCount, ref depthTruncated, ct, "all", includeTypes: false);
+        return (counts, null);
+    }
+
+    private static bool PathEquals(string left, string right) =>
+        string.Equals(Path.GetFullPath(left), Path.GetFullPath(right),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    private static async Task<NamespaceTreePayload> BuildProjectOverviewAsync(
+        Solution solution,
+        string solutionName,
+        IReadOnlyList<Project> projects,
+        NamespaceTreeScanOptions requestedOptions,
+        CancellationToken ct)
+    {
+        var projectCounts = new List<(Project Project, int NamespaceCount, int TypeCount)>();
+        foreach (var project in projects.OrderBy(project => project.Name, StringComparer.Ordinal)
+                     .ThenBy(project => project.FilePath, StringComparer.OrdinalIgnoreCase)
+                     .ThenBy(project => project.Id.Id))
+        {
+            ct.ThrowIfCancellationRequested();
+            var compilation = await project.GetCompilationAsync(ct).ConfigureAwait(false);
+            if (compilation is null)
+                return CreatePayload(solutionName, null, [], 0, 0, false, [],
+                    $"Project '{project.Name}' could not be compiled.", requestedOptions, 1, 1, false);
+            var sourceTrees = await GetProjectSourceTreesAsync(project, requestedOptions.IncludeGenerated, ct).ConfigureAwait(false);
+            var namespaces = new Dictionary<string, int>(StringComparer.Ordinal);
+            var typeCount = 0;
+            var depthTruncated = false;
+            CollectNamespacesAndTypes(compilation.GlobalNamespace, sourceTrees, [], MaxDepthCap, namespaces, new Dictionary<string, List<NamespaceTypeEntry>>(StringComparer.Ordinal),
+                ref typeCount, ref depthTruncated, ct, "all", includeTypes: false);
+            projectCounts.Add((project, CountNodes(BuildTree(namespaces)), typeCount));
+        }
+
+        var effectiveResults = ClampBound(requestedOptions.MaxResults, MaxResultsCap);
+        var shown = projectCounts.Take(effectiveResults).ToList();
+        var duplicateNames = projectCounts.GroupBy(entry => entry.Project.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1).Select(group => group.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var solutionDirectory = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
+        var projectEntries = shown.Select(entry => new NamespaceProjectOverviewEntry(
+            entry.Project.Name,
+            entry.Project.Language,
+            entry.NamespaceCount,
+            entry.TypeCount,
+            duplicateNames.Contains(entry.Project.Name) && !string.IsNullOrWhiteSpace(entry.Project.FilePath)
+                ? Path.GetRelativePath(solutionDirectory, entry.Project.FilePath).Replace('\\', '/')
+                : null)).ToArray();
+        var truncated = projectCounts.Count > shown.Count;
+        var truncatedBy = truncated ? new[] { "maxResults" } : Array.Empty<string>();
+        var totalNamespaces = projectCounts.Sum(entry => entry.NamespaceCount);
+        var totalTypes = projectCounts.Sum(entry => entry.TypeCount);
+        var formatted = FormatProjectOverview(solutionName, projectEntries, projectCounts.Count, totalNamespaces, totalTypes,
+            requestedOptions.IncludeGenerated, truncated);
+        return new NamespaceTreePayload(
+            SolutionName: solutionName,
+            ProjectName: null,
+            RootNamespaces: [],
+            TotalNamespaces: totalNamespaces,
+            TotalTypes: totalTypes,
+            FormattedText: formatted,
+            Truncated: truncated,
+            TruncatedBy: truncatedBy,
+            RequestedMaxDepth: 1,
+            EffectiveMaxDepth: 1,
+            RequestedMaxResults: requestedOptions.MaxResults,
+            EffectiveMaxResults: effectiveResults,
+            BoundsWereClamped: effectiveResults != requestedOptions.MaxResults,
+            NextAction: truncated ? $"Increase MaxResults (up to {MaxResultsCap}) or select a project to drill into its namespaces." : null,
+            IncludeGenerated: requestedOptions.IncludeGenerated,
+            Projects: projectEntries,
+            TotalProjects: projectCounts.Count);
+    }
+
+    private static string FormatProjectOverview(string solutionName, IReadOnlyList<NamespaceProjectOverviewEntry> projects,
+        int totalProjects, int totalNamespaces, int totalTypes, bool includeGenerated, bool truncated)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"# Namespace Tree: {solutionName}");
+        builder.AppendLine($"> {totalProjects} projects | {totalNamespaces} namespaces | {totalTypes} types | depth 1");
+        builder.AppendLine($"> Generated source: {(includeGenerated ? "included" : "excluded")}");
+        if (truncated)
+            builder.AppendLine($"> Truncated by: maxResults | Next step: increase maxResults (up to {MaxResultsCap}) or select a project to drill into its namespaces.");
+        builder.AppendLine();
+        builder.AppendLine("Projects:");
+        foreach (var project in projects)
+        {
+            builder.Append($"- {project.ProjectName} ({project.ProjectType}) — {project.NamespaceCount} namespaces, {project.TypeCount} types");
+            if (project.ProjectPath is not null) builder.Append($" — {project.ProjectPath}");
+            builder.AppendLine();
+        }
+        if (projects.Count > 0) builder.AppendLine();
+        builder.AppendLine("Set `project` to one of these project names to inspect its namespace tree.");
+        return builder.ToString().TrimEnd();
     }
 
     private static int ClampBound(int requested, int cap) => requested < 1 ? 1 : Math.Min(requested, cap);
@@ -173,11 +339,13 @@ public static class NamespaceTreeScanner
         List<string> parentPath,
         int maxDepth,
         Dictionary<string, int> nsTypeCounts,
+        Dictionary<string, List<NamespaceTypeEntry>> namespaceTypes,
         ref int totalTypes,
         ref bool depthWasTruncated,
         CancellationToken ct,
         string kind,
-        bool includeTypes)
+        bool includeTypes,
+        Func<INamedTypeSymbol, string?>? formatTypeHandoff = null)
     {
         ct.ThrowIfCancellationRequested();
         var path = ns.IsGlobalNamespace ? parentPath : [.. parentPath, ns.Name];
@@ -189,8 +357,24 @@ public static class NamespaceTreeScanner
             if (matchingTypes.Length > 0)
             {
                 var fullName = string.Join('.', path);
-                nsTypeCounts[fullName] = nsTypeCounts.GetValueOrDefault(fullName) + (includeTypes ? matchingTypes.Length : 0);
+                nsTypeCounts[fullName] = nsTypeCounts.GetValueOrDefault(fullName) + matchingTypes.Length;
                 totalTypes += matchingTypes.Length;
+                if (includeTypes)
+                {
+                    if (!namespaceTypes.TryGetValue(fullName, out var entries)) namespaceTypes[fullName] = entries = [];
+                    foreach (var type in matchingTypes)
+                    {
+                        var location = type.Locations.Where(candidate => candidate.IsInSource && candidate.SourceTree is not null
+                                && sourceTrees.Contains(candidate.SourceTree))
+                            .OrderBy(candidate => candidate.SourceTree!.FilePath, StringComparer.OrdinalIgnoreCase)
+                            .ThenBy(candidate => candidate.SourceSpan.Start)
+                            .FirstOrDefault();
+                        if (location?.SourceTree is null) continue;
+                        var line = location.SourceTree.GetLineSpan(location.SourceSpan).StartLinePosition.Line + 1;
+                        entries.Add(new NamespaceTypeEntry(type.Name, GetTypeDisplayKind(type), location.SourceTree.FilePath ?? string.Empty, line,
+                            formatTypeHandoff?.Invoke(type)));
+                    }
+                }
             }
         }
 
@@ -210,8 +394,54 @@ public static class NamespaceTreeScanner
                 continue;
             }
 
-            CollectNamespacesAndTypes(childNs, sourceTrees, path, maxDepth, nsTypeCounts, ref totalTypes, ref depthWasTruncated, ct, kind, includeTypes);
+            CollectNamespacesAndTypes(childNs, sourceTrees, path, maxDepth, nsTypeCounts, namespaceTypes, ref totalTypes,
+                ref depthWasTruncated, ct, kind, includeTypes, formatTypeHandoff);
         }
+    }
+
+    private static string GetTypeDisplayKind(INamedTypeSymbol type) => type.IsRecord
+        ? type.TypeKind == TypeKind.Struct ? "record struct" : "record class"
+        : type.TypeKind.ToString().ToLowerInvariant();
+
+    private static int CountTypeMembersInTree(NamespaceNode node) =>
+        node.TypeCount + node.Children.Sum(CountTypeMembersInTree);
+
+    private static void AttachTypes(IReadOnlyList<NamespaceNode> nodes, IReadOnlyDictionary<string, List<NamespaceTypeEntry>> namespaceTypes)
+    {
+        foreach (var node in nodes)
+        {
+            if (namespaceTypes.TryGetValue(node.FullName, out var types))
+                node.Types.AddRange(types.OrderBy(type => type.Name, StringComparer.Ordinal)
+                    .ThenBy(type => type.FilePath, StringComparer.OrdinalIgnoreCase));
+            AttachTypes(node.Children, namespaceTypes);
+        }
+    }
+
+    private static bool LimitTypeEntries(IReadOnlyList<NamespaceNode> nodes, int maxResults)
+    {
+        var remaining = maxResults;
+        return LimitTypeEntries(nodes, ref remaining);
+    }
+
+    private static bool LimitTypeEntries(IReadOnlyList<NamespaceNode> nodes, ref int remaining)
+    {
+        var truncated = false;
+        foreach (var node in nodes.OrderBy(item => item.FullName, StringComparer.Ordinal))
+        {
+            node.Types.Sort((left, right) =>
+            {
+                var nameOrder = StringComparer.Ordinal.Compare(left.Name, right.Name);
+                return nameOrder != 0 ? nameOrder : StringComparer.OrdinalIgnoreCase.Compare(left.FilePath, right.FilePath);
+            });
+            if (node.Types.Count > remaining)
+            {
+                node.Types.RemoveRange(remaining, node.Types.Count - remaining);
+                truncated = true;
+            }
+            remaining -= node.Types.Count;
+            truncated |= LimitTypeEntries(node.Children, ref remaining);
+        }
+        return truncated;
     }
 
     private static int CountProjectSourceTypesInHierarchy(INamespaceSymbol ns, HashSet<SyntaxTree> sourceTrees, CancellationToken ct, string kind)
@@ -251,6 +481,7 @@ public static class NamespaceTreeScanner
     {
         truncated = false;
         var result = new NamespaceNode(source.Name, source.FullName, source.TypeCount);
+        result.Types.AddRange(source.Types);
         if (depth + 1 >= maxDepth)
         {
             truncated = source.Children.Count > 0;
@@ -316,6 +547,7 @@ public static class NamespaceTreeScanner
             if (shownCount >= budget) break;
             shownCount++;
             var copy = new NamespaceNode(node.Name, node.FullName, node.TypeCount);
+            copy.Types.AddRange(node.Types);
             result.Add(copy);
             if (shownCount < budget)
             {
@@ -342,7 +574,8 @@ public static class NamespaceTreeScanner
         int effectiveResults,
         bool boundsWereClamped,
         string? formatted = null,
-        int? shownNamespaces = null)
+        int? shownNamespaces = null,
+        string? errorCode = null)
     {
         var actualShown = shownNamespaces ?? CountNodes(rootNodes);
         return new NamespaceTreePayload(
@@ -362,7 +595,8 @@ public static class NamespaceTreeScanner
             EffectiveMaxResults: effectiveResults,
             BoundsWereClamped: boundsWereClamped,
             NextAction: GetNextAction(truncatedBy),
-            IncludeGenerated: requestedOptions.IncludeGenerated);
+            IncludeGenerated: requestedOptions.IncludeGenerated,
+            ErrorCode: errorCode);
     }
 
     private static string? GetNextAction(IReadOnlyList<string> truncatedBy)
@@ -419,6 +653,11 @@ public static class NamespaceTreeScanner
         var indentStr = new string(' ', indent * 2);
         var typeInfo = node.TypeCount > 0 ? $" ({node.TypeCount} types)" : "";
         sb.AppendLine($"{indentStr}- {node.Name}{typeInfo}");
+        foreach (var type in node.Types.OrderBy(item => item.Name, StringComparer.Ordinal))
+        {
+            var handoff = type.HandoffId is null ? string.Empty : $" [handoff: {type.HandoffId}]";
+            sb.AppendLine($"{indentStr}  - {type.Kind} {type.Name} ({type.FilePath}:{type.Line}){handoff}");
+        }
         foreach (var child in node.Children.OrderBy(item => item.Name, StringComparer.Ordinal))
         {
             AppendNode(sb, child, indent + 1);

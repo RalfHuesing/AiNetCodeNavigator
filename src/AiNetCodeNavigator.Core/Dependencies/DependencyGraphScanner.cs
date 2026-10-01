@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Common;
+using AiNetCodeNavigator.Core.Symbols;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -41,20 +42,39 @@ public static class DependencyGraphScanner
             throw new ArgumentException("TargetFilePath must not be empty.", nameof(options));
         if (options.TargetTypeName is not null && string.IsNullOrWhiteSpace(options.TargetTypeName))
             throw new ArgumentException("TargetTypeName must not be empty.", nameof(options));
-        if (options.TargetProject is not null && options.TargetFilePath is null && options.TargetTypeName is null)
+        if (options.TargetTypeId is not null && string.IsNullOrWhiteSpace(options.TargetTypeId))
+            throw new ArgumentException("TargetTypeId must not be empty.", nameof(options));
+        if (options.TargetTypeIds is not null && options.TargetTypeIds.Any(string.IsNullOrWhiteSpace))
+            throw new ArgumentException("TargetTypeIds must not contain empty values.", nameof(options));
+        if (!Enum.IsDefined(options.ScopeType))
+            throw new ArgumentOutOfRangeException(nameof(options), "ScopeType is invalid.");
+        if (options.TargetProject is not null && options.TargetFilePath is null && options.TargetTypeName is null && options.TargetTypeId is null && options.TargetTypeIds is null)
             throw new ArgumentException("TargetProject requires a file or type target.", nameof(options));
 
         var pageSize = Math.Min(options.PageSize, MaximumPageSize);
         var maxDocuments = Math.Min(options.MaxDocuments, MaximumDocuments);
         var maxNodes = Math.Min(options.MaxNodes, MaximumNodes);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
-        var allDocuments = solution.Projects
+        var candidateDocuments = solution.Projects
             .OrderBy(project => project.Name, StringComparer.Ordinal)
             .ThenBy(project => project.Id.Id)
             .SelectMany(project => project.Documents
                 .OrderBy(document => document.FilePath ?? document.Name, StringComparer.Ordinal)
                 .Select(document => (Project: project, Document: document)))
             .ToList();
+        var allDocuments = new List<(Project Project, Document Document)>(candidateDocuments.Count);
+        foreach (var candidate in candidateDocuments)
+        {
+            ct.ThrowIfCancellationRequested();
+            var isTestDocument = TestDetector.IsTestProject(candidate.Project)
+                || TestDetector.IsTestFile(candidate.Document.FilePath ?? candidate.Document.Name);
+            if (options.ScopeType == SymbolScopeType.Production && isTestDocument
+                || options.ScopeType == SymbolScopeType.Tests && !isTestDocument)
+                continue;
+            if (!options.IncludeGenerated && await GeneratedDocumentDetector.IsGeneratedDocumentAsync(candidate.Document, ct).ConfigureAwait(false))
+                continue;
+            allDocuments.Add(candidate);
+        }
         if (options.DocumentOffset > allDocuments.Count)
             throw new ArgumentOutOfRangeException(nameof(options), "DocumentOffset exceeds the number of solution documents.");
 
@@ -62,10 +82,6 @@ public static class DependencyGraphScanner
         var nextDocumentOffset = options.DocumentOffset + documents.Count < allDocuments.Count
             ? options.DocumentOffset + documents.Count
             : (int?)null;
-        var documentPathProjects = allDocuments
-            .Where(pair => !string.IsNullOrWhiteSpace(pair.Document.FilePath))
-            .GroupBy(pair => pair.Document.FilePath!, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First().Project.Name, StringComparer.OrdinalIgnoreCase);
         var errors = new List<DependencyGraphScanError>();
         var projectDeps = solution.Projects
             .SelectMany(project => project.ProjectReferences.Select(reference =>
@@ -119,10 +135,10 @@ public static class DependencyGraphScanner
                 var targetFile = PathNormalizer.ToRelative(solutionDir, targetLocation.SourceTree?.FilePath ?? targetLocation.GetLineSpan().Path);
                 if (string.IsNullOrEmpty(sourceFile) || string.IsNullOrEmpty(targetFile)) continue;
 
-                var sourceProject = GetProjectName(sourceLocation, project.Name, documentPathProjects);
-                var targetProject = GetProjectName(targetLocation, project.Name, documentPathProjects);
-                var source = ToTypeReferenceEnd(enclosingType, sourceProject, sourceFile);
-                var target = ToTypeReferenceEnd(targetType, targetProject, targetFile);
+                var sourceOwner = solution.GetDocument(sourceLocation.SourceTree!)?.Project ?? project;
+                var targetOwner = solution.GetDocument(targetLocation.SourceTree!)?.Project ?? project;
+                var source = ToTypeReferenceEnd(enclosingType, sourceOwner.Name, sourceFile, GetProjectIdentity(sourceOwner));
+                var target = ToTypeReferenceEnd(targetType, targetOwner.Name, targetFile, GetProjectIdentity(targetOwner));
                 if (source.TypeId == target.TypeId) continue;
 
                 var key = (source.TypeId, target.TypeId);
@@ -143,11 +159,11 @@ public static class DependencyGraphScanner
             .OrderBy(edge => edge.FromProject, StringComparer.Ordinal).ThenBy(edge => edge.FromFile, StringComparer.Ordinal)
             .ThenBy(edge => edge.FromTypeId, StringComparer.Ordinal).ThenBy(edge => edge.ToTypeId, StringComparer.Ordinal)
             .ToList();
-        var isTargeted = options.TargetFilePath is not null || options.TargetTypeName is not null;
+        var isTargeted = options.TargetFilePath is not null || options.TargetTypeName is not null || options.TargetTypeId is not null || options.TargetTypeIds is not null;
         var requestedDepth = isTargeted ? options.Depth : 1;
         var effectiveDepth = Math.Clamp(requestedDepth, 1, MaximumDepth);
         var traversal = isTargeted
-            ? Traverse(rawEdges, options.TargetFilePath, options.TargetTypeName, options.TargetProject, options.Direction, solutionDir, effectiveDepth, maxNodes)
+            ? Traverse(rawEdges, options.TargetFilePath, options.TargetTypeName, options.TargetProject, options.TargetTypeId, options.TargetTypeIds, options.Direction, solutionDir, effectiveDepth, maxNodes)
             : new DependencyGraphTraversalOutcome(rawEdges.Select(edge => edge with { Depth = 1 }).ToList(), 0, false, 0);
         var selectedEdges = traversal.Edges;
 
@@ -211,6 +227,8 @@ public static class DependencyGraphScanner
         string? targetFilePath,
         string? targetTypeName,
         string? targetProject,
+        string? targetTypeId,
+        IReadOnlyCollection<string>? targetTypeIds,
         DependencyGraphDirection direction,
         string solutionDir,
         int maxDepth,
@@ -218,6 +236,7 @@ public static class DependencyGraphScanner
     {
         var targetPath = NormalizeTargetPath(targetFilePath, solutionDir);
         var targetType = NormalizeTypeName(targetTypeName);
+        var exactTypeIds = targetTypeIds is null ? null : new HashSet<string>(targetTypeIds, StringComparer.Ordinal);
         bool CanTraverse(DependencyTypeReference edge, string node) =>
             (edge.FromTypeId == node && direction is DependencyGraphDirection.Outgoing or DependencyGraphDirection.Both) ||
             (edge.ToTypeId == node && direction is DependencyGraphDirection.Incoming or DependencyGraphDirection.Both);
@@ -230,8 +249,16 @@ public static class DependencyGraphScanner
         var seeds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var edge in edges)
         {
-            if (Matches(edge.FromType, edge.FromProject, edge.FromFile)) seeds.Add(edge.FromTypeId);
-            if (Matches(edge.ToType, edge.ToProject, edge.ToFile)) seeds.Add(edge.ToTypeId);
+            if (targetTypeId is not null || exactTypeIds is not null)
+            {
+                if (string.Equals(edge.FromTypeId, targetTypeId, StringComparison.Ordinal) || exactTypeIds?.Contains(edge.FromTypeId) == true) seeds.Add(edge.FromTypeId);
+                if (string.Equals(edge.ToTypeId, targetTypeId, StringComparison.Ordinal) || exactTypeIds?.Contains(edge.ToTypeId) == true) seeds.Add(edge.ToTypeId);
+            }
+            else
+            {
+                if (Matches(edge.FromType, edge.FromProject, edge.FromFile)) seeds.Add(edge.FromTypeId);
+                if (Matches(edge.ToType, edge.ToProject, edge.ToFile)) seeds.Add(edge.ToTypeId);
+            }
         }
 
         var discovered = new Dictionary<(string From, string To), DependencyTypeReference>();
@@ -326,18 +353,58 @@ public static class DependencyGraphScanner
             .ThenBy(location => location.SourceTree?.FilePath, StringComparer.Ordinal)
             .FirstOrDefault();
 
-    private static string GetProjectName(Location location, string fallback, IReadOnlyDictionary<string, string> documentPathProjects)
+    public static string GetSourceTypeId(Solution solution, ISymbol symbol)
     {
-        var path = location.SourceTree?.FilePath;
-        return path is not null && documentPathProjects.TryGetValue(path, out var project) ? project : fallback;
+        ArgumentNullException.ThrowIfNull(solution);
+        ArgumentNullException.ThrowIfNull(symbol);
+        var type = symbol as INamedTypeSymbol ?? symbol.ContainingType
+            ?? throw new ArgumentException("The symbol has no containing source type.", nameof(symbol));
+        var location = type.Locations.FirstOrDefault(candidate => candidate.IsInSource && candidate.SourceTree is not null)
+            ?? throw new ArgumentException("The symbol has no source declaration.", nameof(symbol));
+        var project = solution.GetDocument(location.SourceTree!)?.Project
+            ?? throw new ArgumentException("The symbol's source project is not in the solution.", nameof(symbol));
+        return CreateTypeId(type, GetProjectIdentity(project));
     }
 
-    private static TypeReferenceEnd ToTypeReferenceEnd(INamedTypeSymbol type, string project, string file)
+    public static async Task<IReadOnlyCollection<string>> GetDocumentTypeIdsAsync(Document document, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        var tree = await document.GetSyntaxTreeAsync(ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Source document was unavailable.");
+        var root = await tree.GetRootAsync(ct).ConfigureAwait(false);
+        var model = await document.GetSemanticModelAsync(ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Source semantic model was unavailable.");
+        var projectIdentity = GetProjectIdentity(document.Project);
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var declaration in root.DescendantNodes().Where(node => node is BaseTypeDeclarationSyntax or DelegateDeclarationSyntax))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (model.GetDeclaredSymbol(declaration, ct) is INamedTypeSymbol type)
+                ids.Add(CreateTypeId(type, projectIdentity));
+        }
+        return ids;
+    }
+
+    private static string GetProjectIdentity(Project project)
+    {
+        if (string.IsNullOrWhiteSpace(project.FilePath)) return project.Name;
+        try { return Path.GetFullPath(project.FilePath); }
+        catch (ArgumentException) { return project.FilePath; }
+    }
+
+    private static string CreateTypeId(INamedTypeSymbol type, string projectIdentity)
+    {
+        var definition = type.OriginalDefinition;
+        var displayName = definition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        return $"{displayName}|{definition.ContainingAssembly?.Identity}|{projectIdentity}";
+    }
+
+    private static TypeReferenceEnd ToTypeReferenceEnd(INamedTypeSymbol type, string project, string file, string projectIdentity)
     {
         var definition = type.OriginalDefinition;
         var displayName = definition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         return new TypeReferenceEnd(
-            $"{displayName}|{definition.ContainingAssembly?.Identity}",
+            CreateTypeId(definition, projectIdentity),
             displayName,
             definition.Name,
             definition.ContainingNamespace?.ToDisplayString() ?? string.Empty,

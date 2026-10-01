@@ -474,6 +474,16 @@ public sealed class McpServerIntegrationTests
             Assert.False(namespaceTree.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("NavigationFixture", GetFirstText(namespaceTree), StringComparison.Ordinal);
 
+            await SendRequestAsync(process, 12, "tools/call", new
+            {
+                name = "get_namespace_tree",
+                arguments = new { targetPath = solutionPath },
+            }, timeout.Token);
+            var namespaceOverview = await ReadResponseAsync(process, 12, timeout.Token);
+            Assert.False(namespaceOverview.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(namespaceOverview));
+            Assert.Contains("Projects:", GetFirstText(namespaceOverview), StringComparison.Ordinal);
+            Assert.Contains("NavigationFixture", GetFirstText(namespaceOverview), StringComparison.Ordinal);
+
             AssertWorkspaceUnchanged(workspaceBeforeNavigation, CaptureWorkspaceSnapshot(fixtureRoot));
 
             await SendRequestAsync(process, 5, "tools/call", new
@@ -624,6 +634,95 @@ public sealed class McpServerIntegrationTests
             var assemblySearch = await ReadResponseAsync(process, 23, timeout.Token);
             Assert.False(assemblySearch.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("Counter", GetFirstText(assemblySearch), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 26, "tools/call", new
+            {
+                name = "search_assembly",
+                arguments = new
+                {
+                    targetPath = fixtureAssemblyPath,
+                    pattern = "Counter|Missing",
+                    isRegex = (bool?)null,
+                    kind = "type",
+                    fileFilter = "*.cs",
+                    maxFiles = 1,
+                    maxResults = 10,
+                },
+            }, timeout.Token);
+            var filteredAssemblySearch = await ReadResponseAsync(process, 26, timeout.Token);
+            var filteredAssemblySearchText = GetFirstText(filteredAssemblySearch);
+            Assert.False(filteredAssemblySearch.GetProperty("result").GetProperty("isError").GetBoolean(), filteredAssemblySearchText);
+            var filteredAssemblySearchPayload = ParsePayload(filteredAssemblySearchText);
+            var filteredAssemblyHits = filteredAssemblySearchPayload.GetProperty("results").EnumerateArray().ToArray();
+            Assert.NotEmpty(filteredAssemblyHits);
+            Assert.Contains(filteredAssemblyHits, hit => hit.GetProperty("symbol").GetString()?.Contains("Counter", StringComparison.Ordinal) == true
+                && hit.GetProperty("text").GetString()?.Contains("Counter", StringComparison.Ordinal) == true);
+            Assert.All(filteredAssemblyHits, hit => Assert.EndsWith(".cs", hit.GetProperty("filePath").GetString(), StringComparison.OrdinalIgnoreCase));
+
+            await SendRequestAsync(process, 29, "tools/call", new
+            {
+                name = "search_assembly",
+                arguments = new
+                {
+                    targetPath = fixtureAssemblyPath,
+                    pattern = "Counter",
+                    isRegex = false,
+                    kind = "type",
+                    fileFilter = "*.cs",
+                    maxFiles = 1,
+                    maxResults = 10,
+                },
+            }, timeout.Token);
+            var matchedFileLimitedSearch = await ReadResponseAsync(process, 29, timeout.Token);
+            var matchedFileLimitedText = GetFirstText(matchedFileLimitedSearch);
+            Assert.False(matchedFileLimitedSearch.GetProperty("result").GetProperty("isError").GetBoolean(), matchedFileLimitedText);
+            var matchedFileLimitedPayload = ParsePayload(matchedFileLimitedText);
+            var limitedHits = matchedFileLimitedPayload.GetProperty("results").EnumerateArray().ToArray();
+            Assert.NotEmpty(limitedHits);
+            Assert.All(limitedHits, hit => Assert.Contains("Counter", hit.GetProperty("symbol").GetString(), StringComparison.Ordinal));
+            Assert.Single(limitedHits.Select(hit => hit.GetProperty("filePath").GetString()).Distinct(StringComparer.OrdinalIgnoreCase));
+            Assert.True(matchedFileLimitedPayload.GetProperty("truncated").GetBoolean());
+            Assert.Contains("maxFiles", matchedFileLimitedPayload.GetProperty("truncatedBy").EnumerateArray().Select(value => value.GetString()));
+
+            await SendRequestAsync(process, 32, "tools/call", new
+            {
+                name = "search_assembly",
+                arguments = new
+                {
+                    targetPath = fixtureAssemblyPath,
+                    pattern = "Counter",
+                    isRegex = false,
+                    kind = "type",
+                    fileFilter = "*.cs",
+                    maxFiles = 10,
+                    maxResults = 50,
+                },
+            }, timeout.Token);
+            var unlimitedMatchedFiles = await ReadResponseAsync(process, 32, timeout.Token);
+            var unlimitedMatchedFilePayload = ParsePayload(GetFirstText(unlimitedMatchedFiles));
+            var unlimitedHits = unlimitedMatchedFilePayload.GetProperty("results").EnumerateArray().ToArray();
+            Assert.True(unlimitedHits.Length > limitedHits.Length);
+            Assert.True(unlimitedHits.Select(hit => hit.GetProperty("filePath").GetString())
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1);
+
+            await SendRequestAsync(process, 30, "tools/call", new
+            {
+                name = "get_namespace_tree",
+                arguments = new { targetPath = fixtureAssemblyPath, namespacePrefix = "NavigationFixture", depth = 1, includeTypes = true },
+            }, timeout.Token);
+            var assemblyNamespaceTree = await ReadResponseAsync(process, 30, timeout.Token);
+            Assert.False(assemblyNamespaceTree.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(assemblyNamespaceTree));
+            var assemblyNamespaceText = GetFirstText(assemblyNamespaceTree);
+            var assemblyCounterLine = assemblyNamespaceText.Split('\n').Single(line => line.Contains("class Counter (", StringComparison.Ordinal));
+            var assemblyNamespaceHandle = ExtractHandoff(assemblyCounterLine);
+            await SendRequestAsync(process, 31, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = fixtureAssemblyPath, symbolIdentifiers = new[] { assemblyNamespaceHandle } },
+            }, timeout.Token);
+            var assemblyNamespaceBody = await ReadResponseAsync(process, 31, timeout.Token);
+            Assert.False(assemblyNamespaceBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(assemblyNamespaceBody));
+            Assert.Contains("class Counter", GetFirstText(assemblyNamespaceBody), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 24, "tools/call", new { name = "find_assembly_extensions", arguments = new { targetPath = fixtureAssemblyPath, receiverType = "NavigationFixture.Counter", extensionName = "Double", maxResults = 5 } }, timeout.Token);
             var assemblyExtensions = await ReadResponseAsync(process, 24, timeout.Token);
@@ -865,6 +964,230 @@ public sealed class McpServerIntegrationTests
     }
 
     [Fact]
+    public async Task DependencyGraphKeepsSourceHandoffProjectIdentityForDuplicateTypeNames()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        var hostAssemblyPath = GetHostAssemblyPath(repositoryRoot);
+        using var fixture = TestTempDirectory.Create("dependency-identity-stdio-");
+        var configPath = Path.Combine(Path.GetTempPath(), "ainet-dependency-" + Guid.NewGuid().ToString("N") + ".json");
+        var hostLogDirectory = Path.Combine(Path.GetTempPath(), "ainet-dependency-logs-" + Guid.NewGuid().ToString("N"));
+        var firstProject = Path.Combine(fixture.DirectoryPath, "First", "Shared.csproj");
+        var secondProject = Path.Combine(fixture.DirectoryPath, "Second", "Shared.csproj");
+        var testProject = Path.Combine(fixture.DirectoryPath, "First.Tests", "First.Tests.csproj");
+        var solutionPath = Path.Combine(fixture.DirectoryPath, "DuplicateTypes.slnx");
+        Directory.CreateDirectory(Path.GetDirectoryName(firstProject)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(secondProject)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(testProject)!);
+        await File.WriteAllTextAsync(solutionPath, "<Solution><Folder Name=\"/First/\"><Project Path=\"First/Shared.csproj\" /></Folder><Folder Name=\"/Second/\"><Project Path=\"Second/Shared.csproj\" /></Folder><Folder Name=\"/First.Tests/\"><Project Path=\"First.Tests/First.Tests.csproj\" /></Folder></Solution>");
+        const string projectText = "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><AssemblyName>Same.Graph.Assembly</AssemblyName><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>";
+        await File.WriteAllTextAsync(firstProject, projectText);
+        await File.WriteAllTextAsync(secondProject, projectText);
+        await File.WriteAllTextAsync(testProject,
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup><ItemGroup><ProjectReference Include=\"../First/Shared.csproj\" /></ItemGroup></Project>");
+        await File.WriteAllTextAsync(Path.Combine(fixture.DirectoryPath, "First", "Shared.cs"),
+            "namespace SharedGraph; public sealed class LeafFirst { } public sealed class Consumer { public LeafFirst Read() => new(); }");
+        await File.WriteAllTextAsync(Path.Combine(fixture.DirectoryPath, "Second", "Shared.cs"),
+            "namespace SharedGraph; public sealed class LeafSecond { } public sealed class Consumer { public LeafSecond Read() => new(); }");
+        await File.WriteAllTextAsync(Path.Combine(fixture.DirectoryPath, "First", "Generated.g.cs"),
+            "namespace SharedGraph; public sealed class GeneratedConsumer { public LeafFirst Read() => new(); }");
+        await File.WriteAllTextAsync(Path.Combine(fixture.DirectoryPath, "First.Tests", "TestConsumer.cs"),
+            "namespace SharedGraph.Tests; public sealed class TestConsumer { public SharedGraph.LeafFirst Read() => new(); }");
+        await RestoreProjectAsync(firstProject, fixture.DirectoryPath);
+        await RestoreProjectAsync(secondProject, fixture.DirectoryPath);
+        await RestoreProjectAsync(testProject, fixture.DirectoryPath);
+        await using (var resident = AiNetCodeNavigator.Core.Workspace.MSBuildSolutionLoader.CreateResidentSolution(solutionPath))
+        {
+            var snapshot = await resident.GetCurrentSnapshotAsync(CancellationToken.None);
+            Assert.True(snapshot.Succeeded, snapshot.Error?.Message);
+            var firstLoaded = snapshot.Solution!.Projects.Single(project => project.FilePath == firstProject);
+            var secondLoaded = snapshot.Solution.Projects.Single(project => project.FilePath == secondProject);
+            Assert.Equal(firstLoaded.Name, secondLoaded.Name);
+            Assert.NotEqual(firstLoaded.FilePath, secondLoaded.FilePath);
+        }
+        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        using var process = await StartInitializedHostAsync(repositoryRoot, hostAssemblyPath, configPath, timeout.Token, hostLogDirectory);
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+
+        try
+        {
+            await SendRequestAsync(process, 2, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = solutionPath, pattern = "Consumer", kind = "class", maxResults = 10 },
+            }, timeout.Token);
+            var found = await ReadResponseAsync(process, 2, timeout.Token);
+            Assert.False(found.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(found));
+            var findText = GetFirstText(found);
+            Assert.Contains("(Shared)", findText, StringComparison.Ordinal);
+            Assert.DoesNotContain("(Same.Graph.Assembly)", findText, StringComparison.Ordinal);
+            var firstEntry = findText.Split('\n').FirstOrDefault(line => line.Contains("First/Shared.cs", StringComparison.Ordinal));
+            Assert.True(firstEntry is not null, findText);
+            var handoff = ExtractHandoff(firstEntry!);
+
+            await SendRequestAsync(process, 3, "tools/call", new
+            {
+                name = "dependency_graph",
+                arguments = new { targetPath = solutionPath, symbolIdentifier = handoff, direction = "outgoing", depth = 1 },
+            }, timeout.Token);
+            var graph = await ReadResponseAsync(process, 3, timeout.Token);
+            Assert.False(graph.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(graph));
+            var graphText = GetFirstText(graph);
+            Assert.Contains("LeafFirst", graphText, StringComparison.Ordinal);
+            Assert.DoesNotContain("LeafSecond", graphText, StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 4, "tools/call", new
+            {
+                name = "dependency_graph",
+                arguments = new { targetPath = solutionPath, filePath = "First/Shared.cs", direction = "outgoing", depth = 1 },
+            }, timeout.Token);
+            var fileGraph = await ReadResponseAsync(process, 4, timeout.Token);
+            Assert.False(fileGraph.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(fileGraph));
+            Assert.Contains("LeafFirst", GetFirstText(fileGraph), StringComparison.Ordinal);
+            Assert.DoesNotContain("LeafSecond", GetFirstText(fileGraph), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 5, "tools/call", new
+            {
+                name = "dependency_graph",
+                arguments = new { targetPath = solutionPath, filePath = "Shared.cs", direction = "outgoing" },
+            }, timeout.Token);
+            var ambiguousFileGraph = await ReadResponseAsync(process, 5, timeout.Token);
+            Assert.True(ambiguousFileGraph.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(ambiguousFileGraph));
+            Assert.Contains("multiple documents", GetFirstText(ambiguousFileGraph), StringComparison.OrdinalIgnoreCase);
+
+            await SendRequestAsync(process, 6, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = solutionPath, pattern = "GeneratedConsumer", kind = "class", includeGenerated = true, maxResults = 5 },
+            }, timeout.Token);
+            var generatedFind = await ReadResponseAsync(process, 6, timeout.Token);
+            Assert.False(generatedFind.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(generatedFind));
+            var generatedHandoff = ExtractHandoff(GetFirstText(generatedFind));
+            await SendRequestAsync(process, 7, "tools/call", new
+            {
+                name = "dependency_graph",
+                arguments = new { targetPath = solutionPath, symbolIdentifier = generatedHandoff, direction = "outgoing" },
+            }, timeout.Token);
+            var generatedExcludedGraph = await ReadResponseAsync(process, 7, timeout.Token);
+            Assert.False(generatedExcludedGraph.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(generatedExcludedGraph));
+            Assert.DoesNotContain("LeafFirst", GetFirstText(generatedExcludedGraph), StringComparison.Ordinal);
+            await SendRequestAsync(process, 8, "tools/call", new
+            {
+                name = "dependency_graph",
+                arguments = new { targetPath = solutionPath, symbolIdentifier = generatedHandoff, direction = "outgoing", includeGenerated = true },
+            }, timeout.Token);
+            var generatedIncludedGraph = await ReadResponseAsync(process, 8, timeout.Token);
+            Assert.False(generatedIncludedGraph.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(generatedIncludedGraph));
+            Assert.Contains("LeafFirst", GetFirstText(generatedIncludedGraph), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 9, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = solutionPath, pattern = "TestConsumer", kind = "class", maxResults = 5 },
+            }, timeout.Token);
+            var testFind = await ReadResponseAsync(process, 9, timeout.Token);
+            Assert.False(testFind.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(testFind));
+            var testHandoff = ExtractHandoff(GetFirstText(testFind));
+            await SendRequestAsync(process, 10, "tools/call", new
+            {
+                name = "dependency_graph",
+                arguments = new { targetPath = solutionPath, symbolIdentifier = testHandoff, direction = "outgoing", scopeType = "tests" },
+            }, timeout.Token);
+            var testScopeGraph = await ReadResponseAsync(process, 10, timeout.Token);
+            Assert.False(testScopeGraph.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(testScopeGraph));
+            Assert.Contains("LeafFirst", GetFirstText(testScopeGraph), StringComparison.Ordinal);
+            await SendRequestAsync(process, 11, "tools/call", new
+            {
+                name = "dependency_graph",
+                arguments = new { targetPath = solutionPath, symbolIdentifier = testHandoff, direction = "outgoing", scopeType = "production" },
+            }, timeout.Token);
+            var productionScopeGraph = await ReadResponseAsync(process, 11, timeout.Token);
+            Assert.False(productionScopeGraph.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(productionScopeGraph));
+            Assert.DoesNotContain("LeafFirst", GetFirstText(productionScopeGraph), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 13, "tools/call", new
+            {
+                name = "get_namespace_tree",
+                arguments = new { targetPath = solutionPath },
+            }, timeout.Token);
+            var projectOverview = await ReadResponseAsync(process, 13, timeout.Token);
+            Assert.False(projectOverview.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(projectOverview));
+            Assert.Contains("First/Shared.csproj", GetFirstText(projectOverview), StringComparison.Ordinal);
+            Assert.Contains("Second/Shared.csproj", GetFirstText(projectOverview), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 14, "tools/call", new
+            {
+                name = "get_namespace_tree",
+                arguments = new { targetPath = solutionPath, namespacePrefix = "SharedGraph" },
+            }, timeout.Token);
+            var ambiguousNamespace = await ReadResponseAsync(process, 14, timeout.Token);
+            Assert.True(ambiguousNamespace.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(ambiguousNamespace));
+            Assert.Contains("AMBIGUOUS_SYMBOL", GetFirstText(ambiguousNamespace), StringComparison.Ordinal);
+            Assert.Contains("First", GetFirstText(ambiguousNamespace), StringComparison.Ordinal);
+            Assert.Contains("Second", GetFirstText(ambiguousNamespace), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 15, "tools/call", new
+            {
+                name = "get_namespace_tree",
+                arguments = new { targetPath = solutionPath, project = "Shared" },
+            }, timeout.Token);
+            var ambiguousProject = await ReadResponseAsync(process, 15, timeout.Token);
+            Assert.True(ambiguousProject.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(ambiguousProject));
+            Assert.Contains("AMBIGUOUS_SYMBOL", GetFirstText(ambiguousProject), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 16, "tools/call", new
+            {
+                name = "get_namespace_tree",
+                arguments = new { targetPath = solutionPath, project = firstProject },
+            }, timeout.Token);
+            var firstProjectTree = await ReadResponseAsync(process, 16, timeout.Token);
+            Assert.False(firstProjectTree.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(firstProjectTree));
+            var firstProjectText = GetFirstText(firstProjectTree);
+            Assert.Contains("class LeafFirst", firstProjectText, StringComparison.Ordinal);
+            Assert.DoesNotContain("LeafSecond", firstProjectText, StringComparison.Ordinal);
+            var firstTypeLine = firstProjectText.Split('\n').Single(line => line.Contains("class LeafFirst", StringComparison.Ordinal));
+            var namespaceTypeHandle = ExtractHandoff(firstTypeLine);
+            await SendRequestAsync(process, 17, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = solutionPath, symbolIdentifiers = new[] { namespaceTypeHandle } },
+            }, timeout.Token);
+            var namespaceTypeBody = await ReadResponseAsync(process, 17, timeout.Token);
+            Assert.False(namespaceTypeBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(namespaceTypeBody));
+            Assert.Contains("class LeafFirst", GetFirstText(namespaceTypeBody), StringComparison.Ordinal);
+            Assert.DoesNotContain("LeafSecond", GetFirstText(namespaceTypeBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 18, "tools/call", new
+            {
+                name = "get_namespace_tree",
+                arguments = new { targetPath = solutionPath, project = "NoSuchProject" },
+            }, timeout.Token);
+            var unknownProject = await ReadResponseAsync(process, 18, timeout.Token);
+            Assert.True(unknownProject.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(unknownProject));
+            Assert.Contains("INVALID_ARGUMENT", GetFirstText(unknownProject), StringComparison.Ordinal);
+            Assert.Contains("$.project", GetFirstText(unknownProject), StringComparison.Ordinal);
+
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
+            _ = await stderrTask;
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync();
+            }
+            File.Delete(configPath);
+            if (Directory.Exists(hostLogDirectory)) Directory.Delete(hostLogDirectory, recursive: true);
+            var resolvedFixtureRoot = Path.GetFullPath(fixture.DirectoryPath);
+            Assert.StartsWith(Path.GetFullPath(TestTempDirectory.RootTempDirectory) + Path.DirectorySeparatorChar, resolvedFixtureRoot, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
     public async Task ColdSourceSolutionNavigationDoesNotAddOrChangeWorkspaceFiles()
     {
         var repositoryRoot = SolutionRootLocator.Find();
@@ -986,12 +1309,14 @@ public sealed class McpServerIntegrationTests
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>");
         const string baseline = "namespace NavigationFixture;\npublic interface ICounter { int Read(); }\npublic sealed class Counter : ICounter { public int Read() => 1; }\npublic sealed class CounterConsumer { public int Run(ICounter counter) => counter.Read(); }\npublic static class CounterExtensions { public static int Double(this Counter counter) => counter.Read() * 2; }\n";
         await File.WriteAllTextAsync(sourcePath, baseline);
+        await File.WriteAllTextAsync(Path.Combine(repositoryPath, "AFirstNonMatching.cs"), "namespace NavigationFixture; public sealed class Alpha { }\n");
+        await File.WriteAllTextAsync(Path.Combine(repositoryPath, "ZLastCounter.cs"), "namespace NavigationFixture; public sealed class CounterTail { }\n");
         await RestoreProjectAsync(projectPath, repositoryPath);
         await RunCommandAsync("dotnet", repositoryPath, "build", projectPath, "--no-restore", "--configuration", "Debug");
         await RunCommandAsync("git", repositoryPath, "init", "--quiet");
         await RunCommandAsync("git", repositoryPath, "config", "user.name", "Navigation Integration Test");
         await RunCommandAsync("git", repositoryPath, "config", "user.email", "navigation-test@example.invalid");
-        await RunCommandAsync("git", repositoryPath, "add", "NavigationFixture.slnx", "NavigationFixture.csproj", "NavigationFixture.cs");
+        await RunCommandAsync("git", repositoryPath, "add", "NavigationFixture.slnx", "NavigationFixture.csproj", "NavigationFixture.cs", "AFirstNonMatching.cs", "ZLastCounter.cs");
         await RunCommandAsync("git", repositoryPath, "commit", "--quiet", "-m", "fixture baseline");
         await RunCommandAsync("git", repositoryPath, "worktree", "add", "--quiet", "--detach", worktreePath, "HEAD");
         Assert.True(File.Exists(Path.Combine(worktreePath, ".git")), "The Git impact fixture must exercise a .git-file worktree.");

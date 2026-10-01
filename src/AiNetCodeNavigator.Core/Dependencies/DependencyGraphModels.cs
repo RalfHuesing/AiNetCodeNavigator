@@ -1,6 +1,7 @@
 #nullable enable
 
 using System.Collections.Generic;
+using AiNetCodeNavigator.Core.Symbols;
 
 namespace AiNetCodeNavigator.Core.Dependencies;
 
@@ -32,7 +33,11 @@ public sealed record DependencyGraphScanOptions(
     string? TargetProject = null,
     DependencyGraphDirection Direction = DependencyGraphDirection.Both,
     int Depth = 1,
-    int MaxNodes = DependencyGraphScanner.MaximumNodes);
+    int MaxNodes = DependencyGraphScanner.MaximumNodes,
+    string? TargetTypeId = null,
+    IReadOnlyCollection<string>? TargetTypeIds = null,
+    SymbolScopeType ScopeType = SymbolScopeType.All,
+    bool IncludeGenerated = false);
 
 public sealed record DependencyGraphTraversalOptions(
     string? TargetFilePath = null,
@@ -42,7 +47,9 @@ public sealed record DependencyGraphTraversalOptions(
     int Depth = 1,
     int Offset = 0,
     int PageSize = 100,
-    int MaxNodes = 200);
+    int MaxNodes = 200,
+    string? TargetTypeId = null,
+    IReadOnlyCollection<string>? TargetTypeIds = null);
 
 public enum DependencyGraphDirection
 {

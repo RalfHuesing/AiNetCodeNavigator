@@ -1,6 +1,7 @@
 #nullable enable
 
 using System.Collections.Generic;
+using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.FileStructure;
 
@@ -10,6 +11,7 @@ public sealed class NamespaceNode
     public string FullName { get; }
     public int TypeCount { get; set; }
     public List<NamespaceNode> Children { get; } = [];
+    public List<NamespaceTypeEntry> Types { get; } = [];
 
     public NamespaceNode(string name, string fullName, int typeCount = 0)
     {
@@ -18,6 +20,8 @@ public sealed class NamespaceNode
         TypeCount = typeCount;
     }
 }
+
+public sealed record NamespaceTypeEntry(string Name, string Kind, string FilePath, int Line, string? HandoffId = null);
 
 public sealed record NamespaceTreePayload(
     string SolutionName,
@@ -36,7 +40,17 @@ public sealed record NamespaceTreePayload(
     int EffectiveMaxResults = NamespaceTreeScanner.DefaultMaxResults,
     bool BoundsWereClamped = false,
     string? NextAction = null,
-    bool IncludeGenerated = false);
+    bool IncludeGenerated = false,
+    IReadOnlyList<NamespaceProjectOverviewEntry>? Projects = null,
+    int TotalProjects = 0,
+    string? ErrorCode = null);
+
+public sealed record NamespaceProjectOverviewEntry(
+    string ProjectName,
+    string ProjectType,
+    int NamespaceCount,
+    int TypeCount,
+    string? ProjectPath = null);
 
 public sealed record NamespaceTreeScanOptions(
     int MaxDepth = NamespaceTreeScanner.MaxDepthCap,
@@ -44,4 +58,6 @@ public sealed record NamespaceTreeScanOptions(
     bool IncludeGenerated = false,
     string? NamespacePrefix = null,
     string Kind = "all",
-    bool IncludeTypes = true);
+    bool IncludeTypes = true,
+    bool IncludeProjectOverview = false,
+    System.Func<INamedTypeSymbol, string?>? FormatTypeHandoff = null);

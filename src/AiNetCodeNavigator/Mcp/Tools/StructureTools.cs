@@ -168,7 +168,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         [Required] string targetPath,
         string? project = null,
         string? namespacePrefix = null,
-        [Range(0, 32)] int depth = 1,
+        [Range(1, 3)] int depth = 1,
         bool includeTypes = true,
         string kind = "all",
         [Range(1, 200)] int maxResults = 50,
@@ -185,14 +185,20 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             {
                 if (target.TargetType == AnalysisTargetType.Project)
                     return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target,
-                        (solution, token) => ScanNamespaceTreeAsync(solution, project, namespacePrefix, depth, includeTypes, kind, maxResults, includeGenerated, token,
-                            maxResponseBytes, maxResponseTokens), maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
+                        async (solution, token) =>
+                        {
+                            var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, token).ConfigureAwait(false);
+                            return await ScanNamespaceTreeAsync(solution, project, namespacePrefix, depth, includeTypes, kind, maxResults,
+                                includeGenerated, identity, token, maxResponseBytes, maxResponseTokens, includeProjectOverview: true).ConfigureAwait(false);
+                        }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
 
                 var opened = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
                 if (!opened.IsSuccess) return NavigationToolSupport.Failure(opened.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
                 await using var scope = opened.Value!;
-                return await ScanNamespaceTreeAsync(scope.Solution, project, namespacePrefix, depth, includeTypes, kind, maxResults, includeGenerated, ct,
-                    maxResponseBytes, maxResponseTokens).ConfigureAwait(false);
+                var identity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash,
+                    scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
+                return await ScanNamespaceTreeAsync(scope.Solution, project, namespacePrefix, depth, includeTypes, kind, maxResults, includeGenerated, identity, ct,
+                    maxResponseBytes, maxResponseTokens, includeProjectOverview: false).ConfigureAwait(false);
             }, null, cancellationToken);
     }
 
@@ -236,14 +242,20 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     }
 
     private static async Task<CallToolResult> ScanNamespaceTreeAsync(Solution solution, string? project, string? prefix, int depth,
-        bool includeTypes, string kind, int maxResults, bool includeGenerated, CancellationToken ct, int bytes, int? tokens)
+        bool includeTypes, string kind, int maxResults, bool includeGenerated, AnalysisSymbolIdentity? identity, CancellationToken ct, int bytes, int? tokens,
+        bool includeProjectOverview)
     {
         if (kind is not ("all" or "class" or "record" or "struct" or "interface" or "enum" or "delegate"))
             return McpToolResults.InvalidArgument("kind is not supported.", "$.kind", "Choose all, class, record, struct, interface, enum, or delegate.", maxResponseBytes: bytes, maxResponseTokens: tokens);
         var payload = await NamespaceTreeScanner.ScanSolutionAsync(solution, project, ct,
-            new NamespaceTreeScanOptions(Math.Max(depth, 1), maxResults, includeGenerated, prefix, kind, includeTypes)).ConfigureAwait(false);
+            new NamespaceTreeScanOptions(Math.Clamp(depth, 1, 3), maxResults, includeGenerated, prefix, kind, includeTypes,
+                IncludeProjectOverview: includeProjectOverview,
+                FormatTypeHandoff: identity is null ? null : symbol => identity.FormatHandoff(symbol, solution))).ConfigureAwait(false);
         if (payload.Error is not null)
-            return McpToolResults.InvalidArgument(payload.Error, "$.project", "Correct the project or namespace query.", maxResponseBytes: bytes, maxResponseTokens: tokens);
+            return payload.ErrorCode == NavigationErrorCodes.AmbiguousSymbol
+                ? McpToolResults.Recoverable(NavigationErrorCodes.AmbiguousSymbol, payload.Error,
+                    "Pass an exact project name or canonical project path.", maxResponseBytes: bytes, maxResponseTokens: tokens)
+                : McpToolResults.InvalidArgument(payload.Error, "$.project", "Correct the project or namespace query.", maxResponseBytes: bytes, maxResponseTokens: tokens);
         return NavigationToolSupport.SuccessText(payload.FormattedText, payload.Truncated, payload.NextAction);
     }
 

@@ -187,7 +187,7 @@ public static class FindSymbolScanner
                 var lineSpan = loc.GetLineSpan();
                 var startLine = lineSpan.StartLinePosition.Line + 1;
                 var endLine = lineSpan.EndLinePosition.Line + 1;
-                var projectName = decl.ContainingAssembly?.Name ?? string.Empty;
+                var projectName = document.Project.Name;
 
                 result.Add(new SymbolLocationItem(relativePath, startLine, endLine, projectName));
             }

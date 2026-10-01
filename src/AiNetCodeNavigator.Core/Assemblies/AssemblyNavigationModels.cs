@@ -27,11 +27,13 @@ public sealed record AssemblySearchRequest(
     string? Query = null,
     string SearchKind = "text",
     bool CaseSensitive = false,
-    bool UseRegex = false,
+    bool? UseRegex = null,
     string? FileFilter = null,
     bool DeclarationOnly = false,
     int ContextLines = 0,
-    int MaxResults = 100);
+    int MaxResults = 100,
+    int MaxFiles = 1000,
+    string? Kind = null);
 
 public sealed record AssemblySearchHit(
     string FilePath,
@@ -47,7 +49,8 @@ public sealed record AssemblySearchPayload(
     IReadOnlyList<AssemblySearchHit> Results,
     int TotalCount,
     bool Truncated,
-    IReadOnlyList<string> Diagnostics);
+    IReadOnlyList<string> Diagnostics,
+    IReadOnlyList<string>? TruncatedBy = null);
 
 public sealed record FindAssemblyExtensionsRequest(
     string AssemblyPath,
