@@ -615,7 +615,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 {
                     ct.ThrowIfCancellationRequested();
                     var targetSymbol = string.Equals(scanOwner.TargetPath, frontier.OwnerPath, StringComparison.OrdinalIgnoreCase)
-                        && AssemblyIdentityDtoMatches(scanOwner.Scope.Context.Identity, frontier.Identity)
+                        && AssemblyIdentityMatcher.Matches(scanOwner.Scope.Context.Identity, frontier.Identity)
                         ? ResolveAssemblySourceSymbolInOwner(frontier.DeclarationId, scanOwner.Scope)
                         : ResolveAssemblySymbolInCompilation(frontier.DeclarationId, frontier.Identity, scanOwner.Scope.Context.Compilation);
                     if (targetSymbol is null) continue;
@@ -642,7 +642,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         {
                             if (frontier.Depth + 1 < Math.Clamp(depth, 1, 3)
                                 && node.ContainingAssemblyIdentity is { } unresolvedIdentity
-                                && sourceOwners.Any(candidate => AssemblyIdentityDtoMatches(candidate.Scope.Context.Identity, unresolvedIdentity)))
+                                && sourceOwners.Any(candidate => AssemblyIdentityMatcher.Matches(candidate.Scope.Context.Identity, unresolvedIdentity)))
                                 traversalLimited = true;
                             continue;
                         }
@@ -829,7 +829,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         AssemblyIdentityDto sourceIdentity, Compilation compilation)
     {
         var matches = DocumentationCommentId.GetSymbolsForDeclarationId(declarationId, compilation)
-            .Where(symbol => symbol.ContainingAssembly is { } assembly && AssemblyIdentityMatches(assembly.Identity, sourceIdentity))
+            .Where(symbol => symbol.ContainingAssembly is { } assembly && AssemblyIdentityMatcher.Matches(assembly.Identity, sourceIdentity))
             .Distinct(SymbolEqualityComparer.Default)
             .Take(2)
             .ToArray();
@@ -866,7 +866,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         foreach (var candidate in sourceOwners)
         {
             if (handoff is null && (node.ContainingAssemblyIdentity is not { } containingIdentity
-                || !AssemblyIdentityDtoMatches(candidate.Scope.Context.Identity, containingIdentity))) continue;
+                || !AssemblyIdentityMatcher.Matches(candidate.Scope.Context.Identity, containingIdentity))) continue;
             var symbol = ResolveAssemblySourceSymbolInOwner(declarationId, candidate.Scope);
             if (symbol is null) continue;
             var formatter = CreateAssemblyInternalHandoffFormatter(candidate.Scope.Solution, candidate.Scope.Context);
@@ -881,21 +881,6 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     private static string AssemblyCallTreeNodeKey(string ownerPath, string declarationId) =>
         Path.GetFullPath(ownerPath).ToUpperInvariant() + "\0" + declarationId;
-
-    private static bool AssemblyIdentityMatches(AssemblyIdentity actual, AssemblyIdentityDto expected) =>
-        string.Equals(actual.Name, expected.Name, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(actual.Version?.ToString(), expected.Version, StringComparison.Ordinal)
-        && string.Equals(string.IsNullOrWhiteSpace(actual.CultureName) ? "neutral" : actual.CultureName,
-            string.IsNullOrWhiteSpace(expected.Culture) ? "neutral" : expected.Culture, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(Convert.ToHexString(actual.PublicKeyToken.ToArray()), expected.PublicKeyToken, StringComparison.OrdinalIgnoreCase);
-
-    private static bool AssemblyIdentityDtoMatches(AssemblyIdentityDto? left, AssemblyIdentityDto right) =>
-        left is not null
-        && string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(left.Version, right.Version, StringComparison.Ordinal)
-        && string.Equals(string.IsNullOrWhiteSpace(left.Culture) ? "neutral" : left.Culture,
-            string.IsNullOrWhiteSpace(right.Culture) ? "neutral" : right.Culture, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(left.PublicKeyToken, right.PublicKeyToken, StringComparison.OrdinalIgnoreCase);
 
     private static string? ExternalizeInternalAssemblyHandoff(string? internalHandoff) =>
         string.IsNullOrWhiteSpace(internalHandoff)

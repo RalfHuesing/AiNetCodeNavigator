@@ -10,7 +10,7 @@ Baseline: `9645d17511b855a6b8b4a6c615ededeeb6e40629`; working tree clean.
 
 - [x] Read the changed-files reports in all three areas, assess concrete candidate groups, and select independently actionable slices. This is prioritization, not individual clearance of all 482 findings.
 - [x] Establish a green baseline with the official build and routine test scripts: 0 warnings/errors, 560 fast and 27 routine integration tests passed; no skips.
-- [ ] Centralize the repeated assembly identity matching rules used by `AssemblyReferenceClosureSession` and `RelationshipTools`; review adjacent declaration ownership duplication for safe reuse.
+- [x] Centralize the repeated assembly identity matching rules used by `AssemblyReferenceClosureSession` and `RelationshipTools`; adjacent source-declaration policies remain separate.
 - [ ] Extract cross-owner assembly call-tree construction from `RelationshipTools` into a focused collaborator with explicit traversal and merge/projection phases.
 - [ ] Separate semantic phases in `DependencyGraphScanner.ScanSolutionAsync`, retaining ordering, paging, project-qualified identity, cancellation, and recoverable errors.
 - [ ] Reassess remaining signals and record deferred work and false positives with concrete reasons.
@@ -34,3 +34,4 @@ Triage found two callers for `ResolveEffectiveStatus` through semantic reference
 ## Verification records
 
 - Initial roadmap/baseline: `pwsh -File ./scripts/build.ps1` and `pwsh -File ./scripts/test.ps1` passed (560 fast + 27 routine integration tests). Documentation diff checked before commit.
+- Slice 1: shared MCP-layer `AssemblyIdentityMatcher` replaces both duplicate comparison pairs; source-declaration checks remain separate. Four focused identity contract tests passed. Official build passed with 0 warnings/errors; routine gate passed 564 fast + 27 integration tests; selected extended `ImpactZeroLimitsUseTheSameDefaultsAsOmittedLimits` passed 1/1. No skips. Current-state documentation checked; no observable contract change. The concurrent `.gitkeep` cleanup was committed separately outside this work and is excluded from this slice.

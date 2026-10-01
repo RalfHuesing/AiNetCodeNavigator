@@ -318,18 +318,10 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
         string declarationId, AssemblyIdentityDto originalIdentity)
     {
         if (string.Equals(owner.TargetPath, originalOwnerPath, StringComparison.OrdinalIgnoreCase)
-            && AssemblyIdentityDtosMatch(owner.Scope.Context.Identity, originalIdentity))
+            && AssemblyIdentityMatcher.Matches(owner.Scope.Context.Identity, originalIdentity))
             return ResolveOwnedSourceSymbol(owner, declarationId);
         return ResolveMetadataSymbol(declarationId, originalIdentity, owner.Scope.Context.Compilation);
     }
-
-    private static bool AssemblyIdentityDtosMatch(AssemblyIdentityDto? left, AssemblyIdentityDto right) => left is not null
-        &&
-        string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(left.Version, right.Version, StringComparison.Ordinal)
-        && string.Equals(string.IsNullOrWhiteSpace(left.Culture) ? "neutral" : left.Culture,
-            string.IsNullOrWhiteSpace(right.Culture) ? "neutral" : right.Culture, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(left.PublicKeyToken, right.PublicKeyToken, StringComparison.OrdinalIgnoreCase);
 
     internal AssemblyReferenceClosureOwnerSymbol? ResolveInternalSourceHandoff(string? internalIdentifier)
     {
@@ -373,11 +365,7 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
         : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalIdentifier);
 
     internal static bool IdentityMatches(AssemblyIdentity actual, AssemblyIdentityDto expected) =>
-        string.Equals(actual.Name, expected.Name, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(actual.Version?.ToString(), expected.Version, StringComparison.Ordinal)
-        && string.Equals(string.IsNullOrWhiteSpace(actual.CultureName) ? "neutral" : actual.CultureName,
-            string.IsNullOrWhiteSpace(expected.Culture) ? "neutral" : expected.Culture, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(Convert.ToHexString(actual.PublicKeyToken.ToArray()), expected.PublicKeyToken, StringComparison.OrdinalIgnoreCase);
+        AssemblyIdentityMatcher.Matches(actual, expected);
 
     internal static bool HasSourceDeclaration(ISymbol symbol, Solution solution, string? sourceRoot)
     {
