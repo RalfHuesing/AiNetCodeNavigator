@@ -67,16 +67,43 @@ Run the test suites using the dedicated test scripts:
 # FastTests (dumps full console log to temp/test-fast.log and TRX to TestResults/FastTests.trx)
 pwsh -File ./scripts/test-fast.ps1
 
-# IntegrationTests (dumps full console log to temp/test-integration.log and TRX to TestResults/IntegrationTests.trx)
+# Routine IntegrationTests (excludes ExtendedIntegration; logs and TRX as above)
 pwsh -File ./scripts/test-integration.ps1
 
-# All tests across the solution (dumps full console log to temp/test.log)
+# Routine tests across the solution (excludes ExtendedIntegration; logs to temp/test.log)
 pwsh -File ./scripts/test.ps1
+
+# Complete solution suite, including extended integration tests
+pwsh -File ./scripts/test.ps1 -IncludeExtended
 ```
 
 Agents and automation tools should inspect the static log files under `temp/*.log` whenever diagnosing build or test outcomes.
 
 The full solution script runs test projects sequentially (`-m:1`) so IntegrationTests workspace snapshot checks are isolated from FastTests cache and audit report generation. Parallelism within each test assembly follows its existing runner settings.
+
+### Extended integration tests
+
+`scripts/test-integration.ps1` and `scripts/test.ps1` exclude `Category=ExtendedIntegration` by default. `-IncludeExtended` removes this exclusion. Both scripts combine a supplied `-Filter` with the default exclusion using parentheses, so an OR filter cannot accidentally include extended tests. Use the scripts' `-Filter` parameter rather than passing `--filter` through additional arguments. Direct `dotnet test` calls do not apply the scripts' default exclusion.
+
+The following real Git-impact stdio tests retain their assertions and carry both `Category=ExtendedIntegration` and `Feature=GitImpact`:
+
+| Test | Contract |
+|---|---|
+| `GitChangeContextMapsChangedHunksAndReportsRepositoryStatesThroughPublicStdioTools` | Changed-line declaration mapping, staged/untracked files, deletion hunks, and invalid Git refs. |
+| `GitImpactReportsCallerAndRepositoryCompletenessThroughPublicStdioTools` | Caller selection and clean, non-Git, and deleted-file states. |
+| `ImpactZeroLimitsUseTheSameDefaultsAsOmittedLimits` | Omitted and zero-valued limits select the same changed symbols and totals. |
+
+Run the affected extended tests when changing Git impact or relevant shared host, workspace, symbol-analysis, or response-processing behavior. They are not routine per-commit gates. Include all tests for release verification or an explicitly requested complete gate.
+
+```powershell
+# Only the extended Git-impact cases
+pwsh -File ./scripts/test-integration.ps1 -IncludeExtended -Filter 'Category=ExtendedIntegration&Feature=GitImpact'
+
+# One affected extended test
+pwsh -File ./scripts/test-integration.ps1 -IncludeExtended -Filter 'FullyQualifiedName~ImpactZeroLimitsUseTheSameDefaultsAsOmittedLimits'
+```
+
+The runtime of these three tests still needs improvement. Categorization changes execution frequency and does not optimize their fixture preparation or product path. Any runtime improvement should preserve their contract assertions; diagnosis should use a focused test and timings for individual phases before a wider run.
 
 ### Automatic audit reports
 

@@ -5,6 +5,9 @@
     to a fixed file at temp/test-integration.log and test results to TestResults/IntegrationTests.trx.
 
 .DESCRIPTION
+    ExtendedIntegration tests are excluded by default. Use -IncludeExtended to opt in;
+    combine it with -Filter for a focused extended run.
+
     Agents and automated workflows can inspect the complete execution output
     at the following path:
     <RepoRoot>/temp/test-integration.log
@@ -12,6 +15,7 @@
 [CmdletBinding()]
 param(
     [string]$Filter = '',
+    [switch]$IncludeExtended,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$AdditionalArgs
 )
@@ -57,8 +61,13 @@ $testArgs = @(
     '--logger', "trx;LogFileName=$trxFile",
     '--results-directory', $resultsDir
 )
-if ($Filter) {
-    $testArgs += @('--filter', $Filter)
+$effectiveFilter = $Filter
+if (-not $IncludeExtended) {
+    $effectiveFilter = if ($Filter) { "($Filter)&(Category!=ExtendedIntegration)" } else { 'Category!=ExtendedIntegration' }
+    Write-Host '[NOTE] ExtendedIntegration tests are excluded. Use -IncludeExtended to opt in.' -ForegroundColor Yellow
+}
+if ($effectiveFilter) {
+    $testArgs += @('--filter', $effectiveFilter)
 }
 if ($AdditionalArgs) {
     $testArgs += $AdditionalArgs

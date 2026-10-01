@@ -1679,6 +1679,8 @@ public sealed class McpServerIntegrationTests
     }
 
     [Fact]
+    [Trait("Category", "ExtendedIntegration")]
+    [Trait("Feature", "GitImpact")]
     public async Task GitChangeContextMapsChangedHunksAndReportsRepositoryStatesThroughPublicStdioTools()
     {
         var repositoryRoot = SolutionRootLocator.Find();
@@ -1779,6 +1781,8 @@ public sealed class McpServerIntegrationTests
     }
 
     [Fact]
+    [Trait("Category", "ExtendedIntegration")]
+    [Trait("Feature", "GitImpact")]
     public async Task ImpactZeroLimitsUseTheSameDefaultsAsOmittedLimits()
     {
         var repositoryRoot = SolutionRootLocator.Find();
@@ -1846,6 +1850,8 @@ public sealed class McpServerIntegrationTests
     }
 
     [Fact]
+    [Trait("Category", "ExtendedIntegration")]
+    [Trait("Feature", "GitImpact")]
     public async Task GitImpactReportsCallerAndRepositoryCompletenessThroughPublicStdioTools()
     {
         var repositoryRoot = SolutionRootLocator.Find();

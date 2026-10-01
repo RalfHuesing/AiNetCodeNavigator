@@ -17,7 +17,7 @@ pwsh -File ./scripts/build.ps1
 pwsh -File ./scripts/test.ps1
 ```
 
-The scripts write logs to `temp/`. See [Build and Tests](docs/development/build-and-tests.md) for the project layout and individual test commands.
+The scripts write logs to `temp/`. Routine test scripts exclude extended integration tests; use `scripts/test.ps1 -IncludeExtended` for the complete suite. See [Build and Tests](docs/development/build-and-tests.md) for the project layout, test selection, and individual test commands.
 
 ## Documentation
 
