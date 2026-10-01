@@ -31,6 +31,31 @@ public static class DependencyGraphScanner
     {
         ArgumentNullException.ThrowIfNull(solution);
         options ??= new DependencyGraphScanOptions();
+        ValidateOptions(options);
+
+        var pageSize = Math.Min(options.PageSize, MaximumPageSize);
+        var maxDocuments = Math.Min(options.MaxDocuments, MaximumDocuments);
+        var maxNodes = Math.Min(options.MaxNodes, MaximumNodes);
+        var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
+        var documentSelection = await SelectDocumentsAsync(solution, options, maxDocuments, ct).ConfigureAwait(false);
+        var projectDependencies = GetProjectDependencies(solution);
+        var typeScan = await CollectTypeReferencesAsync(solution, documentSelection.Documents, solutionDir, ct).ConfigureAwait(false);
+
+        var rawEdges = typeScan.Edges;
+        var isTargeted = options.TargetFilePath is not null || options.TargetTypeName is not null || options.TargetTypeId is not null || options.TargetTypeIds is not null;
+        var requestedDepth = isTargeted ? options.Depth : 1;
+        var effectiveDepth = Math.Clamp(requestedDepth, 1, MaximumDepth);
+        var traversal = isTargeted
+            ? Traverse(rawEdges, options.TargetFilePath, options.TargetTypeName, options.TargetProject, options.TargetTypeId, options.TargetTypeIds, options.Direction, solutionDir, effectiveDepth, maxNodes)
+            : new DependencyGraphTraversalOutcome(rawEdges.Select(edge => edge with { Depth = 1 }).ToList(), 0, false, 0);
+
+        return CreatePayload(
+            options, pageSize, maxDocuments, maxNodes, documentSelection, projectDependencies,
+            typeScan, traversal, isTargeted, requestedDepth, effectiveDepth, handoffFormatter);
+    }
+
+    private static void ValidateOptions(DependencyGraphScanOptions options)
+    {
         if (options.Offset < 0) throw new ArgumentOutOfRangeException(nameof(options), "Offset must be zero or greater.");
         if (options.DocumentOffset < 0) throw new ArgumentOutOfRangeException(nameof(options), "DocumentOffset must be zero or greater.");
         if (options.PageSize < 1) throw new ArgumentOutOfRangeException(nameof(options), "PageSize must be at least one.");
@@ -51,11 +76,14 @@ public static class DependencyGraphScanner
             throw new ArgumentOutOfRangeException(nameof(options), "ScopeType is invalid.");
         if (options.TargetProject is not null && options.TargetFilePath is null && options.TargetTypeName is null && options.TargetTypeId is null && options.TargetTypeIds is null)
             throw new ArgumentException("TargetProject requires a file or type target.", nameof(options));
+    }
 
-        var pageSize = Math.Min(options.PageSize, MaximumPageSize);
-        var maxDocuments = Math.Min(options.MaxDocuments, MaximumDocuments);
-        var maxNodes = Math.Min(options.MaxNodes, MaximumNodes);
-        var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
+    private static async Task<DocumentSelection> SelectDocumentsAsync(
+        Solution solution,
+        DependencyGraphScanOptions options,
+        int maxDocuments,
+        CancellationToken ct)
+    {
         var candidateDocuments = solution.Projects
             .OrderBy(project => project.Name, StringComparer.Ordinal)
             .ThenBy(project => project.Id.Id)
@@ -83,20 +111,29 @@ public static class DependencyGraphScanner
         var nextDocumentOffset = options.DocumentOffset + documents.Count < allDocuments.Count
             ? options.DocumentOffset + documents.Count
             : (int?)null;
-        var errors = new List<DependencyGraphScanError>();
-        var projectDeps = solution.Projects
-            .SelectMany(project => project.ProjectReferences.Select(reference =>
-            {
-                var target = solution.GetProject(reference.ProjectId);
-                return target is null ? null : new ProjectDependency(project.Name, target.Name);
-            }))
-            .Where(dependency => dependency is not null)
-            .Cast<ProjectDependency>()
-            .Distinct()
-            .OrderBy(dependency => dependency.FromProject, StringComparer.Ordinal)
-            .ThenBy(dependency => dependency.ToProject, StringComparer.Ordinal)
-            .ToList();
+        return new DocumentSelection(allDocuments.Count, documents, nextDocumentOffset);
+    }
 
+    private static List<ProjectDependency> GetProjectDependencies(Solution solution) => solution.Projects
+        .SelectMany(project => project.ProjectReferences.Select(reference =>
+        {
+            var target = solution.GetProject(reference.ProjectId);
+            return target is null ? null : new ProjectDependency(project.Name, target.Name);
+        }))
+        .Where(dependency => dependency is not null)
+        .Cast<ProjectDependency>()
+        .Distinct()
+        .OrderBy(dependency => dependency.FromProject, StringComparer.Ordinal)
+        .ThenBy(dependency => dependency.ToProject, StringComparer.Ordinal)
+        .ToList();
+
+    private static async Task<TypeReferenceScan> CollectTypeReferencesAsync(
+        Solution solution,
+        IReadOnlyList<(Project Project, Document Document)> documents,
+        string solutionDir,
+        CancellationToken ct)
+    {
+        var errors = new List<DependencyGraphScanError>();
         var rawTypeEdges = new Dictionary<(string FromTypeId, string ToTypeId), DependencyTypeReference>();
         var symbolsByTypeId = new Dictionary<string, INamedTypeSymbol>(StringComparer.Ordinal);
         var compilations = new Dictionary<ProjectId, Compilation?>();
@@ -114,61 +151,87 @@ public static class DependencyGraphScanner
                 continue;
             }
 
-            var tree = await document.GetSyntaxTreeAsync(ct).ConfigureAwait(false);
-            if (tree is null)
-            {
-                errors.Add(new DependencyGraphScanError(project.Name, document.Name, "Source was unavailable."));
-                continue;
-            }
-
-            var model = compilation.GetSemanticModel(tree);
-            var root = await tree.GetRootAsync(ct).ConfigureAwait(false);
-            foreach (var typeSyntax in root.DescendantNodes().OfType<TypeSyntax>())
-            {
-                if (model.GetTypeInfo(typeSyntax, ct).Type is not INamedTypeSymbol targetType || !HasSourceLocation(targetType)) continue;
-                var enclosingSymbol = model.GetEnclosingSymbol(typeSyntax.SpanStart, ct);
-                var enclosingType = enclosingSymbol as INamedTypeSymbol ?? enclosingSymbol?.ContainingType;
-                if (enclosingType is null || !HasSourceLocation(enclosingType)) continue;
-
-                var sourceLocation = SelectLocation(enclosingType, tree.FilePath);
-                var targetLocation = SelectLocation(targetType, tree.FilePath);
-                if (sourceLocation is null || targetLocation is null) continue;
-                var sourceFile = PathNormalizer.ToRelative(solutionDir, sourceLocation.SourceTree?.FilePath ?? tree.FilePath);
-                var targetFile = PathNormalizer.ToRelative(solutionDir, targetLocation.SourceTree?.FilePath ?? targetLocation.GetLineSpan().Path);
-                if (string.IsNullOrEmpty(sourceFile) || string.IsNullOrEmpty(targetFile)) continue;
-
-                var sourceOwner = solution.GetDocument(sourceLocation.SourceTree!)?.Project ?? project;
-                var targetOwner = solution.GetDocument(targetLocation.SourceTree!)?.Project ?? project;
-                var source = ToTypeReferenceEnd(enclosingType, sourceOwner.Name, sourceFile, GetProjectIdentity(sourceOwner));
-                var target = ToTypeReferenceEnd(targetType, targetOwner.Name, targetFile, GetProjectIdentity(targetOwner));
-                symbolsByTypeId.TryAdd(source.TypeId, enclosingType.OriginalDefinition);
-                symbolsByTypeId.TryAdd(target.TypeId, targetType.OriginalDefinition);
-                if (source.TypeId == target.TypeId) continue;
-
-                var key = (source.TypeId, target.TypeId);
-                if (!rawTypeEdges.ContainsKey(key))
-                {
-                    rawTypeEdges.Add(key, new DependencyTypeReference(
-                        source.TypeId, target.TypeId,
-                        source.Type, target.Type,
-                        source.TypeName, target.TypeName,
-                        source.Namespace, target.Namespace,
-                        source.Project, target.Project,
-                        source.File, target.File));
-                }
-            }
+            await CollectDocumentTypeReferencesAsync(
+                solution, project, document, compilation, solutionDir, rawTypeEdges, symbolsByTypeId, errors, ct).ConfigureAwait(false);
         }
 
         var rawEdges = rawTypeEdges.Values
             .OrderBy(edge => edge.FromProject, StringComparer.Ordinal).ThenBy(edge => edge.FromFile, StringComparer.Ordinal)
             .ThenBy(edge => edge.FromTypeId, StringComparer.Ordinal).ThenBy(edge => edge.ToTypeId, StringComparer.Ordinal)
             .ToList();
-        var isTargeted = options.TargetFilePath is not null || options.TargetTypeName is not null || options.TargetTypeId is not null || options.TargetTypeIds is not null;
-        var requestedDepth = isTargeted ? options.Depth : 1;
-        var effectiveDepth = Math.Clamp(requestedDepth, 1, MaximumDepth);
-        var traversal = isTargeted
-            ? Traverse(rawEdges, options.TargetFilePath, options.TargetTypeName, options.TargetProject, options.TargetTypeId, options.TargetTypeIds, options.Direction, solutionDir, effectiveDepth, maxNodes)
-            : new DependencyGraphTraversalOutcome(rawEdges.Select(edge => edge with { Depth = 1 }).ToList(), 0, false, 0);
+        return new TypeReferenceScan(rawEdges, symbolsByTypeId, errors);
+    }
+
+    private static async Task CollectDocumentTypeReferencesAsync(
+        Solution solution,
+        Project project,
+        Document document,
+        Compilation compilation,
+        string solutionDir,
+        Dictionary<(string FromTypeId, string ToTypeId), DependencyTypeReference> rawTypeEdges,
+        Dictionary<string, INamedTypeSymbol> symbolsByTypeId,
+        List<DependencyGraphScanError> errors,
+        CancellationToken ct)
+    {
+        var tree = await document.GetSyntaxTreeAsync(ct).ConfigureAwait(false);
+        if (tree is null)
+        {
+            errors.Add(new DependencyGraphScanError(project.Name, document.Name, "Source was unavailable."));
+            return;
+        }
+
+        var model = compilation.GetSemanticModel(tree);
+        var root = await tree.GetRootAsync(ct).ConfigureAwait(false);
+        foreach (var typeSyntax in root.DescendantNodes().OfType<TypeSyntax>())
+        {
+            if (model.GetTypeInfo(typeSyntax, ct).Type is not INamedTypeSymbol targetType || !HasSourceLocation(targetType)) continue;
+            var enclosingSymbol = model.GetEnclosingSymbol(typeSyntax.SpanStart, ct);
+            var enclosingType = enclosingSymbol as INamedTypeSymbol ?? enclosingSymbol?.ContainingType;
+            if (enclosingType is null || !HasSourceLocation(enclosingType)) continue;
+
+            var sourceLocation = SelectLocation(enclosingType, tree.FilePath);
+            var targetLocation = SelectLocation(targetType, tree.FilePath);
+            if (sourceLocation is null || targetLocation is null) continue;
+            var sourceFile = PathNormalizer.ToRelative(solutionDir, sourceLocation.SourceTree?.FilePath ?? tree.FilePath);
+            var targetFile = PathNormalizer.ToRelative(solutionDir, targetLocation.SourceTree?.FilePath ?? targetLocation.GetLineSpan().Path);
+            if (string.IsNullOrEmpty(sourceFile) || string.IsNullOrEmpty(targetFile)) continue;
+
+            var sourceOwner = solution.GetDocument(sourceLocation.SourceTree!)?.Project ?? project;
+            var targetOwner = solution.GetDocument(targetLocation.SourceTree!)?.Project ?? project;
+            var source = ToTypeReferenceEnd(enclosingType, sourceOwner.Name, sourceFile, GetProjectIdentity(sourceOwner));
+            var target = ToTypeReferenceEnd(targetType, targetOwner.Name, targetFile, GetProjectIdentity(targetOwner));
+            symbolsByTypeId.TryAdd(source.TypeId, enclosingType.OriginalDefinition);
+            symbolsByTypeId.TryAdd(target.TypeId, targetType.OriginalDefinition);
+            if (source.TypeId == target.TypeId) continue;
+
+            var key = (source.TypeId, target.TypeId);
+            if (!rawTypeEdges.ContainsKey(key))
+            {
+                rawTypeEdges.Add(key, new DependencyTypeReference(
+                    source.TypeId, target.TypeId,
+                    source.Type, target.Type,
+                    source.TypeName, target.TypeName,
+                    source.Namespace, target.Namespace,
+                    source.Project, target.Project,
+                    source.File, target.File));
+            }
+        }
+    }
+
+    private static DependencyGraphPayload CreatePayload(
+        DependencyGraphScanOptions options,
+        int pageSize,
+        int maxDocuments,
+        int maxNodes,
+        DocumentSelection documentSelection,
+        List<ProjectDependency> projectDeps,
+        TypeReferenceScan typeScan,
+        DependencyGraphTraversalOutcome traversal,
+        bool isTargeted,
+        int requestedDepth,
+        int effectiveDepth,
+        Func<ISymbol, string?>? handoffFormatter)
+    {
         var selectedEdges = traversal.Edges;
 
         var allNamespaceDeps = selectedEdges
@@ -197,9 +260,9 @@ public static class DependencyGraphScanner
         {
             pagedTypeEdges = pagedTypeEdges.Select(edge => edge with
             {
-                FromHandoffId = symbolsByTypeId.TryGetValue(edge.FromTypeId, out var fromSymbol)
+                FromHandoffId = typeScan.SymbolsByTypeId.TryGetValue(edge.FromTypeId, out var fromSymbol)
                     ? handoffFormatter(fromSymbol) : null,
-                ToHandoffId = symbolsByTypeId.TryGetValue(edge.ToTypeId, out var toSymbol)
+                ToHandoffId = typeScan.SymbolsByTypeId.TryGetValue(edge.ToTypeId, out var toSymbol)
                     ? handoffFormatter(toSymbol) : null,
             }).ToList();
         }
@@ -212,16 +275,16 @@ public static class DependencyGraphScanner
             TotalFileDependencyCount: allFileDeps.Count,
             Offset: options.Offset,
             PageSize: pageSize,
-            ScannedDocumentCount: documents.Count,
-            TotalDocumentCount: allDocuments.Count,
-            DocumentLimitReached: nextDocumentOffset is not null,
+            ScannedDocumentCount: documentSelection.Documents.Count,
+            TotalDocumentCount: documentSelection.TotalDocumentCount,
+            DocumentLimitReached: documentSelection.NextDocumentOffset is not null,
             PageSizeWasClamped: pageSize != options.PageSize,
             DocumentLimitWasClamped: maxDocuments != options.MaxDocuments,
-            Errors: errors,
+            Errors: typeScan.Errors,
             TypeDependencies: pagedTypeEdges,
             TotalTypeDependencyCount: selectedEdges.Count,
             DocumentOffset: options.DocumentOffset,
-            NextDocumentOffset: nextDocumentOffset,
+            NextDocumentOffset: documentSelection.NextDocumentOffset,
             Direction: isTargeted ? options.Direction : DependencyGraphDirection.Both,
             RequestedDepth: requestedDepth,
             EffectiveDepth: effectiveDepth,
@@ -235,6 +298,16 @@ public static class DependencyGraphScanner
             NodeLimitReached: traversal.NodeLimitReached,
             HiddenTypeDependencyCount: traversal.HiddenTypeDependencyCount);
     }
+
+    private sealed record DocumentSelection(
+        int TotalDocumentCount,
+        IReadOnlyList<(Project Project, Document Document)> Documents,
+        int? NextDocumentOffset);
+
+    private sealed record TypeReferenceScan(
+        IReadOnlyList<DependencyTypeReference> Edges,
+        IReadOnlyDictionary<string, INamedTypeSymbol> SymbolsByTypeId,
+        IReadOnlyList<DependencyGraphScanError> Errors);
 
     internal static DependencyGraphTraversalOutcome Traverse(
         IReadOnlyList<DependencyTypeReference> edges,

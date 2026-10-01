@@ -12,7 +12,8 @@ Baseline: `9645d17511b855a6b8b4a6c615ededeeb6e40629`; working tree clean.
 - [x] Establish a green baseline with the official build and routine test scripts: 0 warnings/errors, 560 fast and 27 routine integration tests passed; no skips.
 - [x] Centralize the repeated assembly identity matching rules used by `AssemblyReferenceClosureSession` and `RelationshipTools`; adjacent source-declaration policies remain separate.
 - [x] Extract cross-owner assembly call-tree construction from `RelationshipTools` into a focused collaborator with explicit traversal, merge, and projection phases.
-- [ ] Separate semantic phases in `DependencyGraphScanner.ScanSolutionAsync`, retaining ordering, paging, project-qualified identity, cancellation, and recoverable errors.
+- [x] Separate semantic phases in `DependencyGraphScanner.ScanSolutionAsync`, retaining ordering, paging, project-qualified identity, cancellation, and recoverable errors.
+- [ ] Reuse the identical source-declaration ownership check between assembly context and assembly handoff formatting. Preserve the closure session's different source-tree/path policy.
 - [ ] Reassess remaining signals and record deferred work and false positives with concrete reasons.
 
 ## Execution policy
@@ -31,8 +32,11 @@ The 312 missing-test-evidence entries have not been individually verified. Their
 
 Triage found two callers for `ResolveEffectiveStatus` through semantic references: the dead-code signal is a false positive. The other dead-code candidates (`AssemblyDiagnosticSeverityExtensions`, `TrackingSolutionFactory.DisposalsFor`) are deferred until usage and observability are checked; no API or helper is removed based on the signal alone.
 
+Follow-up semantic inspection confirmed that `AssemblyTools.HasRootSourceDeclaration` and the check moved to `AssemblyHandoffFormatting.HasSourceDeclaration` use identical document-path/root acceptance rules. Reuse is actionable. `AssemblyReferenceClosureSession.HasSourceDeclaration` instead checks the syntax-tree path, requires a path strictly below the root, and only verifies document membership: retain that distinct policy rather than treating structural similarity as equivalence.
+
 ## Verification records
 
 - Initial roadmap/baseline: `pwsh -File ./scripts/build.ps1` and `pwsh -File ./scripts/test.ps1` passed (560 fast + 27 routine integration tests). Documentation diff checked before commit.
 - Slice 1: shared MCP-layer `AssemblyIdentityMatcher` replaces both duplicate comparison pairs; source-declaration checks remain separate. Four focused identity contract tests passed. Official build passed with 0 warnings/errors; routine gate passed 564 fast + 27 integration tests; selected extended `ImpactZeroLimitsUseTheSameDefaultsAsOmittedLimits` passed 1/1. No skips. Current-state documentation checked; no observable contract change. The concurrent `.gitkeep` cleanup was committed separately outside this work and is excluded from this slice.
 - Slice 2: `AssemblyCallTreeClosureBuilder` separates owner expansion, graph merging, and global projection. `AssemblyHandoffFormatting` provides concrete shared handoff formatting without depending on the tool handler. Root-handoff validation and its typed stale-snapshot failure stay in the handler. Updated the primary assembly navigation document. Official build passed with 0 warnings/errors; routine gate passed 564 fast + 27 integration tests; selected extended `GitImpactReportsCallerAndRepositoryCompletenessThroughPublicStdioTools` passed 1/1. No skips. Existing public cross-owner/cap tests verify the preserved behavior; no tests of private phase boundaries were added.
+- Slice 3: dependency graph scanning now exposes validation, ordered/filter-first document selection, project-reference collection, cached-compilation semantic scanning, and result projection as named phases. Public APIs, validation order/messages, traversal, paging, and visible-only handoff allocation are preserved. Updated the primary dependency graph document. Focused scanner tests passed 14/14; official build passed with 0 warnings/errors; routine gate passed 564 fast + 27 integration tests. No skips. Only the dependency scanner is changed; no shared Git impact dependency is modified, so no additional extended Git selection is needed for this slice.
