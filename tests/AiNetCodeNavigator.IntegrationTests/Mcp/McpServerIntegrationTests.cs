@@ -1130,6 +1130,15 @@ public sealed class McpServerIntegrationTests
             Assert.False(betaStructure.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(betaStructure));
             Assert.Contains("PagedBeta", GetFirstText(betaStructure), StringComparison.Ordinal);
 
+            await SendRequestAsync(process, 16, "tools/call", new
+            {
+                name = "get_class_structure",
+                arguments = new { targetPath = hostAssemblyPath, symbolIdentifier = betaHandle },
+            }, timeout.Token);
+            var foreignTargetStructure = await ReadResponseAsync(process, 16, timeout.Token);
+            Assert.True(foreignTargetStructure.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignTargetStructure));
+            Assert.Contains("INVALID_ARGUMENT", GetFirstText(foreignTargetStructure), StringComparison.Ordinal);
+
             await SendRequestAsync(process, 12, "tools/call", new
             {
                 name = "search_assembly",

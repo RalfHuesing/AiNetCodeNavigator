@@ -152,6 +152,9 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 var assembly = await AssemblySymbolHandoffResolver.ResolveAsync(symbolIdentifier, ct).ConfigureAwait(false);
                 if (!assembly.IsSuccess) return NavigationToolSupport.Failure(assembly.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                 await using var access = assembly.Value!;
+                if (!string.Equals(Path.GetFullPath(access.Origin.CanonicalPath), target.CanonicalPath, StringComparison.OrdinalIgnoreCase))
+                    return McpToolResults.InvalidArgument("The symbol handoff belongs to another assembly.", "$.symbolIdentifier",
+                        "Use a handoff produced by this targetPath.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                 var type = access.Symbol as INamedTypeSymbol ?? access.Symbol.ContainingType;
                 if (type is null) return McpToolResults.InvalidArgument("The assembly handle did not resolve to a type.", "$.symbolIdentifier", "Use a type handoff from an assembly navigation result.",
                     maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
