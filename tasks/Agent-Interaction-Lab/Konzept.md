@@ -6,11 +6,11 @@ status: draft
 
 ## Umsetzungssperre und verpflichtender Konzeptreview
 
-**Reviewstatus: ausstehend. Roadmap und Umsetzung sind gesperrt.** Dieses Vorhaben folgt auf den Abschluss von [AiNetLinter-Uebernehmen](../AiNetLinter-Uebernehmen/). Der bisherige Verständnisreview ersetzt den anschließend erforderlichen Abgleich mit dessen tatsächlich implementiertem Stand nicht. Auch eine allgemeine Aufforderung wie „setze diesen Task um“ hebt diese Sperre nicht auf; der Agent weist darauf hin und bleibt bei der vorbereitenden Konzeptprüfung.
+**Reviewstatus: ausstehend. Roadmap und Umsetzung sind gesperrt.** Dieses Vorhaben folgt auf den Abschluss von [Navigator-Migration](../Navigator-Migration/). Der bisherige Verständnisreview ersetzt den anschließend erforderlichen Abgleich mit dessen tatsächlich implementiertem Stand nicht. Auch eine allgemeine Aufforderung wie „setze diesen Task um“ hebt diese Sperre nicht auf; der Agent weist darauf hin und bleibt bei der vorbereitenden Konzeptprüfung.
 
 Ein sinngemäßer Auftrag **„schärfe das Konzept“** für diesen Task bedeutet:
 
-1. Den Abschluss von AiNetLinter-Uebernehmen anhand seiner Abschlussnachweise prüfen. Solange der Vorgängertask nicht abgeschlossen ist, die Voraussetzung als ausstehend dokumentieren; ein Zwischenabgleich hebt die Sperre nicht auf.
+1. Den Abschluss von Navigator-Migration anhand seiner Abschlussnachweise prüfen. Solange der Vorgängertask nicht abgeschlossen ist, die Voraussetzung als ausstehend dokumentieren; ein Zwischenabgleich hebt die Sperre nicht auf.
 2. Den geprüften Produktstand mit Commit-SHA, Arbeitsbaumzustand und Datum festhalten. Konzeptannahmen gegen tatsächlichen Code, Tests und verifizierte docs/ prüfen; geplante Spezifikationen sind kein Implementierungsnachweis.
 3. Insbesondere alle 22 Toolregistrierungen samt Beschreibungen/Schemas, Argumentvalidierung und SDK-Bindung, Runtime/DI, Ergebnis- und Fehlerformate, Budgets, Handoffs/Operationen/Fortsetzungen, Assembly-Referenzauflösung sowie vorhandene Testzugänge abgleichen. Bestehende Mechanismen wiederverwenden und konkrete Integrationsstellen mit Code-/Testankern benennen. Überholte Annahmen ersetzen; Widersprüche und fehlende Entscheidungen sichtbar machen. Ziel und vereinbarte Produktgrenzen bleiben maßgeblich.
 4. Konzept und diesen Reviewnachweis aktualisieren: geprüfter Stand, geprüfte Bereiche, wesentliche Anpassungen, Code-/Testbelege und verbleibende Blocker. Gelesene Tests und vorhandene Testergebnisse von selbst ausgeführten Prüfungen unterscheiden. Keine Implementierungsbehauptung ohne Beleg.
@@ -21,7 +21,7 @@ Die Sperre wird erst aufgehoben, wenn der Vorgängertask abgeschlossen, der tech
 
 Ändern sich nach dem Review relevante produktive Verträge, wird das Konzept wieder draft und der betroffene Abgleich erneut fällig. Der bloße Wechsel der Commit-SHA ohne relevante Vertragsänderung verlangt keinen vollständigen Wiederholungsreview.
 
-Aktueller Nachweis: Der Abgleich nach Abschluss von AiNetLinter-Uebernehmen und der darauf folgende Verständnisreview wurden noch nicht durchgeführt. Die technischen Festlegungen unten sind bis dahin ein überprüfbarer Entwurf.
+Aktueller Nachweis: Der Abgleich nach Abschluss von Navigator-Migration und der darauf folgende Verständnisreview wurden noch nicht durchgeführt. Die technischen Festlegungen unten sind bis dahin ein überprüfbarer Entwurf.
 
 ## Intention
 
@@ -37,14 +37,14 @@ Der Zugang arbeitet lokal gegen den Entwicklungsstand ohne MCP-Transport, Deploy
 - Die reguläre Anwendung erhält keinen Lab-Modus, keine Lab-Parameter und keine Dump-/Aufgabenlogik. Die reguläre Produktverteilung benötigt das Lab nicht.
 - Definitionen, Validierung, Bindung, Handler, Zustandsverwaltung und Ergebnisformatierung stammen aus gemeinsamem produktivem Code. Keine Kopien der Tool-API und keine Lab-eigene Navigation.
 - SDK-Typen, SDK-Schemaerzeugung und SDK-Funktionsbindung sind erlaubt; MCP-Client, MCP-Server, JSON-RPC, Handshake und MCP-Transport sind in Lab-Läufen ausgeschlossen.
-- Erste Abnahme: AiNetCodeNavigator und AiNetLinter, Source und verwaltete Assemblies, alle 22 vorgesehenen Produkttools.
+- Erste Abnahme: AiNetCodeNavigator, Source und verwaltete Assemblies, alle 22 vorgesehenen Produkttools.
 - Die Lab-Exe führt keine Modelle aus und startet keine Codex-Agenten. Der aufrufende Codex-Agent koordiniert die getrennten Rollen außerhalb der Exe.
 
 ## Geprüfte Grundlage und Abhängigkeit
 
 Gelesener und durch den Verständnisreview erneut geprüfter Stand am 2026-09-30: HEAD 90adbfc9907a72f4f283041d319d74c2be520645. Die aufgeführten Produktionsdateien wurden gelesen, aber durch diese Konzeptarbeit weder geändert noch mit Builds oder Tests verifiziert.
 
-- [Host](../../src/AiNetCodeNavigator/Mcp/McpServerHost.cs) und [Runtime](../../src/AiNetCodeNavigator/Mcp/NavigatorHostRuntime.cs) enthalten im gelesenen Arbeitsbaum Stdio-Start, Dependency Injection und Prozesszustand. Der Host registriert zwei Wartungstools; die Navigationsklassen sind noch Platzhalter. [Cluster 9](../AiNetLinter-Uebernehmen/Clusters/Cluster-09.md) besitzt deren Umsetzung.
+- [Host](../../src/AiNetCodeNavigator/Mcp/McpServerHost.cs) und [Runtime](../../src/AiNetCodeNavigator/Mcp/NavigatorHostRuntime.cs) enthalten im gelesenen Arbeitsbaum Stdio-Start, Dependency Injection und Prozesszustand. Der Host registriert zwei Wartungstools; die Navigationsklassen sind noch Platzhalter. [Cluster 9](../Navigator-Migration/Clusters/Cluster-09.md) besitzt deren Umsetzung.
 - Die bestehenden FastTests und IntegrationTests referenzieren bereits das Anwendungsprojekt. InternalsVisibleTo wird für Testzugriff verwendet.
 - [Argumentvalidierung](../../src/AiNetCodeNavigator/Mcp/Validation/McpArgumentValidationFilter.cs) erhält derzeit einen SDK-RequestContext. SDK 2.2.0 verlangt hierfür einen McpServer; dieser Einstieg kann deshalb nicht unverändert der transportlose Lab-Einstieg sein.
 - Die lokal installierte SDK-Dokumentation belegt den öffentlichen Einstieg McpServerTool.Create(AIFunction, options). Die Funktionsbindung kann über Microsoft.Extensions.AI und dieselben Serializeroptionen geteilt werden. Die konkrete SDK-Klasse AIFunctionMcpServerTool ist intern; das Lab darf sie weder per Reflection verwenden noch deren Implementierung kopieren.
@@ -135,20 +135,18 @@ CLI-Exitcodes: 0 für einen empfangenen CallToolResult, auch bei IsError=true; 1
 
 Die lokale Konfiguration wird nicht versioniert; sie liegt unter dem bereits ignorierten temp/agent-interaction-lab/targets.local.json. Ein englisches Beispiel ohne maschinenspezifische reale Pfade wird als Dokumentation im Lab-Projekt versioniert. Die Konfiguration hat ausschließlich schemaVersion 1, repositoryRoot als absoluten Pfad zur AiNetCodeNavigator-Checkoutwurzel und targets als Liste. Jeder Targeteintrag hat id, kind (source oder assembly), repositoryRoot und targetPath, jeweils absolute Pfade. IDs bestehen aus ASCII-Buchstaben, Ziffern und Bindestrichen und sind eindeutig. Der Ausgabeordner ist fest unter repositoryRoot/temp/agent-interaction-lab/; alle vom Lab erzeugten Pfade werden auf Zugehörigkeit geprüft. Das Lab löscht keine alten Runs automatisch.
 
-Die folgenden vier Ziel-IDs sind für die erste Abnahme verbindlich:
+Die folgenden zwei Ziel-IDs sind für die erste Abnahme verbindlich:
 
 | ID | Inhalt |
 |---|---|
 | navigator-source | AiNetCodeNavigator.slnx im eigenen Repository |
-| linter-source | AiNetLinter.slnx im externen AiNetLinter-Repository |
 | navigator-assembly | Bereits gebaute AiNetCodeNavigator.Core.dll |
-| linter-assembly | Bereits gebaute AiNetLinter.dll |
 
-Externe Repositories und deren Binaries werden nur gelesen; das Lab startet dort weder Restore noch Build. Fehlende Binaries müssen vor dem Lauf bereitgestellt werden. Es baut auch die eigenen Produktbinaries nicht implizit. Kein Aufruf des untersuchten Binaries.
+Die Navigator-Ziele und deren Binaries werden nur gelesen; das Lab startet dafür weder Restore noch Build. Fehlende Binaries müssen vor dem Lauf bereitgestellt werden. Es baut auch die eigenen Produktbinaries nicht implizit. Kein Aufruf des untersuchten Binaries.
 
 Die Lab-eigene hostsettings.json wird beim Sitzungsstart mit minimumLogLevel=Information unter dem Runverzeichnis erzeugt und ausdrücklich als Konfigurationspfad der Runtime gesetzt. Wartungsszenarien bearbeiten nur diese Datei. Ein geplanter Fehlerfall darf sie vorübergehend ungültig machen oder entfernen; vor der nächsten Task wird ihr definierter Startzustand wiederhergestellt und erfolgreich geladen. Der normale Benutzer-Konfigurationspfad wird niemals verwendet.
 
-Neue Targets sind über die gleiche lokale Konfiguration zulässig. Die vier verbindlichen Abnahmeziele bleiben erforderlich; keine implizite Suche nach beliebigen Solutions.
+Neue Targets sind über die gleiche lokale Konfiguration zulässig. Die zwei verbindlichen Abnahmeziele bleiben erforderlich; keine implizite Suche nach beliebigen Solutions.
 
 Produktargumente werden nicht umgeschrieben: Der Testagent erhält die erlaubten absoluten Zielpfade und setzt targetPath selbst. Die Targetliste ist eine Experimentregel, keine Dateisystem-Sandbox. Ein Zugriff auf ein anderes echtes Repository wird als isolationStatus=violated bewertet; gezielte Fehlertests mit fehlendem oder ungültigem targetPath müssen in der zugehörigen Referenz ausdrücklich vorgesehen sein.
 
@@ -236,12 +234,12 @@ Der Start erwartet exakt die folgende produktive Toolmenge. Fehlende, doppelte o
 | Kontext | get_feature_context, get_test_context |
 | Wartung | get_server_health, reload_config |
 
-Für jedes Tool gibt es mindestens eine Aufgabe für den normalen Erfolg und eine für einen relevanten Parameter- oder Fehlerfall. Source-Navigation wird auf beiden Solutions untersucht; Assembly-Navigation und resolve_type_origin auf beiden Assemblyzielen; get_symbol_body zusätzlich als Assemblyfolge. Wartung wird einmal auf der Lab-Runtime untersucht, nicht künstlich pro Repository dupliziert. Die Eignung von Tasks wird anhand des realen Targets geprüft; fehlende Referenzdaten dürfen keinen Scheinerfolg erzeugen.
+Für jedes Tool gibt es mindestens eine Aufgabe für den normalen Erfolg und eine für einen relevanten Parameter- oder Fehlerfall. Source-Navigation wird auf der Navigator-Solution untersucht; Assembly-Navigation und resolve_type_origin auf dem Navigator-Assemblyziel; get_symbol_body zusätzlich als Assemblyfolge. Wartung wird einmal auf der Lab-Runtime untersucht. Die Eignung von Tasks wird anhand des realen Targets geprüft; fehlende Referenzdaten dürfen keinen Scheinerfolg erzeugen.
 
 Drei kurze Ketten sind Pflicht:
 
 - Source: find_symbol → get_symbol_body mit unverändertem handoffId, auf beiden Solutions.
-- Source: find_symbol → find_references mit unverändertem handoffId, auf beiden Solutions.
+- Source: find_symbol → find_references mit unverändertem handoffId, auf der Navigator-Solution.
 - Assembly: inspect_assembly → get_symbol_body mit dem tatsächlich angebotenen handoffId, auf beiden Assemblies.
 
 Die Namen dieser Ketten gehören in die verdeckten Abnahmekriterien und die Auswertung, nicht in die Zielbeschreibung des Testagenten. Die Aufgabe nennt das fachliche Ziel. Parent-IDs machen die Verwendung des vorherigen Resultats nachvollziehbar; es gibt keinen automatischen Parameterersatz.
@@ -292,9 +290,9 @@ Verbindliche Nachweise:
 
 ### Gate 2: Produktintegration und erste Agentenuntersuchung
 
-Dieses Gate setzt Gate 1, alle produktiven Registrierungen aus Cluster 9 und die bereitgestellten vier Targets voraus. Vor den bewerteten Agentenläufen werden die Fixture-Paritätsprüfungen auf den echten Katalog erweitert: sämtliche Definitionsfelder sowie mindestens ein gültiger und ein ungültiger Aufruf pro Produkttool. Fehler der Lab-/SDK-Parität sind Infrastrukturfehler; ein fachlich falsches, auf beiden Wegen identisches produktives Resultat ist ein Produktfinding.
+Dieses Gate setzt Gate 1, alle produktiven Registrierungen aus Cluster 9 und die bereitgestellten zwei Targets voraus. Vor den bewerteten Agentenläufen werden die Fixture-Paritätsprüfungen auf den echten Katalog erweitert: sämtliche Definitionsfelder sowie mindestens ein gültiger und ein ungültiger Aufruf pro Produkttool. Fehler der Lab-/SDK-Parität sind Infrastrukturfehler; ein fachlich falsches, auf beiden Wegen identisches produktives Resultat ist ein Produktfinding.
 
-Die Abnahme liefert Tasks, unveränderte JSON-/Markdown-Dumps, finale Agentenantworten und einen separat erstellten Bericht für beide Repositories und die vollständige Toolmenge. Ein erster Run pro Repository genügt; es werden keine statistischen Zusagen gemacht. Die Anzahl der Sitzungen darf an die festen Grenzen angepasst werden; keine Grenze wird still angehoben.
+Die Abnahme liefert Tasks, unveränderte JSON-/Markdown-Dumps, finale Agentenantworten und einen separat erstellten Bericht für das Navigator-Repository mit Source- und Assemblyziel sowie die vollständige Toolmenge. Ein erster Run genügt; es werden keine statistischen Zusagen gemacht. Die Anzahl der Sitzungen darf an die festen Grenzen angepasst werden; keine Grenze wird still angehoben.
 
 Das Lab kann korrekt implementiert sein, obwohl die Untersuchung Produktdefekte oder Verständlichkeitsprobleme aufzeigt. Diese sind Findings, keine fehlgeschlagene Infrastrukturabnahme. Fehlende Tools/Targets, ungültige Tasks, beschädigte Spuren und Zieländerungen blockieren den Gesamtabschluss. Ein nach dokumentiertem gültigem Versuch nicht reproduzierter Spezialfall bleibt dagegen als not_observed eine Coverage-Lücke und blockiert Gate 2 nicht. Vollständige Produktqualität oder vollständige qualitative Abdeckung darf daraus nicht behauptet werden.
 
@@ -314,8 +312,8 @@ Die Umsetzung umfasst die erste Agentenuntersuchung und das belegte Findingsregi
 
 ## Arbeitsgedächtnis (nur Draft)
 
-Die Sachentscheidungen sind getroffen: separate .NET-Lab-Exe, AiNetCodeNavigator/AiNetLinter und alle 22 Tools. Technische Verträge, Grenzen und Nachweise sind in diesem Entwurf festgelegt; kein Implementierer soll aus offenen Varianten auswählen.
+Die Sachentscheidungen sind getroffen: separate .NET-Lab-Exe, AiNetCodeNavigator und alle 22 Tools. Technische Verträge, Grenzen und Nachweise sind in diesem Entwurf festgelegt; kein Implementierer soll aus offenen Varianten auswählen.
 
 Der Verständnisreview mit gpt-6-luna/high gegen 90adbfc hat sieben Vertragslücken belegt. Sie sind konkretisiert: BindingMetadata/Fixtureadapter, Abschluss-/Crashdaten, Referenzbaseline, Busy-/Zählerregeln, Raw-/Envelope-Versionierung, Protokollfehlerausgabe und zwei getrennte Abschlussgates. Im Nachcheck bestätigte Luna diese sieben Klärungen und benannte zwei verbleibende Textwidersprüche: not_observed als Lücke versus Blocker und Vorübertragungsfehler versus Call-Artefakte. Beide Stellen sind entsprechend präzisiert.
 
-Ausstehend sind der verpflichtende Abgleich nach Abschluss von AiNetLinter-Uebernehmen, der anschließende frische Verständnisreview und die ausdrückliche Freigabe des danach geschärften Gesamtkonzepts. Erst nach Erfüllung dieser Bedingungen wird status auf ready gesetzt und dieser Draftabschnitt entfernt; der Reviewnachweis und die Bedingungen für den Umsetzungsbeginn bleiben erhalten. Dies startet weder Roadmap noch Umsetzung; der Nutzer ruft den nächsten Workflow-Schritt selbst auf.
+Ausstehend sind der verpflichtende Abgleich nach Abschluss von Navigator-Migration, der anschließende frische Verständnisreview und die ausdrückliche Freigabe des danach geschärften Gesamtkonzepts. Erst nach Erfüllung dieser Bedingungen wird status auf ready gesetzt und dieser Draftabschnitt entfernt; der Reviewnachweis und die Bedingungen für den Umsetzungsbeginn bleiben erhalten. Dies startet weder Roadmap noch Umsetzung; der Nutzer ruft den nächsten Workflow-Schritt selbst auf.

@@ -25,7 +25,7 @@
   - [x] FastTests für Index-Scope
   - [x] Project-/Solution-Scope, vollständige Gesamtsummen und begrenzte Projekt-/Dateityplisten mit Truncation-Metadaten abdecken.
   - [x] Unbekannte Projekte als Fehler behandeln, Cancellation weiterreichen und den Dokumentbestand unverändert lassen.
-  - [x] Current-State-Dokumentation zu Roslyn-Dokumentumfang, Grenzen und AiNetLinter-Unterschieden ergänzen.
+  - [x] Current-State-Dokumentation zu Roslyn-Dokumentumfang, Grenzen und lokalen Navigator-Verträgen ergänzen.
   - [x] Report generated-document and test-document totals over the selected Roslyn scope, independent of presentation limits; cover them in FastTests and documentation.
   - [x] Share generated-document classification with symbol navigation and align test-document classification with navigation scope rules.
   - [x] Review/Audit zu 6.3 durchführen; Findings ergänzen und umsetzen.

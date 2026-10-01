@@ -6,6 +6,6 @@ The scope includes each project's Roslyn `Project.Documents` entries, including 
 
 Project names are matched case-insensitively. An unknown project returns `ScanCompleted=false` and an `Error`; cancellation is propagated to the caller. The default response shows at most 100 projects and 64 file types. Requested limits are clamped to at least 1 and at most 500 projects or 128 file types. The scanner still counts the full selected scope, including generated and test documents, before applying these presentation limits, so totals remain complete when `IsTruncated` is true. `TruncatedBy`, shown counts, and `NextAction` identify presentation truncation. The scanner does not provide cursor or offset pagination.
 
-The Core inventory is intentionally narrower than AiNetLinter's `get_index_scope`, which also reports physical project assets and generated/build file categories. This scanner describes the loaded Roslyn document scope used by navigation.
+The Core inventory describes the loaded Roslyn document scope used by navigation. Physical non-C# project assets and generated/build file categories outside that loaded scope are not part of this scanner.
 
 The MCP host registers `get_index_scope` for source solution targets only. Its public integration path is included in the initial navigation slice; the complete public budget/error matrix remains open. See [MCP Host](../mcp-host.md).

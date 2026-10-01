@@ -9,5 +9,5 @@ alwaysApply: true
 - Communicate with the user in German, regardless of whether the task is written in German or English.
 - Task descriptions may be written in German or English.
 - Write code, rules, repository documentation, and new README files in English. Do not translate existing task specifications unless requested.
-- Do not modify external repositories such as `C:\Daten\Entwicklung\Ralf\AiNetLinter` or `C:\Daten\Entwicklung\Ralf\AiNetReview`. Treat them as read-only references.
+- Keep all task changes within this repository. External repositories are outside the product reference scope; use local documentation, contracts, code, and tests.
 - Do not start another step of `.agents/agent-workflow/` unless the user invokes that step.

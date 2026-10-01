@@ -1,17 +1,19 @@
 ---
-description: Proactively use AiNetLinter MCP server for C# semantic code navigation and exploration.
+description: Proactively use AiNetCodeNavigator MCP server for C# semantic code navigation and exploration.
 globs: '*'
 alwaysApply: true
 ---
 
 # MCP Navigation Workflow
 
-Proactively use the `AiNetLinter` MCP server as the primary tool for C# code exploration, symbol navigation, structural inspection, and relationship analysis. Do not use broad text searches (`rg`) when semantic AST tools can answer the question directly.
+Proactively use the `AiNetCodeNavigator` MCP server as the primary tool for C# code exploration, symbol navigation, structural inspection, and relationship analysis. Do not use broad text searches (`rg`) when semantic AST tools can answer the question directly.
+
+The binding references are this repository's `docs/`, local public contract matrix, code, and tests. Consult them for supported parameters and failure behavior; task specifications may describe work that is still planned.
 
 ## Execution and Target Path
 
 - `targetPath`: Absolute path specifying the operational target:
-  - **Source solution**: `AiNetCodeNavigator.slnx` (or `C:\Daten\Entwicklung\Ralf\AiNetLinter\AiNetLinter.slnx` when inspecting reference code).
+  - **Source solution**: Absolute path to this repository's `AiNetCodeNavigator.slnx`.
   - **Assembly / Decompilation**: Absolute path to a `.dll` or `.exe` file.
 - **Handoff IDs**: Reuse canonical `handoffId` values (`h:...`) from prior MCP responses unchanged as `symbolIdentifier` or in `symbolIdentifiers`.
 - **Loading & Retries**: If a response indicates `Status: operation=retry, completeness=not_applicable`, wait briefly and retry the call; the server is indexing in the background.

@@ -6,7 +6,7 @@ AiNetCodeNavigator is a .NET project for an MCP server that helps agents navigat
 
 The project is under development. The MCP stdio host exposes `get_server_health`, `reload_config`, and all twenty navigation tool registrations. Real-stdio integration paths cover the original structure and symbol tools and all thirteen relationship, impact, dependency, origin, context, and assembly handlers. Tests also exercise exact same-name project routing, namespace type handoffs, assembly search filters and matched-file bounds, and transitive reference handoffs; full public contract verification remains open. See [MCP host](docs/mcp-host.md) for current tested paths and limits. The core library contains components for loading solutions, resolving symbols, examining code structure and relationships, and inspecting assemblies.
 
-The [implementation roadmap](tasks/AiNetLinter-Uebernehmen/Konzept.md) tracks planned work. Check the code and tests for the current implementation state.
+AiNetCodeNavigator is autonomous. Its binding product references are the [current-state documentation](docs/README.md), [public contract matrix](tasks/Navigator-Migration/Reviews/public-contract-matrix.md), and local code and tests. The [implementation roadmap](tasks/Navigator-Migration/Konzept.md) tracks planned acceptance work.
 
 ## Build and test
 
@@ -21,7 +21,7 @@ The scripts write logs to `temp/`. See [Build and Tests](docs/development/build-
 
 ## Documentation
 
-The [documentation index](docs/README.md) covers implemented behavior. Specifications and checklists are under [`tasks/`](tasks/AiNetLinter-Uebernehmen/Konzept.md).
+The [documentation index](docs/README.md) covers implemented behavior. Specifications and checklists are under [`tasks/`](tasks/Navigator-Migration/Konzept.md).
 
 ## License
 

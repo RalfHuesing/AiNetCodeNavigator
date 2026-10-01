@@ -6,7 +6,7 @@
   - [x] `FindSymbolScanner`: Filter nach Namen/Patterns, `SymbolKind`, `scopeType` (`production`, `tests`, `all`), generated source standardmäßig ausschließen und gezielt einbeziehen
   - [x] FastTests für Symbolsuche (Name/Pattern, `SymbolKind` einschließlich Delegate/Record-Varianten, Produktions-/Testprojekt-Scope, generated source und Mehrprojektfall)
   - [x] Complete the public kind vocabulary (`delegate`, `record class`, `record struct`) and make plain `struct` exclude record structs; cover each kind and mismatch with FastTests.
-  - [x] Apply the reference `includeGenerated` default and opt-in to source locations across all scopes; cover generated path/header and mixed-source declarations with FastTests.
+  - [x] Apply the local `includeGenerated` default and opt-in to source locations across all scopes; cover generated path/header and mixed-source declarations with FastTests.
   - [x] Review/Audit zu 4.1 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.2 Symbol-Body-Extraktion (`get_symbol_body`-Engine):
   - [x] `SourceSymbolBodyResolver`: Syntax-Extraktion aus AST mit Paginierung (`startLine`, `maxBodyLines`)
@@ -47,7 +47,7 @@
   - [x] Gemeinsame Core-Auflösung für Body-, Feature-Context- und Class-Structure-Folgeaufrufe; Kandidaten mit Signature, Pfad/Position, Projekt, Doc-ID und auswählbarer `h:`-ID zurückgeben.
   - [x] Vertragstests für Doc-IDs, qualified/simple names, absolute Position, line-only Position, Mehrdeutigkeit, Invalid-Position-Fehler und Handoff-Roundtrips zu allen drei Folge-Scannern.
   - [x] Source-only Grenzfälle abdecken: keine Metadata-only Treffer wie `System.String`, und Literal-/Punctuation-Positionen nicht über umgebende Deklarationen auflösen.
-  - [x] AiNetLinter read-only vergleichen und den gemeinsamen Resolver-Vertrag in der Current-State-Dokumentation festhalten.
+  - [x] Lokale Navigator-Spezifikationen, Verträge und Tests abgleichen und den gemeinsamen Resolver-Vertrag in der Current-State-Dokumentation festhalten.
   - [x] Review/Audit zu 4.7 durchführen; Findings ergänzen und umsetzen.
 - [x] 4.8 Test-Kontext fachlich absichern: gleichnamige Testklassen in verschiedenen Projekten getrennt erhalten, xUnit/NUnit/MSTest korrekt klassifizieren und Empfehlungen als Heuristik ausweisen; Tests für Mehrprojektfälle und `TestMethodAttribute` ergänzen.
   - [x] Fixture-Kandidaten genau einmal solutionweit sammeln, gleichnamige Typen projektbezogen getrennt halten und Projektname/Pfad/Handoff als Auswahlkontext ausgeben.
@@ -55,5 +55,5 @@
   - [x] Name-only Treffer ohne Framework-Attribut ausdrücklich als `Unknown`/Heuristik dokumentieren und mit Core-Vertragstest belegen.
   - [x] Statischen Heuristikmodus als `TestContextPayload.EvidenceMode` und im Feature-Context-Markdown sichtbar ausgeben.
   - [x] `FeatureContextPayload`-Scanergebnisse strukturiert mit `EvidenceMode = static-test-candidates-only` kennzeichnen; Totals und Kandidaten-Handoffs bleiben nutzbar.
-  - [x] AiNetLinter read-only mit der projekt-/dateibezogenen Kandidatenausgabe und dem `static-test-candidates-only`-Vertrag vergleichen.
+  - [x] Projekt-/dateibezogene Kandidatenausgabe mit dem lokalen `static-test-candidates-only`-Vertrag und den Navigator-Tests abgleichen.
   - [x] Review/Audit zu 4.8 durchführen; Findings ergänzen und umsetzen.

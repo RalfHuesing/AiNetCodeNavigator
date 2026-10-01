@@ -29,7 +29,7 @@ The numbered roadmap still has **13 open points**. This table also records the o
 - After the user-authorized AiNetReview test adaptation: official build passed with 0 warnings/errors; standalone FastTests passed 560/560 with 0 skips; standalone IntegrationTests passed 30/30 with 0 skips in 11:57. The lifecycle case passed in 24.3681458 seconds in that integration TRX.
 - The latest full `test.ps1` run passed its FastTests segment 560/560 with 0 skips, then was interrupted during IntegrationTests. It has no complete final result or successful full-suite exit evidence. No replacement gate was started after the stop.
 - The earlier full run failed only the obsolete AiNetReview root-view path assertion (FastTests 559/560); its IntegrationTests passed 30/30 in 12:04. The adapted reporting test subsequently passed a focused run 1/1 in 30.8541640 seconds and the standalone/full FastTests segments above.
-- Static logs and TRX files are overwritten by later runs. The recorded completed results above must not be confused with the interrupted latest full run. Changes are preserved by the stop commit; external AiNetLinter/AiNetReview repositories and the installed AiNetReview binary were not modified.
+- Static logs and TRX files are overwritten by later runs. The recorded completed results above must not be confused with the interrupted latest full run. Changes are preserved by the stop commit.
 
 ## Historical audit provenance
 

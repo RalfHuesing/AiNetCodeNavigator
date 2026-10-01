@@ -1,11 +1,11 @@
-# AiNetCodeNavigator – Architektonische Notizen & Differenzen zu AiNetLinter
+# AiNetCodeNavigator – Architektonische Notizen
 
 ## MCP-Server & Prozessmodell
 
-- **Nur als direkter Stdio-MCP-Host implementiert (kein ThinClient / Daemon wie bei AiNetLinter):**
+- **Nur als direkter Stdio-MCP-Host implementiert (kein ThinClient / Daemon):**
   - Kein zentraler Daemon über Named Pipes: Jeder gestartete Stdio-Prozess hält seine eigene `NavigatorHostRuntime` und lädt die Solution separat via `MSBuildWorkspace`.
   - **Risiko bei Multi-Agenten-Betrieb:** Wenn ein Agentensystem mehrere parallele Subagenten mit jeweils eigener Stdio-Instanz startet, vervielfachen sich RAM-Verbrauch, Startup-Ladezeiten und parallele MSBuild-Dateizugriffe.
-  - *Praxisprüfung erforderlich:* Da der Linter- und Metrik-Teil entfallen ist, ist der Speicherbedarf pro Instanz geringer als bei AiNetLinter (~1,5–3 GB statt ~10 GB bei 180k LOC), aber bei mehreren parallelen Prozessen summiert es sich dennoch. AiNetLinter hatte mit Daemon + ThinClient am Ende keine Probleme; technisch ist der direkte Stdio-Host zwar einfacher, bei parallelen Prozessen aber potenziell ressourcenhungriger.
+  - *Praxisprüfung erforderlich:* Speicherbedarf, Kaltstartzeit und parallele MSBuild-Zugriffe müssen mit lokalen Navigator-Szenarien gemessen werden. Mehrere Stdio-Prozesse halten jeweils eigene residente Daten; belastbare Größenordnungen ergeben sich aus den lokalen Messungen.
 
 - **Kaltstart-Latenz zwischen separaten Agenten-Sessions:**
   - Da kein langlebiger Daemon im Hintergrund weiterläuft, erlischt der In-Memory-Cache beim Beenden der Stdio-Session (EOF). Eine spätere neue Session muss MSBuild neu initialisieren und die Solution erneut laden (5–20 s Initialisierungszeit bei großen Projekten).
@@ -21,6 +21,5 @@
   - Wenn sich der Code ändert oder ein Snapshot stale wird, bricht der Server mit `STALE_HANDOFF` bzw. `INVALID_HANDOFF` ab. Es gibt kein stillschweigendes Raten/Namensauflösen mehr – der Agent muss über `find_symbol` neu suchen.
 
 - **Keine Volltext- / Nicht-C#-Suche (`search_pattern`) – *(Einstufung: fraglich)*:**
-  - In AiNetLinter gab es `search_pattern` für Regex-/Textsuche in Nicht-C#-Dateien (`.json`, `.xml`, `.sql`, etc.).
-  - In AiNetCodeNavigator entfallen (reine C#-Semantik).
+  - `search_pattern` für Nicht-C#-Dateien (`.json`, `.xml`, `.sql` usw.) gehört nicht zum Navigator-Katalog; dessen Umfang ist C#-Navigation.
   - *Bewertung: Fraglich als echter Nachteil*, da moderne Agentensysteme bereits eigene, optimierte Volltext-Werkzeuge (Ripgrep, Grep-Tools, IDE-File-Search) standardmäßig mitbringen.

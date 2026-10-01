@@ -14,5 +14,5 @@
   - [ ] `pwsh -File ./scripts/build.ps1` (0 Warnungen, 0 Fehler)
   - [ ] `pwsh -File ./scripts/test.ps1` (100% bestandene Tests)
   - [ ] Review/Audit zu 11.3 durchführen; Findings ergänzen und umsetzen.
-- [ ] 11.4 Abnahmematrix aus AiNetLinter-Verhalten und Navigator-Vertrag erstellen: für jedes der 22 Werkzeuge mindestens Erfolg, relevante Filter, Handoff/Folgeaufruf, Pagination/Budget und Fehlerszenarien nachweisen; ausdrücklich ausgeschlossene Linter-, Metrik- und Schreibwerkzeuge dürfen nicht registriert sein.
+- [ ] 11.4 Abnahmematrix aus lokalen Navigator-Spezifikationen, öffentlicher Vertragsmatrix und Tests erstellen: für jedes der 22 Werkzeuge mindestens Erfolg, relevante Filter, Handoff/Folgeaufruf, Pagination/Budget und Fehlerszenarien nachweisen; ausdrücklich ausgeschlossene Linter-, Metrik- und Schreibwerkzeuge dürfen nicht registriert sein.
   - [ ] Review/Audit zu 11.4 durchführen; Findings ergänzen und umsetzen.
