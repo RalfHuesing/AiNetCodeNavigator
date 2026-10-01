@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Common;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
 
 namespace AiNetCodeNavigator.Core.Symbols;
@@ -37,8 +38,9 @@ public static class FindReferencesResolver
         int maxNodes = DefaultMaxVisitedSymbols,
         SymbolScopeType scope = SymbolScopeType.All,
         bool includeGenerated = false,
-        Func<ISymbol, string?>? handoffFormatter = null)
-        => await FindReferencesAsyncCore(targetSymbol, solution, maxResults, depth, maxNodes, ct, scope, includeGenerated, handoffFormatter).ConfigureAwait(false);
+        Func<ISymbol, string?>? handoffFormatter = null,
+        string? ownerTargetPath = null)
+        => await FindReferencesAsyncCore(targetSymbol, solution, maxResults, depth, maxNodes, ct, scope, includeGenerated, handoffFormatter, ownerTargetPath).ConfigureAwait(false);
 
     private static async Task<FindReferencesResult> FindReferencesAsyncCore(
         ISymbol targetSymbol,
@@ -49,7 +51,8 @@ public static class FindReferencesResolver
         CancellationToken ct,
         SymbolScopeType scope,
         bool includeGenerated,
-        Func<ISymbol, string?>? handoffFormatter = null)
+        Func<ISymbol, string?>? handoffFormatter = null,
+        string? ownerTargetPath = null)
     {
         ArgumentNullException.ThrowIfNull(targetSymbol);
         ArgumentNullException.ThrowIfNull(solution);
@@ -60,7 +63,8 @@ public static class FindReferencesResolver
         var effectiveNodeLimit = Math.Min(maxNodes, DefaultMaxVisitedSymbols);
         var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
-        var entries = new List<(ReferenceLocationEntry Entry, string ReachedFromSymbolId)>();
+        var entries = new List<(ReferenceLocationEntry Entry, ISymbol? CallerSymbol, ISymbol ReachedFromSymbol,
+            string CallerProjectPath, string CallerProjectId, string CallerSymbolId, string ReachedFromSymbolId)>();
         var queue = new Queue<(ISymbol Symbol, int Depth)>();
         var visited = new HashSet<ISymbol>(SymbolEqualityComparer.Default) { targetSymbol };
         queue.Enqueue((targetSymbol, 1));
@@ -112,7 +116,7 @@ public static class FindReferencesResolver
                     }
 
                     var semanticModel = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false);
-                    var enclosing = semanticModel?.GetEnclosingSymbol(loc.Location.SourceSpan.Start);
+                    var enclosing = semanticModel is null ? null : ResolveEnclosingSourceSymbol(semanticModel, loc.Location);
 
                     var callerName = enclosing switch
                     {
@@ -121,18 +125,12 @@ public static class FindReferencesResolver
                         _ => enclosing?.Name ?? string.Empty
                     };
 
-                    var callerHandoff = handoffFormatter is null
-                        ? SourceHandoffFormatter.Format(enclosing, solution, handoffIdentity)
-                        : enclosing is null ? null : handoffFormatter(enclosing);
                     var reachedFromName = currentSymbol switch
                     {
                         IMethodSymbol method => $"{method.ContainingType?.Name}.{method.Name}",
                         IPropertySymbol property => $"{property.ContainingType?.Name}.{property.Name}",
                         _ => currentSymbol.Name
                     };
-                    var reachedFromHandoff = handoffFormatter is null
-                        ? SourceHandoffFormatter.Format(currentSymbol, solution, handoffIdentity)
-                        : handoffFormatter(currentSymbol);
 
                     entries.Add((new ReferenceLocationEntry(
                             FilePath: relPath,
@@ -140,11 +138,17 @@ public static class FindReferencesResolver
                             Column: column,
                             Snippet: snippet,
                             EnclosingSymbolName: callerName,
-                            EnclosingSymbolHandoffId: callerHandoff,
+                            EnclosingSymbolHandoffId: null,
                             ProjectName: doc.Project.Name,
                             Depth: currentDepth,
                             ReachedFromSymbolName: reachedFromName,
-                            ReachedFromSymbolHandoffId: reachedFromHandoff),
+                            ReachedFromSymbolHandoffId: null,
+                            OwnerTargetPath: ownerTargetPath),
+                        enclosing,
+                        currentSymbol,
+                        doc.Project.FilePath is { Length: > 0 } projectPath ? Path.GetFullPath(projectPath) : string.Empty,
+                        doc.Project.Id.Id.ToString("N"),
+                        enclosing is null ? string.Empty : RelationshipSymbolIdentity.GetStableId(enclosing),
                         RelationshipSymbolIdentity.GetStableId(currentSymbol)));
 
                     if (currentDepth >= effectiveDepth || enclosing is null) continue;
@@ -163,23 +167,52 @@ public static class FindReferencesResolver
         }
 
         var sorted = entries
-            .GroupBy(item => item.Entry)
+            .GroupBy(item => (item.Entry, item.CallerProjectId, item.CallerSymbolId, item.ReachedFromSymbolId))
             .Select(group => group.First())
             .OrderBy(item => item.Entry.Depth)
-            .ThenBy(item => item.Entry.ProjectName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.CallerProjectPath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.CallerProjectPath, StringComparer.Ordinal)
             .ThenBy(item => item.Entry.FilePath, StringComparer.OrdinalIgnoreCase)
             .ThenBy(item => item.Entry.FilePath, StringComparer.Ordinal)
             .ThenBy(item => item.Entry.Line)
+            .ThenBy(item => item.Entry.ProjectName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(item => item.Entry.EnclosingSymbolName, StringComparer.Ordinal)
-            .ThenBy(item => item.Entry.EnclosingSymbolHandoffId, StringComparer.Ordinal)
+            .ThenBy(item => item.CallerProjectId, StringComparer.Ordinal)
+            .ThenBy(item => item.CallerSymbolId, StringComparer.Ordinal)
             .ThenBy(item => item.ReachedFromSymbolId, StringComparer.Ordinal)
-            .ThenBy(item => item.Entry.ReachedFromSymbolHandoffId, StringComparer.Ordinal)
             .ThenBy(item => item.Entry.Column)
             .Select(item => item.Entry)
             .ToList();
 
         var isTruncated = sorted.Count > normalizedMaxResults;
-        var shown = sorted.Take(normalizedMaxResults).ToList();
+        var shown = entries
+            .GroupBy(item => (item.Entry, item.CallerProjectId, item.CallerSymbolId, item.ReachedFromSymbolId))
+            .Select(group => group.First())
+            .OrderBy(item => item.Entry.Depth)
+            .ThenBy(item => item.CallerProjectPath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.CallerProjectPath, StringComparer.Ordinal)
+            .ThenBy(item => item.Entry.FilePath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Entry.FilePath, StringComparer.Ordinal)
+            .ThenBy(item => item.Entry.Line)
+            .ThenBy(item => item.Entry.ProjectName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Entry.EnclosingSymbolName, StringComparer.Ordinal)
+            .ThenBy(item => item.CallerProjectId, StringComparer.Ordinal)
+            .ThenBy(item => item.CallerSymbolId, StringComparer.Ordinal)
+            .ThenBy(item => item.ReachedFromSymbolId, StringComparer.Ordinal)
+            .ThenBy(item => item.Entry.Column)
+            .Take(normalizedMaxResults)
+            .Select(item => item.Entry with
+            {
+                EnclosingSymbolHandoffId = item.CallerSymbol is null
+                    ? null
+                    : handoffFormatter is null
+                        ? SourceHandoffFormatter.Format(item.CallerSymbol, solution, handoffIdentity)
+                        : handoffFormatter(item.CallerSymbol),
+                ReachedFromSymbolHandoffId = handoffFormatter is null
+                    ? SourceHandoffFormatter.Format(item.ReachedFromSymbol, solution, handoffIdentity)
+                    : handoffFormatter(item.ReachedFromSymbol),
+            })
+            .ToList();
 
         return new FindReferencesResult(
             TargetSymbolName: targetSymbol.Name,
@@ -197,6 +230,19 @@ public static class FindReferencesResolver
 
     private static ISymbol? NormalizeToOwningMember(ISymbol? symbol) =>
         symbol is IMethodSymbol { AssociatedSymbol: { } owner } ? owner : symbol;
+
+    private static ISymbol? ResolveEnclosingSourceSymbol(SemanticModel semanticModel, Location location)
+    {
+        var enclosing = semanticModel.GetEnclosingSymbol(location.SourceSpan.Start);
+        if (enclosing is not null and not INamespaceSymbol) return enclosing;
+
+        var node = location.SourceTree?.GetRoot().FindNode(location.SourceSpan, getInnermostNodeForTie: true);
+        var declared = node?.AncestorsAndSelf()
+            .OfType<MemberDeclarationSyntax>()
+            .Select(member => semanticModel.GetDeclaredSymbol(member))
+            .FirstOrDefault(symbol => symbol is not null);
+        return declared ?? enclosing;
+    }
 
     public static async Task<FindImplementationsResult> FindImplementationsAsync(
         ISymbol targetSymbol,

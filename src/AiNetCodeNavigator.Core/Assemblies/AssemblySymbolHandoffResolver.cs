@@ -105,6 +105,7 @@ public sealed class AssemblySymbolHandoffAccess : IAsyncDisposable
     public IAssemblySymbol Assembly => sessionAccess.Generation.Snapshot.Compilation.Assembly;
     public DecompiledProjectPaths? DecompiledProjectPaths => sessionAccess.Generation.DecompiledProjectPaths;
     public AssemblyOrigin Origin => sessionAccess.Generation.Origin;
+    public AssemblyIdentityDto Identity => sessionAccess.Generation.Identity;
     public long Generation => sessionAccess.Generation.Number;
     public string ReferenceSnapshotHash => sessionAccess.Generation.ReferenceSnapshotHash;
 

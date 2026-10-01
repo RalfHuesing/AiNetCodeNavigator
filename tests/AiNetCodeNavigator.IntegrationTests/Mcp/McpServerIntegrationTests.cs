@@ -930,9 +930,13 @@ public sealed class McpServerIntegrationTests
         using var fixture = TestTempDirectory.Create("assembly-owner-stdio-");
         var configPath = Path.Combine(Path.GetTempPath(), "ainet-owner-" + Guid.NewGuid().ToString("N") + ".json");
         var hostLogDirectory = Path.Combine(Path.GetTempPath(), "ainet-owner-logs-" + Guid.NewGuid().ToString("N"));
-        var cPath = AssemblyTestHelper.EmitAssembly(fixture, "ClosureC", "namespace ClosureFixture; public class ClosureOnlyC { public string Value => \"from C\"; }");
-        var bPath = AssemblyTestHelper.EmitAssembly(fixture, "ClosureB", "namespace ClosureFixture; public class ClosureB : ClosureOnlyC { }", cPath);
-        var aPath = AssemblyTestHelper.EmitAssembly(fixture, "ClosureA", "namespace ClosureFixture; public class ClosureA { public string Read() => new ClosureB().GetType().Name; }", bPath, cPath);
+        var cPath = AssemblyTestHelper.EmitAssembly(fixture, "ClosureC", "[assembly: System.Reflection.AssemblyVersion(\"4.2.0.0\")] namespace ClosureFixture; public class ClosureOnlyC { public string Value => \"from C\"; public string Read() => Value; public string LocalRun() => Read(); }");
+        var bPath = AssemblyTestHelper.EmitAssembly(fixture, "ClosureB", "namespace ClosureFixture; public class ClosureB : ClosureOnlyC { public string Run() => Read(); }", cPath);
+        var aPath = AssemblyTestHelper.EmitAssembly(fixture, "ClosureA", "namespace ClosureFixture; public class ClosureA { public string Run() => new ClosureB().Run(); }", bPath, cPath);
+        var foreignPath = AssemblyTestHelper.EmitAssembly(fixture, "ClosureForeign", "namespace ClosureFixture; public class ForeignMarker { }");
+        await using (var cImage = File.OpenRead(cPath))
+        using (var cPe = new PEReader(cImage))
+            Assert.Equal(new Version(4, 2, 0, 0), cPe.GetMetadataReader().GetAssemblyDefinition().Version);
         await using var aImage = File.OpenRead(aPath);
         using var aPe = new PEReader(aImage);
         var aMetadata = aPe.GetMetadataReader();
@@ -971,6 +975,74 @@ public sealed class McpServerIntegrationTests
             Assert.Contains($"targetPath: {ownedCPath}", GetFirstText(find), StringComparison.OrdinalIgnoreCase);
             var handoff = ExtractHandoff(GetFirstText(find));
 
+            await SendRequestAsync(process, 17, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = aPath, namePatterns = new[] { "ClosureOnlyC.Read" }, kind = "method", includeReferences = true, maxResults = 10 },
+            }, timeout.Token);
+            var methodFind = await ReadResponseAsync(process, 17, timeout.Token);
+            for (var requestId = 18; GetFirstText(methodFind).Contains("operation=running", StringComparison.Ordinal) && requestId < 19; requestId++)
+            {
+                var operationToken = ReadStringLine(GetFirstText(methodFind), "operationToken");
+                await SendRequestAsync(process, requestId, "tools/call", new
+                {
+                    name = "find_symbol",
+                    arguments = new { targetPath = aPath, namePatterns = new[] { "ClosureOnlyC.Read" }, kind = "method", includeReferences = true, maxResults = 10, operationToken },
+                }, timeout.Token);
+                methodFind = await ReadResponseAsync(process, requestId, timeout.Token);
+            }
+            Assert.False(methodFind.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(methodFind));
+            Assert.Contains($"targetPath: {ownedCPath}", GetFirstText(methodFind), StringComparison.OrdinalIgnoreCase);
+            var methodHandoff = ExtractHandoff(GetFirstText(methodFind));
+
+            await SendRequestAsync(process, 19, "tools/call", new
+            {
+                name = "find_references",
+                arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 1, maxResults = 20 },
+            }, timeout.Token);
+            var closureReferences = await ReadResponseAsync(process, 19, timeout.Token);
+            Assert.False(closureReferences.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(closureReferences));
+            var closureText = GetFirstText(closureReferences);
+            Assert.Contains("ClosureB.Run", closureText, StringComparison.Ordinal);
+            var closurePayload = ParsePayload(closureText);
+            var bCaller = closurePayload.GetProperty("references").EnumerateArray()
+                .Single(entry => entry.GetProperty("enclosingSymbolName").GetString() == "ClosureB.Run");
+            Assert.Equal(Path.GetFullPath(bPath), bCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
+            var bCallerHandoff = bCaller.GetProperty("enclosingSymbolHandoffId").GetString();
+            Assert.StartsWith("h:", bCallerHandoff, StringComparison.Ordinal);
+            await SendRequestAsync(process, 28, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = bPath, symbolIdentifiers = new[] { bCallerHandoff } },
+            }, timeout.Token);
+            var bCallerBody = await ReadResponseAsync(process, 28, timeout.Token);
+            Assert.False(bCallerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(bCallerBody));
+            Assert.Contains("Run()", GetFirstText(bCallerBody), StringComparison.Ordinal);
+
+            var cCaller = closurePayload.GetProperty("references").EnumerateArray()
+                .Single(entry => entry.GetProperty("enclosingSymbolName").GetString() == "ClosureOnlyC.LocalRun");
+            Assert.Equal(ownedCPath, cCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
+            var cCallerHandoff = cCaller.GetProperty("enclosingSymbolHandoffId").GetString();
+            Assert.StartsWith("h:", cCallerHandoff, StringComparison.Ordinal);
+            await SendRequestAsync(process, 29, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = ownedCPath, symbolIdentifiers = new[] { cCallerHandoff } },
+            }, timeout.Token);
+            var cCallerBody = await ReadResponseAsync(process, 29, timeout.Token);
+            Assert.False(cCallerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(cCallerBody));
+            Assert.Contains("LocalRun()", GetFirstText(cCallerBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 32, "tools/call", new
+            {
+                name = "find_references",
+                arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 2, maxResults = 20 },
+            }, timeout.Token);
+            var depthTwoReferences = await ReadResponseAsync(process, 32, timeout.Token);
+            Assert.False(depthTwoReferences.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(depthTwoReferences));
+            Assert.Contains("completeness=truncated", GetFirstText(depthTwoReferences), StringComparison.Ordinal);
+            Assert.Contains("Cross-assembly caller chaining", GetFirstText(depthTwoReferences), StringComparison.Ordinal);
+
             await SendRequestAsync(process, 20, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -980,6 +1052,46 @@ public sealed class McpServerIntegrationTests
             Assert.False(ownerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(ownerBody));
             Assert.Contains("ClosureOnlyC", GetFirstText(ownerBody), StringComparison.Ordinal);
             Assert.Contains("from C", GetFirstText(ownerBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 14, "tools/call", new
+            {
+                name = "find_references",
+                arguments = new { targetPath = aPath, symbolIdentifier = handoff, includeReferences = true, depth = 1, maxResults = 20 },
+            }, timeout.Token);
+            var typeReferences = await ReadResponseAsync(process, 14, timeout.Token);
+            Assert.False(typeReferences.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(typeReferences));
+            var typeReferencePayload = ParsePayload(GetFirstText(typeReferences));
+            var baseReference = typeReferencePayload.GetProperty("references").EnumerateArray()
+                .FirstOrDefault(entry => entry.GetProperty("enclosingSymbolName").GetString() == "ClosureB");
+            Assert.False(baseReference.ValueKind == JsonValueKind.Undefined, GetFirstText(typeReferences));
+            Assert.Equal(Path.GetFullPath(bPath), baseReference.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
+            var derivedTypeHandoff = baseReference.GetProperty("enclosingSymbolHandoffId").GetString();
+            Assert.StartsWith("h:", derivedTypeHandoff, StringComparison.Ordinal);
+            await SendRequestAsync(process, 15, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = bPath, symbolIdentifiers = new[] { derivedTypeHandoff } },
+            }, timeout.Token);
+            var derivedTypeBody = await ReadResponseAsync(process, 15, timeout.Token);
+            Assert.False(derivedTypeBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(derivedTypeBody));
+            Assert.Contains("ClosureB", GetFirstText(derivedTypeBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 30, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = foreignPath, pattern = "ForeignMarker", kind = "class", maxResults = 10 },
+            }, timeout.Token);
+            var foreignFind = await ReadResponseAsync(process, 30, timeout.Token);
+            Assert.False(foreignFind.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignFind));
+            var foreignHandoff = ExtractHandoff(GetFirstText(foreignFind));
+            await SendRequestAsync(process, 31, "tools/call", new
+            {
+                name = "find_references",
+                arguments = new { targetPath = aPath, symbolIdentifier = foreignHandoff, includeReferences = true, depth = 1, maxResults = 20 },
+            }, timeout.Token);
+            var foreignReference = await ReadResponseAsync(process, 31, timeout.Token);
+            Assert.True(foreignReference.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignReference));
+            Assert.Contains("TARGET_MISMATCH", GetFirstText(foreignReference), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 22, "tools/call", new
             {
@@ -1011,7 +1123,7 @@ public sealed class McpServerIntegrationTests
             Assert.Contains("TARGET_MISMATCH", GetFirstText(wrongOwnerBody), StringComparison.Ordinal);
 
             using var replacementFixture = TestTempDirectory.Create("assembly-owner-replacement-");
-            var replacementCPath = AssemblyTestHelper.EmitAssembly(replacementFixture, "ClosureC", "namespace ClosureFixture; public class ClosureOnlyC { public string Value => \"replacement C\"; }");
+            var replacementCPath = AssemblyTestHelper.EmitAssembly(replacementFixture, "ClosureC", "[assembly: System.Reflection.AssemblyVersion(\"4.2.0.0\")] namespace ClosureFixture; public class ClosureOnlyC { public string Value => \"replacement C\"; public string Read() => Value; public string LocalRun() => Read(); }");
             File.Copy(replacementCPath, cPath, overwrite: true);
             await SendRequestAsync(process, 23, "tools/call", new
             {
@@ -1022,6 +1134,15 @@ public sealed class McpServerIntegrationTests
             Assert.True(replacedOldBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(replacedOldBody));
             Assert.Contains("STALE_SNAPSHOT", GetFirstText(replacedOldBody), StringComparison.Ordinal);
             Assert.DoesNotContain("from C", GetFirstText(replacedOldBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 33, "tools/call", new
+            {
+                name = "find_references",
+                arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 1, maxResults = 20 },
+            }, timeout.Token);
+            var staleClosure = await ReadResponseAsync(process, 33, timeout.Token);
+            Assert.True(staleClosure.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(staleClosure));
+            Assert.Contains("STALE_SNAPSHOT", GetFirstText(staleClosure), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 24, "tools/call", new
             {
@@ -1425,7 +1546,7 @@ public sealed class McpServerIntegrationTests
             var incompleteAssemblyReferences = await ReadResponseAsync(process, 63, timeout.Token);
             Assert.False(incompleteAssemblyReferences.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(incompleteAssemblyReferences));
             Assert.Contains("completeness=truncated", GetFirstText(incompleteAssemblyReferences), StringComparison.Ordinal);
-            Assert.Contains("Referenced assembly source is not included yet", GetFirstText(incompleteAssemblyReferences), StringComparison.Ordinal);
+            Assert.Contains("Cross-assembly caller chaining beyond each owner solution is not composed yet", GetFirstText(incompleteAssemblyReferences), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 71, "tools/call", new
             {

@@ -14,7 +14,8 @@ public sealed record ReferenceLocationEntry(
     string ProjectName,
     int Depth = 1,
     string? ReachedFromSymbolName = null,
-    string? ReachedFromSymbolHandoffId = null);
+    string? ReachedFromSymbolHandoffId = null,
+    string? OwnerTargetPath = null);
 
 public sealed record FindReferencesResult(
     string TargetSymbolName,

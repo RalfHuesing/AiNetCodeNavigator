@@ -1,5 +1,7 @@
 #nullable enable
 
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Symbols;
@@ -38,6 +40,93 @@ public sealed class FindReferencesResolverTests
         var resolvedCaller = await SourceSymbolResolver.ResolveAsync(fixture.Solution, caller.EnclosingSymbolHandoffId!);
         Assert.True(resolvedCaller.IsSuccess);
         Assert.Equal("ExecuteSingle", resolvedCaller.Symbol!.Name);
+    }
+
+    [Fact]
+    public async Task FindReferencesAsync_FormatsHandoffsOnlyForVisibleLocations()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\ReferencePage.slnx",
+            new ProjectSpec("Contracts", [("A.cs", "namespace Page; public class Target { public void Run() { } }")]),
+            new ProjectSpec("Callers", [("B.cs", "namespace Page; public class Caller { public void One(Target t) => t.Run(); public void Two(Target t) => t.Run(); public void Three(Target t) => t.Run(); }")], ProjectReferences: ["Contracts"]));
+        var compilation = await fixture.Solution.Projects.Single(project => project.Name == "Contracts").GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var target = compilation.GetTypeByMetadataName("Page.Target")!.GetMembers("Run").OfType<IMethodSymbol>().Single();
+        var formattedSymbols = new List<ISymbol>();
+
+        var result = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, maxResults: 1, depth: 1,
+            handoffFormatter: symbol =>
+            {
+                formattedSymbols.Add(symbol);
+                return $"h:page-{formattedSymbols.Count}";
+            });
+
+        Assert.Single(result.References);
+        Assert.Equal(3, result.TotalCount);
+        Assert.True(result.IsTruncated);
+        Assert.Equal(2, formattedSymbols.Count);
+        Assert.NotNull(result.References[0].EnclosingSymbolHandoffId);
+        Assert.NotNull(result.References[0].ReachedFromSymbolHandoffId);
+    }
+
+    [Fact]
+    public async Task FindReferencesAsync_PreservesLinkedFileOwnersWithDuplicateProjectNames()
+    {
+        const string linkedPath = @"C:\VirtualRepo\Shared\Caller.cs";
+        const string linkedContent = "namespace Linked; public class Caller { public void Invoke(Contracts.Target target) => target.Run(); }";
+        var workspace = new AdhocWorkspace();
+        try
+        {
+            var solutionPath = @"C:\VirtualRepo\LinkedOwners.slnx";
+            var solution = workspace.AddSolution(SolutionInfo.Create(SolutionId.CreateNewId(), VersionStamp.Create(), filePath: solutionPath));
+            var contractsId = ProjectId.CreateNewId("Contracts");
+            var contracts = ProjectInfo.Create(contractsId, VersionStamp.Create(), "Contracts", "Contracts", LanguageNames.CSharp,
+                    filePath: @"C:\VirtualRepo\Contracts\Contracts.csproj")
+                .WithMetadataReferences(TestWorkspaceBuilder.CoreReferences)
+                .WithCompilationOptions(new Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions(Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary));
+            solution = solution.AddProject(contracts).AddDocument(DocumentId.CreateNewId(contractsId), "Target.cs",
+                "namespace Contracts; public class Target { public void Run() { } }", filePath: @"C:\VirtualRepo\Contracts\Target.cs");
+
+            var callerProjects = new List<ProjectId>();
+            foreach (var projectPath in new[] { @"C:\VirtualRepo\First\Shared.csproj", @"C:\VirtualRepo\Second\Shared.csproj" })
+            {
+                var projectId = ProjectId.CreateNewId("Shared");
+                callerProjects.Add(projectId);
+                var project = ProjectInfo.Create(projectId, VersionStamp.Create(), "Shared", "Shared", LanguageNames.CSharp,
+                        filePath: projectPath)
+                    .WithMetadataReferences(TestWorkspaceBuilder.CoreReferences)
+                    .WithProjectReferences([new ProjectReference(contractsId)])
+                    .WithCompilationOptions(new Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions(Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary));
+                solution = solution.AddProject(project).AddDocument(DocumentId.CreateNewId(projectId), "Caller.cs", linkedContent, filePath: linkedPath);
+            }
+
+            Assert.True(workspace.TryApplyChanges(solution));
+            solution = workspace.CurrentSolution;
+            var compilation = await solution.GetProject(contractsId)!.GetCompilationAsync();
+            var target = compilation!.GetTypeByMetadataName("Contracts.Target")!.GetMembers("Run").OfType<IMethodSymbol>().Single();
+            var result = await FindReferencesResolver.FindReferencesAsync(target, solution, maxResults: 10);
+
+            Assert.Equal(2, result.TotalCount);
+            Assert.Equal(2, result.References.Count);
+            Assert.All(result.References, reference => Assert.Equal("Shared", reference.ProjectName));
+            var ownerPaths = new List<string?>();
+            foreach (var reference in result.References)
+            {
+                var resolved = await SourceSymbolResolver.ResolveAsync(solution, reference.EnclosingSymbolHandoffId!);
+                Assert.True(resolved.IsSuccess);
+                var sourceTree = Assert.Single(resolved.Symbol!.Locations.Where(location => location.IsInSource)).SourceTree;
+                ownerPaths.Add(solution.GetDocument(sourceTree!)!.Project.FilePath);
+            }
+            Assert.Equal(2, ownerPaths.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+            Assert.Equal(2, ownerPaths.Count(path => path == @"C:\VirtualRepo\First\Shared.csproj" || path == @"C:\VirtualRepo\Second\Shared.csproj"));
+            Assert.Equal(@"C:\VirtualRepo\First\Shared.csproj", ownerPaths[0]);
+            Assert.Equal(@"C:\VirtualRepo\Second\Shared.csproj", ownerPaths[1]);
+            Assert.All(result.References, reference => Assert.Equal("Shared/Caller.cs", reference.FilePath));
+        }
+        finally
+        {
+            workspace.Dispose();
+        }
     }
 
     [Fact]
