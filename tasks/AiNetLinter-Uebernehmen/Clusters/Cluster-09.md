@@ -17,6 +17,10 @@
   - [x] Initial symbol slice: `find_symbol`, `get_symbol_body` (source and assembly routing; assembly follow-up via `get_symbol_body`).
   - [x] Initial structure slice: `get_file_skeleton`, `get_class_structure`, `get_file_tree`, `get_namespace_tree`, `get_index_scope`.
   - [x] Register the remaining thirteen navigation handlers and exercise their source/assembly happy paths through real MCP stdio; full public contracts remain open below.
+  - [x] Verified source and assembly ownership, namespace/class structure, dependency edge, and body/skeleton consumer slices with real stdio handoffs.
+  - [x] Verified Root → B → C relationship traversal through depth 2, fixture depth-3 queries, and owner-bound relationship handoffs for references, call tree, impact, and assembly context.
+  - [x] Verified raw managed-assembly symbol inputs (names, documentation IDs, positions, line-only) and selectable owner-bound ambiguity results through public consumers.
+  - [x] Verified Git change-context hunk mapping, sibling declarations, staged/unstaged/untracked changes, deletion completeness, repository status, and invalid refs through real stdio fixtures.
   - [ ] Complete all twenty navigation contracts, including public budget/error recovery, assembly-reference consumer closure, and full parameter/filter parity.
   - [ ] Beziehungs-Tools: `get_call_tree`, `find_references`, `get_type_hierarchy`, `find_implementations`, `get_impact`, `dependency_graph`, `resolve_type_origin`
   - [ ] Assembly-Tools: `get_assembly_context`, `inspect_assembly`, `search_assembly`, `find_assembly_extensions`
@@ -28,4 +32,4 @@
 - [ ] 9.4 Realen Host-Lebenszyklus verifizieren: Stdio-Handshake, parallele Anfragen, Cancellation, Neustart, Logging nur auf `stderr`/Datei und sauberes Herunterfahren; der bisherige Typ-Existenztest genügt dafür nicht.
   - [ ] Review/Audit zu 9.4 durchführen; Findings ergänzen und umsetzen.
 
-Point 9.1 is closed after [independent audit 2/3](../Reviews/Cluster-09.md#point-91-independent-audit-23--accepted) accepted fixed commit `3cd6919e9c2c8f2c543082cd93fb662f2e406ae5`. All twenty navigation tools are now registered beside the two maintenance tools, and real stdio tests exercise the thirteen Cluster 9.2 handlers. Point 9.2 remains open for complete public contract parity and its independent audit. Point 8.5 remains 0/3 pending full per-tool acceptance, and later lifecycle/product acceptance remains separate work.
+Point 9.1 is closed after [independent audit 2/3](../Reviews/Cluster-09.md#point-91-independent-audit-23--accepted) accepted fixed commit `3cd6919e9c2c8f2c543082cd93fb662f2e406ae5`. All twenty navigation tools are now registered beside the two maintenance tools. Several source/assembly, relationship, raw-input, and Git change-context contract slices have verified real-stdio evidence, but the full parameter/default/filter, cancellation, budget, and rendering matrix remains open. Point 9.2 and its independent audit remain open at 0/3. Point 8.5 remains 0/3 pending full per-tool acceptance, and later lifecycle/product acceptance remains separate work.

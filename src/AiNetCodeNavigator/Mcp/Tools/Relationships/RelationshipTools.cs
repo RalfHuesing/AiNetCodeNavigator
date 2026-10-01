@@ -996,77 +996,240 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         var directory = Path.GetDirectoryName(target.CanonicalPath)!;
         var rootResult = await RunGitAsync(directory, ["rev-parse", "--show-toplevel"], ct).ConfigureAwait(false);
         if (rootResult.ExitCode != 0)
-            return NavigationToolSupport.Success(new { impactStatus = "not_git_repository", changedFiles = Array.Empty<string>(), symbols = Array.Empty<object>() });
+            return NavigationToolSupport.Success(new { impactStatus = "not_git_repository", completeness = "not_applicable", totalChangedFiles = 0, totalUnresolvedFiles = 0, totalChangedSymbols = 0, changedFiles = Array.Empty<string>(), unresolvedFiles = Array.Empty<string>(), analyzedSymbols = Array.Empty<object>() });
         var gitRoot = Path.GetFullPath(rootResult.StandardOutput.Trim());
         var reference = gitRef ?? "HEAD";
         var verification = await RunGitAsync(gitRoot, ["rev-parse", "--verify", "--end-of-options", reference + "^{commit}"], ct).ConfigureAwait(false);
         if (verification.ExitCode != 0)
-            return McpToolResults.Recoverable(NavigationErrorCodes.InvalidArgument, "gitRef could not be resolved.", "Provide a commit, branch, or tag that exists in this repository.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+            return McpToolResults.Recoverable(NavigationErrorCodes.InvalidArgument, "gitRef could not be resolved.",
+                "Provide a commit, branch, or tag that exists in this repository.", fieldPath: "$.gitRef",
+                maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
 
         var resolvedCommit = verification.StandardOutput.Trim();
-        var diff = await RunGitAsync(gitRoot, ["diff", "--no-ext-diff", "--no-textconv", "--name-only", "--diff-filter=ACMRD", resolvedCommit, "--"], ct).ConfigureAwait(false);
+        var diff = await RunGitAsync(gitRoot, ["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "--diff-filter=ACMRD", resolvedCommit, "--"], ct).ConfigureAwait(false);
         if (diff.ExitCode != 0)
             return McpToolResults.Recoverable(NavigationErrorCodes.InvalidArgument, "Git could not compute the requested change set.", "Check gitRef and repository availability, then retry.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         var untracked = gitRef is null
-            ? await RunGitAsync(gitRoot, ["ls-files", "--others", "--exclude-standard"], ct).ConfigureAwait(false)
+            ? await RunGitAsync(gitRoot, ["ls-files", "--others", "--exclude-standard", "-z"], ct).ConfigureAwait(false)
             : (0, string.Empty, string.Empty);
-        var changedPaths = diff.StandardOutput.Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
-            .Concat(untracked.Item2.Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries))
-            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (gitRef is null && untracked.Item1 != 0)
+            return McpToolResults.Recoverable(NavigationErrorCodes.TargetUnreadable, "Git could not enumerate untracked files.", "Check repository permissions and retry.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var untrackedPaths = ReadNulDelimitedGitPaths(untracked.Item2).ToHashSet(pathComparer);
+        var changedPaths = ReadNulDelimitedGitPaths(diff.StandardOutput).Concat(untrackedPaths)
+            .Distinct(pathComparer).OrderBy(path => path, pathComparer).ToArray();
         if (changedPaths.Length == 0)
-            return NavigationToolSupport.Success(new { impactStatus = "clean_worktree", changedFiles = Array.Empty<string>(), symbols = Array.Empty<object>() });
+            return NavigationToolSupport.Success(new { impactStatus = "clean_worktree", completeness = "complete", totalChangedFiles = 0, totalUnresolvedFiles = 0, totalChangedSymbols = 0, changedFiles = Array.Empty<string>(), unresolvedFiles = Array.Empty<string>(), analyzedSymbols = Array.Empty<object>() });
         return await WithSource(target, async solution =>
         {
             var byPath = solution.Projects.SelectMany(project => project.Documents)
                 .Where(document => !string.IsNullOrWhiteSpace(document.FilePath))
-                .GroupBy(document => Path.GetFullPath(document.FilePath!), StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.OrderBy(document => document.Project.FilePath, StringComparer.OrdinalIgnoreCase).ToArray(), StringComparer.OrdinalIgnoreCase);
-            var changedSymbols = new List<ISymbol>();
+                .GroupBy(document => Path.GetFullPath(document.FilePath!), pathComparer)
+                .ToDictionary(group => group.Key, group => group.OrderBy(document => document.Project.FilePath, pathComparer).ToArray(), pathComparer);
+            var changedSymbols = new List<GitChangedSymbol>();
+            var seenSymbols = new HashSet<(ProjectId ProjectId, string DeclarationId)>();
+            var unresolvedFiles = new List<string>();
+            var limit = detailLevel == "change-context" ? Math.Clamp(maxChangedSymbols, 1, 100) : 1000;
+            var moreSymbolsExist = false;
             foreach (var relative in changedPaths)
             {
                 ct.ThrowIfCancellationRequested();
-                var fullPath = Path.GetFullPath(Path.Combine(gitRoot, relative));
-                if (!IsWithin(gitRoot, fullPath) || !byPath.TryGetValue(fullPath, out var documents)) continue;
+                string fullPath;
+                try { fullPath = Path.GetFullPath(Path.Combine(gitRoot, relative)); }
+                catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+                {
+                    unresolvedFiles.Add(relative);
+                    continue;
+                }
+                if (!IsWithin(gitRoot, fullPath) || !byPath.TryGetValue(fullPath, out var documents))
+                {
+                    unresolvedFiles.Add(relative);
+                    continue;
+                }
+
+                IReadOnlyList<ChangedLineRange> ranges;
+                var hasDeletionOnlyHunk = false;
+                if (untrackedPaths.Contains(relative))
+                {
+                    ranges = [];
+                    foreach (var document in documents)
+                    {
+                        var root = await document.GetSyntaxRootAsync(ct).ConfigureAwait(false);
+                        if (root is null) continue;
+                        var lastLine = root.SyntaxTree.GetLineSpan(root.FullSpan).EndLinePosition.Line + 1;
+                        if (lastLine > 0) ranges = ranges.Append(new ChangedLineRange(1, lastLine)).ToArray();
+                    }
+                }
+                else
+                {
+                    var fileDiff = await RunGitAsync(gitRoot,
+                        ["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=0", resolvedCommit, "--", ":(literal)" + relative], ct).ConfigureAwait(false);
+                    if (fileDiff.ExitCode != 0)
+                    {
+                        unresolvedFiles.Add(relative);
+                        continue;
+                    }
+                    var parsedDiff = ParseGitNewLineRanges(fileDiff.StandardOutput);
+                    ranges = parsedDiff.Ranges;
+                    hasDeletionOnlyHunk = parsedDiff.HasDeletionOnlyHunk;
+                }
+
+                if (hasDeletionOnlyHunk) unresolvedFiles.Add(relative);
+
+                if (ranges.Count == 0)
+                {
+                    // Pure deletions and non-text changes have no current source span to attribute safely.
+                    unresolvedFiles.Add(relative);
+                    continue;
+                }
+
+                var fileHadMappedChange = false;
                 foreach (var document in documents)
                 {
                     var root = await document.GetSyntaxRootAsync(ct).ConfigureAwait(false);
                     var model = await document.GetSemanticModelAsync(ct).ConfigureAwait(false);
-                    if (root is null || model is null) continue;
-                    foreach (var node in root.DescendantNodes().Where(node => node is Microsoft.CodeAnalysis.CSharp.Syntax.BaseTypeDeclarationSyntax
-                                 or Microsoft.CodeAnalysis.CSharp.Syntax.DelegateDeclarationSyntax or Microsoft.CodeAnalysis.CSharp.Syntax.BaseMethodDeclarationSyntax
-                                 or Microsoft.CodeAnalysis.CSharp.Syntax.PropertyDeclarationSyntax or Microsoft.CodeAnalysis.CSharp.Syntax.EventDeclarationSyntax))
+                    if (root is null || model is null) { unresolvedFiles.Add(relative); continue; }
+                    var declarations = GetImpactDeclarationNodes(root)
+                        .Select(node => (Node: node, Symbol: model.GetDeclaredSymbol(node, ct)))
+                        .Where(candidate => candidate.Symbol is not null
+                            && (detailLevel == "change-context" || IsCallerImpactSymbol(candidate.Symbol)))
+                        .ToArray();
+                    foreach (var range in ranges)
                     {
-                        if (model.GetDeclaredSymbol(node, ct) is { } symbol) changedSymbols.Add(symbol);
-                        if (changedSymbols.Count >= Math.Clamp(maxChangedSymbols, 1, 100)) break;
+                        for (var line = range.StartLine; line <= range.EndLine; line++)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            var matching = declarations.Where(candidate => ContainsLine(candidate.Node, line)).ToArray();
+                            if (matching.Length == 0)
+                            {
+                                unresolvedFiles.Add(relative);
+                                continue;
+                            }
+                            fileHadMappedChange = true;
+                            var innermost = matching.Where(candidate => !matching.Any(other =>
+                                    other.Node != candidate.Node && candidate.Node.Span.Length > other.Node.Span.Length
+                                    && candidate.Node.Span.Contains(other.Node.Span)))
+                                .OrderBy(candidate => candidate.Node.SpanStart).ToArray();
+                            foreach (var candidate in innermost)
+                            {
+                                var symbol = candidate.Symbol!;
+                                var declarationId = DocumentationCommentId.CreateDeclarationId(symbol)
+                                    ?? $"{symbol.Kind}:{symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)}:{candidate.Node.SpanStart}";
+                                if (!seenSymbols.Add((document.Project.Id, declarationId))) continue;
+                                if (changedSymbols.Count < limit)
+                                    changedSymbols.Add(new(symbol, document.Project.Id, document.Project.FilePath ?? string.Empty,
+                                        document.FilePath ?? fullPath, line, declarationId));
+                                else moreSymbolsExist = true;
+                            }
+                        }
                     }
-                    if (changedSymbols.Count >= Math.Clamp(maxChangedSymbols, 1, 100)) break;
                 }
-                if (changedSymbols.Count >= Math.Clamp(maxChangedSymbols, 1, 100)) break;
+                if (!fileHadMappedChange) unresolvedFiles.Add(relative);
             }
-            var distinctSymbols = changedSymbols.Distinct(SymbolEqualityComparer.Default).ToArray();
-            var symbolLimit = detailLevel == "change-context" ? Math.Clamp(maxChangedSymbols, 1, 100) : Math.Clamp(maxResults, 1, 1000);
             var entries = new List<object>();
-            var callSiteCount = 0;
-            foreach (var symbol in distinctSymbols.Take(symbolLimit))
+            var directCallerCount = 0;
+            var analysisIncomplete = false;
+            var testsIncomplete = false;
+            foreach (var change in changedSymbols)
             {
                 ct.ThrowIfCancellationRequested();
-                var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(symbol, solution, maxDepth: 1, maxResults: maxResults, ct: ct).ConfigureAwait(false);
-                callSiteCount += impact.CallSites.Count;
+                var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(change.Symbol, solution, maxDepth: 1, maxResults: maxResults, ct: ct).ConfigureAwait(false);
+                directCallerCount += impact.DirectCallersCount;
+                analysisIncomplete |= impact.IsTruncated || impact.IsTruncatedByNodeLimit || impact.IsDepthClamped;
                 if (detailLevel == "change-context")
                 {
-                    var tests = await TestRecommendationBuilder.BuildAsync(symbol, solution, ct).ConfigureAwait(false);
-                    entries.Add(new { symbol = symbol.ToDisplayString(), impact, testCandidates = tests.TestFixtures.Take(Math.Clamp(maxTestsPerSymbol, 1, 50)).ToArray(), testEvidence = tests.EvidenceMode });
+                    var tests = await TestRecommendationBuilder.BuildAsync(change.Symbol, solution, ct).ConfigureAwait(false);
+                    var testLimit = Math.Clamp(maxTestsPerSymbol, 1, 50);
+                    testsIncomplete |= tests.TestFixtures.Count > testLimit;
+                    entries.Add(new { symbol = change.Symbol.ToDisplayString(), ownerProjectPath = change.ProjectPath,
+                        changedFile = change.FilePath, changedLine = change.Line, impact,
+                        testCandidates = tests.TestFixtures.Take(testLimit).ToArray(), testEvidence = tests.EvidenceMode });
                 }
-                else entries.Add(new { symbol = symbol.ToDisplayString(), impact });
+                else entries.Add(new { symbol = change.Symbol.ToDisplayString(), ownerProjectPath = change.ProjectPath,
+                    changedFile = change.FilePath, changedLine = change.Line, impact });
             }
-            var incomplete = changedPaths.Length > maxResults || distinctSymbols.Length > symbolLimit ||
-                             distinctSymbols.Length < changedPaths.Length || changedPaths.Any(relative => !byPath.ContainsKey(Path.GetFullPath(Path.Combine(gitRoot, relative))));
-            var status = detailLevel == "callers" && callSiteCount == 0 && !incomplete ? "diff_without_callsite_impact" : "changes_found";
+            var incomplete = changedPaths.Length > maxResults || moreSymbolsExist || unresolvedFiles.Count > 0 || analysisIncomplete || testsIncomplete;
+            var distinctUnresolved = unresolvedFiles.Distinct(pathComparer).ToArray();
+            var status = detailLevel == "callers" && directCallerCount == 0 && !incomplete ? "diff_without_callsite_impact" : "changes_found";
             return NavigationToolSupport.Success(new { impactStatus = status, completeness = incomplete ? "partial" : "complete",
-                changedFiles = changedPaths.Take(maxResults).ToArray(), analyzedSymbols = entries }, incomplete,
+                totalChangedFiles = changedPaths.Length, totalUnresolvedFiles = distinctUnresolved.Length, totalChangedSymbols = seenSymbols.Count,
+                changedFiles = changedPaths.Take(maxResults).ToArray(), unresolvedFiles = distinctUnresolved, analyzedSymbols = entries }, incomplete,
                 "Increase maxResults or maxChangedSymbols and repeat the query; inspect listed unresolved files before treating an empty symbol list as complete.");
         }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
     }
+
+    private static IEnumerable<Microsoft.CodeAnalysis.SyntaxNode> GetImpactDeclarationNodes(Microsoft.CodeAnalysis.SyntaxNode root)
+    {
+        foreach (var node in root.DescendantNodesAndSelf())
+        {
+            switch (node)
+            {
+                case Microsoft.CodeAnalysis.CSharp.Syntax.FieldDeclarationSyntax field:
+                    foreach (var variable in field.Declaration.Variables) yield return variable;
+                    break;
+                case Microsoft.CodeAnalysis.CSharp.Syntax.EventFieldDeclarationSyntax eventField:
+                    foreach (var variable in eventField.Declaration.Variables) yield return variable;
+                    break;
+                case Microsoft.CodeAnalysis.CSharp.Syntax.BaseTypeDeclarationSyntax:
+                case Microsoft.CodeAnalysis.CSharp.Syntax.DelegateDeclarationSyntax:
+                case Microsoft.CodeAnalysis.CSharp.Syntax.BaseMethodDeclarationSyntax:
+                case Microsoft.CodeAnalysis.CSharp.Syntax.LocalFunctionStatementSyntax:
+                case Microsoft.CodeAnalysis.CSharp.Syntax.PropertyDeclarationSyntax:
+                case Microsoft.CodeAnalysis.CSharp.Syntax.IndexerDeclarationSyntax:
+                case Microsoft.CodeAnalysis.CSharp.Syntax.EventDeclarationSyntax:
+                    yield return node;
+                    break;
+            }
+        }
+    }
+
+    private static bool ContainsLine(Microsoft.CodeAnalysis.SyntaxNode node, int oneBasedLine)
+    {
+        var lineSpan = node.SyntaxTree.GetLineSpan(node.Span);
+        return lineSpan.StartLinePosition.Line + 1 <= oneBasedLine && lineSpan.EndLinePosition.Line + 1 >= oneBasedLine;
+    }
+
+    private static bool IsCallerImpactSymbol(ISymbol? symbol) => symbol is IMethodSymbol method
+        && method.MethodKind is MethodKind.Ordinary or MethodKind.Constructor or MethodKind.StaticConstructor
+        && method.DeclaredAccessibility is Accessibility.Public or Accessibility.Internal or Accessibility.Protected
+            or Accessibility.ProtectedOrInternal or Accessibility.ProtectedAndInternal;
+
+    private static IReadOnlyList<string> ReadNulDelimitedGitPaths(string output) =>
+        output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+
+    private static (IReadOnlyList<ChangedLineRange> Ranges, bool HasDeletionOnlyHunk) ParseGitNewLineRanges(string diff)
+    {
+        var ranges = new List<ChangedLineRange>();
+        var hasDeletionOnlyHunk = false;
+        foreach (var line in diff.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!line.StartsWith("@@ ", StringComparison.Ordinal)) continue;
+            var plus = line.IndexOf('+');
+            var end = plus < 0 ? -1 : line.IndexOf(' ', plus);
+            var minus = line.IndexOf('-');
+            if (plus < 0 || end < 0 || minus < 0) continue;
+            var oldEnd = line.IndexOf(' ', minus);
+            if (oldEnd < 0) continue;
+            var oldCoordinates = line.AsSpan(minus + 1, oldEnd - minus - 1);
+            var oldComma = oldCoordinates.IndexOf(',');
+            var oldCount = 1;
+            if (oldComma >= 0 && !int.TryParse(oldCoordinates[(oldComma + 1)..], System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out oldCount)) continue;
+            var coordinates = line.AsSpan(plus + 1, end - plus - 1);
+            var comma = coordinates.IndexOf(',');
+            var startSpan = comma < 0 ? coordinates : coordinates[..comma];
+            if (!int.TryParse(startSpan, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var startLine)) continue;
+            var count = 1;
+            if (comma >= 0 && !int.TryParse(coordinates[(comma + 1)..], System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out count)) continue;
+            if (count > 0) ranges.Add(new ChangedLineRange(startLine, startLine + count - 1));
+            else if (oldCount > 0) hasDeletionOnlyHunk = true;
+        }
+        return (ranges, hasDeletionOnlyHunk);
+    }
+
+    private sealed record GitChangedSymbol(ISymbol Symbol, ProjectId ProjectId, string ProjectPath, string FilePath, int Line, string DeclarationId);
+    private readonly record struct ChangedLineRange(int StartLine, int EndLine);
 
     private static async Task<(int ExitCode, string StandardOutput, string StandardError)> RunGitAsync(string workingDirectory, IReadOnlyList<string> arguments, CancellationToken ct)
     {
@@ -1077,7 +1240,13 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
         try { await process.WaitForExitAsync(ct).ConfigureAwait(false); }
-        catch (OperationCanceledException) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false); throw; }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+            await Task.WhenAll(stdout, stderr).ConfigureAwait(false);
+            throw;
+        }
         return (process.ExitCode, await stdout.ConfigureAwait(false), await stderr.ConfigureAwait(false));
     }
 

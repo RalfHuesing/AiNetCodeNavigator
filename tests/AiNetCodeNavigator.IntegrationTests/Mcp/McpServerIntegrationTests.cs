@@ -416,22 +416,6 @@ public sealed class McpServerIntegrationTests
             Assert.False(implementations.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("Counter", GetFirstText(implementations), StringComparison.Ordinal);
 
-            await SendRequestAsync(process, 28, "tools/call", new { name = "get_impact", arguments = new { targetPath = solutionPath, detailLevel = "change-context", maxChangedSymbols = 2 } }, timeout.Token);
-            var changeContext = await ReadResponseAsync(process, 28, timeout.Token);
-            for (var requestId = 29; GetFirstText(changeContext).Contains("operation=running", StringComparison.Ordinal) && requestId < 35; requestId++)
-            {
-                var operationToken = ReadStringLine(GetFirstText(changeContext), "operationToken");
-                await SendRequestAsync(process, requestId, "tools/call", new
-                {
-                    name = "get_impact",
-                    arguments = new { targetPath = solutionPath, detailLevel = "change-context", maxChangedSymbols = 2, operationToken },
-                }, timeout.Token);
-                changeContext = await ReadResponseAsync(process, requestId, timeout.Token);
-            }
-            Assert.False(changeContext.GetProperty("result").GetProperty("isError").GetBoolean());
-            Assert.Contains("impactStatus", GetFirstText(changeContext), StringComparison.Ordinal);
-            Assert.Contains("completeness", GetFirstText(changeContext), StringComparison.Ordinal);
-
             await SendRequestAsync(process, 7, "tools/call", new
             {
                 name = "get_file_skeleton",
@@ -914,6 +898,191 @@ public sealed class McpServerIntegrationTests
             if (Directory.Exists(Path.Combine(fixtureRoot, "repository", ".git")))
             {
                 await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "remove", "--force", Path.Combine(fixtureRoot, "worktree"));
+                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "prune");
+            }
+            if (Directory.Exists(fixtureRoot))
+            {
+                ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
+                Directory.Delete(fixtureRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task GitChangeContextMapsChangedHunksAndReportsRepositoryStatesThroughPublicStdioTools()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        var hostAssemblyPath = GetHostAssemblyPath(repositoryRoot);
+        var fixtureRoot = Directory.CreateTempSubdirectory("ainet-contract-fixture-").FullName;
+        var configPath = Path.Combine(Path.GetTempPath(), "ainet-git-impact-" + Guid.NewGuid().ToString("N") + ".json");
+        var hostLogDirectory = Path.Combine(Path.GetTempPath(), "ainet-git-impact-logs-" + Guid.NewGuid().ToString("N"));
+        var (solutionPath, _) = await CreateNavigationFixtureAsync(fixtureRoot);
+        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(4));
+        using var process = await StartInitializedHostAsync(repositoryRoot, hostAssemblyPath, configPath, timeout.Token, hostLogDirectory);
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+        var worktreeDirectory = Path.GetDirectoryName(solutionPath)!;
+        var worktreeSourcePath = Path.Combine(worktreeDirectory, "NavigationFixture.cs");
+
+        try
+        {
+            var initialArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["detailLevel"] = "change-context", ["maxChangedSymbols"] = 2 };
+            await SendRequestAsync(process, 2, "tools/call", new { name = "get_impact", arguments = initialArguments }, timeout.Token);
+            var initial = await PollRunningImpactAsync(process, 2, await ReadResponseAsync(process, 2, timeout.Token), initialArguments, timeout.Token);
+            var initialText = GetFirstText(initial);
+            Assert.False(initial.GetProperty("result").GetProperty("isError").GetBoolean(), initialText);
+            var initialPayload = ParsePayload(initialText);
+            Assert.Equal(new[] { "NavigationFixture.Counter", "NavigationFixture.Counter.Read()" }, initialPayload.GetProperty("analyzedSymbols").EnumerateArray()
+                .Select(entry => entry.GetProperty("symbol").GetString()).ToArray());
+            Assert.Equal("partial", initialPayload.GetProperty("completeness").GetString());
+            Assert.True(initialPayload.GetProperty("totalChangedSymbols").GetInt32() > initialPayload.GetProperty("analyzedSymbols").GetArrayLength(),
+                "The payload must retain the known total beyond the maxChangedSymbols display cap.");
+
+            var sourceWithAdditionalChangedField = (await File.ReadAllTextAsync(worktreeSourcePath, timeout.Token))
+                .Replace("muchLongerValue = 2", "muchLongerValue = 3", StringComparison.Ordinal);
+            const string deletedMethod = "    public int BothFields() => firstValue + muchLongerValue;";
+            sourceWithAdditionalChangedField = sourceWithAdditionalChangedField
+                .Replace(deletedMethod + "\r\n", string.Empty, StringComparison.Ordinal)
+                .Replace(deletedMethod + "\n", string.Empty, StringComparison.Ordinal)
+                .Replace(deletedMethod, string.Empty, StringComparison.Ordinal);
+            Assert.DoesNotContain("BothFields", sourceWithAdditionalChangedField, StringComparison.Ordinal);
+            await File.WriteAllTextAsync(worktreeSourcePath, sourceWithAdditionalChangedField, timeout.Token);
+            await RunCommandAsync("git", worktreeDirectory, "add", "NavigationFixture.cs");
+            var stagedDiff = await RunCommandCaptureAsync("git", worktreeDirectory,
+                "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=0", "HEAD", "--", ":(literal)NavigationFixture.cs");
+            Assert.True(stagedDiff.StandardOutput.Contains(",0 @@", StringComparison.Ordinal), stagedDiff.StandardOutput);
+            var stagedArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["detailLevel"] = "change-context", ["maxChangedSymbols"] = 100 };
+            await SendRequestAsync(process, 4, "tools/call", new { name = "get_impact", arguments = stagedArguments }, timeout.Token);
+            var staged = await PollRunningImpactAsync(process, 4, await ReadResponseAsync(process, 4, timeout.Token), stagedArguments, timeout.Token);
+            var stagedText = GetFirstText(staged);
+            Assert.False(staged.GetProperty("result").GetProperty("isError").GetBoolean(), stagedText);
+            var stagedPayload = ParsePayload(stagedText);
+            var stagedSymbols = stagedPayload.GetProperty("analyzedSymbols").EnumerateArray()
+                .Select(entry => entry.GetProperty("symbol").GetString()).ToArray();
+            Assert.Contains("NavigationFixture.Counter.firstValue", stagedSymbols);
+            Assert.Contains("NavigationFixture.Counter.muchLongerValue", stagedSymbols);
+            Assert.Contains("NavigationFixture.UntrackedGitImpact.Added()", stagedSymbols);
+            Assert.Equal("partial", stagedPayload.GetProperty("completeness").GetString());
+            var stagedUnresolvedFiles = stagedPayload.GetProperty("unresolvedFiles").EnumerateArray().Select(path => path.GetString()).ToArray();
+            Assert.Contains("NavigationFixture.cs", stagedUnresolvedFiles);
+
+            var optionLikeRefArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["gitRef"] = "--help", ["detailLevel"] = "change-context" };
+            await SendRequestAsync(process, 5, "tools/call", new { name = "get_impact", arguments = optionLikeRefArguments }, timeout.Token);
+            var optionLikeRef = await PollRunningImpactAsync(process, 5, await ReadResponseAsync(process, 5, timeout.Token), optionLikeRefArguments, timeout.Token);
+            Assert.True(optionLikeRef.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(optionLikeRef));
+            Assert.Contains("INVALID_ARGUMENT", GetFirstText(optionLikeRef), StringComparison.Ordinal);
+            Assert.Contains("fieldPath: $.gitRef", GetFirstText(optionLikeRef), StringComparison.Ordinal);
+
+            var missingRefArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["gitRef"] = "missing-navigation-fixture-ref", ["detailLevel"] = "change-context" };
+            await SendRequestAsync(process, 6, "tools/call", new { name = "get_impact", arguments = missingRefArguments }, timeout.Token);
+            var missingRef = await PollRunningImpactAsync(process, 6, await ReadResponseAsync(process, 6, timeout.Token), missingRefArguments, timeout.Token);
+            Assert.True(missingRef.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(missingRef));
+            Assert.Contains("INVALID_ARGUMENT", GetFirstText(missingRef), StringComparison.Ordinal);
+            Assert.Contains("fieldPath: $.gitRef", GetFirstText(missingRef), StringComparison.Ordinal);
+
+            await RunCommandAsync("git", worktreeDirectory, "add", "UntrackedGitImpact.cs");
+            await RunCommandAsync("git", worktreeDirectory, "commit", "--quiet", "-m", "fixture change context");
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
+            _ = await stderrTask;
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            File.Delete(configPath);
+            if (Directory.Exists(hostLogDirectory)) Directory.Delete(hostLogDirectory, recursive: true);
+            if (Directory.Exists(Path.Combine(fixtureRoot, "repository", ".git")))
+            {
+                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "remove", "--force", worktreeDirectory);
+                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "prune");
+            }
+            if (Directory.Exists(fixtureRoot))
+            {
+                ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
+                Directory.Delete(fixtureRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task GitImpactReportsCallerAndRepositoryCompletenessThroughPublicStdioTools()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        var hostAssemblyPath = GetHostAssemblyPath(repositoryRoot);
+        var fixtureRoot = Directory.CreateTempSubdirectory("ainet-contract-fixture-").FullName;
+        var configPath = Path.Combine(Path.GetTempPath(), "ainet-git-status-" + Guid.NewGuid().ToString("N") + ".json");
+        var hostLogDirectory = Path.Combine(Path.GetTempPath(), "ainet-git-status-logs-" + Guid.NewGuid().ToString("N"));
+        var (solutionPath, _) = await CreateNavigationFixtureAsync(fixtureRoot);
+        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(4));
+        using var process = await StartInitializedHostAsync(repositoryRoot, hostAssemblyPath, configPath, timeout.Token, hostLogDirectory);
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+        var worktreeDirectory = Path.GetDirectoryName(solutionPath)!;
+        var worktreeSourcePath = Path.Combine(worktreeDirectory, "NavigationFixture.cs");
+
+        try
+        {
+            var callersArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["detailLevel"] = "callers", ["maxChangedSymbols"] = 1 };
+            await SendRequestAsync(process, 2, "tools/call", new { name = "get_impact", arguments = callersArguments }, timeout.Token);
+            var callers = await PollRunningImpactAsync(process, 2, await ReadResponseAsync(process, 2, timeout.Token), callersArguments, timeout.Token);
+            var callersText = GetFirstText(callers);
+            Assert.False(callers.GetProperty("result").GetProperty("isError").GetBoolean(), callersText);
+            var callerSymbols = ParsePayload(callersText).GetProperty("analyzedSymbols").EnumerateArray()
+                .Select(entry => entry.GetProperty("symbol").GetString()).ToArray();
+            Assert.Contains("NavigationFixture.Counter.Read()", callerSymbols);
+            Assert.Contains("NavigationFixture.UntrackedGitImpact.Added()", callerSymbols);
+            Assert.All(callerSymbols, symbol =>
+            {
+                Assert.Contains("(", symbol, StringComparison.Ordinal);
+                Assert.EndsWith(")", symbol, StringComparison.Ordinal);
+            });
+
+            await RunCommandAsync("git", worktreeDirectory, "add", "NavigationFixture.cs", "UntrackedGitImpact.cs");
+            await RunCommandAsync("git", worktreeDirectory, "commit", "--quiet", "-m", "fixture clean state");
+            var cleanArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["gitRef"] = "HEAD", ["detailLevel"] = "change-context" };
+            await SendRequestAsync(process, 3, "tools/call", new { name = "get_impact", arguments = cleanArguments }, timeout.Token);
+            var clean = await PollRunningImpactAsync(process, 3, await ReadResponseAsync(process, 3, timeout.Token), cleanArguments, timeout.Token);
+            Assert.False(clean.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(clean));
+            Assert.Contains("\"impactStatus\": \"clean_worktree\"", GetFirstText(clean), StringComparison.Ordinal);
+            Assert.Contains("\"completeness\": \"complete\"", GetFirstText(clean), StringComparison.Ordinal);
+
+            var nonGitRoot = Path.Combine(fixtureRoot, "non-git");
+            Directory.CreateDirectory(nonGitRoot);
+            var nonGitSolutionPath = Path.Combine(nonGitRoot, "NoGit.slnx");
+            await File.WriteAllTextAsync(nonGitSolutionPath, "<Solution />", timeout.Token);
+            var nonGitArguments = new Dictionary<string, object?> { ["targetPath"] = nonGitSolutionPath, ["detailLevel"] = "change-context" };
+            await SendRequestAsync(process, 4, "tools/call", new { name = "get_impact", arguments = nonGitArguments }, timeout.Token);
+            var nonGit = await PollRunningImpactAsync(process, 4, await ReadResponseAsync(process, 4, timeout.Token), nonGitArguments, timeout.Token);
+            Assert.False(nonGit.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(nonGit));
+            Assert.Contains("\"impactStatus\": \"not_git_repository\"", GetFirstText(nonGit), StringComparison.Ordinal);
+            Assert.Contains("\"completeness\": \"not_applicable\"", GetFirstText(nonGit), StringComparison.Ordinal);
+
+            File.Delete(worktreeSourcePath);
+            var deletedArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["detailLevel"] = "change-context" };
+            await SendRequestAsync(process, 5, "tools/call", new { name = "get_impact", arguments = deletedArguments }, timeout.Token);
+            var deleted = await PollRunningImpactAsync(process, 5, await ReadResponseAsync(process, 5, timeout.Token), deletedArguments, timeout.Token);
+            var deletedText = GetFirstText(deleted);
+            var deletedPayload = ParsePayload(deletedText);
+            Assert.False(deleted.GetProperty("result").GetProperty("isError").GetBoolean(), deletedText);
+            Assert.Equal("partial", deletedPayload.GetProperty("completeness").GetString());
+            Assert.Contains("NavigationFixture.cs", deletedPayload.GetProperty("unresolvedFiles").EnumerateArray().Select(path => path.GetString()));
+
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
+            _ = await stderrTask;
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            File.Delete(configPath);
+            if (Directory.Exists(hostLogDirectory)) Directory.Delete(hostLogDirectory, recursive: true);
+            if (Directory.Exists(Path.Combine(fixtureRoot, "repository", ".git")))
+            {
+                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "remove", "--force", worktreeDirectory);
                 await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "prune");
             }
             if (Directory.Exists(fixtureRoot))
@@ -3113,7 +3282,7 @@ public sealed class McpServerIntegrationTests
         var linkedConsumerProject = Path.Combine(repositoryPath, "LinkedConsumer.csproj");
         await File.WriteAllTextAsync(linkedConsumerProject,
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup><ItemGroup><Compile Include=\"..\\Shared\\LinkedFixture.cs\" Link=\"LinkedFixture.cs\" /></ItemGroup></Project>");
-        const string baseline = "namespace NavigationFixture;\npublic interface ICounter { int Read(); }\npublic sealed class Counter : ICounter { public int Read() => 1; }\npublic sealed class CounterConsumer { public int Run(ICounter counter) => counter.Read(); }\npublic static class CounterExtensions { public static int Double(this Counter counter) => counter.Read() * 2; }\n";
+        const string baseline = "namespace NavigationFixture;\npublic interface ICounter { int Read(); }\npublic sealed class Counter : ICounter\n{\n    private readonly int firstValue = 1, muchLongerValue = 2;\n    public int Read() => firstValue;\n    public int StableSeparator() => 7;\n    public int BothFields() => firstValue + muchLongerValue;\n}\npublic sealed class CounterConsumer { public int Run(ICounter counter) => counter.Read(); }\npublic static class CounterExtensions { public static int Double(this Counter counter) => counter.Read() * 2; }\n";
         await File.WriteAllTextAsync(sourcePath, baseline);
         await File.WriteAllTextAsync(Path.Combine(repositoryPath, "ScopeWidget.cs"),
             "namespace NavigationFixture; public partial class ScopeWidget { public void ProductionOnly() { } }");
@@ -3141,7 +3310,11 @@ public sealed class McpServerIntegrationTests
         await RunCommandAsync("dotnet", worktreePath, "build", worktreeProjectPath, "--no-restore", "--configuration", "Debug");
         await RunCommandAsync("dotnet", worktreePath, "build", worktreeLinkedConsumerProject, "--no-restore", "--configuration", "Debug");
         var worktreeSourcePath = Path.Combine(worktreePath, "NavigationFixture.cs");
-        await File.WriteAllTextAsync(worktreeSourcePath, baseline.Replace("Read() => 1", "Read() => 2", StringComparison.Ordinal));
+        await File.WriteAllTextAsync(worktreeSourcePath, baseline
+            .Replace("public sealed class Counter", "public sealed partial class Counter", StringComparison.Ordinal)
+            .Replace("Read() => firstValue", "Read() => firstValue + 1", StringComparison.Ordinal));
+        await File.WriteAllTextAsync(Path.Combine(worktreePath, "UntrackedGitImpact.cs"),
+            "namespace NavigationFixture;\npublic sealed class UntrackedGitImpact\n{\n    public int Added() => 1;\n}\n");
         return (Path.Combine(worktreePath, "NavigationFixture.slnx"), Path.Combine(worktreePath, "bin", "Debug", "net10.0", "NavigationFixture.dll"));
     }
 
@@ -3163,6 +3336,27 @@ public sealed class McpServerIntegrationTests
         var output = await stdout;
         var error = await stderr;
         Assert.True(process.ExitCode == 0, $"Temporary fixture command failed ({executable} {string.Join(' ', arguments)}):\n{error}\n{output}");
+    }
+
+    private static async Task<(string StandardOutput, string StandardError)> RunCommandCaptureAsync(string executable, string workingDirectory, params string[] arguments)
+    {
+        var startInfo = new ProcessStartInfo(executable)
+        {
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException($"Could not start {executable} for the temporary fixture.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromMinutes(2));
+        var output = await stdout;
+        var error = await stderr;
+        Assert.True(process.ExitCode == 0, $"Temporary fixture command failed ({executable} {string.Join(' ', arguments)}):\n{error}\n{output}");
+        return (output, error);
     }
 
     private static void ClearReadOnlyAttributesWithinOwnedFixture(string fixtureRoot)
@@ -3228,6 +3422,30 @@ public sealed class McpServerIntegrationTests
         }
 
         throw new EndOfStreamException($"MCP host exited before responding to request {id}.");
+    }
+
+    private static async Task<JsonElement> PollRunningImpactAsync(
+        Process process,
+        int initialRequestId,
+        JsonElement response,
+        IReadOnlyDictionary<string, object?> originalArguments,
+        CancellationToken cancellationToken)
+    {
+        for (var poll = 0; poll < 240 && GetFirstText(response).Contains("operation=running", StringComparison.Ordinal); poll++)
+        {
+            var operationToken = ReadStringLine(GetFirstText(response), "operationToken");
+            var arguments = new Dictionary<string, object?>(originalArguments, StringComparer.Ordinal)
+            {
+                ["operationToken"] = operationToken,
+            };
+            var requestId = initialRequestId + 1000 + poll;
+            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+            await SendRequestAsync(process, requestId, "tools/call", new { name = "get_impact", arguments }, cancellationToken);
+            response = await ReadResponseAsync(process, requestId, cancellationToken);
+        }
+
+        Assert.DoesNotContain("operation=running", GetFirstText(response), StringComparison.Ordinal);
+        return response;
     }
 
     private static Task SendRequestAsync(Process process, int id, string method, object parameters, CancellationToken cancellationToken) =>
