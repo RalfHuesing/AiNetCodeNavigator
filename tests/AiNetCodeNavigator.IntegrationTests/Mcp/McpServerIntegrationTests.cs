@@ -1394,6 +1394,161 @@ public sealed class McpServerIntegrationTests
             Assert.False(contractMethodBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(contractMethodBody));
             Assert.Contains("ReadBeta", GetFirstText(contractMethodBody), StringComparison.Ordinal);
 
+            var concreteReadBetaHandle = contractMethodImplementation.GetProperty("handoffId").GetString()!;
+            await SendRequestAsync(process, 61, "tools/call", new
+            {
+                name = "find_references",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = concreteReadBetaHandle, depth = 2, maxResults = 10, includeReferences = false },
+            }, timeout.Token);
+            var assemblyReferences = await ReadResponseAsync(process, 61, timeout.Token);
+            var assemblyReferencesText = GetFirstText(assemblyReferences);
+            Assert.False(assemblyReferences.GetProperty("result").GetProperty("isError").GetBoolean(), assemblyReferencesText);
+            var betaReference = ParsePayload(assemblyReferencesText).GetProperty("references").EnumerateArray()
+                .Single(item => item.GetProperty("snippet").GetString()!.Contains("ReadBeta", StringComparison.Ordinal));
+            Assert.Contains("BetaInvoker.Invoke", betaReference.GetProperty("enclosingSymbolName").GetString(), StringComparison.Ordinal);
+            var referenceCallerHandle = betaReference.GetProperty("enclosingSymbolHandoffId").GetString();
+            Assert.StartsWith("h:", referenceCallerHandle, StringComparison.Ordinal);
+            await SendRequestAsync(process, 62, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { referenceCallerHandle } },
+            }, timeout.Token);
+            var referenceCallerBody = await ReadResponseAsync(process, 62, timeout.Token);
+            Assert.False(referenceCallerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(referenceCallerBody));
+            Assert.Contains("Invoke", GetFirstText(referenceCallerBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 63, "tools/call", new
+            {
+                name = "find_references",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = concreteReadBetaHandle, depth = 2, maxResults = 10, includeReferences = true },
+            }, timeout.Token);
+            var incompleteAssemblyReferences = await ReadResponseAsync(process, 63, timeout.Token);
+            Assert.False(incompleteAssemblyReferences.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(incompleteAssemblyReferences));
+            Assert.Contains("completeness=truncated", GetFirstText(incompleteAssemblyReferences), StringComparison.Ordinal);
+            Assert.Contains("Referenced assembly source is not included yet", GetFirstText(incompleteAssemblyReferences), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 71, "tools/call", new
+            {
+                name = "get_impact",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = concreteReadBetaHandle, depth = 2, maxResults = 10, includeReferences = false },
+            }, timeout.Token);
+            var assemblyImpact = await ReadResponseAsync(process, 71, timeout.Token);
+            var assemblyImpactText = GetFirstText(assemblyImpact);
+            Assert.False(assemblyImpact.GetProperty("result").GetProperty("isError").GetBoolean(), assemblyImpactText);
+            var impactCallSite = ParsePayload(assemblyImpactText).GetProperty("callSites").EnumerateArray()
+                .Single(item => item.GetProperty("callingMember").GetString() == "BetaInvoker.Invoke");
+            Assert.True(impactCallSite.TryGetProperty("callingMemberHandoffId", out var impactCallerHandoff),
+                "The assembly impact caller must include an owner-bound handoff.");
+            var impactCallerHandle = impactCallerHandoff.GetString();
+            Assert.StartsWith("h:", impactCallerHandle, StringComparison.Ordinal);
+            await SendRequestAsync(process, 72, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { impactCallerHandle } },
+            }, timeout.Token);
+            var impactCallerBody = await ReadResponseAsync(process, 72, timeout.Token);
+            Assert.False(impactCallerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(impactCallerBody));
+            Assert.Contains("Invoke", GetFirstText(impactCallerBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 73, "tools/call", new
+            {
+                name = "get_impact",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = concreteReadBetaHandle, includeReferences = true },
+            }, timeout.Token);
+            var incompleteAssemblyImpact = await ReadResponseAsync(process, 73, timeout.Token);
+            Assert.False(incompleteAssemblyImpact.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(incompleteAssemblyImpact));
+            Assert.Contains("completeness=truncated", GetFirstText(incompleteAssemblyImpact), StringComparison.Ordinal);
+            Assert.Contains("Referenced assembly source is not included yet", GetFirstText(incompleteAssemblyImpact), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 64, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = concreteReadBetaHandle, direction = "incoming", depth = 2, topN = 10, includeReferences = false },
+            }, timeout.Token);
+            var assemblyCallTree = await ReadResponseAsync(process, 64, timeout.Token);
+            var assemblyCallTreeText = GetFirstText(assemblyCallTree);
+            Assert.False(assemblyCallTree.GetProperty("result").GetProperty("isError").GetBoolean(), assemblyCallTreeText);
+            Assert.Contains("BetaInvoker.Invoke", assemblyCallTreeText, StringComparison.Ordinal);
+            var callerHandoffLine = assemblyCallTreeText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Single(line => line.Contains("(BetaInvoker.Invoke)", StringComparison.Ordinal));
+            var callTreeCallerHandle = ExtractBacktickHandoff(callerHandoffLine);
+            await SendRequestAsync(process, 65, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { callTreeCallerHandle } },
+            }, timeout.Token);
+            var callTreeCallerBody = await ReadResponseAsync(process, 65, timeout.Token);
+            Assert.False(callTreeCallerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(callTreeCallerBody));
+            Assert.Contains("Invoke", GetFirstText(callTreeCallerBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 67, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = referenceCallerHandle, direction = "outgoing", depth = 2, topN = 10, includeReferences = false },
+            }, timeout.Token);
+            var outgoingCallTree = await ReadResponseAsync(process, 67, timeout.Token);
+            var outgoingCallTreeText = GetFirstText(outgoingCallTree);
+            Assert.False(outgoingCallTree.GetProperty("result").GetProperty("isError").GetBoolean(), outgoingCallTreeText);
+            Assert.Contains("PagedBeta.ReadBeta", outgoingCallTreeText, StringComparison.Ordinal);
+            var outgoingCallHandoffLine = outgoingCallTreeText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Single(line => line.Contains("(PagedBeta.ReadBeta)", StringComparison.Ordinal));
+            var outgoingCallHandle = ExtractBacktickHandoff(outgoingCallHandoffLine);
+            await SendRequestAsync(process, 68, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { outgoingCallHandle } },
+            }, timeout.Token);
+            var outgoingCallBody = await ReadResponseAsync(process, 68, timeout.Token);
+            Assert.False(outgoingCallBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(outgoingCallBody));
+            Assert.Contains("ReadBeta", GetFirstText(outgoingCallBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 69, "tools/call", new
+            {
+                name = "find_references",
+                arguments = new { targetPath = hostAssemblyPath, symbolIdentifier = concreteReadBetaHandle, maxResults = 10 },
+            }, timeout.Token);
+            var foreignAssemblyReferences = await ReadResponseAsync(process, 69, timeout.Token);
+            Assert.True(foreignAssemblyReferences.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignAssemblyReferences));
+            Assert.Contains("TARGET_MISMATCH", GetFirstText(foreignAssemblyReferences), StringComparison.Ordinal);
+            await SendRequestAsync(process, 70, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = "h:unknown", direction = "incoming" },
+            }, timeout.Token);
+            var unknownCallTreeHandle = await ReadResponseAsync(process, 70, timeout.Token);
+            Assert.True(unknownCallTreeHandle.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(unknownCallTreeHandle));
+            Assert.Contains("HANDOFF_UNKNOWN", GetFirstText(unknownCallTreeHandle), StringComparison.Ordinal);
+
+            var (sourceSolutionPath, _) = await CreateNavigationFixtureAsync(Path.Combine(fixture.DirectoryPath, "source-owner"));
+            await SendRequestAsync(process, 74, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = sourceSolutionPath, pattern = "CounterConsumer", maxResults = 5 },
+            }, timeout.Token);
+            var sourceSymbol = await ReadResponseAsync(process, 74, timeout.Token);
+            var sourceSymbolText = GetFirstText(sourceSymbol);
+            Assert.False(sourceSymbol.GetProperty("result").GetProperty("isError").GetBoolean(), sourceSymbolText);
+            var sourceHandle = ExtractHandoff(sourceSymbolText);
+            await SendRequestAsync(process, 75, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = sourceHandle },
+            }, timeout.Token);
+            var sourceHandleOnAssembly = await ReadResponseAsync(process, 75, timeout.Token);
+            var sourceHandleOnAssemblyText = GetFirstText(sourceHandleOnAssembly);
+            Assert.True(sourceHandleOnAssembly.GetProperty("result").GetProperty("isError").GetBoolean(), sourceHandleOnAssemblyText);
+            Assert.Contains("TARGET_MISMATCH", sourceHandleOnAssemblyText, StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 66, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = concreteReadBetaHandle, direction = "incoming", depth = 2, topN = 10, includeReferences = true },
+            }, timeout.Token);
+            var incompleteAssemblyCallTree = await ReadResponseAsync(process, 66, timeout.Token);
+            Assert.False(incompleteAssemblyCallTree.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(incompleteAssemblyCallTree));
+            Assert.Contains("completeness=truncated", GetFirstText(incompleteAssemblyCallTree), StringComparison.Ordinal);
+            Assert.Contains("Referenced assembly source is not included yet", GetFirstText(incompleteAssemblyCallTree), StringComparison.Ordinal);
+
             await SendRequestAsync(process, 58, "tools/call", new
             {
                 name = "get_class_structure",
@@ -2224,6 +2379,17 @@ public sealed class McpServerIntegrationTests
         var valueStart = markerStart + marker.Length;
         var valueEnd = text.IndexOf(']', valueStart);
         Assert.True(valueEnd > valueStart, "The navigation result included a malformed opaque handoff.");
+        return text[valueStart..valueEnd];
+    }
+
+    private static string ExtractBacktickHandoff(string text)
+    {
+        const string marker = "`h:";
+        var markerStart = text.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(markerStart >= 0, "The rendered call graph did not include an owner handoff for the selected node.");
+        var valueStart = markerStart + 1;
+        var valueEnd = text.IndexOf('`', valueStart);
+        Assert.True(valueEnd > valueStart, "The rendered call graph included a malformed handoff.");
         return text[valueStart..valueEnd];
     }
 

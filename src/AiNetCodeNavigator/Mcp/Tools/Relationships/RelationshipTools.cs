@@ -35,15 +35,33 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         return await NavigationToolSupport.RouteAsync(runtime, "get_call_tree", targetPath,
             new { symbolIdentifier, direction, depth, topN, format, includeBcl, scopeType, includeGenerated, includeReferences },
             operationToken, continuationToken, maxResponseBytes, maxResponseTokens,
-            async (target, ct) => await WithSource(target, async solution =>
+            async (target, ct) =>
             {
+                if (target.TargetType == AnalysisTargetType.Assembly)
+                {
+                    var accessResult = await ResolveAssemblySymbolAsync(target, symbolIdentifier, ct).ConfigureAwait(false);
+                    if (!accessResult.IsSuccess) return NavigationToolSupport.Failure(accessResult.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
+                    await using var access = accessResult.Value!;
+                    var graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(access.Solution, access.Symbol,
+                        depth, topN, parsedDirection, includeBcl, scope, includeGenerated, CreateAssemblyHandoffFormatter(access)), ct)
+                        .ConfigureAwait(false);
+                    var body = format == "mermaid" ? CallTreeMermaidRenderer.RenderMermaid(graph) : CallGraphTextRenderer.RenderAscii(graph);
+                    var incomplete = graph.Truncated || includeReferences;
+                    return NavigationToolSupport.SuccessText(body, incomplete,
+                        includeReferences
+                            ? "Referenced assembly source is not included yet; treat this result as root-only and incomplete."
+                            : graph.Truncated ? "Increase depth or topN and repeat the query." : null);
+                }
+                return await WithSource(target, async solution =>
+                {
                 var symbol = await Resolve(solution, symbolIdentifier, ct).ConfigureAwait(false);
                 if (symbol.Error is not null) return Fail(symbol.Error.Value, "$.symbolIdentifier");
                 var graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(solution, symbol.Symbol!, depth, topN, parsedDirection, includeBcl, scope, includeGenerated), ct).ConfigureAwait(false);
                 var body = format == "mermaid" ? CallTreeMermaidRenderer.RenderMermaid(graph) : CallGraphTextRenderer.RenderAscii(graph);
                 return NavigationToolSupport.SuccessText(body, graph.Truncated,
                     graph.Truncated ? "Increase depth or topN and repeat the query." : null);
-            }, maxResponseBytes, maxResponseTokens, ct), AnalysisTargetType.Project, cancellationToken);
+                }, maxResponseBytes, maxResponseTokens, ct);
+            }, null, cancellationToken);
 
         CallToolResult Invalid(string field, string hint) => McpToolResults.InvalidArgument("The requested value is not supported.", "$." + field, hint,
             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
@@ -61,15 +79,32 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         return await NavigationToolSupport.RouteAsync(runtime, "find_references", targetPath,
             new { symbolIdentifier, depth, maxResults, scopeType, includeGenerated, includeReferences }, operationToken,
             continuationToken, maxResponseBytes, maxResponseTokens,
-            async (target, ct) => await WithSource(target, async solution =>
+            async (target, ct) =>
             {
+                if (target.TargetType == AnalysisTargetType.Assembly)
+                {
+                    var accessResult = await ResolveAssemblySymbolAsync(target, symbolIdentifier, ct).ConfigureAwait(false);
+                    if (!accessResult.IsSuccess) return NavigationToolSupport.Failure(accessResult.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
+                    await using var access = accessResult.Value!;
+                    var result = await FindReferencesResolver.FindReferencesAsync(access.Symbol, access.Solution,
+                        maxResults, depth, ct, scope: scope, includeGenerated: includeGenerated,
+                        handoffFormatter: CreateAssemblyHandoffFormatter(access)).ConfigureAwait(false);
+                    return NavigationToolSupport.Success(result,
+                        result.IsTruncated || result.IsTruncatedByNodeLimit || result.IsDepthClamped || includeReferences,
+                        includeReferences
+                            ? "Referenced assembly source is not included yet; treat this result as root-only and incomplete."
+                            : "Increase depth or maxResults and repeat the query.");
+                }
+                return await WithSource(target, async solution =>
+                {
                 var symbol = await Resolve(solution, symbolIdentifier, ct).ConfigureAwait(false);
                 if (symbol.Error is not null) return Fail(symbol.Error.Value, "$.symbolIdentifier");
                 var result = await FindReferencesResolver.FindReferencesAsync(symbol.Symbol!, solution, maxResults, depth, ct,
                     scope: scope, includeGenerated: includeGenerated).ConfigureAwait(false);
                 return NavigationToolSupport.Success(result, result.IsTruncated || result.IsTruncatedByNodeLimit || result.IsDepthClamped,
                     "Increase depth or maxResults and repeat the query.");
-            }, maxResponseBytes, maxResponseTokens, ct), AnalysisTargetType.Project, cancellationToken);
+                }, maxResponseBytes, maxResponseTokens, ct);
+            }, null, cancellationToken);
 
         CallToolResult Invalid(string field, string hint) => McpToolResults.InvalidArgument("The requested value is not supported.", "$." + field, hint,
             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
@@ -185,8 +220,13 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     await using var lease = access.Value!;
                     if (!string.Equals(Path.GetFullPath(lease.Origin.CanonicalPath), target.CanonicalPath, StringComparison.OrdinalIgnoreCase))
                         return Invalid("symbolIdentifier", "Use a handoff produced by this targetPath.");
-                    var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(lease.Symbol, lease.Solution, depth, maxResults, ct).ConfigureAwait(false);
-                    return NavigationToolSupport.Success(impact, impact.IsTruncated || impact.IsTruncatedByNodeLimit || impact.IsDepthClamped, "Increase depth or maxResults and repeat the query.");
+                    var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(lease.Symbol, lease.Solution, depth, maxResults, ct,
+                        handoffFormatter: CreateAssemblyHandoffFormatter(access.Value!)).ConfigureAwait(false);
+                    var incomplete = impact.IsTruncated || impact.IsTruncatedByNodeLimit || impact.IsDepthClamped || includeReferences;
+                    return NavigationToolSupport.Success(impact, incomplete,
+                        includeReferences
+                            ? "Referenced assembly source is not included yet; treat this result as root-only and incomplete."
+                            : "Increase depth or maxResults and repeat the query.");
                 }
                 if (symbolIdentifier is not null)
                     return await WithSource(target, async solution =>
