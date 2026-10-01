@@ -69,7 +69,7 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                     access.Generation, access.ReferenceSnapshotHash);
                 string? FormatOwnedHandoff(ISymbol symbol)
                 {
-                    if (!HasRootSourceDeclaration(symbol, access.Solution, access.DecompiledProjectPaths?.DecompiledSourceRoot)) return null;
+                    if (!AssemblyHandoffFormatting.HasSourceDeclaration(symbol, access.Solution, access.DecompiledProjectPaths?.DecompiledSourceRoot)) return null;
                     var declarationId = DocumentationCommentId.CreateDeclarationId(symbol);
                     if (string.IsNullOrWhiteSpace(declarationId))
                         return null;
@@ -219,22 +219,6 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
             if (!string.IsNullOrWhiteSpace(reference.Snippet)) output.AppendLine($"  {reference.Snippet}");
         }
         return output.ToString().TrimEnd();
-    }
-
-    private static bool HasRootSourceDeclaration(ISymbol symbol, Solution solution, string? decompiledSourceRoot)
-    {
-        if (string.IsNullOrWhiteSpace(decompiledSourceRoot)) return false;
-        var root = Path.GetFullPath(decompiledSourceRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        foreach (var location in symbol.Locations.Where(location => location.IsInSource && location.SourceTree is not null))
-        {
-            var document = solution.GetDocument(location.SourceTree!);
-            if (document?.FilePath is not { } filePath) continue;
-            var fullPath = Path.GetFullPath(filePath);
-            if (fullPath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(fullPath, root, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-        return false;
     }
 
     [McpServerTool(Name = "inspect_assembly", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
