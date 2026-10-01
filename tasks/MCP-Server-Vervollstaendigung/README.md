@@ -7,4 +7,4 @@ This task specifies a functional, read-only C# navigation MCP server with twenty
 - [Verification and acceptance](konzept/02-verifikation.md): contract cases, component tests, required gates, documentation, and explicit E2E exclusion.
 - [Implementation roadmap](roadmap.md): seven sequential implementation tasks followed by one independent completion audit with a bounded correction.
 
-These three concept documents contain the complete specification. The concept remains a draft; the roadmap was explicitly requested and does not change its status. Implementation requires a separate workflow request.
+These three concept documents contain the complete specification. The user has approved the concept (`ready`), and the implementation roadmap is available. Implementation requires a separate workflow request.

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 ---
 
 # Funktionsfähiger MCP-Server für C#-Navigation
@@ -78,4 +78,4 @@ Unzulässig sind offene P0/P1/P2-Defekte an Navigation, Read-only, Bindung, Reco
 
 Ausgeschlossene Prüfungen werden als nicht durchgeführt ausgewiesen. Komponentenprüfungen belegen keinen ausgeführten Stdio-Handshake oder Clientstart. Der Abschlussbericht nennt die tatsächlichen Nachweise und verbleibenden Einschränkungen.
 
-Der Status ist `draft`. Prüfung/Freigabe, Roadmap und Umsetzung beginnen jeweils erst durch den entsprechenden Nutzerauftrag.
+Das Konzept ist vom Nutzer freigegeben und hat den Status `ready`. Die Roadmap liegt vor. Die Umsetzung beginnt erst durch den entsprechenden Nutzerauftrag.
