@@ -1,10 +1,9 @@
-# MCP server and Agent Interaction Lab
+# MCP server completion
 
-This task specifies a functional, read-only C# navigation MCP server with twenty navigation tools and two maintenance tools. After server acceptance, a separate Agent Interaction Lab evaluates and improves the product on AiNetCodeNavigator source and assemblies.
+This task specifies a functional, read-only C# navigation MCP server with twenty navigation tools and two maintenance tools. It prioritizes correct product behavior, reuse of existing components, focused verification, and accurate documentation.
 
-- [Concept](Konzept.md): intent, scope, agent models, independent audits, and completion criteria; status remains draft until workflow step 2.
-- [Server contracts](konzept/01-server.md): required navigation, runtime, ownership, budgets, and recovery.
-- [Verification and acceptance](konzept/02-verifikation.md): public contract cases, component verification, documentation, and explicit E2E exclusion.
-- [Agent Interaction Lab](konzept/03-agent-lab.md): shared dispatch, CLI, artifacts, evaluation, and improvement rounds.
+- [Concept](Konzept.md): intent, scope, implementation constraints, agent models, and completion criteria.
+- [Server contracts](konzept/01-server.md): required navigation, runtime, ownership, budgets, recovery, and read-only behavior.
+- [Verification and acceptance](konzept/02-verifikation.md): contract cases, component tests, required gates, documentation, and explicit E2E exclusion.
 
-These four concept documents contain the complete task specification. Only concept work is authorized here; roadmap creation and implementation require their respective workflow requests.
+These three concept documents contain the complete specification. The concept is a draft. Review and approval, roadmap creation, and implementation require their respective workflow requests.
