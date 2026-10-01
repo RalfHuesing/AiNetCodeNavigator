@@ -1,0 +1,135 @@
+# 01 — Server, Funktionsumfang und verbleibende Vertragsarbeit
+
+Dieses Kapitel gehört zu [Konzept.md](../Konzept.md). Seine Aussagen sind Soll-Verträge; ein Muss ohne Implementierungsnachweis ist kein Ist-Zustand.
+
+## Produktgrenze und Architektur
+
+Das Produkt ist genau ein MCP-Stdio-Server für read-only C#-Navigation. `stdout` ist ausschließlich JSON-RPC vorbehalten. CLI-Hilfe/-Fehler und Logging gehen nach `stderr` beziehungsweise in rotierende Dateien. Core und Navigationsmodelle dürfen weder MCP-Transport/-Protokolltypen noch Lab-Abhängigkeiten erhalten. Navigation verändert weder die analysierten Dateien noch den Benutzer-Workspace oder Benutzerkonfiguration. Produkttexte, Tool-/Parameterbeschreibungen, Fehler und nächste Aktionen sind Englisch.
+
+Source-Targets sind vorhandene absolute `.sln`-/`.slnx`-Pfade; Assembly-Targets vorhandene absolute verwaltete `.dll`-/`.exe`-Pfade. Keine Suche nach einer beliebigen Solution und keine Ausführung untersuchter Binaries. Pfadvarianten werden kanonisiert. Verzeichnis-, Wildcard-, fehlende, gesperrte, native und während des Fingerprintings verschwundene Targets ergeben definierte Fehler. Erwartete Dateizugriffsfehler bleiben wiederherstellbar; unerwartete Fehler dürfen nicht als Erfolg verschwinden.
+
+Die vorhandenen Verantwortlichen bleiben zuständig: `Core/Workspace` für Target/Resident/Snapshot, `Core/Symbols` für gemeinsame Symbolauflösung, `Core/Assemblies` für Dekompilation/Owner/Referenzen, `Mcp/Formatting` für Budget/Ergebnis, `LongRunningToolCallStore` für Operations-/Antwortzustand und die vorhandenen Toolklassen für fachliches Routing. Gemeinsame Registrierung/Validierung werden für das Lab aus dem Hostbereich herausgelöst, ohne eine zweite Implementierung der Navigationssemantik.
+
+Der in Kapitel 03 vollständig festgelegte transportunabhängige Produktionskatalog samt validierender SDK-Funktionshülle und Dispatcher wird bereits im Serverteil geschaffen und abgenommen. Er ist notwendig für dessen echte öffentliche Nicht-E2E-Vertragsprüfungen aus Kapitel 02. Dafür wird noch kein Lab-Projekt, Worker, IPC, Recorder, Renderer oder Agentenrun implementiert. Der abschließende Lab-Block verwendet anschließend diesen akzeptierten Produktionspfad. Damit ist Serverabnahme keine Voraussetzung für ihren eigenen Prüfeinstieg.
+
+## Exakte Toolmenge und gültige Targets
+
+S = Source-Solution, A = verwaltete Assembly, R = Runtime. Jedes Tool muss mit seinem unterstützten Target arbeiten und ein fachlich unzulässiges Target verständlich zurückweisen. Ein gesetzter Source-Scope wird bei Assembly-Navigation nicht als echte Produktions-/Testklassifikation ausgegeben. Source-only und Assembly-only sind absichtliche Grenzen.
+
+| Tool | Targets | Pflichtfunktion und wichtige Fälle |
+|---|---|---|
+| `find_symbol` | S, A | genau ein `pattern` oder 1–10 nicht leere `namePatterns`; Namen/Kinds/Scopes/Generated; Treffer mit Owner und nutzbarem Handoff; Assemblyreferenzen bei `includeReferences=true` |
+| `get_symbol_body` | S, A | Batch in Eingabereihenfolge; Bodyfenster, Partials, Owner; gemischter gültiger/ungültiger Batch meldet Teilvollständigkeit, nur ungültige Einträge Fehler |
+| `get_file_skeleton` | S, A | deklarative Typ-/Memberübersicht ohne Bodies und ausführbare Feld-/Eventinitializer; Source indexed absolute/relative/linked Pfade; Assembly nur eigene Dekompilate; separater Handoff je Variablendeklarator |
+| `get_class_structure` | S, A | deklarierte Member, Visibility, Signaturen, Partialdateien, Recordparameter, Filter und stabile Sortierung vor Cap; Member→Body |
+| `get_file_tree` | S, A | `tree`, `files`, `summary`; relative Unterwurzel, Extensions/Patterns/Tiefe/Sortierung/Metadaten; Reparse-Grenzen; Assembly keine benachbarten DLL-Verzeichnisdateien |
+| `get_namespace_tree` | S, A | Projektübersicht/Namespaceprefix/Typen/Kinds/Depth; exakter Projektpfad bei gleichen Namen; selectable Typ-Handoffs; vollständig gezählte Totals vor Darstellungscaps |
+| `get_index_scope` | S | Roslyn-Dokumentinventar einschließlich physisch mehrfach eingebundener Dateien, Sprach-/C#-/Generated-/Testzählungen; keine angebliche vollständige physische Dateiinventur |
+| `get_call_tree` | S, A | incoming/outgoing/both, ASCII/Mermaid, Depth/TopN, BCL/Sourcescope/Generated; begrenzte Assemblyowner-Closure; globale Fanout-/Node-/Edgegrenzen mit ehrlicher Vollständigkeit |
+| `find_references` | S, A | direkte/transitive Verwendungen mit Position, Spalte, Dispatch/Provenienz und Owner; Depth/Resultlimit; referenzierte Assemblysource bei `includeReferences=true` |
+| `get_type_hierarchy` | S, A | Basisklassen, Interfaces, abgeleitete Typen, Partialdeklarationen und auflösbare Source-/Assembly-Handoffs; Assembly betrachtet eigene dekompilierte Source, keine neue Referenzclosure-Option |
+| `find_implementations` | S, A | Interface/abstrakt/virtuell, Methoden und Properties einschließlich Overrides; konkrete Owner-Handoffs; unsupported Targetsymbol wiederherstellbar |
+| `get_impact` | S, A | Symbolmodus mit transitiven Callern/Projekten und Assemblyclosure; getrennt davon Source-Gitmodus mit `gitRef`, callers/change-context, Hunkmapping und Repositoryzuständen |
+| `dependency_graph` | S, A | genau eine Datei- oder Symbolauswahl; incoming/outgoing/both; projektgenaue Typ-/Datei-/Namespacekanten; generische Typen, Dokumentfenster und begrenzte Traversierung |
+| `resolve_type_origin` | S, A | genau ein nicht leerer Symbolidentifier oder Typname; eigene Source, Metadata-/Framework-/NuGetherkunft und exakte DLL-Identität; Nested/Generic, Ambiguität und fehlende Herkunft |
+| `get_assembly_context` | A | Assemblyübersicht beziehungsweise ausgewähltes Symbol mit angeforderten Body-/Structure-/Caller-/Impactabschnitten; Sectionfehler ist kein Gesamterfolg; optionale Referenzen |
+| `inspect_assembly` | A | öffentliche API/Typen/Member, Namespace-/Type-/Memberfilter, exact/publicOnly, referenzierte Assemblies, Details und querygebundene Domainpages |
+| `search_assembly` | A | text/external_calls/data_access, literal/regex/auto, Case, Deklarations-/Kind-/Filefilter, Kontext, matched-file-Cap und querygebundene Domainpages; Type-/Methodhandoffs mit Owner |
+| `find_assembly_extensions` | A | Receiver-/Method-/Namespacefilter und optionale Referenzen; leerer/fehlender Receiver ist gültige breite Suche |
+| `get_feature_context` | S | Deklaration/Signatur/Caller und statische Testkandidaten; Scope/Generated vor Counts/Caps; keine Linter-Violations |
+| `get_test_context` | S | projektgenaue xUnit-/NUnit-/MSTestkandidaten und name-only Unknown; ausdrücklich heuristisch, keine gemessene Testabdeckung |
+| `get_server_health` | R; Targetcheck S/A | atomare vollständige Runtime-/Cache-/Memory-/Versionübersicht; optionaler Targetcheck lädt/refreshes kein Target |
+| `reload_config` | R | serialisierter atomarer Reload ausschließlich `minimumLogLevel`; Budgetpreflight vor Zustandsänderung; identische Settings behalten Version |
+
+Für Hierarchie und Implementierungen wird die bereits festgelegte Assembly-Root-Semantik erhalten. Die vorhandene begrenzte Ownerclosure der dafür vorgesehenen Tools wird geprüft; ein neuer universeller referenzierter Assemblyindex ist kein Bestandteil. Toolnamen für Verify, Metrics, Hotspots, Pattern-/Duplicatechecks oder Refactoring dürfen weder registriert noch in Folgehinweisen angeboten werden.
+
+## Bereits implementierte Basis als zu erhaltende Invarianten
+
+Die historischen Cluster 1–7 und 8.1–8.4 sind Grundlagen; ihre semantischen Anforderungen gehen beim Konsolidieren nicht verloren:
+
+- TestKit liefert konsistente `Solution`/`Workspace.CurrentSolution`, Projekt-/Dokument-/Referenzidentitäten und validierte Builderinputs. Handoffassertions verwenden das Produktalphabet.
+- Cache-Hits benötigen denselben vollständigen Fingerprint. Ein Lookup ohne Hash darf keinen gespeicherten Hash umgehen. Compilationfingerprints umfassen Sourcepfade/-Inhalte, Parse-/Compilationoptions, Projekt- und Metadatareferenzen einschließlich Inhalt/Identität/Properties.
+- ProjectRegistry dedupliziert paralleles Laden, schützt aktive Leases vor Eviction und verhindert Publikation nach Disposal. Derselbe physische Linked-Pfad wird in allen zugehörigen Dokumenten refreshed. Lösungs-/Projektlisten, geänderte Referenzen, neue/entfernte Sources und externe Compileglobs verändern den Snapshot.
+- Symbolsuche unterscheidet class/interface/record/record class/record struct/struct/enum/delegate/method/property/field. Plain struct schließt Record Struct aus. Scope und Generatedfilter greifen vor Counts, Sortierung und Limits. Nicht-C#-Symbolsuche wird nicht durch eine gemischte Roslynsolution eingeschleust.
+- Sourcebody hält Batchreihenfolge und Zeilenfenster; Skeletons halten getrennte Multi-Variable-Handoffs; Class Structure hält deklarierte Member einschließlich Konstanten/Events/Recordparameter, Partialdateien und gültige Markdownzellen.
+- Testkandidaten werden solutionweit ohne Zusammenfallen gleichnamiger Fixtures verschiedener Projekte gesammelt. Attribute erkennen xUnit/NUnit/MSTest; `TestMethodAttribute` ist nicht NUnit. Bloße Namensähnlichkeit bleibt Unknown. Feature- und Test-DTOs sowie Text weisen `static-test-candidates-only` aus.
+- Beziehungsergebnisse behalten konkrete Callsite-Spalten und Reached-from-Provenienz auch bei mehrfachen Aufrufen auf derselben Zeile und reconverging Pfaden. Source in frameworkähnlichen Namespaces wird nicht als BCL weggefiltert; non-BCL Metadata wird bei den vorgesehenen Defaults erhalten. Both-TopN wird gemeinsam angewendet.
+- Dependencytraversierung erreicht spätere Dokumentfenster auch hinter Dokument 1000, erhält projektgenaue gleichnamige/generische Typen und zählt unterschiedlich lange Relationshipcollections bei gemeinsamen Pageoffsets korrekt.
+- File Tree begrenzt die aktive Ansicht, sperrt absolute Unterwurzeln und Pfadausbrüche durch jeden Reparseancestor. Namespace und Indexscope unterscheiden physische Dateien, Roslyndokumente, C#-Navigation, Generated und Testscope; Totals bleiben von Darstellungslimits unabhängig.
+- Assemblyregistry hält geleaste Generationen resident, invalidiert bei Root-/Referenzinhaltänderung und erholt sich nach fehlgeschlagenem Refresh, ohne die alte Generation als neue auszugeben. Die bestehende 32-Targetgrenze bleibt auch bei aktiven Zugriffen wirksam. Dekompilationcache liest und publiziert nur gegen denselben Referenzcontentfingerprint; same-identity Ersatzbytes dürfen nicht alte Source weiterverwenden.
+
+Die produktiven Details stehen in den jeweiligen englischen `docs/navigation/`-Seiten, den lokalen Scannern/Tests und der vollständig konservierten Quellenbasis. Diese Liste ist eine Erhaltungsanforderung, kein Auftrag zum Neubau akzeptierter Engines.
+
+## Restfall MSBuild-Strukturinvalidierung (alte 2.3)
+
+Ownership: `MSBuildStructureInputCollector`, `SolutionStructureFingerprint`, `ResidentSolution`, `MSBuildSolutionLoader`. Bereits abgedeckte effektive Imports, externe Compileglobs und bislang fehlende konditionale Imports einschließlich `ImportGroup` bleiben erhalten.
+
+Für deklarierte Wildcardimports muss der Strukturvergleich die mit der MSBuild-Auswertung übereinstimmende kanonische Menge passender Importpfade und deren Inhalte einschließlich der leeren Ausgangsmenge erfassen. Addition, Änderung und Entfernung eines Matches triggern vor der nächsten fachlichen Navigation die Neuladung. Es wird nicht wahllos jedes File im übergeordneten Baum in einen Import umgedeutet. MSBuild-Matching/-Expansion wird aus den vorhandenen MSBuild-APIs gewonnen; keine eigene allgemeine MSBuild-Sprache.
+
+Eine bei der geladenen Evaluation weiterhin unaufgelöste Property-/Item-/Metadataexpression wird explizit als nicht vollständig fingerprintbare Struktur markiert. In diesem Zustand darf `ResidentSolution` vor einem neuen fachlichen Source-Aufruf nicht ausschließlich wegen gleicher alter Fingerprints den alten Strukturstand als aktuell ausgeben. Sie führt eine erneute Evaluation/Neuladung mit den aktuellen bekannten Eingaben durch. Wird die Expression dabei auflösbar, geht sie in die normale Beobachtung über. Ein Evaluation-/Loadfehler liefert Ursache und Retry, keinen stillen Alt-Snapshot. Nicht auflösbare Struktur wird dokumentiert; es wird keine universelle Erkennung beliebiger externer Environment-/Taskeffekte behauptet.
+
+Komponentenfälle müssen zumindest abdecken: anfangs leeres Wildcardimportverzeichnis → neuer `.props`-Match mit ProjectReference → geänderter Match → gelöschter Match; importierendes File außerhalb der Projektwurzel; verschachtelte konditionale Importcontainer; kontrolliert zunächst unaufgelöste Expression → Neuladung/aufgelöster Stand; Fehler → verständliche Recovery. Es gibt kein viertes Punktaudit 2.3.
+
+## Restdefekte und vollständige öffentliche Parameter
+
+Die Behauptung „alle Tools erzwingen beide Budgets“ ist als Beschreibung des Ausgangsstands ungenau: Tokenbudgets sind optional, Byte-Defaults toolspezifisch und `get_index_scope` veröffentlicht diese Optionen bislang nicht. Folgender Soll-Vertrag schließt die Lücke:
+
+`get_index_scope` erhält zusätzlich zu `targetPath` genau `maxResponseBytes` (int, Default 16.384, Range 512–65.536), `maxResponseTokens` (nullable int, Default null, positive Werte), `operationToken` (nullable string, Default null) und `continuationToken` (nullable string, Default null). CancellationToken bleibt ein nicht veröffentlichter Parameter. Handler, Routing, stabiler Argumentkey, Katalog, Schema, Validator, Operationsstore, Tests und Dokumentation verwenden diese Felder konsistent. Budgets und Tokens gehören nicht zur fachlichen Queryidentität; ihr vorhandener Storebindungsvertrag bleibt bestehen. Das Tool bleibt source-only. Neue öffentliche Projekt-/Inventoryfilter werden hier nicht eingeführt.
+
+Der implementierte Assembly-`get_impact`-Fix für omitted/false `includeReferences` muss unabhängig bestätigt werden: raw Method-Doc-ID, qualifizierter Name und gültige emittierte Position liefern dieselben Caller und Owner-Handoffs wie `h:`; unknown/foreign/source/stale opake Handles bleiben strikt; `true` erhält die bereits vorhandene Referenzclosure. Fehlende oder mehrdeutige Rawinputs liefern geeignete typisierte Recovery, keinen zufälligen Treffer.
+
+Der offene P3-Sortierungsbefund wird geschlossen. `get_class_structure` und der Class-Structure-Abschnitt in `get_assembly_context` verwenden für omitted/`lines` vor `maxMembers`: `FilePath` mit `OrdinalIgnoreCase`, dann `StartLine` aufsteigend, dann `Name` mit `OrdinalIgnoreCase`. `lines` bedeutet Deklarationsreihenfolge und nicht Bodylänge. `kind` und `name` behalten ihre unterstützte explizite Semantik; der gemeinsame Vergleich gegen Source wird getestet. Die Regression verwendet nichtalphabetische Deklarationsreihenfolge und Cap 1 sowie vollständige Ergebnisreihenfolge und nutzbare Memberhandoffs.
+
+Alle veröffentlichten Felder müssen genau den publizierten SDK-Schema-/Bindingvertrag erfüllen. Die Implementierung erstellt eine Tabelle je Parameter mit Wire-Name, Typ, Required/Null/Default, Range, Null-/Zero-Normalisierung, Enum, fachlicher Wirkung, Targetgrenze und konkretem Nachweis. Kein schema-akzeptierter Parameter darf still unberücksichtigt bleiben, außer einer ausdrücklich beschriebenen Target-Inapplicability wie Sourcescope im Assemblymodus. Scope/Filter greifen vor Counts/Caps; fachlich ungültige Enum-/Selektorkombinationen werden zurückgewiesen.
+
+Die bereits geltenden Zero-Defaults bleiben erhalten: `inspect_assembly.maxResults/maxMembers=0` → 100; `search_assembly.maxResults=0` → 50; `find_assembly_extensions.maxResults=0` → 100; `get_assembly_context.maxResults=0` → 100; `get_impact.maxChangedSymbols=0` → 20 und `maxTestsPerSymbol=0` → 10. `search_assembly.maxFiles=0` bedeutet kein zusätzliches matched-file-Limit, nicht keine Ergebnisse. Zero-Bytebudgets der Assemblytools wählen deren bestehenden Default. Andere Tools dürfen daraus keine unpublizierte Zero-Semantik ableiten. Core-Defaults ersetzen keine abweichend festgelegten öffentlichen Defaults.
+
+## Handoffs, Owner und Fehler
+
+Alle veröffentlichten `h:...`-IDs sind opak und unverändert für Folgeaufrufe zu verwenden. Producer und Consumer binden Sourceidentität an kanonischen Target-/Solutionsnapshot und stabilen Projektmarker; Assemblyidentität an tatsächliche Owner-DLL, Root-/Referenzfingerprint und Generation. DTO und sichtbarer Text geben dieselbe externe ID aus. Ohne kanonische Identität gibt es weder Handoff noch falsche Werbung für einen Folgeaufruf.
+
+Gleiche Doc-IDs, Typ-/Projekt-/Assemblynamen oder physisch geteilte Pfade dürfen nicht den ersten beliebigen Owner auswählen. Mehrdeutigkeit liefert Auswahlkandidaten mit Kontext und tatsächlich auflösbaren Handoffs. Rawqualified-/Doc-ID-/Positionsinputs benutzen die vorhandene gemeinsame Auflösung; Literal-/Punctuationpositionen und Metadatatypen werden nicht als irgendeine umgebende Sourcesymboldeklaration ausgegeben. Handoffähnliche malformed Eingaben gehen nicht in eine freie Namenssuche; Windowsdrivepfade bleiben Pfade.
+
+Unknown, foreign, stale, abgelaufene oder frühere Runtimehandles liefern die dafür vorgesehenen typisierten Fehler ohne alte Source. Referenzowner werden nur über bewiesene aktuelle Assemblyidentitäten erreicht. Root→B→C-Followups benutzen den angebotenen kanonischen Ownerpfad. Unaufgelöste/gelöschte Referenzen müssen Vollständigkeit reduzieren; fehlende Closure darf keine scheinbar eindeutige Rawauflösung erzeugen.
+
+## Runtime, Langläufer, Continuations und Wartung
+
+Der Host und die gemeinsame Runtime müssen parallele unabhängige Requests bedienen. Operationsstore besitzt die Cancellation der Hintergrundarbeit. Abbruch des ersten Requests beendet seine Arbeit; Abbruch eines Poll-Waiters beendet ausschließlich dessen Warten. Hoststop/EOF beendet und drained eigene Operationen und eigene Git-Kindprozesse, bevor Resident-/Assemblyzustand disposed wird. Ein neuer Prozess reaktiviert keine alten opaken Handles/Tokens. Logging darf die Protokollausgabe nicht verschmutzen.
+
+Bestehende Grenzen bleiben erhalten: Responsewindow 15 s; bis zu vier aktive und 32 abgeschlossene Operations; standardmäßig 30 min Inaktivitätsretention; Continuations bis 32 Snapshots, 8 MiB Text, 512 Tokens und vier Budgetvarianten pro Pagetoken. Laufende Idleexpiry wird auch ohne spätere Calls angewendet. Cancellation-/Dispose-/Completionwege dürfen keine disposed-CTS-Races erzeugen. Replay einer completed Operation alloziert nicht für jedes Poll einen neuen Snapshot.
+
+Operationstokens binden Tool, kanonischen Target, fachlichen Argumentkey und gegebenenfalls exakten Domaincursor. Budgets dürfen beim Retry steigen; andere fachliche Parameter bleiben gleich. Domaincursor und operationToken können für dieselbe Seite zusammen verwendet werden; operationToken und äußeres Pagetoken dürfen nicht vermischt werden. Storeeigene Runningkontrollen und delegiertes Loading bleiben Steuerzustände, keine angeblich vollständigen fachlichen Erfolge.
+
+`inspect_assembly` und `search_assembly` haben `v1.<offset>.<binding>`-Domaincursor mit Query-/Target-/Root-/Referenzbinding. Äußere Antwortseiten besitzen eigene opake decimal Tokens und immutable Textsnapshots. Zuerst die äußeren Seiten vollständig lesen, dann den dort enthaltenen Domaincursor. Replay, geänderte Budgets, veränderte Query, Root-/Referenzersatz, Ablauf und Capacity sind getrennte Fälle. Ein abgelaufenes Nachfolgetoken wird nicht mit anderer Bedeutung wiederbelebt.
+
+Graphen, Trees, Referenzen, Hierarchien, Impact und Context erhalten ihre fachlichen Caps und truthful Domaintruncation; ihnen wird kein neuer Domaincursor erfunden. Eine äußere Textfortsetzung rekonstruiert nur den bereits begrenzten fachlichen Snapshot. Sie kann deshalb nicht versteckte Domainergebnisse nachliefern.
+
+Health ist atomar, ohne Targetload. Reload ist atomar, idempotent bei unveränderten Settings und prüft vor dem Publish das vollständige Acknowledgement im Budget. Budgetfehler, fehlende/ungültige/nicht lesbare Config lassen den alten Zustand unverändert. Nur die exakten Levels Verbose/Debug/Information/Warning/Error/Fatal sind zulässig. Die Benutzerconfig wird nicht geschrieben oder automatisch beobachtet.
+
+## Harte Responsebudgets und Latenz
+
+Nutzerentscheidung: harte Grenzen und automatische passende Antwortseiten beibehalten. Explizite `maxResponseBytes`/`maxResponseTokens` werden niemals still angehoben, deaktiviert oder überschritten. Allgemeine Bytegrenzen sind inklusive 512–65.536; Tokenlimit ist optional und bei Angabe positiv. Keine neue globale Default-Tokenbegrenzung. Bestehende toolspezifische Byte-Defaults bleiben erhalten: find 16 KiB, body/call-tree 32 KiB, skeleton/feature/dependency/inspect/search 24 KiB, tree 8 KiB, übrige reguläre Tools 16 KiB; Assemblycontext compact/standard 32 KiB und full 65.536, mit Vorrang eines gültigen expliziten Bytecaps.
+
+Die Budgeteinheit ist der komplette sichtbare Produkttext inklusive Status, Code, Recovery, Token und Fortsetzungshinweis: exakte UTF-8-Bytes und SharpToken `cl100k_base`-Tokens. Das ist keine Obergrenze für den gesamten JSON-RPC-/CLI-Envelope oder verborgene Modelltokens. Diese Größen werden im Lab separat gemessen.
+
+Ein Ergebnis oberhalb des Budgets ist nicht automatisch ein Budgetfehler. Bei ausreichendem Platz für mindestens die nächste ganze Einheit inklusive verpflichtender Metadaten liefert der Server sofort eine passende, wahrheitsgetreu als truncated markierte Seite mit ausführbarem Continuationtoken. Zeilen-/Unicodescalargrenzen bleiben intakt. Bei Textpagination kein scheinbar vollständiges StructuredContent neben Teiltext. Ein atomar erforderliches strukturiertes Ergebnis darf weiterhin `STRUCTURED_RESULT_TOO_LARGE` liefern; es wird nicht still in ein anderes Ergebnisformat umgedeutet.
+
+`RESPONSE_BUDGET_TOO_SMALL` ist erforderlich, wenn die nächste notwendige unteilbare Texteinheit, eine atomare Control-/Fehlerantwort oder ein atomarer Wartungssnapshot nicht in den gewählten Grenzen darstellbar ist. `minimumResponseBytes` und `minimumResponseTokens` werden gemeinsam aus einer tatsächlich ausführbaren Ergebnisprojektion einschließlich finalem Status und Recovery-/Continuationmetadaten berechnet. Für unveränderte immutable Projektionen gilt: Byte-Minimum = max(512, gemessene UTF-8-Bytes); Token-Minimum = gemessene cl100k_base-Tokens. Das sind die kleinsten gültigen Budgets dieser gewählten Projektion, kein pauschaler Zuschlag. Bei dynamischem Health bleiben die bestehenden konservativen ausführbaren Minima ausdrücklich als konservativ gekennzeichnet; hier wird kein mathematisch kleinster Wert über den nächsten wechselnden Snapshot versprochen.
+
+Wenn die notwendige Einheit auch oberhalb der öffentlichen 65.536-Bytegrenze nicht darstellbar ist, empfiehlt die Antwort das Eingrenzen der fachlichen Query; sie empfiehlt kein unzulässiges Bytebudget und keinen endlosen Retry. Wenn nicht einmal der verpflichtende Error-/Recovery-Envelope in das angegebene Budget passt, folgt sanitized `InvalidParams` (-32602), ohne Stacktrace/interne Details und ohne überbudgetierten Tooltext. Pflichtfehlerfelder werden niemals einzeln abgeschnitten.
+
+Recovery wiederholt denselben fachlichen Aufruf beziehungsweise dieselbe gebundene Seite mit beiden angebotenen Mindestwerten. Nur Bytes zu erhöhen genügt bei zugleich zu kleinem Tokencap nicht. Der Server startet beim Replay einer gespeicherten Operations-/Continuationprojektion keine neue Analyse. Normale Loading-Retries ohne gecachten fachlichen Erfolg behalten ihre definierte Ladebedeutung.
+
+Ein zusätzlich notwendiger Toolcall kann zusätzliche Latenz erzeugen; er erzwingt technisch nicht in jedem Client einen zweiten LLM-Turn. Ein weiterer Modellturn, ein API-Request, ein Toolcall und eine Continuationpage sind unterschiedliche Messgrößen. Keine künstliche Latenzzusage und keine erfundenen API-Kosten.
+
+Vermeidbar sind falsche Minima, fehlende Recoveryfelder, erneute Arbeit auf Immutable-Replay, doppelte Status-/Textdaten und unbrauchbare Metadatenprojektionen. Diese Ursachen sind zu beheben. Pflichtinformation wird dabei nicht entfernt. Der Vergleich prüft bei identischen gespeicherten Inputs/Resultaten, dass normale und ausführbare Recoveryseiten keinen zusätzlichen Budgetfehler produzieren. Große fachliche Ergebnismengen dürfen legitime Folgeseiten benötigen. Automatische Client-Recovery im Lab ist ausgeschlossen: der Testagent muss die öffentliche Anweisung selbst verstehen; sein echter Recoverycall wird mitgezählt.
+
+## Read-only-Grenze, Git und Laufzeit
+
+Design-Time-MSBuild erhält Scratch außerhalb des analysierten Workspace. Die noch offene Custom-Targetgrenze wird mit kontrollierten importierten Targets geprüft, die Intermediate-/Outputpfade umleiten. Bekannte produktive Outputpfade dürfen weder Sources noch `obj`/`bin` oder fremde Benutzerpfade beschreiben. Ein vom Loader nicht sicher unterstützter Fall muss vor dem betreffenden Schreibeffekt als nicht unterstütztes Laden scheitern; nachträgliches Zurückkopieren ist keine Read-only-Lösung. Die Nachweise erfassen Dateien und Verzeichnisse vor/nach Loader-/Runtime-Dispose sowie Scratchcleanup.
+
+Das Produkt ist keine Sicherheits-Sandbox für willkürlich bösartigen, ausführbaren MSBuildcode. Der Abschlussbericht benennt die konkret getesteten Custom-Targetfälle und kann daraus keinen Beweis für jeden beliebigen Fremdtask ableiten. Die Navigation selbst implementiert keine Workspace-Schreibfunktion.
+
+Gitimpact erhält beide getrennten Modi und deren bekannte Fälle: staged/unstaged/untracked, `.git`-File-Worktree, clean/non-Git, invalid/option-like refs, innermost Hunkmapping, sibling Declarators auf gleicher Zeile, positive/deletion-only/mixed Hunks, vollständig gelöschte Dateien, Callerfilter und bekannte Totals vor Caps. Rename und zulässige ungewöhnliche Dateinamen werden komponentennah mit tatsächlich von Git gelieferten nulldelimitierten Daten geprüft; Plattform-unzulässige Namen sind keine erfundenen Erfolgsszenarien. Deletion-only/unmapped Bereiche werden nicht dem Nachbarn zugeschrieben. Kindprozessabbruch wird am zuständigen Prozessowner geprüft, ohne einen vollständigen MCP-Hosttest aufzubauen.
+
+Die historische Laufzeit von ungefähr zwölf Minuten für 30 Integrationstests bleibt als Befund erhalten. Das Umkategorisieren dreier ExtendedIntegration-Gittests löste lediglich die Ausführungsfrequenz, nicht die Ursache. Vorhandene Logs/TRX und Fixture-/Produktcode werden zur Phasenaufteilung verwendet. Erlaubte neue Komponentenmessungen trennen Fixtureerstellung, Restore/Build, Lade-/Dekompilationzeit, Dispatcher, Git und Rendering. Ausgeschlossene E2E-Tests werden dafür nicht gestartet. Unnötige wiederholte Fixturearbeit wird im bestehenden Testowner reduziert, ohne Assertions zu entfernen. Ist der E2E-Anteil ohne verbotenen Lauf nicht neu messbar, bleibt dessen Verbesserung ungemessen und wird nicht als schneller ausgegeben. Keine neuen allgemeinen Performancebenchmarks oder ungemessenen Schwellenwerte.
