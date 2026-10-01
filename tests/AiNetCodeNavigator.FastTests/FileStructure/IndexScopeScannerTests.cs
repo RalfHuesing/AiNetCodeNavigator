@@ -110,7 +110,7 @@ public sealed class IndexScopeScannerTests
 
         Assert.Contains("## Projects", payload.FormattedText);
         Assert.Contains("## File types in Roslyn index", payload.FormattedText);
-        Assert.DoesNotContain("Projects:", payload.FormattedText);
+        Assert.DoesNotContain("Projekte:", payload.FormattedText);
         Assert.True(payload.ScanCompleted);
         Assert.False(payload.IsTruncated);
         var after = await Task.WhenAll(documents.Select(document => document.GetTextAsync()));

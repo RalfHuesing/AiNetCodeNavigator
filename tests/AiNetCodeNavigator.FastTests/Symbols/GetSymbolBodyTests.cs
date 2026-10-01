@@ -250,7 +250,7 @@ public sealed class GetSymbolBodyTests
         Assert.Equal(0, result.TotalLines);
         Assert.Equal(1, result.DisplayedStart);
         Assert.Equal(0, result.DisplayedEnd);
-        Assert.Contains("Quell-Syntax", result.Hint, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source syntax", result.Hint, System.StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

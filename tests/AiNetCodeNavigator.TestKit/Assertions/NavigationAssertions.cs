@@ -36,10 +36,10 @@ public static class NavigationAssertions
     /// </summary>
     public static void AssertValidLineRange(int startLine, int endLine, int minimumLines = 1)
     {
-        Assert.True(startLine >= 1, $"Startzeile {startLine} muss >= 1 sein.");
-        Assert.True(endLine >= startLine, $"Endzeile {endLine} muss >= Startzeile {startLine} sein.");
+        Assert.True(startLine >= 1, $"Start line {startLine} must be >= 1.");
+        Assert.True(endLine >= startLine, $"End line {endLine} must be >= start line {startLine}.");
         var lineCount = endLine - startLine + 1;
-        Assert.True(lineCount >= minimumLines, $"Zeilenzahl {lineCount} muss mindestens {minimumLines} betragen.");
+        Assert.True(lineCount >= minimumLines, $"Line count {lineCount} must be at least {minimumLines}.");
     }
 
     /// <summary>

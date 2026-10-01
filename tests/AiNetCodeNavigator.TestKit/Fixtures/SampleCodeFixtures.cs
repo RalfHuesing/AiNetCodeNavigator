@@ -5,7 +5,7 @@ namespace AiNetCodeNavigator.TestKit.Fixtures;
 using AiNetCodeNavigator.TestKit.Builders;
 
 /// <summary>
-/// Vordefinierte, semantisch reichhaltige C#-Code-Vorlagen für Navigations- und AST-Tests.
+/// Predefined, semantically rich C# code templates for navigation and AST tests.
 /// </summary>
 public static class SampleCodeFixtures
 {
@@ -116,7 +116,7 @@ public static class SampleCodeFixtures
         """;
 
     /// <summary>
-    /// Erstellt eine zweiprojektige In-Memory-Solution mit Querverweisen für Integrationstests.
+    /// Creates a two-project in-memory solution with cross-references for integration tests.
     /// </summary>
     public static TestSolutionHandle CreateStandardTestSolution()
     {

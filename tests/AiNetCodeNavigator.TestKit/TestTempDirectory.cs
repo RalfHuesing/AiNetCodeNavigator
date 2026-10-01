@@ -12,8 +12,8 @@ using System.Threading;
 namespace AiNetCodeNavigator.TestKit;
 
 /// <summary>
-/// Verwaltet ein isoliertes temporäres Unterverzeichnis innerhalb des Projektmappen-Temp-Ordners (<c>&lt;RepoRoot&gt;/temp/</c>).
-/// Implementiert <see cref="IDisposable"/>, um das erzeugte Testverzeichnis beim Teardown automatisch zu bereinigen.
+/// Manages an isolated temporary subdirectory within the solution's temp folder (<c>&lt;RepoRoot&gt;/temp/</c>).
+/// Implements <see cref="IDisposable"/> to automatically clean up the created test directory during teardown.
 /// </summary>
 public sealed class TestTempDirectory : IDisposable
 {
@@ -43,17 +43,17 @@ public sealed class TestTempDirectory : IDisposable
     }
 
     /// <summary>
-    /// Absoluter Pfad zum temporären Testverzeichnis.
+    /// Absolute path to the temporary test directory.
     /// </summary>
     public string DirectoryPath { get; }
 
     /// <summary>
-    /// Absoluter Pfad zum Wurzel-Temp-Verzeichnis des Repositories (<c>&lt;RepoRoot&gt;/temp/</c>).
+    /// Absolute path to the repository's root temp directory (<c>&lt;RepoRoot&gt;/temp/</c>).
     /// </summary>
     public static string RootTempDirectory => Path.Combine(SolutionRootLocator.Find(), TempFolderName);
 
     /// <summary>
-    /// Erstellt ein neues, eindeutiges Unterverzeichnis im Projektmappen-Temp-Ordner.
+    /// Creates a new, unique subdirectory in the solution's temp folder.
     /// </summary>
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "OwnerMarker stream is tracked in ActiveDirectories dictionary")]
     public static TestTempDirectory Create(string prefix = DefaultPrefix)
@@ -72,7 +72,7 @@ public sealed class TestTempDirectory : IDisposable
             if (!ActiveDirectories.TryAdd(fullPath, ownerMarker))
             {
                 ownerMarker.Dispose();
-                throw new IOException($"Temporäres Testverzeichnis wurde doppelt registriert: {fullPath}");
+                throw new IOException($"Temporary test directory was registered twice: {fullPath}");
             }
 
             return new TestTempDirectory(fullPath);
@@ -91,7 +91,7 @@ public sealed class TestTempDirectory : IDisposable
     }
 
     /// <summary>
-    /// Erstellt eine Datei mit relativem Pfad und Inhalt im temporären Verzeichnis und gibt den absoluten Pfad zurück.
+    /// Creates a file with a relative path and content in the temporary directory and returns its absolute path.
     /// </summary>
     public string CreateFile(string relativePath, string content = "")
     {
@@ -107,7 +107,7 @@ public sealed class TestTempDirectory : IDisposable
     }
 
     /// <summary>
-    /// Erstellt ein Unterverzeichnis mit relativem Pfad im temporären Verzeichnis und gibt den absoluten Pfad zurück.
+    /// Creates a subdirectory with a relative path in the temporary directory and returns its absolute path.
     /// </summary>
     public string CreateSubdirectory(string relativePath)
     {
@@ -117,12 +117,12 @@ public sealed class TestTempDirectory : IDisposable
     }
 
     /// <summary>
-    /// Liefert einen absoluten Pfad für eine relative Datei- oder Ordnerangabe innerhalb dieses Temp-Verzeichnisses.
+    /// Returns an absolute path for a relative file or folder within this temp directory.
     /// </summary>
     public string GetPath(string relativePath) => Path.GetFullPath(Path.Combine(DirectoryPath, relativePath));
 
     /// <summary>
-    /// Implizite Konvertierung zu <see cref="string"/>, damit Instanzen direkt an Methoden mit Pfad-Parametern übergeben werden können.
+    /// Implicit conversion to <see cref="string"/> so instances can be passed directly to methods with path parameters.
     /// </summary>
     public static implicit operator string(TestTempDirectory directory) => directory.DirectoryPath;
 
@@ -257,7 +257,7 @@ public sealed class TestTempDirectory : IDisposable
     private static string GetOwnerMarkerPath(string directoryPath)
     {
         var parentPath = Directory.GetParent(directoryPath)?.FullName
-            ?? throw new ArgumentException("Temporäres Testverzeichnis muss einen Elternpfad besitzen.", nameof(directoryPath));
+            ?? throw new ArgumentException("Temporary test directory must have a parent path.", nameof(directoryPath));
         return Path.Combine(parentPath, OwnerMarkerFilePrefix + Path.GetFileName(directoryPath));
     }
 

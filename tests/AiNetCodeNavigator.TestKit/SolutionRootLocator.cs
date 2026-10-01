@@ -6,12 +6,12 @@ using System.IO;
 namespace AiNetCodeNavigator.TestKit;
 
 /// <summary>
-/// Sucht das Root-Verzeichnis der Projektmappe ausgehend vom aktuellen Anwendungsordner.
+/// Finds the solution root directory starting from the current application directory.
 /// </summary>
 public static class SolutionRootLocator
 {
     /// <summary>
-    /// Ermittelt das Verzeichnis mit <c>AiNetCodeNavigator.slnx</c>.
+    /// Locates the directory containing <c>AiNetCodeNavigator.slnx</c>.
     /// </summary>
     public static string Find()
     {
@@ -26,6 +26,6 @@ public static class SolutionRootLocator
             currentDirectory = currentDirectory.Parent;
         }
 
-        throw new DirectoryNotFoundException("Das Root-Verzeichnis mit der Projektmappe 'AiNetCodeNavigator.slnx' wurde nicht gefunden.");
+        throw new DirectoryNotFoundException("The root directory containing the solution 'AiNetCodeNavigator.slnx' was not found.");
     }
 }
