@@ -47,7 +47,8 @@ public static class CallTreeMermaidRenderer
             sb.AppendLine();
             foreach (var node in withHandoff)
             {
-                sb.AppendLine($"    %% [{node.NodeId}] handoffId: {node.HandoffId}");
+                var owner = string.IsNullOrWhiteSpace(node.OwnerTargetPath) ? string.Empty : $"; targetPath: {node.OwnerTargetPath}";
+                sb.AppendLine($"    %% [{node.NodeId}] handoffId: {node.HandoffId}{owner}");
             }
         }
 

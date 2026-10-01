@@ -2,6 +2,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
+using AiNetCodeNavigator.Core.Assemblies;
 using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.CallTree;
@@ -23,7 +25,9 @@ public sealed record CallGraphNode(
     string Name,
     string DisplayLine,
     string Kind,
-    string? HandoffId = null);
+    string? HandoffId = null,
+    string? OwnerTargetPath = null,
+    [property: JsonIgnore] AssemblyIdentityDto? ContainingAssemblyIdentity = null);
 
 public sealed record CallGraphEdge(
     string FromNodeId,

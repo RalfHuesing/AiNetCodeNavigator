@@ -1033,6 +1033,100 @@ public sealed class McpServerIntegrationTests
             Assert.False(cCallerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(cCallerBody));
             Assert.Contains("LocalRun()", GetFirstText(cCallerBody), StringComparison.Ordinal);
 
+            await SendRequestAsync(process, 33, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, direction = "incoming", depth = 1, topN = 20, includeReferences = true },
+            }, timeout.Token);
+            var closureCallTree = await ReadResponseAsync(process, 33, timeout.Token);
+            var closureCallTreeText = GetFirstText(closureCallTree);
+            Assert.False(closureCallTree.GetProperty("result").GetProperty("isError").GetBoolean(), closureCallTreeText);
+            Assert.Contains("ClosureB.Run", closureCallTreeText, StringComparison.Ordinal);
+            Assert.Contains("ClosureOnlyC.LocalRun", closureCallTreeText, StringComparison.Ordinal);
+            var bCallTreeHandoffLine = closureCallTreeText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Single(line => line.Contains("ClosureB.Run", StringComparison.Ordinal) && line.Contains("targetPath:", StringComparison.OrdinalIgnoreCase));
+            var bCallTreeHandoff = bCallTreeHandoffLine.Split('`')[1];
+            Assert.Contains(Path.GetFullPath(bPath), bCallTreeHandoffLine, StringComparison.OrdinalIgnoreCase);
+            await SendRequestAsync(process, 34, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = bPath, symbolIdentifiers = new[] { bCallTreeHandoff } },
+            }, timeout.Token);
+            var bCallTreeBody = await ReadResponseAsync(process, 34, timeout.Token);
+            Assert.False(bCallTreeBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(bCallTreeBody));
+            Assert.Contains("Run()", GetFirstText(bCallTreeBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 35, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = aPath, symbolIdentifier = bCallerHandoff, direction = "outgoing", depth = 1, topN = 20, includeReferences = true },
+            }, timeout.Token);
+            var outgoingClosureTree = await ReadResponseAsync(process, 35, timeout.Token);
+            var outgoingClosureText = GetFirstText(outgoingClosureTree);
+            Assert.False(outgoingClosureTree.GetProperty("result").GetProperty("isError").GetBoolean(), outgoingClosureText);
+            var cReadHandoffLines = outgoingClosureText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Where(line => line.Contains("ClosureOnlyC.Read", StringComparison.Ordinal) && line.Contains("targetPath:", StringComparison.OrdinalIgnoreCase)).ToArray();
+            Assert.True(cReadHandoffLines.Length == 1, outgoingClosureText);
+            var cReadHandoffLine = cReadHandoffLines[0];
+            Assert.Contains(ownedCPath, cReadHandoffLine, StringComparison.OrdinalIgnoreCase);
+            var cReadCallTreeHandoff = cReadHandoffLine.Split('`')[1];
+            await SendRequestAsync(process, 36, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = ownedCPath, symbolIdentifiers = new[] { cReadCallTreeHandoff } },
+            }, timeout.Token);
+            var cReadCallTreeBody = await ReadResponseAsync(process, 36, timeout.Token);
+            Assert.False(cReadCallTreeBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(cReadCallTreeBody));
+            Assert.Contains("Read()", GetFirstText(cReadCallTreeBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 37, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, direction = "both", depth = 1, topN = 1, includeReferences = true },
+            }, timeout.Token);
+            var limitedClosureTree = await ReadResponseAsync(process, 37, timeout.Token);
+            var limitedClosureText = GetFirstText(limitedClosureTree);
+            Assert.False(limitedClosureTree.GetProperty("result").GetProperty("isError").GetBoolean(), limitedClosureText);
+            var limitedOwnerLine = limitedClosureText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Single(line => line.Contains("targetPath:", StringComparison.OrdinalIgnoreCase)
+                    && (line.Contains("ClosureB.Run", StringComparison.Ordinal) || line.Contains("ClosureOnlyC.LocalRun", StringComparison.Ordinal)));
+            Assert.Contains("completeness=truncated", limitedClosureText, StringComparison.Ordinal);
+            var limitedOwnerHandoff = limitedOwnerLine.Split('`')[1];
+            var limitedOwnerPath = limitedOwnerLine.Split("targetPath:", StringSplitOptions.None)[1].Trim();
+            Assert.True(string.Equals(Path.GetFullPath(bPath), limitedOwnerPath, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(Path.GetFullPath(ownedCPath), limitedOwnerPath, StringComparison.OrdinalIgnoreCase), limitedOwnerLine);
+            await SendRequestAsync(process, 38, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = limitedOwnerPath, symbolIdentifiers = new[] { limitedOwnerHandoff } },
+            }, timeout.Token);
+            var limitedOwnerBody = await ReadResponseAsync(process, 38, timeout.Token);
+            Assert.False(limitedOwnerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(limitedOwnerBody));
+            Assert.Contains("Run()", GetFirstText(limitedOwnerBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 39, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = aPath, symbolIdentifier = bCallerHandoff, direction = "outgoing", depth = 1, topN = 20, includeReferences = true, format = "mermaid" },
+            }, timeout.Token);
+            var mermaidClosureTree = await ReadResponseAsync(process, 39, timeout.Token);
+            var mermaidClosureText = GetFirstText(mermaidClosureTree);
+            Assert.False(mermaidClosureTree.GetProperty("result").GetProperty("isError").GetBoolean(), mermaidClosureText);
+            Assert.Contains("flowchart TD", mermaidClosureText, StringComparison.Ordinal);
+            var mermaidOwnerLine = mermaidClosureText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Single(line => line.Contains("handoffId:", StringComparison.Ordinal)
+                    && line.Contains(Path.GetFullPath(ownedCPath), StringComparison.OrdinalIgnoreCase));
+            var mermaidHandoff = mermaidOwnerLine.Split("handoffId:", StringSplitOptions.None)[1].Split(';')[0].Trim();
+            Assert.StartsWith("h:", mermaidHandoff, StringComparison.Ordinal);
+            await SendRequestAsync(process, 40, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = ownedCPath, symbolIdentifiers = new[] { mermaidHandoff } },
+            }, timeout.Token);
+            var mermaidOwnerBody = await ReadResponseAsync(process, 40, timeout.Token);
+            Assert.False(mermaidOwnerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(mermaidOwnerBody));
+            Assert.Contains("Read()", GetFirstText(mermaidOwnerBody), StringComparison.Ordinal);
+
             await SendRequestAsync(process, 32, "tools/call", new
             {
                 name = "find_references",
@@ -1092,6 +1186,14 @@ public sealed class McpServerIntegrationTests
             var foreignReference = await ReadResponseAsync(process, 31, timeout.Token);
             Assert.True(foreignReference.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignReference));
             Assert.Contains("TARGET_MISMATCH", GetFirstText(foreignReference), StringComparison.Ordinal);
+            await SendRequestAsync(process, 37, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = aPath, symbolIdentifier = foreignHandoff, includeReferences = true, direction = "incoming", depth = 1 },
+            }, timeout.Token);
+            var foreignCallTree = await ReadResponseAsync(process, 37, timeout.Token);
+            Assert.True(foreignCallTree.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignCallTree));
+            Assert.Contains("TARGET_MISMATCH", GetFirstText(foreignCallTree), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 22, "tools/call", new
             {
@@ -1226,6 +1328,108 @@ public sealed class McpServerIntegrationTests
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             File.Delete(configPath);
             if (Directory.Exists(hostLogDirectory)) Directory.Delete(hostLogDirectory, recursive: true);
+            var resolvedFixtureRoot = Path.GetFullPath(fixture.DirectoryPath);
+            Assert.StartsWith(Path.GetFullPath(TestTempDirectory.RootTempDirectory) + Path.DirectorySeparatorChar, resolvedFixtureRoot, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public async Task AssemblyCallTreeReferenceMergeKeepsGlobalNodeAndEdgeCap()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        var hostAssemblyPath = GetHostAssemblyPath(repositoryRoot);
+        using var fixture = TestTempDirectory.Create("assembly-calltree-cap-");
+        var configPath = Path.Combine(Path.GetTempPath(), "ainet-calltree-cap-" + Guid.NewGuid().ToString("N") + ".json");
+        var cSource = "namespace CallTreeCap; public class Callee { public void Read() { } "
+            + string.Join(" ", Enumerable.Range(0, 130).Select(index => $"public void Local{index:D3}() => Read();")) + " }";
+        var callerNames = Enumerable.Range(0, 130).Select(index => $"Caller{index:D3}").ToArray();
+        var bSource = "namespace CallTreeCap; public class Bridge : Callee { public void Start() { "
+            + string.Join(" ", callerNames.Select(name => $"{name}();")) + " } "
+            + string.Join(" ", callerNames.Select(name => $"public void {name}() => Read();")) + " }";
+        var cPath = AssemblyTestHelper.EmitAssembly(fixture, "CallTreeCapC", cSource);
+        var bPath = AssemblyTestHelper.EmitAssembly(fixture, "CallTreeCapB", bSource, cPath);
+        var aPath = AssemblyTestHelper.EmitAssembly(fixture, "CallTreeCapA", "namespace CallTreeCap; public class Entry { public void Start(Bridge bridge) => bridge.Caller000(); }", bPath, cPath);
+        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        using var process = await StartInitializedHostAsync(repositoryRoot, hostAssemblyPath, configPath, timeout.Token);
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+        try
+        {
+            await SendRequestAsync(process, 2, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = aPath, namePatterns = new[] { "Callee.Read" }, kind = "method", includeReferences = true, maxResults = 5 },
+            }, timeout.Token);
+            var found = await ReadResponseAsync(process, 2, timeout.Token);
+            for (var requestId = 3; GetFirstText(found).Contains("operation=running", StringComparison.Ordinal) && requestId < 8; requestId++)
+            {
+                var operationToken = ReadStringLine(GetFirstText(found), "operationToken");
+                await SendRequestAsync(process, requestId, "tools/call", new
+                {
+                    name = "find_symbol",
+                    arguments = new { targetPath = aPath, namePatterns = new[] { "Callee.Read" }, kind = "method", includeReferences = true, maxResults = 5, operationToken },
+                }, timeout.Token);
+                found = await ReadResponseAsync(process, requestId, timeout.Token);
+            }
+            Assert.False(found.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(found));
+            var seedHandoff = ExtractHandoff(GetFirstText(found));
+
+            await SendRequestAsync(process, 9, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = aPath, symbolIdentifier = seedHandoff, direction = "incoming", depth = 1, topN = 250, includeReferences = true, maxResponseBytes = 65536 },
+            }, timeout.Token);
+            var callTree = await ReadResponseAsync(process, 9, timeout.Token);
+            var text = GetFirstText(callTree);
+            Assert.False(callTree.GetProperty("result").GetProperty("isError").GetBoolean(), text);
+            Assert.Contains("completeness=truncated", text, StringComparison.Ordinal);
+            Assert.Contains("weitere Aufrufe", text, StringComparison.Ordinal);
+            var visibleHandoffCount = text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Count(line => line.StartsWith("- [n", StringComparison.Ordinal) && line.Contains("`h:", StringComparison.Ordinal));
+            Assert.Equal(250, visibleHandoffCount);
+
+            await SendRequestAsync(process, 10, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = aPath, namePatterns = new[] { "Bridge.Start" }, kind = "method", includeReferences = true, maxResults = 5 },
+            }, timeout.Token);
+            var startFound = await ReadResponseAsync(process, 10, timeout.Token);
+            for (var requestId = 11; GetFirstText(startFound).Contains("operation=running", StringComparison.Ordinal) && requestId < 16; requestId++)
+            {
+                var operationToken = ReadStringLine(GetFirstText(startFound), "operationToken");
+                await SendRequestAsync(process, requestId, "tools/call", new
+                {
+                    name = "find_symbol",
+                    arguments = new { targetPath = aPath, namePatterns = new[] { "Bridge.Start" }, kind = "method", includeReferences = true, maxResults = 5, operationToken },
+                }, timeout.Token);
+                startFound = await ReadResponseAsync(process, requestId, timeout.Token);
+            }
+            Assert.False(startFound.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(startFound));
+            var startHandoff = ExtractHandoff(GetFirstText(startFound));
+            await SendRequestAsync(process, 17, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = aPath, symbolIdentifier = startHandoff, direction = "outgoing", depth = 2, topN = 250, includeReferences = true, maxResponseBytes = 65536 },
+            }, timeout.Token);
+            var edgeCappedTree = await ReadResponseAsync(process, 17, timeout.Token);
+            var edgeCappedText = GetFirstText(edgeCappedTree);
+            Assert.False(edgeCappedTree.GetProperty("result").GetProperty("isError").GetBoolean(), edgeCappedText);
+            Assert.Contains("completeness=truncated", edgeCappedText, StringComparison.Ordinal);
+            Assert.Contains("weitere Aufrufe", edgeCappedText, StringComparison.Ordinal);
+            var edgeCappedHandoffs = edgeCappedText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Count(line => line.StartsWith("- [n", StringComparison.Ordinal) && line.Contains("`h:", StringComparison.Ordinal));
+            Assert.Equal(132, edgeCappedHandoffs);
+
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
+            _ = await stderrTask;
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            File.Delete(configPath);
             var resolvedFixtureRoot = Path.GetFullPath(fixture.DirectoryPath);
             Assert.StartsWith(Path.GetFullPath(TestTempDirectory.RootTempDirectory) + Path.DirectorySeparatorChar, resolvedFixtureRoot, StringComparison.OrdinalIgnoreCase);
         }
@@ -1730,7 +1934,7 @@ public sealed class McpServerIntegrationTests
             var incompleteAssemblyCallTree = await ReadResponseAsync(process, 66, timeout.Token);
             Assert.False(incompleteAssemblyCallTree.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(incompleteAssemblyCallTree));
             Assert.Contains("completeness=truncated", GetFirstText(incompleteAssemblyCallTree), StringComparison.Ordinal);
-            Assert.Contains("Referenced assembly source is not included yet", GetFirstText(incompleteAssemblyCallTree), StringComparison.Ordinal);
+            Assert.Contains("Cross-assembly call-chain expansion beyond each owner solution is not composed yet", GetFirstText(incompleteAssemblyCallTree), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 58, "tools/call", new
             {

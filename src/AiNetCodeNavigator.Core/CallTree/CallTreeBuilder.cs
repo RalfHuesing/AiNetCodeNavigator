@@ -351,7 +351,8 @@ public static class CallTreeBuilder
                 Name: name,
                 DisplayLine: displayLine,
                 Kind: symbol.Kind.ToString().ToLowerInvariant(),
-                HandoffId: handoffId);
+                HandoffId: handoffId,
+                ContainingAssemblyIdentity: ToAssemblyIdentityDto(symbol.ContainingAssembly?.Identity));
 
             _nodesBySymbol[symbol] = node;
             _nodes.Add(node);
@@ -437,5 +438,12 @@ public static class CallTreeBuilder
             var line = loc.GetLineSpan().StartLinePosition.Line + 1;
             return $"{relPath}:{line}";
         }
+
+        private static AiNetCodeNavigator.Core.Assemblies.AssemblyIdentityDto? ToAssemblyIdentityDto(AssemblyIdentity? identity) =>
+            identity is null ? null : new(
+                identity.Name,
+                identity.Version?.ToString() ?? string.Empty,
+                string.IsNullOrWhiteSpace(identity.CultureName) ? "neutral" : identity.CultureName,
+                Convert.ToHexString(identity.PublicKeyToken.ToArray()));
     }
 }

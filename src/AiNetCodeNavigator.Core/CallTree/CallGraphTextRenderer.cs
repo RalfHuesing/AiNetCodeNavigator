@@ -74,7 +74,8 @@ public static class CallGraphTextRenderer
         sb.AppendLine("Handoffs:");
         foreach (var node in withHandoff)
         {
-            sb.AppendLine($"- [{node.NodeId}] `{node.HandoffId}` ({node.Name})");
+            var owner = string.IsNullOrWhiteSpace(node.OwnerTargetPath) ? string.Empty : $" — targetPath: {node.OwnerTargetPath}";
+            sb.AppendLine($"- [{node.NodeId}] `{node.HandoffId}` ({node.Name}){owner}");
         }
     }
 
