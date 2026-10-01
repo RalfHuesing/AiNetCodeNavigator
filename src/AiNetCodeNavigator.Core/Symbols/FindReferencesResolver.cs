@@ -14,7 +14,7 @@ using Microsoft.CodeAnalysis.FindSymbols;
 namespace AiNetCodeNavigator.Core.Symbols;
 
 /// <summary>
-/// Sucht alle Referenzen und Implementierungen eines Symbols über die gesamte Solution hinweg.
+/// Finds all references and implementations of a symbol across the entire solution.
 /// </summary>
 public static class FindReferencesResolver
 {
@@ -277,7 +277,7 @@ public static class FindReferencesResolver
             }
             else
             {
-                errorMessage = $"Typ '{namedType.ToDisplayString()}' ({namedType.TypeKind.ToString().ToLowerInvariant()}) ist weder ein Interface noch eine vererbbare Klasse.";
+                errorMessage = $"Type '{namedType.ToDisplayString()}' ({namedType.TypeKind.ToString().ToLowerInvariant()}) is neither an interface nor an inheritable class.";
             }
         }
         else if (targetSymbol is IMethodSymbol method)
@@ -294,7 +294,7 @@ public static class FindReferencesResolver
             }
             else
             {
-                errorMessage = $"Methode '{method.ToDisplayString()}' ist weder Teil eines Interface noch virtuell/abstrakt.";
+                errorMessage = $"Method '{method.ToDisplayString()}' is neither an interface member nor virtual/abstract.";
             }
         }
         else if (targetSymbol is IPropertySymbol property)
@@ -311,12 +311,12 @@ public static class FindReferencesResolver
             }
             else
             {
-                errorMessage = $"Eigenschaft '{property.ToDisplayString()}' ist weder Teil eines Interface noch virtuell/abstrakt.";
+                errorMessage = $"Property '{property.ToDisplayString()}' is neither an interface member nor virtual/abstract.";
             }
         }
         else
         {
-            errorMessage = $"Symbol '{targetSymbol.ToDisplayString()}' ({targetSymbol.Kind}) kann keine Implementierungen oder Overrides haben.";
+            errorMessage = $"Symbol '{targetSymbol.ToDisplayString()}' ({targetSymbol.Kind}) cannot have implementations or overrides.";
         }
 
         if (errorMessage is not null)

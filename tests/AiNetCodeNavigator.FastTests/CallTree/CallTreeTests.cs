@@ -299,8 +299,8 @@ public sealed class CallTreeTests
         Assert.True(graph.Truncated);
         Assert.Equal(0, graph.HiddenEdgeCount);
         Assert.Equal(CallTreeBuilder.MaxCallTreeNodes - 1, graph.PendingNodeCount);
-        Assert.Contains("249 Knoten noch nicht untersucht", CallGraphTextRenderer.RenderAscii(graph));
-        Assert.Contains("249 Knoten nicht untersucht", CallTreeMermaidRenderer.RenderMermaid(graph));
+        Assert.Contains("249 nodes not yet explored", CallGraphTextRenderer.RenderAscii(graph));
+        Assert.Contains("249 nodes not explored", CallTreeMermaidRenderer.RenderMermaid(graph));
     }
 
     [Fact]

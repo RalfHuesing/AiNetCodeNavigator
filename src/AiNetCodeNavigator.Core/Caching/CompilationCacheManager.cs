@@ -8,12 +8,12 @@ using System.Threading;
 using Microsoft.CodeAnalysis;
 
 /// <summary>
-/// Statistiken für Cache-Abfragen.
+/// Statistics for cache queries.
 /// </summary>
 public sealed record CacheStatistics(long Hits, long Misses, int CachedTreesCount, int CachedCompilationsCount);
 
 /// <summary>
-/// Cache-Eintrag für einen geparsten Roslyn-Syntaxbaum.
+/// Cache entry for a parsed Roslyn syntax tree.
 /// </summary>
 public sealed record CachedTreeEntry(DateTime LastWriteTimeUtc, string? ContentHash, SyntaxTree Tree);
 
@@ -39,8 +39,8 @@ public sealed record CachedCompilationEntry(
     Compilation Compilation);
 
 /// <summary>
-/// Thread-sicherer In-Memory- und Zeitstempel-basierter Cache für Roslyn-Syntaxbäume und Kompilationen.
-/// Ermöglicht schnelle inkrementelle Abfragen ohne unnötiges Re-Parsing unveränderter Dateien.
+/// Thread-safe in-memory, timestamp-based cache for Roslyn syntax trees and compilations.
+/// Enables fast incremental queries without unnecessary reparsing of unchanged files.
 /// </summary>
 public sealed class CompilationCacheManager
 {
@@ -51,7 +51,7 @@ public sealed class CompilationCacheManager
     private long _misses;
 
     /// <summary>
-    /// Aktuelle Cache-Statistiken abrufen.
+    /// Retrieves current cache statistics.
     /// </summary>
     public CacheStatistics GetStatistics()
     {
@@ -63,8 +63,8 @@ public sealed class CompilationCacheManager
     }
 
     /// <summary>
-    /// Versucht, einen gecachten SyntaxTree anhand des Dateipfads, Zeitstempels und Inhaltshash abzurufen.
-    /// Ein hashbehafteter Eintrag kann daher nicht durch eine Abfrage ohne Hash wiederverwendet werden.
+    /// Tries to retrieve a cached SyntaxTree by file path, timestamp and content hash.
+    /// An entry with a hash therefore cannot be reused by a query without a hash.
     /// </summary>
     public bool TryGetTree(string filePath, DateTime lastWriteTimeUtc, out SyntaxTree? tree, string? contentHash = null)
     {
@@ -86,7 +86,7 @@ public sealed class CompilationCacheManager
     }
 
     /// <summary>
-    /// Speichert einen geparsten SyntaxTree im Cache.
+    /// Stores a parsed SyntaxTree in the cache.
     /// </summary>
     public void StoreTree(string filePath, DateTime lastWriteTimeUtc, string? contentHash, SyntaxTree tree)
     {
@@ -98,8 +98,8 @@ public sealed class CompilationCacheManager
     }
 
     /// <summary>
-    /// Versucht, eine gecachte Kompilation anhand des Projektpfads, Zeitstempels der jüngsten Datei und aller
-    /// semantisch relevanten Compilation-Eingaben abzurufen.
+    /// Tries to retrieve a cached compilation by project path, latest file timestamp and all
+    /// semantically relevant compilation inputs.
     /// </summary>
     public bool TryGetCompilation(
         string projectPath,
@@ -126,7 +126,7 @@ public sealed class CompilationCacheManager
     }
 
     /// <summary>
-    /// Speichert eine Kompilation im Cache.
+    /// Stores a compilation in the cache.
     /// </summary>
     public void StoreCompilation(
         string projectPath,
@@ -143,7 +143,7 @@ public sealed class CompilationCacheManager
     }
 
     /// <summary>
-    /// Invalidiert den Cache für eine einzelne Datei.
+    /// Invalidates the cache for a single file.
     /// </summary>
     public bool InvalidateFile(string filePath)
     {
@@ -156,7 +156,7 @@ public sealed class CompilationCacheManager
     }
 
     /// <summary>
-    /// Invalidiert den Cache für ein Projekt.
+    /// Invalidates the cache for a project.
     /// </summary>
     public bool InvalidateProject(string projectPath)
     {
@@ -169,7 +169,7 @@ public sealed class CompilationCacheManager
     }
 
     /// <summary>
-    /// Leert den gesamten Cache und setzt die Zähler zurück.
+    /// Clears the entire cache and resets the counters.
     /// </summary>
     public void Clear()
     {

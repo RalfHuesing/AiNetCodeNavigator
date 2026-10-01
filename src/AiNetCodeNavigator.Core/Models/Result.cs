@@ -32,7 +32,7 @@ public readonly record struct Result<T>
     public static Result<T> Failure(ResultError error) => new(error);
 
     public static Result<T> Failure(ResultError? error) =>
-        new(error ?? new ResultError("ERROR", "Unbekannter Fehler."));
+        new(error ?? new ResultError("ERROR", "Unknown error."));
 
     public static implicit operator Result<T>(T value) => Success(value);
     public static implicit operator Result<T>(ResultError error) => Failure(error);

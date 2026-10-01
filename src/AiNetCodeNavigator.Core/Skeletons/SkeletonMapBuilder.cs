@@ -11,7 +11,7 @@ using Microsoft.CodeAnalysis;
 namespace AiNetCodeNavigator.Core.Skeletons;
 
 /// <summary>
-/// Erzeugt Typ-Skelette für einzelne Dokumente oder ganze Projekte.
+/// Creates type skeletons for individual documents or entire projects.
 /// </summary>
 public static class SkeletonMapBuilder
 {

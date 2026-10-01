@@ -13,7 +13,7 @@ using Microsoft.CodeAnalysis.FindSymbols;
 namespace AiNetCodeNavigator.Core.Symbols;
 
 /// <summary>
-/// Berechnet den transitiven Blast Radius (Impact) bei Änderungen an einem C#-Symbol.
+/// Calculates the transitive blast radius (impact) of changes to a C# symbol.
 /// </summary>
 public static class ImpactAnalyzer
 {

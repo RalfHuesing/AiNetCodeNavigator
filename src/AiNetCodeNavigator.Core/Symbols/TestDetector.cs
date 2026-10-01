@@ -11,7 +11,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace AiNetCodeNavigator.Core.Symbols;
 
 /// <summary>
-/// Zentraler Service zur Erkennung und Klassifizierung von Test-Artefakten (Projekte, Dateien, Klassen, Methoden).
+/// Central service for detecting and classifying test artifacts (projects, files, classes, methods).
 /// </summary>
 public static class TestDetector
 {

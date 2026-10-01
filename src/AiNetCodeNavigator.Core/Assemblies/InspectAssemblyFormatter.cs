@@ -105,7 +105,7 @@ public static partial class InspectAssemblyFormatter
     {
         var qualifiedName = string.IsNullOrEmpty(type.Namespace) ? type.Name : $"{type.Namespace}.{type.Name}";
         var memberCount = type.MembersTruncated
-            ? $", Member {type.Members.Count} of {type.TotalMembers} gezeigt{FormatTruncation(true, type.TruncatedBy)}"
+            ? $", Members {type.Members.Count} of {type.TotalMembers} shown{FormatTruncation(true, type.TruncatedBy)}"
             : $", {type.TotalMembers} members";
         builder.AppendLine($"- `{qualifiedName}`{FormatHandoffId(type.Id)} ({type.Kind}, {type.Accessibility}{memberCount})");
         foreach (var member in type.Members)

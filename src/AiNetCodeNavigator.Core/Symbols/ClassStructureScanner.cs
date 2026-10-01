@@ -18,9 +18,9 @@ using Microsoft.CodeAnalysis.FindSymbols;
 namespace AiNetCodeNavigator.Core.Symbols;
 
 /// <summary>
-/// Extrahiert eine vollständige Übersicht aller Member eines C#-Typs
-/// (Kind, Name, Visibility, Start-/Endzeile, Zeilenanzahl, Signatur, Handoff-IDs).
-/// Unterstützt partial classes über mehrere Quelldateien.
+/// Extracts a complete overview of all members of a C# type
+/// (kind, name, visibility, start/end line, line count, signature, handoff IDs).
+/// Supports partial classes across multiple source files.
 /// </summary>
 public static class ClassStructureScanner
 {
@@ -440,18 +440,18 @@ public static class ClassStructureScanner
             return sb.ToString().TrimEnd();
         }
 
-        sb.AppendLine($"# Typ: {p.TypeName}");
+        sb.AppendLine($"# Type: {p.TypeName}");
         sb.AppendLine($"- Kind: {p.Kind}");
-        var filesStr = p.Files.Count == 0 ? "unbekannt" : string.Join(", ", p.Files);
-        var fileCountStr = p.Files.Count == 1 ? "1 Datei" : $"{p.Files.Count} Dateien";
+        var filesStr = p.Files.Count == 0 ? "unknown" : string.Join(", ", p.Files);
+        var fileCountStr = p.Files.Count == 1 ? "1 file" : $"{p.Files.Count} files";
         sb.AppendLine($"- Files: {filesStr} ({fileCountStr})");
         sb.AppendLine($"- Total Lines: {p.TotalLines}");
-        sb.AppendLine($"- Member Count: {p.ShownMemberCount} von {p.TotalMemberCount}");
+        sb.AppendLine($"- Member Count: {p.ShownMemberCount} of {p.TotalMemberCount}");
         sb.AppendLine();
 
         if (p.Members.Count == 0)
         {
-            sb.AppendLine("Keine Member gefunden.");
+            sb.AppendLine("No members found.");
             return sb.ToString().TrimEnd();
         }
 
@@ -474,7 +474,7 @@ public static class ClassStructureScanner
         if (p.Truncated)
         {
             sb.AppendLine();
-            sb.AppendLine($"[{p.TotalMemberCount} Member gesamt, {p.ShownMemberCount} gezeigt — maxMembers erhöhen oder Filter verfeinern]");
+            sb.AppendLine($"[{p.TotalMemberCount} members total, {p.ShownMemberCount} shown — increase maxMembers or refine the filter]");
         }
 
         return sb.ToString().TrimEnd();

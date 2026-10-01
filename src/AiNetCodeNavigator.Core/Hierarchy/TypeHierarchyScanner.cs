@@ -14,7 +14,7 @@ using Microsoft.CodeAnalysis.FindSymbols;
 namespace AiNetCodeNavigator.Core.Hierarchy;
 
 /// <summary>
-/// Ermittelt Basisklassen, Schnittstellen und abgeleitete bzw. implementierende Typen.
+/// Identifies base classes, interfaces and derived or implementing types.
 /// </summary>
 public static class TypeHierarchyScanner
 {
@@ -42,18 +42,18 @@ public static class TypeHierarchyScanner
                 TypeName: type.ToDisplayString(),
                 BaseTypes: Array.Empty<TypeHierarchyEntry>(),
                 Interfaces: Array.Empty<TypeHierarchyEntry>(),
-                SubtypesHeading: "Abgeleitete Klassen:",
+                SubtypesHeading: "Derived classes:",
                 Subtypes: Array.Empty<TypeHierarchyEntry>(),
                 TotalSubtypes: 0,
                 IsTruncated: false,
-                ErrorMessage: $"Typ '{type.ToDisplayString()}' ({type.TypeKind.ToString().ToLowerInvariant()}) wird nicht unterstützt; erwartet werden Klassen, Interfaces oder Structs.");
+                ErrorMessage: $"Type '{type.ToDisplayString()}' ({type.TypeKind.ToString().ToLowerInvariant()}) is not supported; classes, interfaces or structs are expected.");
         }
 
         var baseTypes = CollectBaseTypes(type, solution, solutionDir, handoffIdentity, handoffFormatter, ct);
         var interfaces = CollectInterfaces(type, solution, solutionDir, handoffIdentity, handoffFormatter);
 
         var isInterface = type.TypeKind == TypeKind.Interface;
-        var subtypesHeading = isInterface ? "Implementierende Typen:" : "Abgeleitete Klassen:";
+        var subtypesHeading = isInterface ? "Implementing types:" : "Derived classes:";
 
         var subtypesSymbols = isInterface
             ? (await SymbolFinder.FindImplementationsAsync(type, solution, transitive: true, cancellationToken: ct).ConfigureAwait(false)).OfType<INamedTypeSymbol>().ToList()

@@ -7,7 +7,7 @@ using Microsoft.CodeAnalysis;
 namespace AiNetCodeNavigator.Core.Dependencies;
 
 /// <summary>
-/// Einstiegspunkt zur Erstellung von Dependency-Graphen.
+/// Entry point for building dependency graphs.
 /// </summary>
 public static class DependencyGraphBuilder
 {

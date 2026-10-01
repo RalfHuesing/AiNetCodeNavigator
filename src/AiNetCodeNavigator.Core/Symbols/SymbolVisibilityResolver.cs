@@ -5,7 +5,7 @@ using Microsoft.CodeAnalysis;
 namespace AiNetCodeNavigator.Core.Symbols;
 
 /// <summary>
-/// Helper zur Ermittlung der Sichtbarkeit eines Roslyn-Symbols.
+/// Helper for determining the visibility of a Roslyn symbol.
 /// </summary>
 public static class SymbolVisibilityResolver
 {

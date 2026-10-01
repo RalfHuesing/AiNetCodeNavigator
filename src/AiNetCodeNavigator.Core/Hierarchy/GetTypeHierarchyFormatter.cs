@@ -6,7 +6,7 @@ using System.Text;
 namespace AiNetCodeNavigator.Core.Hierarchy;
 
 /// <summary>
-/// Rendert die Typ-Hierarchie als formatierte Markdown-/Textstruktur.
+/// Renders the type hierarchy as formatted Markdown/text.
 /// </summary>
 public static class GetTypeHierarchyFormatter
 {
@@ -16,13 +16,13 @@ public static class GetTypeHierarchyFormatter
         if (!payload.IsSuccess) return payload.ErrorMessage!;
 
         var sb = new StringBuilder();
-        sb.AppendLine($"# Typ-Hierarchie für {payload.TypeName}");
+        sb.AppendLine($"# Type hierarchy for {payload.TypeName}");
         sb.AppendLine();
 
-        sb.AppendLine("## Basisklassen:");
+        sb.AppendLine("## Base classes:");
         if (payload.BaseTypes.Count == 0)
         {
-            sb.AppendLine("Keine Basisklasse (System.Object).");
+            sb.AppendLine("No base class (System.Object).");
         }
         else
         {
@@ -37,10 +37,10 @@ public static class GetTypeHierarchyFormatter
         }
         sb.AppendLine();
 
-        sb.AppendLine("## Implementierte Interfaces:");
+        sb.AppendLine("## Implemented interfaces:");
         if (payload.Interfaces.Count == 0)
         {
-            sb.AppendLine("Keine Interfaces.");
+            sb.AppendLine("No interfaces.");
         }
         else
         {
@@ -56,7 +56,7 @@ public static class GetTypeHierarchyFormatter
         sb.AppendLine($"## {payload.SubtypesHeading}");
         if (payload.Subtypes.Count == 0)
         {
-            sb.AppendLine("Keine Treffer.");
+            sb.AppendLine("No matches.");
         }
         else
         {
@@ -69,7 +69,7 @@ public static class GetTypeHierarchyFormatter
 
             if (payload.IsTruncated)
             {
-                sb.AppendLine($"... ({payload.TotalSubtypes - payload.Subtypes.Count} weitere abgeschnitten)");
+                sb.AppendLine($"... ({payload.TotalSubtypes - payload.Subtypes.Count} more truncated)");
             }
         }
 

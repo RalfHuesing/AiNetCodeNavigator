@@ -124,7 +124,7 @@ public sealed class ClassStructureScannerTests
 
         var markdown = ClassStructureScanner.RenderMarkdown(payload);
 
-        Assert.Contains("# Typ: SampleNamespace.Greeter", markdown);
+        Assert.Contains("# Type: SampleNamespace.Greeter", markdown);
         Assert.Contains("| Kind | Name | Visibility | Lines | Signature | Handoff |", markdown);
         Assert.Contains("| Method | Greet | public |", markdown);
     }

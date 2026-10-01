@@ -6,7 +6,7 @@ using System.IO;
 namespace AiNetCodeNavigator.Core.Common;
 
 /// <summary>
-/// Normalisiert absolute Dateipfade zu relativen Pfaden mit einheitlichen Forward-Slashes.
+/// Normalizes absolute file paths to relative paths with consistent forward slashes.
 /// </summary>
 public static class PathNormalizer
 {

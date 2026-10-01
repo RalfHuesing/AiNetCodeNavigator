@@ -7,7 +7,7 @@ using System.Text.RegularExpressions;
 namespace AiNetCodeNavigator.Core.Common;
 
 /// <summary>
-/// Erkennung und Validierung von Regex-Mustern und Wildcard-Globs (* und ?).
+/// Detection and validation of regex patterns and wildcard globs (* and ?).
 /// </summary>
 public static class RegexAutoDetector
 {
@@ -142,7 +142,7 @@ public static class RegexAutoDetector
             return true;
         }
 
-        errorMessage = $"Ungültiges Filter-Muster: '{filter}'";
+        errorMessage = $"Invalid filter pattern: '{filter}'";
         return false;
     }
 }

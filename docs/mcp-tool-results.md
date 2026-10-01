@@ -2,6 +2,8 @@
 
 `McpToolResults` is an internal host utility for constructing `ModelContextProtocol.Protocol.CallToolResult` values. It emits exactly one text content block and sets `IsError` explicitly.
 
+Repository-defined navigation labels, diagnostics, errors, and recovery hints use English. Tool names, protocol property names, and machine-readable error codes retain their existing values.
+
 Successful text results use `Status: operation=ok, completeness=complete` and `IsError=false`; a shortened result uses `completeness=truncated` and retains its continuation hint. An optional `JsonElement` can be attached as `StructuredContent` for an untruncated success. If the text projection is truncated, combining it with structured content is rejected to avoid presenting a partial text view beside an apparently complete structured result.
 
 `Error`, `Recoverable`, and `InvalidArgument` all use `IsError=true`, an `[ERROR]` code, and an actionable `nextAction` when supplied. The status, code/message, argument path, budget recovery details, and correction action form a required envelope: it is emitted whole or rejected with `ArgumentOutOfRangeException` when the requested budgets cannot represent it. Optional context is added only when the required envelope still fits; it may be shortened or omitted to preserve those fields. Recoverability describes the recommended correction; it does not change the MCP error flag.

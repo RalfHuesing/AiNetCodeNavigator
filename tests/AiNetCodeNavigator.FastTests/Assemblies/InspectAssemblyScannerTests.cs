@@ -364,7 +364,7 @@ public sealed class InspectAssemblyScannerTests
 
         Assert.True(result.IsSuccess);
         var text = result.Value!.FormattedText;
-        Assert.Contains("Member 2 of 5 gezeigt (truncated: maxMembers)", text, StringComparison.Ordinal);
+        Assert.Contains("Members 2 of 5 shown (truncated: maxMembers)", text, StringComparison.Ordinal);
     }
 
     [Fact]

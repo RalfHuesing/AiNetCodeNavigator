@@ -10,7 +10,7 @@ using AiNetCodeNavigator.Core.Symbols;
 namespace AiNetCodeNavigator.Core.Skeletons;
 
 /// <summary>
-/// Bequemer Einstiegspunkt zur Erstellung von Datei- und Projekt-Skeletons als Markdown.
+/// Convenient entry point for creating file and project skeletons as Markdown.
 /// </summary>
 public static class FileSkeletonBuilder
 {

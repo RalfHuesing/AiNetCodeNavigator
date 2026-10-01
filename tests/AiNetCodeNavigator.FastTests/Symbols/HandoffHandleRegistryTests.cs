@@ -18,7 +18,7 @@ public sealed class HandoffHandleRegistryTests
         public Result<string> Next() =>
             Result<string>.Failure(
                 NavigationErrorCodes.HandoffCounterUnavailable,
-                "Counter-Speicher absichtlich nicht verfügbar.");
+                "Counter store intentionally unavailable.");
     }
 
     [Fact]

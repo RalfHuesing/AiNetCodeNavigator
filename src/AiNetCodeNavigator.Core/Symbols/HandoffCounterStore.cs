@@ -21,8 +21,8 @@ public sealed record HandoffCounterState(
     [property: JsonPropertyName("lastIssued")] string LastIssued);
 
 /// <summary>
-/// Verwaltet die dauerhafte High-Water-Mark des alphabetischen Handoff-Zählers mit internem Prefetch-Puffer.
-/// Verhindert die Wiederverwendung von Handle-Werten über Prozessneustarts und parallele Hosts hinweg.
+/// Manages the persistent high-water mark of the alphabetic handoff counter with an internal prefetch buffer.
+/// Prevents reuse of handle values across process restarts and parallel hosts.
 /// </summary>
 public sealed class HandoffCounterStore : IHandoffCounterStore
 {
@@ -45,7 +45,7 @@ public sealed class HandoffCounterStore : IHandoffCounterStore
     {
         if (string.IsNullOrWhiteSpace(filePath))
         {
-            throw new ArgumentException("Der Pfad der Counter-Datei darf nicht leer sein.", nameof(filePath));
+            throw new ArgumentException("The counter file path must not be empty.", nameof(filePath));
         }
 
         this.filePath = Path.GetFullPath(filePath);
@@ -100,7 +100,7 @@ public sealed class HandoffCounterStore : IHandoffCounterStore
         {
             return Result<string>.Failure(
                 NavigationErrorCodes.HandoffCounterUnavailable,
-                "Die High-Water-Mark-Datei konnte nicht für die Zuteilung eines Handles gesperrt werden.");
+                "The high-water mark file could not be locked to allocate a handle.");
         }
 
         var batchResult = GenerateNextBatch(batchSize);
@@ -146,7 +146,7 @@ public sealed class HandoffCounterStore : IHandoffCounterStore
             {
                 return Result<IReadOnlyList<string>>.Failure(
                     NavigationErrorCodes.HandoffCounterUnavailable,
-                    "Die Handoff-Counter-Datei ist leer oder beschädigt.");
+                    "The handoff counter file is empty or corrupted.");
             }
 
             HandoffCounterState? state;
@@ -158,14 +158,14 @@ public sealed class HandoffCounterStore : IHandoffCounterStore
             {
                 return Result<IReadOnlyList<string>>.Failure(
                     NavigationErrorCodes.HandoffCounterUnavailable,
-                    "Die Handoff-Counter-Datei enthält kein gültiges JSON.");
+                    "The handoff counter file does not contain valid JSON.");
             }
 
             if (state is null || state.FormatVersion != 1 || !HandoffCounterAlphabet.IsValidCounter(state.LastIssued))
             {
                 return Result<IReadOnlyList<string>>.Failure(
                     NavigationErrorCodes.HandoffCounterUnavailable,
-                    "Die Handoff-Counter-Datei enthält eine ungültige Formatversion oder einen inkonsistenten Zählerwert.");
+                    "The handoff counter file contains an invalid format version or an inconsistent counter value.");
             }
 
             var batch = new List<string>(count);
@@ -182,7 +182,7 @@ public sealed class HandoffCounterStore : IHandoffCounterStore
         {
             return Result<IReadOnlyList<string>>.Failure(
                 NavigationErrorCodes.HandoffCounterUnavailable,
-                $"Fehler beim Lesen der High-Water-Mark-Datei: {ex.Message}");
+                $"Error reading the high-water mark file: {ex.Message}");
         }
     }
 
@@ -208,7 +208,7 @@ public sealed class HandoffCounterStore : IHandoffCounterStore
         {
             return Result<string>.Failure(
                 NavigationErrorCodes.HandoffCounterUnavailable,
-                $"Fehler beim Schreiben der High-Water-Mark-Datei: {ex.Message}");
+                $"Error writing the high-water mark file: {ex.Message}");
         }
         finally
         {

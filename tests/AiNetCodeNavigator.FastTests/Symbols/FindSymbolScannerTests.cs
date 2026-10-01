@@ -277,7 +277,7 @@ public sealed class FindSymbolScannerTests
         var methodRequest = new FindSymbolScanRequest(fixture.Solution, "Greeter", Kind: SymbolKindFilter.Method);
         var methodResult = await FindSymbolScanner.FindMatchesWithDetailsAsync(methodRequest);
         Assert.Empty(methodResult.Entries);
-        Assert.Contains("Vorhandene Symbole mit diesem Namen haben den Typ: class", methodResult.Text);
+        Assert.Contains("Existing symbols with this name have kind: class", methodResult.Text);
     }
 
     [Fact]
@@ -549,7 +549,7 @@ public sealed class FindSymbolScannerTests
         var result = await FindSymbolScanner.FindMatchesWithDetailsAsync(request);
 
         Assert.Empty(result.Entries);
-        Assert.Contains("Meintest du eventuell", result.Text);
+        Assert.Contains("Did you mean", result.Text);
         Assert.Contains("Greeter", result.Text);
     }
 }

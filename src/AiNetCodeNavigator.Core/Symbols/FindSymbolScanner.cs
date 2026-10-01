@@ -15,8 +15,8 @@ using Microsoft.CodeAnalysis.FindSymbols;
 namespace AiNetCodeNavigator.Core.Symbols;
 
 /// <summary>
-/// Such-Engine für C#-Symbole via Roslyn Solution und SymbolFinder.
-/// Filtert nach Name, Pattern, SymbolKind und ScopeType (Production/Tests).
+/// Search engine for C# symbols through Roslyn Solution and SymbolFinder.
+/// Filters by name, pattern, SymbolKind and ScopeType (production/tests).
 /// </summary>
 public static class FindSymbolScanner
 {
@@ -84,7 +84,7 @@ public static class FindSymbolScanner
         if (allEntries.Count == 0)
         {
             return new FindSymbolScanResult(
-                $"Keine Treffer für '{request.NamePattern}' im angeforderten Scope '{request.ScopeType}'.",
+                $"No matches for '{request.NamePattern}' in the requested scope '{request.ScopeType}'.",
                 Array.Empty<SymbolLocationEntry>(),
                 0,
                 0,
@@ -310,7 +310,7 @@ public static class FindSymbolScanner
 
         if (totalMatches > entries.Count)
         {
-            sb.AppendLine($"\n... {totalMatches - entries.Count} weitere Treffer (maxResults={maxResults} erreicht).");
+            sb.AppendLine($"\n... {totalMatches - entries.Count} more matches (maxResults={maxResults} reached).");
         }
 
         return sb.ToString().TrimEnd();
@@ -324,7 +324,7 @@ public static class FindSymbolScanner
         if (nameMatches.Count > 0)
         {
             var availableKinds = string.Join(", ", nameMatches.Select(DescribeKind).Distinct(StringComparer.OrdinalIgnoreCase));
-            return $"Keine Treffer für '{request.NamePattern}' mit Filter '{request.Kind}'. Vorhandene Symbole mit diesem Namen haben den Typ: {availableKinds}.";
+            return $"No matches for '{request.NamePattern}' with filter '{request.Kind}'. Existing symbols with this name have kind: {availableKinds}.";
         }
 
         var suggestions = await SymbolNameMatcher.FindSimilarSymbolNamesAsync(
@@ -334,9 +334,9 @@ public static class FindSymbolScanner
             symbol => HasCSharpSourceLocation(request.Solution, symbol)).ConfigureAwait(false);
         if (suggestions.Count > 0)
         {
-            return $"Keine Treffer für '{request.NamePattern}'. Meintest du eventuell: {string.Join(", ", suggestions)}?";
+            return $"No matches for '{request.NamePattern}'. Did you mean: {string.Join(", ", suggestions)}?";
         }
 
-        return $"Keine Treffer für '{request.NamePattern}' gefunden.";
+        return $"No matches found for '{request.NamePattern}'.";
     }
 }

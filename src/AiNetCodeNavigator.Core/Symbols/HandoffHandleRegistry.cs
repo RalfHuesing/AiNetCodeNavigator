@@ -8,8 +8,8 @@ using AiNetCodeNavigator.Core.Workspace;
 namespace AiNetCodeNavigator.Core.Symbols;
 
 /// <summary>
-/// Zentrale Registry für flüchtige Handoff-Handles.
-/// Verwaltet die 1:1-Bijektion zwischen internen Navigations-IDs und kurzen externen Opaque-Handles (h:...).
+/// Central registry for ephemeral handoff handles.
+/// Manages the one-to-one mapping between internal navigation IDs and short external opaque handles (h:...).
 /// </summary>
 public sealed class HandoffHandleRegistry
 {
@@ -45,7 +45,7 @@ public sealed class HandoffHandleRegistry
     }
 
     /// <summary>
-    /// Erzeugt oder liefert ein kompaktes, opaques Handle für eine interne Handoff-ID.
+    /// Creates or returns a compact, opaque handle for an internal handoff ID.
     /// </summary>
     public Result<string> GetOrCreateOpaqueHandleForOutput(string internalHandoffId)
     {
@@ -53,7 +53,7 @@ public sealed class HandoffHandleRegistry
         {
             return Result<string>.Failure(
                 NavigationErrorCodes.InvalidArgument,
-                "Die interne Handoff-ID darf nicht leer sein.");
+                "The internal handoff ID must not be empty.");
         }
 
         lock (syncLock)
@@ -75,7 +75,7 @@ public sealed class HandoffHandleRegistry
         {
             return Result<string>.Failure(
                 NavigationErrorCodes.HandoffCounterUnavailable,
-                "Der Counter-Speicher hat einen ungültigen Handoff-Zähler geliefert.");
+                "The counter store returned an invalid handoff counter.");
         }
 
         var handle = HandoffCounterAlphabet.FormatHandle(counter);
@@ -90,7 +90,7 @@ public sealed class HandoffHandleRegistry
             {
                 return Result<string>.Failure(
                     NavigationErrorCodes.HandoffCounterUnavailable,
-                    "Der Counter-Speicher hat einen bereits verwendeten Handoff-Zähler geliefert.");
+                    "The counter store returned a previously used handoff counter.");
             }
 
             internalToExternal.Add(internalHandoffId, handle);
@@ -108,11 +108,11 @@ public sealed class HandoffHandleRegistry
         }
 
         throw new InvalidOperationException(
-            $"Handoff-Ausgabe konnte nicht erzeugt werden ({result.Error!.Value.Code}).");
+            $"Handoff output could not be created ({result.Error!.Value.Code}).");
     }
 
     /// <summary>
-    /// Restauriert ein externes Handoff-Handle zu einer internen Handoff-ID oder reicht semantische Eingaben unverändert durch.
+    /// Restores an external handoff handle to an internal handoff ID or passes semantic inputs through unchanged.
     /// </summary>
     public Result<string> RestoreInternalHandoffForInput(string externalHandleOrSemanticInput)
     {
@@ -132,8 +132,8 @@ public sealed class HandoffHandleRegistry
             {
                 return Result<string>.Failure(
                     NavigationErrorCodes.InvalidHandoff,
-                    $"Das Handoff-Handle '{externalHandleOrSemanticInput}' ist syntaktisch ungültig.",
-                    hint: "Ein gültiges Handle aus der aktuellen Tool-Antwort verwenden (Format: h:...).");
+                    $"The handoff handle '{externalHandleOrSemanticInput}' is syntactically invalid.",
+                    hint: "Use a valid handle from the current tool response (format: h:...).");
             }
 
             lock (syncLock)
@@ -146,8 +146,8 @@ public sealed class HandoffHandleRegistry
 
             return Result<string>.Failure(
                 NavigationErrorCodes.HandoffUnknown,
-                $"Das Handoff-Handle '{externalHandleOrSemanticInput}' ist unbekannt. Der MCP-Host wurde möglicherweise neu gestartet.",
-                hint: "Bitte das Symbol über find_symbol, get_file_skeleton oder einen passenden Producer erneut ermitteln.");
+                $"The handoff handle '{externalHandleOrSemanticInput}' is unknown. The MCP host may have restarted.",
+                hint: "Find the symbol again using find_symbol, get_file_skeleton or a suitable producer.");
         }
 
         return Result<string>.Success(externalHandleOrSemanticInput);

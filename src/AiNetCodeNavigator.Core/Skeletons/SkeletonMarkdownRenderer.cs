@@ -8,7 +8,7 @@ using System.Text;
 namespace AiNetCodeNavigator.Core.Skeletons;
 
 /// <summary>
-/// Rendert eine Liste von <see cref="SkeletonTypeInfo"/>-Objekten als Markdown.
+/// Renders a list of <see cref="SkeletonTypeInfo"/> objects as Markdown.
 /// </summary>
 public static class SkeletonMarkdownRenderer
 {
@@ -22,8 +22,8 @@ public static class SkeletonMarkdownRenderer
         var sb = new StringBuilder();
         sb.AppendLine("# AiNetCodeNavigator — Skeleton Map");
         sb.AppendLine();
-        sb.AppendLine($"> Typen: {types.Count}"
-            + $" | Member: {types.Sum(t => t.Members.Count)}"
+        sb.AppendLine($"> Types: {types.Count}"
+            + $" | Members: {types.Sum(t => t.Members.Count)}"
             + $" | Pfad: {solutionPath.Replace('\\', '/')}");
         sb.AppendLine();
         sb.AppendLine("---");

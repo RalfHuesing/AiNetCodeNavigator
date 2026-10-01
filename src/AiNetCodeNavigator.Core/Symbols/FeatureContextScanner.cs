@@ -16,9 +16,9 @@ using Microsoft.CodeAnalysis.FindSymbols;
 namespace AiNetCodeNavigator.Core.Symbols;
 
 /// <summary>
-/// Aggregiert den semantischen Feature-Kontext für ein Symbol:
-/// Deklaration/Signatur, eingehende Aufrufer und zugehörige Tests.
-/// Rein lesende Navigation — strikt ohne Linter-Violations oder Qualitätsmetriken.
+/// Aggregates semantic feature context for a symbol:
+/// declaration/signature, incoming callers and related tests.
+/// Read-only navigation — strictly without linter violations or quality metrics.
 /// </summary>
 public static class FeatureContextScanner
 {
@@ -332,7 +332,7 @@ public static class FeatureContextScanner
         sb.AppendLine($"## Incoming Callers ({p.TotalCallers})");
         if (p.Callers.Count == 0)
         {
-            sb.AppendLine("Keine Aufrufer gefunden.");
+            sb.AppendLine("No callers found.");
         }
         else
         {
@@ -343,7 +343,7 @@ public static class FeatureContextScanner
             }
             if (p.CallersTruncated)
             {
-                sb.AppendLine($"... ({p.TotalCallers - p.Callers.Count} weitere Aufrufer abgeschnitten)");
+                sb.AppendLine($"... ({p.TotalCallers - p.Callers.Count} more callers truncated)");
             }
         }
         sb.AppendLine();
@@ -353,7 +353,7 @@ public static class FeatureContextScanner
         sb.AppendLine($"## Associated Tests ({p.TotalTests}) — static heuristic candidates only");
         if (p.Tests.Count == 0)
         {
-            sb.AppendLine("Keine zugehörigen Tests gefunden.");
+            sb.AppendLine("No related tests found.");
         }
         else
         {
@@ -364,7 +364,7 @@ public static class FeatureContextScanner
             }
             if (p.TestsTruncated)
             {
-                sb.AppendLine($"... ({p.TotalTests - p.Tests.Count} weitere Tests abgeschnitten)");
+                sb.AppendLine($"... ({p.TotalTests - p.Tests.Count} more tests truncated)");
             }
         }
 

@@ -12,7 +12,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace AiNetCodeNavigator.Core.Skeletons;
 
 /// <summary>
-/// Extrahiert Typ-Skelette (Signaturen + Metadaten ohne Methodenrümpfe) aus einem C#-Syntaxbaum via SemanticModel.
+/// Extracts type skeletons (signatures and metadata without method bodies) from a C# syntax tree through SemanticModel.
 /// </summary>
 public sealed class SkeletonSyntaxWalker : CSharpSyntaxWalker
 {

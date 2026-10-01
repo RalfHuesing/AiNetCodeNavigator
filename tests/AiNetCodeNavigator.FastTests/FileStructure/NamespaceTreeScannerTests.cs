@@ -189,7 +189,7 @@ public sealed class NamespaceTreeScannerTests
         Assert.Contains("Increase MaxResults", defaultPayload.NextAction);
         Assert.Contains("Truncated by: maxResults", defaultPayload.FormattedText);
         Assert.Contains("Next step:", defaultPayload.FormattedText);
-        Assert.DoesNotContain("Gekürzt", defaultPayload.FormattedText);
+        Assert.DoesNotContain("Truncated", defaultPayload.FormattedText);
 
         var payload = await NamespaceTreeScanner.ScanSolutionAsync(
             fixture.Solution,
@@ -272,8 +272,8 @@ public sealed class NamespaceTreeScannerTests
         Assert.Contains("1 namespaces total, 1 shown | 1 types", success.FormattedText);
         Assert.Equal("Project 'Missing.Project' was not found.", error.Error);
         Assert.Contains("Project 'Missing.Project' was not found.", error.FormattedText);
-        Assert.DoesNotContain("Typen", success.FormattedText);
-        Assert.DoesNotContain("Gekürzt", success.FormattedText);
+        Assert.DoesNotContain("Types", success.FormattedText);
+        Assert.DoesNotContain("Truncated", success.FormattedText);
     }
 
     [Fact]

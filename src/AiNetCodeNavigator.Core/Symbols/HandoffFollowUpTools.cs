@@ -5,7 +5,7 @@ using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.Symbols;
 
-/// <summary>Gemeinsamer Vertrag für erlaubte Folge-Tools kanonischer Handoff-IDs.</summary>
+/// <summary>Shared contract for permitted follow-up tools of canonical handoff IDs.</summary>
 public static class HandoffFollowUpTools
 {
     public static IReadOnlyList<string> ForAssembly(ISymbol symbol) => ["get_symbol_body"];

@@ -13,8 +13,8 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace AiNetCodeNavigator.Core.Symbols;
 
 /// <summary>
-/// Extrahiert den Quellcode (Body/Definition) eines C#-Symbols aus dem Roslyn-AST.
-/// Unterstützt Zeilen-Paginierung (startLine, maxBodyLines) und Batch-Extraktion.
+/// Extracts the source code (body/definition) of a C# symbol from the Roslyn AST.
+/// Supports line pagination (startLine, maxBodyLines) and batch extraction.
 /// </summary>
 public static class SourceSymbolBodyResolver
 {
@@ -114,20 +114,20 @@ public static class SourceSymbolBodyResolver
 
     private static string? GetHint(ISymbol symbol, bool hasSyntax, bool unavailable)
     {
-        if (!hasSyntax) return "Für das Symbol ist kein Quell-Syntax verfügbar.";
+        if (!hasSyntax) return "No source syntax is available for the symbol.";
         if (!unavailable) return null;
         if (symbol is INamedTypeSymbol { TypeKind: TypeKind.Interface }
             || symbol.ContainingType?.TypeKind == TypeKind.Interface)
         {
-            return "Interfaces stellen für dieses Symbol keinen ausführbaren Body bereit.";
+            return "Interfaces do not provide an executable body for this symbol.";
         }
 
         if (symbol is IMethodSymbol { IsPartialDefinition: true, PartialImplementationPart: null })
         {
-            return "Die partielle Methodendeklaration besitzt keine Implementierung.";
+            return "The partial method declaration has no implementation.";
         }
 
-        return "Das Symbol ist abstract oder extern und besitzt keinen Body.";
+        return "The symbol is abstract or extern and has no body.";
     }
 
     private static bool HasNoBody(IPropertySymbol property) =>
@@ -162,7 +162,7 @@ public static class SourceSymbolBodyResolver
         var declaringReference = GetBodySyntaxReference(symbol);
         if (declaringReference is null)
         {
-            return ($"// Kein Quell-Syntax verfügbar für '{symbol.ToDisplayString()}'.", 0, 1, 0, false);
+            return ($"// No source syntax available for '{symbol.ToDisplayString()}'.", 0, 1, 0, false);
         }
 
         var text = declaringReference.GetSyntax().ToFullString();
@@ -172,7 +172,7 @@ public static class SourceSymbolBodyResolver
         if (normalizedStart > totalLines)
         {
             return (
-                $"// startLine {normalizedStart} liegt außerhalb des Symbols (gesamt {totalLines} Zeilen).",
+                $"// startLine {normalizedStart} is outside the symbol ({totalLines} lines total).",
                 totalLines,
                 normalizedStart,
                 normalizedStart,
@@ -188,7 +188,7 @@ public static class SourceSymbolBodyResolver
         var body = string.Join("\n", selectedLines).TrimEnd();
         if (hasMore)
         {
-            body += $"\n// ... truncated, gesamt {totalLines} Zeilen (angezeigt {normalizedStart}-{displayedEnd}), startLine/maxBodyLines anpassen für mehr";
+            body += $"\n// ... truncated, {totalLines} lines total (showing {normalizedStart}-{displayedEnd}), adjust startLine/maxBodyLines for more";
         }
 
         return (body, totalLines, normalizedStart, displayedEnd, hasMore);

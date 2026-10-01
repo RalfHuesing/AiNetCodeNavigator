@@ -52,7 +52,7 @@ public sealed class TypeHierarchyTests
 
         var payload = await TypeHierarchyScanner.ScanAsync(baseProcessor, fixture.Solution);
 
-        Assert.Equal("Abgeleitete Klassen:", payload.SubtypesHeading);
+        Assert.Equal("Derived classes:", payload.SubtypesHeading);
         Assert.True(payload.TotalSubtypes >= 2);
         Assert.Contains(payload.Subtypes, s => s.Name.Contains("FastProcessor"));
         Assert.Contains(payload.Subtypes, s => s.Name.Contains("SafeProcessor"));
@@ -70,10 +70,10 @@ public sealed class TypeHierarchyTests
 
         var text = await TypeHierarchyService.GetFormattedHierarchyAsync(safeProcessor, fixture.Solution);
 
-        Assert.Contains("# Typ-Hierarchie für SampleNamespace.Hierarchy.SafeProcessor", text);
-        Assert.Contains("## Basisklassen:", text);
+        Assert.Contains("# Type hierarchy for SampleNamespace.Hierarchy.SafeProcessor", text);
+        Assert.Contains("## Base classes:", text);
         Assert.Contains("FastProcessor", text);
-        Assert.Contains("## Implementierte Interfaces:", text);
+        Assert.Contains("## Implemented interfaces:", text);
         Assert.Contains("IDisposable", text);
     }
 
@@ -201,7 +201,7 @@ public sealed class TypeHierarchyTests
         Assert.Single(payload.Subtypes);
         Assert.True(payload.IsTruncated);
         Assert.True(payload.TotalSubtypes > payload.Subtypes.Count);
-        Assert.Contains("1 weitere abgeschnitten", GetTypeHierarchyFormatter.FormatText(payload), System.StringComparison.Ordinal);
+        Assert.Contains("1 more truncated", GetTypeHierarchyFormatter.FormatText(payload), System.StringComparison.Ordinal);
     }
 
     [Fact]

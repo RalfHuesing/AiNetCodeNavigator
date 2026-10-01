@@ -13,8 +13,8 @@ using Microsoft.CodeAnalysis.FindSymbols;
 namespace AiNetCodeNavigator.Core.Symbols;
 
 /// <summary>
-/// Zentraler Name-Matcher für Symbol-Suchen.
-/// Unterstützt Substrings, Wildcards (*, ?), klammerbereinigte Methodennamen und punktseparierte Typ-/Member-Pfade.
+/// Central name matcher for symbol searches.
+/// Supports substrings, wildcards (*, ?), method names with parentheses removed and dot-separated type/member paths.
 /// </summary>
 public static class SymbolNameMatcher
 {

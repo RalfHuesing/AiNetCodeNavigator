@@ -5,7 +5,7 @@ using System;
 namespace AiNetCodeNavigator.Core.Symbols;
 
 /// <summary>
-/// Berechnungs- und Validierungsmodul für das alphabetische Handoff-Counter-Format (h:...).
+/// Calculation and validation module for the alphabetic handoff counter format (h:...).
 /// </summary>
 public static class HandoffCounterAlphabet
 {
@@ -67,7 +67,7 @@ public static class HandoffCounterAlphabet
     {
         if (!IsValidCounter(counter))
         {
-            throw new ArgumentException("Der Handoff-Zähler enthält ungültige Zeichen oder ist leer.", nameof(counter));
+            throw new ArgumentException("The handoff counter contains invalid characters or is empty.", nameof(counter));
         }
 
         return HandlePrefix + counter;
@@ -89,12 +89,12 @@ public static class HandoffCounterAlphabet
     {
         if (string.IsNullOrEmpty(current))
         {
-            throw new ArgumentException("Der aktuelle Zähler darf nicht leer sein.", nameof(current));
+            throw new ArgumentException("The current counter must not be empty.", nameof(current));
         }
 
         if (!IsValidCounter(current))
         {
-            throw new ArgumentException($"Der Zähler '{current}' enthält ungültige Zeichen.", nameof(current));
+            throw new ArgumentException($"The counter '{current}' contains invalid characters.", nameof(current));
         }
 
         var characters = current.ToCharArray();
@@ -105,7 +105,7 @@ public static class HandoffCounterAlphabet
             var charIndex = Alphabet.IndexOf(characters[i], StringComparison.Ordinal);
             if (charIndex < 0)
             {
-                throw new ArgumentException($"Das Zeichen '{characters[i]}' gehört nicht zum Handoff-Alphabet.", nameof(current));
+                throw new ArgumentException($"The character '{characters[i]}' is not part of the handoff alphabet.", nameof(current));
             }
 
             if (charIndex == Alphabet.Length - 1)

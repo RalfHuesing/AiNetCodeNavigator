@@ -15,7 +15,7 @@ using Microsoft.CodeAnalysis.FindSymbols;
 namespace AiNetCodeNavigator.Core.CallTree;
 
 /// <summary>
-/// Traversiert den Aufrufbaum eines Symbols in Roslyn (eingehend, ausgehend oder beides).
+/// Traverses a symbol's call tree in Roslyn (incoming, outgoing or both).
 /// </summary>
 public static class CallTreeBuilder
 {

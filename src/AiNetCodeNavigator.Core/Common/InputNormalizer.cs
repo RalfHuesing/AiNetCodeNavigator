@@ -6,8 +6,8 @@ using System.Text.RegularExpressions;
 namespace AiNetCodeNavigator.Core.Common;
 
 /// <summary>
-/// Konsolidierungsklasse zur Bereinigung von LLM- und Benutzereingaben.
-/// Bereinigt Backticks, Anführungszeichen, Methodenklammern und Generics.
+/// Shared utility for cleaning up LLM and user input.
+/// Cleans up backticks, quotation marks, method parentheses and generics.
 /// </summary>
 public static class InputNormalizer
 {

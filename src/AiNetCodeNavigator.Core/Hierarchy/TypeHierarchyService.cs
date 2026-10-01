@@ -8,7 +8,7 @@ using Microsoft.CodeAnalysis;
 namespace AiNetCodeNavigator.Core.Hierarchy;
 
 /// <summary>
-/// Service für Typ-Hierarchien und formatierte Ausgabe.
+/// Service for type hierarchies and formatted output.
 /// </summary>
 public static class TypeHierarchyService
 {

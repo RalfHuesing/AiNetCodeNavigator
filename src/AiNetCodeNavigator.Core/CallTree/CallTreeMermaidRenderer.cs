@@ -8,7 +8,7 @@ using System.Text;
 namespace AiNetCodeNavigator.Core.CallTree;
 
 /// <summary>
-/// Rendert einen Aufrufgraphen als Mermaid-Flowchart-Diagramm.
+/// Renders a call graph as a Mermaid flowchart.
 /// </summary>
 public static class CallTreeMermaidRenderer
 {
@@ -31,13 +31,13 @@ public static class CallTreeMermaidRenderer
 
         if (graph.HiddenEdgeCount > 0 && !string.IsNullOrEmpty(graph.RootNodeId))
         {
-            sb.AppendLine($"    overflow[\"... und {graph.HiddenEdgeCount} weitere\"]");
+            sb.AppendLine($"    overflow[\"... and {graph.HiddenEdgeCount} more\"]");
             sb.AppendLine($"    {graph.RootNodeId} --> overflow");
         }
 
         if (graph.PendingNodeCount > 0 && !string.IsNullOrEmpty(graph.RootNodeId))
         {
-            sb.AppendLine($"    pending[\"... {graph.PendingNodeCount} Knoten nicht untersucht\"]");
+            sb.AppendLine($"    pending[\"... {graph.PendingNodeCount} nodes not explored\"]");
             sb.AppendLine($"    {graph.RootNodeId} --> pending");
         }
 

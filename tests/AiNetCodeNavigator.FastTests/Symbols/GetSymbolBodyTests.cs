@@ -92,7 +92,7 @@ public sealed class GetSymbolBodyTests
 
         var result = SourceSymbolBodyResolver.Resolve(greetMethod, maxBodyLines: 10, startLine: 9999);
 
-        Assert.Contains("liegt außerhalb des Symbols", result.Body, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("is outside the symbol", result.Body, System.StringComparison.OrdinalIgnoreCase);
         Assert.False(result.HasMore);
         Assert.True(result.TotalLines > 0);
     }
@@ -182,7 +182,7 @@ public sealed class GetSymbolBodyTests
         var unavailable = SourceSymbolBodyResolver.Resolve(unimplemented, maxBodyLines: 50);
         Assert.Equal("unavailable", unavailable.Availability);
         Assert.Contains("partial void Missing();", unavailable.Body);
-        Assert.Contains("Implementierung", unavailable.Hint, System.StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("implementation", unavailable.Hint, System.StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

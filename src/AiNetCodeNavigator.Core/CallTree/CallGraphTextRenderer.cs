@@ -8,14 +8,14 @@ using System.Text;
 namespace AiNetCodeNavigator.Core.CallTree;
 
 /// <summary>
-/// Rendert einen Aufrufgraphen als ASCII-Baumdarstellung.
+/// Renders a call graph as an ASCII tree.
 /// </summary>
 public static class CallGraphTextRenderer
 {
     public static string RenderAscii(CallGraphPayload graph)
     {
         ArgumentNullException.ThrowIfNull(graph);
-        if (graph.Nodes.Count == 0) return "Keine Aufrufe gefunden.";
+        if (graph.Nodes.Count == 0) return "No calls found.";
 
         var nodes = graph.Nodes.ToDictionary(n => n.NodeId, StringComparer.Ordinal);
         if (!nodes.TryGetValue(graph.RootNodeId, out var root))
@@ -46,12 +46,12 @@ public static class CallGraphTextRenderer
 
         if (graph.HiddenEdgeCount > 0)
         {
-            sb.AppendLine($"└── ... und {graph.HiddenEdgeCount} weitere Aufrufe");
+            sb.AppendLine($"└── ... and {graph.HiddenEdgeCount} more calls");
         }
 
         if (graph.PendingNodeCount > 0)
         {
-            sb.AppendLine($"└── ... {graph.PendingNodeCount} Knoten noch nicht untersucht");
+            sb.AppendLine($"└── ... {graph.PendingNodeCount} nodes not yet explored");
         }
 
         AppendNodeHandoffs(sb, graph.Nodes);
@@ -84,7 +84,7 @@ public static class CallGraphTextRenderer
         if (hints is null || hints.Count == 0) return;
 
         sb.AppendLine();
-        sb.AppendLine("Methoden im Typ:");
+        sb.AppendLine("Methods in type:");
         foreach (var hint in hints)
         {
             sb.AppendLine($"- {hint.Name} — {hint.DisplayLine}");

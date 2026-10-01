@@ -2876,7 +2876,7 @@ public sealed class McpServerIntegrationTests
             var text = GetFirstText(callTree);
             Assert.False(callTree.GetProperty("result").GetProperty("isError").GetBoolean(), text);
             Assert.Contains("completeness=truncated", text, StringComparison.Ordinal);
-            Assert.Contains("weitere Aufrufe", text, StringComparison.Ordinal);
+            Assert.Contains("more calls", text, StringComparison.Ordinal);
             Assert.Contains("Some reachable owner symbols could not be mapped or expanded within the bounded reference closure", text, StringComparison.Ordinal);
             var visibleHandoffCount = text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Count(line => line.StartsWith("- [n", StringComparison.Ordinal) && line.Contains("`h:", StringComparison.Ordinal));
@@ -2909,7 +2909,7 @@ public sealed class McpServerIntegrationTests
             var edgeCappedText = GetFirstText(edgeCappedTree);
             Assert.False(edgeCappedTree.GetProperty("result").GetProperty("isError").GetBoolean(), edgeCappedText);
             Assert.Contains("completeness=truncated", edgeCappedText, StringComparison.Ordinal);
-            Assert.Contains("weitere Aufrufe", edgeCappedText, StringComparison.Ordinal);
+            Assert.Contains("more calls", edgeCappedText, StringComparison.Ordinal);
             var edgeCappedHandoffs = edgeCappedText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Count(line => line.StartsWith("- [n", StringComparison.Ordinal) && line.Contains("`h:", StringComparison.Ordinal));
             Assert.Equal(132, edgeCappedHandoffs);
@@ -4097,7 +4097,7 @@ public sealed class McpServerIntegrationTests
             }, timeout.Token);
             var isolatedSearch = await ReadResponseAsync(process, 7, timeout.Token);
             var isolatedSearchText = GetFirstText(isolatedSearch);
-            Assert.Contains("Keine Treffer für", isolatedSearchText, StringComparison.Ordinal);
+            Assert.Contains("No matches for", isolatedSearchText, StringComparison.Ordinal);
             Assert.DoesNotContain("[handoff:", isolatedSearchText, StringComparison.Ordinal);
 
             AssertWorkspaceUnchanged(beforeFirst, CaptureWorkspaceSnapshot(firstRoot));
