@@ -1,6 +1,39 @@
 # Open Findings and Technical Debt
 
-Point 9.2 [independent audit 1/3](Reviews/Cluster-09.md#point-92-independent-audit-13--registration-verified-contract-finding-open) checked fixed implementation `2da5c6d3bd4d3c2e139c9d4bbe0048f1d67b1bfe`. All twenty navigation registrations and connected supported routes are confirmed; the relationship/assembly/context registration children are closed. The parent and audit acceptance remain open for **P2: default-false assembly `get_impact` rejects raw names/documentation IDs/positions as invalid handoffs**. Its red-before-fix regression and remediation are assigned to the next bundled 8.5/9.3/9.4 public-contract block. **P3: assembly class structure's omitted/lines ordering differs from source/reference ordering before the display cap** remains open and explicitly deferred as nonblocking debt while prioritizing Cluster 10. Neither deferral nor green prior gates resolves a finding. Point 8.5 remains 0/3 for the broad budget/recovery matrix; live cancellation/concurrency/restart remain separate 9.4 work, and arbitrary MSBuild custom-target cold-source redirection remains unverified. No further 9.2 audit is consumed by these assignments.
+## User-directed stop — 2026-10-01
+
+Work is stopped at the user's explicit request. The last implementation agent and its running tests were interrupted; no further implementation, audit, build, or test is authorized by this stop record. The user explicitly authorized committing the preserved work without requiring green build/test gates. Clusters 8 and 9 are **not fully accepted or closed**. No audit counter is consumed by this record.
+
+The preserved host block remediates the P2 default-false assembly `get_impact` raw-input defect with a real-stdio red-before-fix regression, validates empty feature/test identifiers, adds concrete invalid-input cases for all twenty navigation tools and host lifecycle tests, and adapts the existing AiNetReview report test to its updated production/tests/mixed report layout. Independent confirmation remains pending. Detailed case evidence and concrete untested cells are in the [public host and tool contract matrix](Reviews/public-contract-matrix.md) and [Cluster 9 implementation record](Reviews/Cluster-09.md#bundled-85929394-public-host-implementation--independent-acceptance-pending).
+
+### Remaining work and findings
+
+The numbered roadmap still has **13 open points**. This table also records the outstanding audits, cluster reviews, and unnumbered limitations; implementation evidence does not replace independent acceptance.
+
+| Scope | Remaining work or finding | Audit/review state |
+|---|---|---|
+| [2.3](Clusters/Cluster-02.md) | MSBuild declared wildcard imports and expressions unresolved during loaded evaluation are not tracked as exact candidate paths. Existing technical debt; do not start a fourth point audit. | Point audits exhausted, 3/3. |
+| [8.5](Clusters/Cluster-08.md) | Complete the tool-specific byte/token minimum retries, forced loading/operation-token retries, missing outer-page reconstruction, and supported parameter/default/cap/filter evidence. Exact missing cells and inapplicability reasons are enumerated in the [matrix](Reviews/public-contract-matrix.md#explicit-remaining-limits). | Point audit 0/3; independent acceptance remains pending. |
+| Cluster 8 integration | Finish the public-tool integration review after the remaining 8.5 work. | Earlier partial integration review 1; fix rounds 0. |
+| [9.2](Clusters/Cluster-09.md) | Independently confirm the implemented P2 raw-Impact remediation and remaining public contract/parameter parity. **P3 remains open:** assembly class structure's omitted/`lines` ordering differs from source/reference order before `maxMembers`. | Point audit 1/3; remediation has focused and standalone-suite evidence but no follow-up audit. |
+| [9.3](Clusters/Cluster-09.md) | Independently audit the implemented real-host handshake, registration, argument errors, and valid calls after errors. | Point audit 0/3. |
+| [9.4](Clusters/Cluster-09.md) | Independently audit the implemented concurrent requests, canceled polling waiter/shared operation, live Git-child shutdown, restart, EOF, and protocol/logging evidence. | Point audit 0/3. |
+| Cluster 9 integration | Initial independent integration review of the complete connected host/tool block is still outstanding. | No completed cluster integration review or fix round. |
+| Read-only boundary | Arbitrary MSBuild custom-target cold-workspace output redirection remains unverified. This is an untested boundary, not a newly reproduced defect. | No acceptance claimed. |
+| Integration-test runtime | Investigate suite runtime separately as requested by the user. Completed 30-test integration runs took about twelve minutes; the latest full-suite integration run was stopped. | No runtime investigation or new performance tests performed. |
+| [10.1–10.4](Clusters/Cluster-10.md) | Full authored-content inventory/acceptance, English translation, identifier/path/link migration, and migration verification remain open. Earlier linguistic research was read-only and did not complete or accept these points. | No implementation or point audits; Cluster 10 work was explicitly excluded. |
+| [11.1–11.4](Clusters/Cluster-11.md) | Full end-to-end acceptance, public schema/parameter catalogue and client setup, final acceptance, and the complete 22-tool acceptance matrix remain open. Existing stdio tests are partial evidence, not completion of these points. | No point audits; no Cluster 11 implementation performed. |
+
+### Verification at the stop
+
+- After the user-authorized AiNetReview test adaptation: official build passed with 0 warnings/errors; standalone FastTests passed 560/560 with 0 skips; standalone IntegrationTests passed 30/30 with 0 skips in 11:57. The lifecycle case passed in 24.3681458 seconds in that integration TRX.
+- The latest full `test.ps1` run passed its FastTests segment 560/560 with 0 skips, then was interrupted during IntegrationTests. It has no complete final result or successful full-suite exit evidence. No replacement gate was started after the stop.
+- The earlier full run failed only the obsolete AiNetReview root-view path assertion (FastTests 559/560); its IntegrationTests passed 30/30 in 12:04. The adapted reporting test subsequently passed a focused run 1/1 in 30.8541640 seconds and the standalone/full FastTests segments above.
+- Static logs and TRX files are overwritten by later runs. The recorded completed results above must not be confused with the interrupted latest full run. Changes are preserved by the stop commit; external AiNetLinter/AiNetReview repositories and the installed AiNetReview binary were not modified.
+
+## Historical audit provenance
+
+The following historical audit findings and their original dispositions are retained as provenance; the current disposition above supersedes only their next-step priority, not their evidence.
 
 Point 2.3 remains open with its documented MSBuild structure boundary: declared wildcard imports and expressions unresolved during the loaded evaluation are not tracked as exact candidate paths. See [Cluster 2 integration review after fix round 1](Reviews/Cluster-02.md#integration-review-after-cluster-fix-round-1). Its three point audits are exhausted; the nested conditional import finding was fixed separately. Public tool composition and stdio acceptance remain later work.
 

@@ -607,6 +607,266 @@ public sealed class McpServerIntegrationTests
     }
 
     [Fact]
+    public async Task HostRejectsMalformedUnknownMissingAndOutOfRangeArgumentsThenContinues()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        using var process = StartHost(repositoryRoot, GetHostAssemblyPath(repositoryRoot), null);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+        try
+        {
+            await SendRequestAsync(process, 1, "initialize", new
+            {
+                protocolVersion = "2025-03-26",
+                capabilities = new { },
+                clientInfo = new { name = "argument-contract-test", version = "1.0" },
+            }, timeout.Token);
+            Assert.Equal("2025-03-26", (await ReadResponseAsync(process, 1, timeout.Token)).GetProperty("result").GetProperty("protocolVersion").GetString());
+            await SendNotificationAsync(process, "notifications/initialized", timeout.Token);
+
+            var invalidCases = new (int Id, object Arguments)[]
+            {
+                (2, new { pattern = "Counter" }),
+                (3, new { targetPath = 42, pattern = "Counter" }),
+                (4, new { targetPath = "unused.slnx", pattern = "Counter", maxResponseBytes = 100 }),
+                (5, new { targetPath = "unused.slnx", pattern = "Counter", unexpected = true }),
+            };
+            foreach (var invalid in invalidCases)
+            {
+                await SendRequestAsync(process, invalid.Id, "tools/call", new { name = "find_symbol", arguments = invalid.Arguments }, timeout.Token);
+                var response = await ReadResponseAsync(process, invalid.Id, timeout.Token);
+                if (response.TryGetProperty("error", out var error))
+                {
+                    Assert.Equal(-32602, error.GetProperty("code").GetInt32());
+                }
+                else
+                {
+                    Assert.True(response.GetProperty("result").GetProperty("isError").GetBoolean(), response.ToString());
+                    Assert.Contains("INVALID_ARGUMENT", GetFirstText(response), StringComparison.Ordinal);
+                }
+            }
+
+            await SendRequestAsync(process, 6, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = Path.Combine(repositoryRoot, "AiNetCodeNavigator.slnx"), symbolIdentifier = "T:Missing.Type", direction = "sideways" },
+            }, timeout.Token);
+            var semantic = await ReadResponseAsync(process, 6, timeout.Token);
+            Assert.True(semantic.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(semantic));
+            Assert.Contains("INVALID_ARGUMENT", GetFirstText(semantic), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 7, "tools/call", new { name = "get_server_health", arguments = new { } }, timeout.Token);
+            var health = await ReadResponseAsync(process, 7, timeout.Token);
+            Assert.False(health.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(health));
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
+            _ = await stderrTask;
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+        }
+    }
+
+    [Fact]
+    public async Task NavigationToolsReturnTypedErrorsForConcreteToolSpecificInvalidInputs()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        var fixtureRoot = Directory.CreateTempSubdirectory("ainet-public-error-matrix-").FullName;
+        var configPath = Path.Combine(Path.GetTempPath(), "ainet-navigation-" + Guid.NewGuid().ToString("N") + ".json");
+        var (solutionPath, assemblyPath) = await CreateNavigationFixtureAsync(fixtureRoot);
+        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Warning\"}");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        using var process = await StartInitializedHostAsync(repositoryRoot, GetHostAssemblyPath(repositoryRoot), configPath,
+            timeout.Token);
+        try
+        {
+            var cases = new (string Tool, Dictionary<string, object?> Arguments, string ExpectedCode)[]
+            {
+                ("find_symbol", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath }, "INVALID_ARGUMENT"),
+                ("get_symbol_body", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifiers"] = new[] { "h:unknown" } }, "HANDOFF_UNKNOWN"),
+                ("get_file_skeleton", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["filePaths"] = new[] { "Missing.cs" } }, "INVALID_ARGUMENT"),
+                ("get_class_structure", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "HANDOFF_UNKNOWN"),
+                ("get_file_tree", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["view"] = "unsupported" }, "INVALID_ARGUMENT"),
+                ("get_namespace_tree", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["kind"] = "unsupported" }, "INVALID_ARGUMENT"),
+                ("get_index_scope", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath }, "INVALID_ARGUMENT"),
+                ("get_call_tree", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "h:unknown", ["direction"] = "sideways" }, "INVALID_ARGUMENT"),
+                ("find_references", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "h:unknown" }, "HANDOFF_UNKNOWN"),
+                ("get_type_hierarchy", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "HANDOFF_UNKNOWN"),
+                ("find_implementations", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "HANDOFF_UNKNOWN"),
+                ("get_impact", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "T:NavigationFixture.Counter", ["gitRef"] = "HEAD" }, "INVALID_ARGUMENT"),
+                ("dependency_graph", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath }, "INVALID_ARGUMENT"),
+                ("resolve_type_origin", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "", ["typeName"] = "" }, "INVALID_ARGUMENT"),
+                ("get_assembly_context", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown", ["detailLevel"] = "unsupported" }, "INVALID_ARGUMENT"),
+                ("inspect_assembly", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["detailLevel"] = "unsupported" }, "INVALID_ARGUMENT"),
+                ("search_assembly", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["pattern"] = "Counter", ["searchKind"] = "unsupported" }, "INVALID_ARGUMENT"),
+                ("find_assembly_extensions", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["detailLevel"] = "unsupported" }, "INVALID_ARGUMENT"),
+                ("get_feature_context", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "" }, "INVALID_ARGUMENT"),
+                ("get_test_context", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "" }, "INVALID_ARGUMENT"),
+            };
+
+            var requestId = 10;
+            foreach (var (tool, arguments, expectedCode) in cases)
+            {
+                var response = await CallAndDrainAsync(process, tool, arguments, requestId, timeout.Token);
+                Assert.True(response.TryGetProperty("error", out _) || response.GetProperty("result").GetProperty("isError").GetBoolean(),
+                    $"{tool} accepted its invalid case: {response}");
+                var text = response.TryGetProperty("result", out _) ? GetFirstText(response) : response.GetProperty("error").GetProperty("message").GetString()!;
+                Assert.True(text.Contains(expectedCode, StringComparison.Ordinal), $"{tool}: {text}");
+                requestId += 3;
+            }
+
+            await SendRequestAsync(process, requestId, "tools/call", new { name = "get_server_health", arguments = new { } }, timeout.Token);
+            var health = await ReadResponseAsync(process, requestId, timeout.Token);
+            Assert.False(health.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(health));
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            File.Delete(configPath);
+            if (Directory.Exists(Path.Combine(fixtureRoot, "repository", ".git")))
+            {
+                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "remove", "--force", Path.Combine(fixtureRoot, "worktree"));
+                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "prune");
+            }
+            ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
+            Directory.Delete(fixtureRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StdioHostCancelsGitChildOnShutdownAndSurvivesCancelledPollingRequest()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        var hostAssemblyPath = GetHostAssemblyPath(repositoryRoot);
+        var fixtureRoot = Directory.CreateTempSubdirectory("ainet-git-cancel-acceptance-").FullName;
+        var configPath = Path.Combine(Path.GetTempPath(), "ainet-navigation-" + Guid.NewGuid().ToString("N") + ".json");
+        var logDirectory = Path.Combine(Path.GetTempPath(), "ainet-navigation-logs-" + Guid.NewGuid().ToString("N"));
+        var gitShimDirectory = await CreateBlockingGitShimAsync(fixtureRoot);
+        var (solutionPath, assemblyPath) = await CreateNavigationFixtureAsync(fixtureRoot);
+        var pidFile = Path.Combine(Path.GetDirectoryName(gitShimDirectory)!, "git-child.pid");
+        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        using var process = StartHostWithGitPath(repositoryRoot, hostAssemblyPath, logDirectory, gitShimDirectory, "--config", configPath);
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+
+        try
+        {
+            await SendRequestAsync(process, 1, "initialize", new
+            {
+                protocolVersion = "2025-03-26",
+                capabilities = new { },
+                clientInfo = new { name = "git-cancellation-test", version = "1.0" },
+            }, timeout.Token);
+            var initialize = await ReadResponseAsync(process, 1, timeout.Token);
+            Assert.Equal("2025-03-26", initialize.GetProperty("result").GetProperty("protocolVersion").GetString());
+            await SendNotificationAsync(process, "notifications/initialized", timeout.Token);
+
+            var arguments = new Dictionary<string, object?>
+            {
+                ["targetPath"] = solutionPath,
+                ["detailLevel"] = "change-context",
+                ["gitRef"] = "HEAD",
+            };
+            await SendRequestAsync(process, 2, "tools/call", new { name = "get_impact", arguments }, timeout.Token);
+            var started = await ReadResponseAsync(process, 2, timeout.Token);
+            var startedText = GetFirstText(started);
+            Assert.Contains("operation=running", startedText, StringComparison.Ordinal);
+            var operationToken = ReadStringLine(startedText, "operationToken");
+
+            var waitArguments = new Dictionary<string, object?>(arguments, StringComparer.Ordinal)
+            {
+                ["operationToken"] = operationToken,
+            };
+            await SendRequestAsync(process, 3, "tools/call", new { name = "get_impact", arguments = waitArguments }, timeout.Token);
+            var childDeadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(20);
+            while (!File.Exists(pidFile) && DateTimeOffset.UtcNow < childDeadline)
+                await Task.Delay(50, timeout.Token);
+            Assert.True(File.Exists(pidFile), "The real get_impact Git child did not reach the blocked diff invocation.");
+            var childPid = int.Parse(await File.ReadAllTextAsync(pidFile, timeout.Token), System.Globalization.CultureInfo.InvariantCulture);
+
+            await SendNotificationAsync(process, "notifications/cancelled", new { requestId = 3, reason = "Cancel this polling waiter." }, timeout.Token);
+            await Task.Delay(250, timeout.Token);
+            Assert.True(IsProcessRunning(childPid), "Cancelling one poll waiter must leave the shared background operation running.");
+
+            await SendRequestAsync(process, 4, "tools/call", new { name = "get_server_health", arguments = new { } }, timeout.Token);
+            var health = await ReadResponseAsync(process, 4, timeout.Token);
+            Assert.False(health.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(health));
+
+            await SendRequestAsync(process, 5, "tools/call", new { name = "get_server_health", arguments = new { } }, timeout.Token);
+            await SendRequestAsync(process, 6, "tools/list", new { }, timeout.Token);
+            await SendRequestAsync(process, 7, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = assemblyPath, pattern = "Counter", maxResults = 10 },
+            }, timeout.Token);
+            var concurrentResponses = await ReadResponsesAsync(process, [5, 6, 7], timeout.Token);
+            Assert.False(concurrentResponses[5].GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(concurrentResponses[5]));
+            Assert.Equal(22, concurrentResponses[6].GetProperty("result").GetProperty("tools").GetArrayLength());
+            Assert.False(concurrentResponses[7].GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(concurrentResponses[7]));
+            var oldSessionHandoff = ExtractHandoff(GetFirstText(concurrentResponses[7]));
+
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
+            _ = await stderrTask;
+            Assert.False(IsProcessRunning(childPid), "Host shutdown must cancel, kill, and drain its live Git child.");
+
+            using var restarted = StartHostWithGitPath(repositoryRoot, hostAssemblyPath, logDirectory, gitShimDirectory, "--config", configPath);
+            var restartedStderr = restarted.StandardError.ReadToEndAsync(timeout.Token);
+            await SendRequestAsync(restarted, 1, "initialize", new
+            {
+                protocolVersion = "2025-03-26",
+                capabilities = new { },
+                clientInfo = new { name = "git-cancellation-restart-test", version = "1.0" },
+            }, timeout.Token);
+            var restartedInitialize = await ReadResponseAsync(restarted, 1, timeout.Token);
+            Assert.Equal("2025-03-26", restartedInitialize.GetProperty("result").GetProperty("protocolVersion").GetString());
+            await SendNotificationAsync(restarted, "notifications/initialized", timeout.Token);
+            await SendRequestAsync(restarted, 2, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { oldSessionHandoff } },
+            }, timeout.Token);
+            var staleSessionHandle = await ReadResponseAsync(restarted, 2, timeout.Token);
+            Assert.True(staleSessionHandle.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(staleSessionHandle));
+            Assert.Contains("HANDOFF_UNKNOWN", GetFirstText(staleSessionHandle), StringComparison.Ordinal);
+            await SendRequestAsync(restarted, 3, "tools/call", new { name = "get_server_health", arguments = new { } }, timeout.Token);
+            var restartedHealth = await ReadResponseAsync(restarted, 3, timeout.Token);
+            Assert.False(restartedHealth.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(restartedHealth));
+            restarted.StandardInput.Close();
+            await restarted.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, restarted.ExitCode);
+            Assert.Empty(await restarted.StandardOutput.ReadToEndAsync(timeout.Token));
+            _ = await restartedStderr;
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            File.Delete(configPath);
+            if (Directory.Exists(logDirectory)) Directory.Delete(logDirectory, recursive: true);
+            if (Directory.Exists(Path.Combine(fixtureRoot, "repository", ".git")))
+            {
+                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "remove", "--force", Path.Combine(fixtureRoot, "worktree"));
+                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "prune");
+            }
+            ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
+            Directory.Delete(fixtureRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task CommandLineErrorsGoToStderrAndNeverProtocolStdout()
     {
         var repositoryRoot = SolutionRootLocator.Find();
@@ -1319,6 +1579,71 @@ public sealed class McpServerIntegrationTests
             await SendRequestAsync(process, 25, "tools/call", new { name = "get_impact", arguments = new { targetPath = fixtureAssemblyPath, symbolIdentifier = assemblyHandle } }, timeout.Token);
             var assemblyImpact = await ReadResponseAsync(process, 25, timeout.Token);
             Assert.False(assemblyImpact.GetProperty("result").GetProperty("isError").GetBoolean());
+
+            await SendRequestAsync(process, 125, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = fixtureAssemblyPath, pattern = "Counter.Read", kind = "method", maxResults = 10 },
+            }, timeout.Token);
+            var assemblyReadFind = await ReadResponseAsync(process, 125, timeout.Token);
+            var assemblyReadFindText = GetFirstText(assemblyReadFind);
+            Assert.False(assemblyReadFind.GetProperty("result").GetProperty("isError").GetBoolean(), assemblyReadFindText);
+            var assemblyReadHandoff = ExtractHandoff(assemblyReadFindText);
+            var assemblyReadLocation = assemblyReadFindText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .First(line => line.Contains("Read()", StringComparison.Ordinal) && line.Contains(" in ", StringComparison.Ordinal));
+            var assemblyReadLocationToken = assemblyReadLocation[(assemblyReadLocation.LastIndexOf(" in ", StringComparison.Ordinal) + 4)..]
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+
+            var impactInputs = new[]
+            {
+                new { RequestId = 126, Identifier = "M:NavigationFixture.Counter.Read", IncludeReferences = (bool?)null },
+                new { RequestId = 127, Identifier = "M:NavigationFixture.Counter.Read", IncludeReferences = (bool?)false },
+                new { RequestId = 128, Identifier = "NavigationFixture.Counter.Read", IncludeReferences = (bool?)null },
+                new { RequestId = 129, Identifier = "NavigationFixture.Counter.Read", IncludeReferences = (bool?)false },
+                new { RequestId = 131, Identifier = assemblyReadLocationToken, IncludeReferences = (bool?)null },
+                new { RequestId = 132, Identifier = assemblyReadLocationToken, IncludeReferences = (bool?)false },
+                new { RequestId = 133, Identifier = assemblyReadHandoff, IncludeReferences = (bool?)null },
+            };
+            JsonElement? baselineImpactPayload = null;
+            string? callerHandoff = null;
+            foreach (var input in impactInputs)
+            {
+                var arguments = new Dictionary<string, object?>
+                {
+                    ["targetPath"] = fixtureAssemblyPath,
+                    ["symbolIdentifier"] = input.Identifier,
+                    ["maxResults"] = 20,
+                };
+                if (input.IncludeReferences is { } includeReferences) arguments["includeReferences"] = includeReferences;
+                await SendRequestAsync(process, input.RequestId, "tools/call", new { name = "get_impact", arguments }, timeout.Token);
+                var response = await ReadResponseAsync(process, input.RequestId, timeout.Token);
+                var responseText = GetFirstText(response);
+                Assert.False(response.GetProperty("result").GetProperty("isError").GetBoolean(), responseText);
+                var payload = ParsePayload(responseText);
+                var caller = payload.GetProperty("callSites").EnumerateArray()
+                    .FirstOrDefault(site => site.GetProperty("callingMember").GetString()?.EndsWith("CounterConsumer.Run", StringComparison.Ordinal) == true);
+                Assert.False(caller.ValueKind == JsonValueKind.Undefined, responseText);
+                Assert.True(payload.GetProperty("directCallersCount").GetInt32() > 0, responseText);
+                callerHandoff ??= caller.GetProperty("callingMemberHandoffId").GetString();
+                Assert.StartsWith("h:", callerHandoff, StringComparison.Ordinal);
+                if (baselineImpactPayload is { } expected)
+                {
+                    Assert.Equal(expected.GetProperty("directCallersCount").GetInt32(), payload.GetProperty("directCallersCount").GetInt32());
+                    Assert.Equal(expected.GetProperty("transitiveImpactCount").GetInt32(), payload.GetProperty("transitiveImpactCount").GetInt32());
+                }
+                else
+                {
+                    baselineImpactPayload = payload.Clone();
+                }
+            }
+            await SendRequestAsync(process, 130, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = fixtureAssemblyPath, symbolIdentifiers = new[] { callerHandoff } },
+            }, timeout.Token);
+            var assemblyImpactCallerBody = await ReadResponseAsync(process, 130, timeout.Token);
+            Assert.False(assemblyImpactCallerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(assemblyImpactCallerBody));
+            Assert.Contains("Run", GetFirstText(assemblyImpactCallerBody), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 6, "tools/call", new
             {
@@ -3893,6 +4218,71 @@ public sealed class McpServerIntegrationTests
         return Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start MCP host process.");
     }
 
+    private static Process StartHostWithGitPath(string repositoryRoot, string hostAssemblyPath, string logDirectory, string gitDirectory, params string[] arguments)
+    {
+        var startInfo = new ProcessStartInfo("dotnet")
+        {
+            WorkingDirectory = repositoryRoot,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        startInfo.Environment["AINET_CODE_NAVIGATOR_LOG_DIRECTORY"] = logDirectory;
+        startInfo.Environment["AINET_TEST_GIT_PID_FILE"] = Path.Combine(Path.GetDirectoryName(gitDirectory)!, "git-child.pid");
+        startInfo.Environment["PATH"] = gitDirectory + Path.PathSeparator + (Environment.GetEnvironmentVariable("PATH") ?? string.Empty);
+        startInfo.ArgumentList.Add(hostAssemblyPath);
+        foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
+        return Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start MCP host with the Git test shim.");
+    }
+
+    private static async Task<string> CreateBlockingGitShimAsync(string fixtureRoot)
+    {
+        var projectDirectory = Path.Combine(fixtureRoot, "git-shim");
+        Directory.CreateDirectory(projectDirectory);
+        var projectPath = Path.Combine(projectDirectory, "GitShim.csproj");
+        await File.WriteAllTextAsync(projectPath,
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><AssemblyName>git</AssemblyName><UseAppHost>true</UseAppHost><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>");
+        await File.WriteAllTextAsync(Path.Combine(projectDirectory, "Program.cs"), """
+            var arguments = args;
+            if (arguments.Length >= 2 && arguments[0] == "rev-parse" && arguments[1] == "--show-toplevel")
+            {
+                Console.WriteLine(Environment.CurrentDirectory);
+                return;
+            }
+            if (arguments.Length >= 2 && arguments[0] == "rev-parse" && arguments[1] == "--verify")
+            {
+                Console.WriteLine("0123456789abcdef0123456789abcdef01234567");
+                return;
+            }
+            if (arguments.Contains("diff", StringComparer.Ordinal))
+            {
+                var pidFile = Environment.GetEnvironmentVariable("AINET_TEST_GIT_PID_FILE")!;
+                await File.WriteAllTextAsync(pidFile, Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                await Task.Delay(Timeout.Infinite);
+            }
+            """);
+        await RestoreProjectAsync(projectPath, projectDirectory);
+        await RunCommandAsync("dotnet", projectDirectory, "build", projectPath, "--no-restore", "--configuration", "Debug");
+        var outputDirectory = Path.Combine(projectDirectory, "bin", "Debug", "net10.0");
+        Assert.True(File.Exists(Path.Combine(outputDirectory, "git.exe")), "The test Git apphost was not produced.");
+        return outputDirectory;
+    }
+
+    private static bool IsProcessRunning(int processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
     private static async Task RestoreProjectAsync(string projectPath, string workingDirectory)
     {
         var startInfo = new ProcessStartInfo("dotnet")
@@ -4012,7 +4402,11 @@ public sealed class McpServerIntegrationTests
         var fullRoot = Path.GetFullPath(fixtureRoot);
         var temporaryRoot = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         Assert.StartsWith(temporaryRoot, fullRoot, StringComparison.OrdinalIgnoreCase);
-        Assert.StartsWith("ainet-contract-fixture-", Path.GetFileName(fullRoot), StringComparison.Ordinal);
+        var fixtureName = Path.GetFileName(fullRoot);
+        Assert.True(fixtureName.StartsWith("ainet-contract-fixture-", StringComparison.Ordinal)
+            || fixtureName.StartsWith("ainet-git-cancel-acceptance-", StringComparison.Ordinal)
+            || fixtureName.StartsWith("ainet-public-error-matrix-", StringComparison.Ordinal),
+            "Read-only cleanup is restricted to owned navigation integration fixtures.");
         var pending = new Stack<string>();
         pending.Push(fullRoot);
         while (pending.TryPop(out var directory))
@@ -4072,6 +4466,39 @@ public sealed class McpServerIntegrationTests
         throw new EndOfStreamException($"MCP host exited before responding to request {id}.");
     }
 
+    private static async Task<JsonElement> CallAndDrainAsync(Process process, string toolName, Dictionary<string, object?> arguments,
+        int initialRequestId, CancellationToken cancellationToken)
+    {
+        var requestId = initialRequestId;
+        await SendRequestAsync(process, requestId, "tools/call", new { name = toolName, arguments }, cancellationToken);
+        var response = await ReadResponseAsync(process, requestId++, cancellationToken);
+        for (var poll = 0; poll < 120 && response.TryGetProperty("result", out _) && GetFirstText(response).Contains("operation=running", StringComparison.Ordinal); poll++)
+        {
+            var operationToken = ReadStringLine(GetFirstText(response), "operationToken");
+            var pollArguments = new Dictionary<string, object?>(arguments, StringComparer.Ordinal) { ["operationToken"] = operationToken };
+            await SendRequestAsync(process, requestId, "tools/call", new { name = toolName, arguments = pollArguments }, cancellationToken);
+            response = await ReadResponseAsync(process, requestId++, cancellationToken);
+            if (GetFirstText(response).Contains("operation=running", StringComparison.Ordinal))
+                await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+        }
+        return response;
+    }
+
+    private static async Task<Dictionary<int, JsonElement>> ReadResponsesAsync(Process process, IReadOnlyCollection<int> expectedIds, CancellationToken cancellationToken)
+    {
+        var responses = new Dictionary<int, JsonElement>();
+        var expected = expectedIds.ToHashSet();
+        while (responses.Count < expected.Count && await process.StandardOutput.ReadLineAsync(cancellationToken) is { } line)
+        {
+            using var document = JsonDocument.Parse(line);
+            var root = document.RootElement;
+            if (root.TryGetProperty("id", out var responseId) && responseId.TryGetInt32(out var id) && expected.Contains(id))
+                responses[id] = root.Clone();
+        }
+        Assert.Equal(expected.Count, responses.Count);
+        return responses;
+    }
+
     private static async Task<JsonElement> PollRunningImpactAsync(
         Process process,
         int initialRequestId,
@@ -4101,6 +4528,9 @@ public sealed class McpServerIntegrationTests
 
     private static Task SendNotificationAsync(Process process, string method, CancellationToken cancellationToken) =>
         WriteLineAsync(process, JsonSerializer.Serialize(new { jsonrpc = "2.0", method }), cancellationToken);
+
+    private static Task SendNotificationAsync(Process process, string method, object parameters, CancellationToken cancellationToken) =>
+        WriteLineAsync(process, JsonSerializer.Serialize(new { jsonrpc = "2.0", method, @params = parameters }), cancellationToken);
 
     private static async Task WriteLineAsync(Process process, string line, CancellationToken cancellationToken)
     {

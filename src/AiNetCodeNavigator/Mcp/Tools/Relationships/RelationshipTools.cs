@@ -252,7 +252,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                             return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, closureImpact.ErrorField);
                         return NavigationToolSupport.Success(closureImpact.Impact!, closureImpact.IsTruncated, closureImpact.NextAction);
                     }
-                    var access = await AssemblySymbolHandoffResolver.ResolveAsync(symbolIdentifier, ct).ConfigureAwait(false);
+                    var access = await ResolveAssemblySymbolAsync(target, symbolIdentifier, ct).ConfigureAwait(false);
                     if (!access.IsSuccess) return NavigationToolSupport.Failure(access.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                     await using var lease = access.Value!;
                     if (!string.Equals(Path.GetFullPath(lease.Origin.CanonicalPath), target.CanonicalPath, StringComparison.OrdinalIgnoreCase))
@@ -474,6 +474,10 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
         string? continuationToken = null, CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(symbolIdentifier))
+            return McpToolResults.InvalidArgument("symbolIdentifier must be a non-empty symbol identifier.", "$.symbolIdentifier",
+                "Provide a source symbol name, documentation ID, position, or current handoff ID.",
+                maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         if (!TryScope(scopeType, out var scope)) return McpToolResults.InvalidArgument("scopeType is unsupported.", "$.scopeType", "Use all, production, or tests.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         return await NavigationToolSupport.RouteAsync(runtime, "get_feature_context", targetPath,
             new { symbolIdentifier, scopeType, includeGenerated, maxCallers, maxTests }, operationToken, continuationToken,
@@ -495,6 +499,10 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         [Range(512, 65536)] int maxResponseBytes = 16384, [Range(1, int.MaxValue)] int? maxResponseTokens = null,
         string? operationToken = null, string? continuationToken = null, CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(symbolIdentifier))
+            return McpToolResults.InvalidArgument("symbolIdentifier must be a non-empty symbol identifier.", "$.symbolIdentifier",
+                "Provide a source symbol name, documentation ID, position, or current handoff ID.",
+                maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         if (!TryScope(scopeType, out var scope)) return McpToolResults.InvalidArgument("scopeType is unsupported.", "$.scopeType", "Use all, production, or tests.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         return await NavigationToolSupport.RouteAsync(runtime, "get_test_context", targetPath,
             new { symbolIdentifier, scopeType, includeGenerated, maxResults }, operationToken, continuationToken,

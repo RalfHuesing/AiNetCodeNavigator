@@ -59,8 +59,11 @@ public sealed class RepositoryAuditReportTests
 
         var runDirectory = Path.Combine(outputDirectory, runId);
         Assert.True(File.Exists(Path.Combine(runDirectory, "index.md")), "AiNetReview did not publish the report index.");
-        Assert.True(File.Exists(Path.Combine(runDirectory, "changed-files", "index.md")), "AiNetReview did not publish the working report view.");
-        Assert.True(File.Exists(Path.Combine(runDirectory, "all-findings", "index.md")), "AiNetReview did not publish the complete report view.");
+        foreach (var area in new[] { "production", "tests", "mixed" })
+        {
+            Assert.True(File.Exists(Path.Combine(runDirectory, area, "changed-files", "index.md")), $"AiNetReview did not publish the {area} working report view.");
+            Assert.True(File.Exists(Path.Combine(runDirectory, area, "all-findings", "index.md")), $"AiNetReview did not publish the {area} complete report view.");
+        }
         Assert.False(File.Exists(baselinePath), "AiNetReview unexpectedly created a baseline.");
     }
 }
