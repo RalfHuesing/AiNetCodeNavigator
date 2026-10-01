@@ -27,13 +27,15 @@ public sealed record SymbolResolutionCandidate(
     int EndLine,
     string ProjectName,
     string? DocCommentId,
-    string? HandoffId);
+    string? HandoffId,
+    string? OwnerTargetPath = null);
 
 /// <summary>The result of resolving a source identifier; ambiguous results include selectable candidates.</summary>
 public sealed record SourceSymbolResolution(
     ISymbol? Symbol,
     IReadOnlyList<SymbolResolutionCandidate> Candidates,
-    ResultError? Error)
+    ResultError? Error,
+    IReadOnlyList<ISymbol>? CandidateSymbols = null)
 {
     public bool IsSuccess => Symbol is not null && Error is null;
 }
@@ -51,6 +53,24 @@ public static class SourceSymbolResolver
         string identifier,
         AnalysisSymbolIdentity? identity = null,
         CancellationToken cancellationToken = default)
+        => await ResolveCoreAsync(solution, identifier, identity, createSourceIdentity: true, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>Resolves raw source identifiers without allocating source handoff IDs for candidates.</summary>
+    public static async Task<SourceSymbolResolution> ResolveRawWithoutHandoffsAsync(
+        Solution solution,
+        string identifier,
+        CancellationToken cancellationToken = default)
+        => await ResolveCoreAsync(solution, identifier, identity: null, createSourceIdentity: false, cancellationToken).ConfigureAwait(false);
+
+    public static SymbolResolutionCandidate? DescribeCandidate(ISymbol symbol, Solution solution) =>
+        CreateCandidate(symbol, solution, identity: null);
+
+    private static async Task<SourceSymbolResolution> ResolveCoreAsync(
+        Solution solution,
+        string identifier,
+        AnalysisSymbolIdentity? identity,
+        bool createSourceIdentity,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(solution);
         ArgumentException.ThrowIfNullOrWhiteSpace(identifier);
@@ -59,7 +79,9 @@ public static class SourceSymbolResolver
         AnalysisSymbolIdentity? effectiveIdentity;
         if (identity is null)
         {
-            effectiveIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, cancellationToken).ConfigureAwait(false);
+            effectiveIdentity = createSourceIdentity
+                ? await AnalysisSymbolIdentity.ForSourceAsync(solution, cancellationToken).ConfigureAwait(false)
+                : null;
         }
         else
         {
@@ -106,7 +128,11 @@ public static class SourceSymbolResolver
     {
         if (symbol is null) return Failure(NavigationErrorCodes.SymbolNotFound, "The source symbol could not be resolved.");
         var candidate = CreateCandidate(symbol, solution, identity);
-        return new SourceSymbolResolution(symbol, candidate is null ? Array.Empty<SymbolResolutionCandidate>() : [candidate], null);
+        return new SourceSymbolResolution(
+            symbol,
+            candidate is null ? Array.Empty<SymbolResolutionCandidate>() : [candidate],
+            null,
+            [symbol]);
     }
 
     private static SourceSymbolResolution ResolveCandidates(
@@ -134,7 +160,7 @@ public static class SourceSymbolResolver
             .ThenBy(candidate => candidate.Name, StringComparer.Ordinal)
             .ToList();
 
-        if (distinct.Count == 1) return new SourceSymbolResolution(distinct[0], candidates, null);
+        if (distinct.Count == 1) return new SourceSymbolResolution(distinct[0], candidates, null, distinct);
         if (distinct.Count == 0)
         {
             return Failure(
@@ -149,11 +175,12 @@ public static class SourceSymbolResolver
             candidates,
             new ResultError(
                 NavigationErrorCodes.AmbiguousSymbol,
-                $"'{identifier}' matches multiple source symbols. Select a candidate using its handoff ID. {choices}"));
+                $"'{identifier}' matches multiple source symbols. Select a candidate using its handoff ID. {choices}"),
+            distinct);
     }
 
     private static SourceSymbolResolution Failure(ResultError error) =>
-        new(null, Array.Empty<SymbolResolutionCandidate>(), error);
+        new(null, Array.Empty<SymbolResolutionCandidate>(), error, Array.Empty<ISymbol>());
 
     private static SourceSymbolResolution Failure(string code, string message) =>
         Failure(new ResultError(code, message));

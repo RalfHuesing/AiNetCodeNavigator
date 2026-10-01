@@ -149,13 +149,13 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                             {
                                 firstSourceResolutionError ??= error;
                                 var candidates = resolved.ResolutionCandidates.Count == 0 ? string.Empty
-                                    : $" Candidates: {string.Join(", ", resolved.ResolutionCandidates.Select(candidate => candidate.Name))}.";
+                                    : $" Candidates: {string.Join(", ", resolved.ResolutionCandidates.Select(FormatResolutionCandidate))}.";
                                 items.Add($"Could not resolve {identifier}: {error.Code}: {error.Message}{candidates}");
                             }
                             else if (resolved.Body is { } body)
                             {
                                 resolvedSourceBodies++;
-                                items.Add(FormatBody(identifier, body));
+                                items.Add(FormatBody(identifier, body, target.CanonicalPath));
                             }
                         }
                         if (resolvedSourceBodies == 0 && firstSourceResolutionError is { } resolutionError)
@@ -181,13 +181,13 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                     {
                         firstAssemblyResolutionError ??= error;
                         var candidates = resolved.ResolutionCandidates.Count == 0 ? string.Empty
-                            : $" Candidates: {string.Join(", ", resolved.ResolutionCandidates.Select(candidate => candidate.Name))}.";
+                            : $" Candidates: {string.Join(", ", resolved.ResolutionCandidates.Select(FormatResolutionCandidate))}.";
                         items.Add($"Could not resolve {identifier}: {error.Code}: {error.Message}{candidates}");
                     }
                     else if (resolved.Body is { } body)
                     {
                         resolvedAssemblyBodies++;
-                        items.Add(FormatBody(identifier, body));
+                        items.Add(FormatBody(identifier, body, target.CanonicalPath));
                     }
                 }
                 if (resolvedAssemblyBodies == 0 && firstAssemblyResolutionError is { } resolutionError)
@@ -233,10 +233,16 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
         return Enum.IsDefined(scope);
     }
 
-    private static string FormatBody(string identifier, SymbolBodyResult body)
+    private static string FormatResolutionCandidate(SymbolResolutionCandidate candidate) =>
+        candidate.OwnerTargetPath is { Length: > 0 } ownerPath && candidate.HandoffId is { Length: > 0 } handoffId
+            ? $"{candidate.Signature} at {candidate.FilePath}:{candidate.Line} [targetPath: `{ownerPath}`, handoffId: `{handoffId}`]"
+            : candidate.Name;
+
+    private static string FormatBody(string identifier, SymbolBodyResult body, string targetPath)
     {
         var status = body.HasMore ? ", more lines available" : ", complete";
-        return $"Symbol: {identifier}\nContent mode: {body.ContentMode}\nLines: {body.DisplayedStart}-{body.DisplayedEnd} of {body.TotalLines}{status}\n{body.Body}";
+        var handoff = body.HandoffId is null ? string.Empty : $"\nHandoff: {body.HandoffId}\nOwner targetPath: {targetPath}";
+        return $"Symbol: {identifier}\nContent mode: {body.ContentMode}{handoff}\nLines: {body.DisplayedStart}-{body.DisplayedEnd} of {body.TotalLines}{status}\n{body.Body}";
     }
 
     private static string FormatAssemblyFindResult(FindSymbolScanResult result)

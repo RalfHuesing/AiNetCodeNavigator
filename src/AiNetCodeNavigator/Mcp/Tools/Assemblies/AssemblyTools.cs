@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text;
+using AiNetCodeNavigator.Core.Common;
 using AiNetCodeNavigator.Core.Assemblies;
 using AiNetCodeNavigator.Core.CallTree;
 using AiNetCodeNavigator.Core.Models;
@@ -41,7 +42,18 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                 if (!context.IsSuccess) return NavigationToolSupport.Failure(context.Error!.Value, effectiveResponseBytes, maxResponseTokens, "$.targetPath");
                 var payload = context.Value!;
                 if (symbolIdentifier is null) return NavigationToolSupport.Success(payload, payload.Truncated, "Increase maxResults and repeat the query.");
-                var resolved = await AssemblySymbolHandoffResolver.ResolveAsync(symbolIdentifier, ct).ConfigureAwait(false);
+                var effectiveSymbolIdentifier = symbolIdentifier;
+                var normalizedIdentifier = InputNormalizer.NormalizeSymbolIdentifier(symbolIdentifier);
+                if (!InputNormalizer.HasOpaqueHandoffPrefix(normalizedIdentifier)
+                    && !normalizedIdentifier.StartsWith("i:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var raw = includeReferences
+                        ? await AssemblyReferenceClosureSession.ResolveRawAcrossReferencesAsync(target.CanonicalPath, normalizedIdentifier, ct).ConfigureAwait(false)
+                        : await ResolveRawInTargetAsync(target.CanonicalPath, normalizedIdentifier, ct).ConfigureAwait(false);
+                    if (!raw.IsSuccess) return NavigationToolSupport.Failure(raw.Error!.Value, effectiveResponseBytes, maxResponseTokens, "$.symbolIdentifier");
+                    effectiveSymbolIdentifier = raw.HandoffId!;
+                }
+                var resolved = await AssemblySymbolHandoffResolver.ResolveAsync(effectiveSymbolIdentifier, ct).ConfigureAwait(false);
                 if (!resolved.IsSuccess) return NavigationToolSupport.Failure(resolved.Error!.Value, effectiveResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                 await using var access = resolved.Value!;
                 var ownerPath = Path.GetFullPath(access.Origin.CanonicalPath);
@@ -78,7 +90,7 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                 var incompleteActions = new List<string>();
                 if (includeBody)
                 {
-                    var result = await AssemblySymbolBodyScanner.GetAsync(symbolIdentifier, maxBodyLines, 1, ct, ownerPath).ConfigureAwait(false);
+                    var result = await AssemblySymbolBodyScanner.GetAsync(effectiveSymbolIdentifier, maxBodyLines, 1, ct, ownerPath).ConfigureAwait(false);
                     if (result.Error is { } error) return NavigationToolSupport.Failure(error, effectiveResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                     var body = result.Body!;
                     sections.Add($"## Body\n```csharp\n{body.Body.TrimEnd()}\n```");
@@ -99,7 +111,7 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                 {
                     if (includeReferences)
                     {
-                        var closure = await AssemblyReferencesClosureScanner.ScanAsync(target.CanonicalPath, symbolIdentifier,
+                        var closure = await AssemblyReferencesClosureScanner.ScanAsync(target.CanonicalPath, effectiveSymbolIdentifier,
                             graphLimit, Math.Clamp(depth, 1, 3), SymbolScopeType.All, includeGenerated: false, ct).ConfigureAwait(false);
                         if (closure.Error is { } error)
                             return NavigationToolSupport.Failure(error, effectiveResponseBytes, maxResponseTokens, closure.ErrorField);
@@ -120,7 +132,7 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                 {
                     if (includeReferences)
                     {
-                        var closure = await AssemblyImpactClosureScanner.ScanAsync(target.CanonicalPath, symbolIdentifier,
+                        var closure = await AssemblyImpactClosureScanner.ScanAsync(target.CanonicalPath, effectiveSymbolIdentifier,
                             Math.Clamp(depth, 1, 3), graphLimit, ct).ConfigureAwait(false);
                         if (closure.Error is { } error)
                             return NavigationToolSupport.Failure(error, effectiveResponseBytes, maxResponseTokens, closure.ErrorField);
@@ -161,6 +173,18 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
         }
         foreach (var diagnostic in payload.Diagnostics) output.AppendLine($"- Diagnostic: {diagnostic}");
         return output.ToString().TrimEnd();
+    }
+
+    private static async Task<AssemblySymbolInputResolution> ResolveRawInTargetAsync(
+        string targetPath,
+        string identifier,
+        CancellationToken cancellationToken)
+    {
+        var opened = await AssemblyNavigationSessionScope.OpenAsync(targetPath, cancellationToken).ConfigureAwait(false);
+        if (!opened.IsSuccess)
+            return new(null, null, Array.Empty<AssemblySymbolInputCandidate>(), opened.Error!.Value);
+        await using var scope = opened.Value!;
+        return await AssemblySymbolInputResolver.ResolveAsync(scope, identifier, cancellationToken).ConfigureAwait(false);
     }
 
     private static string FormatImpact(SymbolImpactPayload impact)

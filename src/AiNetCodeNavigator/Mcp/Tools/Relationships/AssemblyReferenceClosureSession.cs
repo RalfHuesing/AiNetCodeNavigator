@@ -2,6 +2,9 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using AiNetCodeNavigator.Core.Common;
 using AiNetCodeNavigator.Core.Assemblies;
 using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Core.Symbols;
@@ -79,6 +82,16 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
         string identifier,
         CancellationToken cancellationToken)
     {
+        var normalizedIdentifier = InputNormalizer.NormalizeSymbolIdentifier(identifier);
+        if (!InputNormalizer.HasOpaqueHandoffPrefix(normalizedIdentifier)
+            && !normalizedIdentifier.StartsWith("i:", System.StringComparison.OrdinalIgnoreCase))
+        {
+            var rawResolution = await ResolveRawAcrossReferencesAsync(targetPath, normalizedIdentifier, cancellationToken).ConfigureAwait(false);
+            if (!rawResolution.IsSuccess)
+                return Failed(rawResolution.Error!.Value, "$.symbolIdentifier");
+            return await OpenAsync(targetPath, rawResolution.HandoffId!, cancellationToken).ConfigureAwait(false);
+        }
+
         var openedRoot = await AssemblyNavigationSessionScope.OpenAsync(targetPath, cancellationToken).ConfigureAwait(false);
         if (!openedRoot.IsSuccess) return Failed(openedRoot.Error!.Value, "$.targetPath");
         var root = openedRoot.Value!;
@@ -175,6 +188,130 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
             await root.DisposeAsync().ConfigureAwait(false);
             return Failed(error, field);
         }
+    }
+
+    internal static async Task<AssemblySymbolInputResolution> ResolveRawAcrossReferencesAsync(
+        string targetPath,
+        string identifier,
+        CancellationToken cancellationToken)
+    {
+        var openedRoot = await AssemblyNavigationSessionScope.OpenAsync(targetPath, cancellationToken).ConfigureAwait(false);
+        if (!openedRoot.IsSuccess)
+            return new(null, null, System.Array.Empty<AssemblySymbolInputCandidate>(), openedRoot.Error!.Value);
+
+        var root = openedRoot.Value!;
+        var scopes = new List<AssemblyNavigationSessionScope>();
+        try
+        {
+            var rootPath = Path.GetFullPath(root.Context.Origin.CanonicalPath);
+            var ownerOpenFailed = root.Context.Status is not AssemblySessionStatus.Complete;
+            var ownerPaths = root.Context.References
+                .Where(reference => reference.Resolved && !string.IsNullOrWhiteSpace(reference.ResolvedPath))
+                .Select(reference => Path.GetFullPath(reference.ResolvedPath!))
+                .Where(path => !IsFrameworkPath(path))
+                .Distinct(System.StringComparer.OrdinalIgnoreCase)
+                .Prepend(rootPath)
+                .ToArray();
+            var ownerLimitReached = ownerPaths.Length > MaxAssemblies;
+            var unresolvedReferences = root.Context.References.Any(reference => !reference.Resolved);
+            var selectedOwnerPaths = ownerPaths.Take(MaxAssemblies).ToArray();
+            var candidates = new List<(AssemblyNavigationSessionScope Scope, ISymbol Symbol, SymbolResolutionCandidate Metadata)>();
+            ResultError? resolutionError = null;
+            foreach (var ownerPath in selectedOwnerPaths)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                AssemblyNavigationSessionScope scope;
+                if (string.Equals(ownerPath, rootPath, System.StringComparison.OrdinalIgnoreCase)) scope = root;
+                else
+                {
+                    var opened = await AssemblyNavigationSessionScope.OpenAsync(ownerPath, cancellationToken).ConfigureAwait(false);
+                    if (!opened.IsSuccess)
+                    {
+                        ownerOpenFailed = true;
+                        continue;
+                    }
+                    scope = opened.Value!;
+                    scopes.Add(scope);
+                }
+                if (scope.Context.Status is not AssemblySessionStatus.Complete) ownerOpenFailed = true;
+
+                var resolved = await SourceSymbolResolver.ResolveRawWithoutHandoffsAsync(
+                    scope.Solution, identifier, cancellationToken).ConfigureAwait(false);
+                foreach (var symbol in resolved.CandidateSymbols ?? System.Array.Empty<ISymbol>())
+                {
+                    if (!AssemblySymbolInputResolver.IsOwnedSourceSymbol(scope, symbol)) continue;
+                    var metadata = SourceSymbolResolver.DescribeCandidate(symbol, scope.Solution);
+                    if (metadata is not null) candidates.Add((scope, symbol, metadata));
+                }
+                if (resolved.CandidateSymbols is not { Count: > 0 }
+                    && resolved.Error is { } error
+                    && !string.Equals(error.Code, NavigationErrorCodes.SymbolNotFound, System.StringComparison.Ordinal))
+                    resolutionError ??= error;
+            }
+
+            var distinctCandidates = candidates
+                .GroupBy(candidate => (OwnerPath: Path.GetFullPath(candidate.Scope.Context.Origin.CanonicalPath),
+                    ProjectId: candidate.Scope.Solution.GetDocument(candidate.Symbol.Locations.First(location => location.IsInSource).SourceTree!)?.Project.Id,
+                    candidate.Metadata.DocCommentId), OwnerDocComparer.Instance)
+                .Select(group => group.First())
+                .OrderBy(candidate => candidate.Scope.Context.Origin.CanonicalPath, System.StringComparer.OrdinalIgnoreCase)
+                .ThenBy(candidate => candidate.Metadata.FilePath, System.StringComparer.OrdinalIgnoreCase)
+                .ThenBy(candidate => candidate.Metadata.Line)
+                .ToArray();
+
+            if (ownerLimitReached || ownerOpenFailed || unresolvedReferences || resolutionError is not null)
+            {
+                var message = ownerLimitReached
+                    ? "The current reference snapshot exceeds the raw-resolution owner limit."
+                    : ownerOpenFailed
+                        ? "One or more referenced assemblies could not be opened for raw symbol resolution."
+                        : unresolvedReferences
+                            ? "The current reference snapshot contains unresolved assemblies."
+                        : resolutionError!.Value.Message;
+                var error = resolutionError ?? new ResultError(NavigationErrorCodes.TargetUnreadable, message,
+                    "Resolve the incomplete reference snapshot before using a raw identifier; an owner-bound handoff avoids cross-owner name ambiguity.");
+                return new(null, null, System.Array.Empty<AssemblySymbolInputCandidate>(), error);
+            }
+
+            var candidatesToExpose = distinctCandidates
+                .Select(candidate => AssemblySymbolInputResolver.CreateCandidate(candidate.Scope, candidate.Symbol, candidate.Metadata))
+                .Where(candidate => candidate is not null)
+                .Cast<AssemblySymbolInputCandidate>()
+                .ToArray();
+            if (candidatesToExpose.Length == 1)
+            {
+                var candidate = candidatesToExpose[0];
+                return new(candidate.Symbol, candidate.HandoffId, candidatesToExpose, null);
+            }
+            if (candidatesToExpose.Length > 1)
+            {
+                var choices = string.Join("; ", candidatesToExpose.Select(candidate =>
+                    $"{candidate.Signature} at {candidate.FilePath}:{candidate.Line} [targetPath: '{candidate.OwnerTargetPath}', handoffId: `{candidate.HandoffId}`]"));
+                return new(null, null, candidatesToExpose, new ResultError(NavigationErrorCodes.AmbiguousSymbol,
+                    $"'{identifier}' matches declarations in multiple assemblies. Select a candidate by its owner targetPath and handoffId. {choices}"));
+            }
+
+            return new(null, null, System.Array.Empty<AssemblySymbolInputCandidate>(), resolutionError ?? new ResultError(NavigationErrorCodes.SymbolNotFound,
+                $"No declaration matching '{identifier}' was found in the selected assembly or its current reference snapshot."));
+        }
+        finally
+        {
+            foreach (var scope in scopes) await scope.DisposeAsync().ConfigureAwait(false);
+            await root.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    private sealed class OwnerDocComparer : System.Collections.Generic.IEqualityComparer<(string OwnerPath, ProjectId? ProjectId, string? DocCommentId)>
+    {
+        internal static OwnerDocComparer Instance { get; } = new();
+        public bool Equals((string OwnerPath, ProjectId? ProjectId, string? DocCommentId) x,
+            (string OwnerPath, ProjectId? ProjectId, string? DocCommentId) y) =>
+            string.Equals(x.OwnerPath, y.OwnerPath, System.StringComparison.OrdinalIgnoreCase)
+            && Equals(x.ProjectId, y.ProjectId)
+            && string.Equals(x.DocCommentId, y.DocCommentId, System.StringComparison.Ordinal);
+        public int GetHashCode((string OwnerPath, ProjectId? ProjectId, string? DocCommentId) value) =>
+            HashCode.Combine(System.StringComparer.OrdinalIgnoreCase.GetHashCode(value.OwnerPath), value.ProjectId,
+                value.DocCommentId is null ? 0 : System.StringComparer.Ordinal.GetHashCode(value.DocCommentId));
     }
 
     internal ISymbol? ResolveDeclaration(AssemblyReferenceClosureOwner owner, string originalOwnerPath,

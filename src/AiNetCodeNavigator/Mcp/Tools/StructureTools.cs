@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text;
+using AiNetCodeNavigator.Core.Common;
 using AiNetCodeNavigator.Core.Assemblies;
 using AiNetCodeNavigator.Core.FileStructure;
 using AiNetCodeNavigator.Core.Models;
@@ -186,6 +187,24 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                         return NavigationToolSupport.SuccessText(FormatClassStructure(result), result.Truncated,
                             result.Truncated ? "Increase maxMembers up to 200 and repeat the query." : null);
                     }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
+
+                var normalizedIdentifier = InputNormalizer.NormalizeSymbolIdentifier(symbolIdentifier);
+                if (!InputNormalizer.HasOpaqueHandoffPrefix(normalizedIdentifier)
+                    && !normalizedIdentifier.StartsWith("i:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var openedRaw = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
+                    if (!openedRaw.IsSuccess) return NavigationToolSupport.Failure(openedRaw.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
+                    await using var rawScope = openedRaw.Value!;
+                    var raw = await AssemblySymbolInputResolver.ResolveAsync(rawScope, normalizedIdentifier, ct).ConfigureAwait(false);
+                    if (!raw.IsSuccess) return NavigationToolSupport.Failure(raw.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
+                    var rawType = raw.Symbol as INamedTypeSymbol ?? raw.Symbol!.ContainingType;
+                    if (rawType is null) return McpToolResults.InvalidArgument("The assembly identifier did not resolve to a type.", "$.symbolIdentifier", "Use a type or member declared in a type.",
+                        maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                    var rawIdentity = AssemblySymbolInputResolver.CreateIdentity(rawScope);
+                    var rawStructure = BuildAssemblyClassStructure(rawType, target.CanonicalPath, rawIdentity, sortBy, maxMembers, kindFilter, nameFilter);
+                    return NavigationToolSupport.SuccessText(FormatClassStructure(rawStructure), rawStructure.Truncated,
+                        rawStructure.Truncated ? "Increase maxMembers up to 200 and repeat the query." : null);
+                }
 
                 var assembly = await AssemblySymbolHandoffResolver.ResolveAsync(symbolIdentifier, ct).ConfigureAwait(false);
                 if (!assembly.IsSuccess) return NavigationToolSupport.Failure(assembly.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");

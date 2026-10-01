@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using AiNetCodeNavigator.Core.Common;
 using AiNetCodeNavigator.Core.Assemblies;
 using AiNetCodeNavigator.Core.CallTree;
 using AiNetCodeNavigator.Core.Dependencies;
@@ -425,11 +426,9 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     var input = symbolIdentifier ?? typeName!;
                     if (symbolIdentifier is not null)
                     {
-                        var access = await AssemblySymbolHandoffResolver.ResolveAsync(symbolIdentifier, ct).ConfigureAwait(false);
+                        var access = await ResolveAssemblySymbolAsync(target, symbolIdentifier, ct).ConfigureAwait(false);
                         if (!access.IsSuccess) return NavigationToolSupport.Failure(access.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                         await using var lease = access.Value!;
-                        if (!string.Equals(Path.GetFullPath(lease.Origin.CanonicalPath), target.CanonicalPath, StringComparison.OrdinalIgnoreCase))
-                            return Invalid("symbolIdentifier", "Use a handoff produced by this targetPath.");
                         input = lease.Symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
                     }
                     var result = await ResolveTypeOriginScanner.ResolveAsync(new ResolveTypeOriginRequest(target.CanonicalPath, input), ct).ConfigureAwait(false);
@@ -507,6 +506,26 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     private static async Task<Result<AssemblySymbolHandoffAccess>> ResolveAssemblySymbolAsync(
         AnalysisTarget target, string identifier, CancellationToken ct)
     {
+        var normalizedIdentifier = InputNormalizer.NormalizeSymbolIdentifier(identifier);
+        if (!InputNormalizer.HasOpaqueHandoffPrefix(normalizedIdentifier)
+            && !normalizedIdentifier.StartsWith("i:", StringComparison.OrdinalIgnoreCase))
+        {
+            var opened = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
+            if (!opened.IsSuccess) return Result<AssemblySymbolHandoffAccess>.Failure(opened.Error);
+            string? handoff;
+            await using (var scope = opened.Value!)
+            {
+                var raw = await AssemblySymbolInputResolver.ResolveAsync(scope, normalizedIdentifier, ct).ConfigureAwait(false);
+                if (!raw.IsSuccess) return Result<AssemblySymbolHandoffAccess>.Failure(raw.Error!);
+                handoff = raw.HandoffId;
+            }
+
+            if (string.IsNullOrWhiteSpace(handoff))
+                return Result<AssemblySymbolHandoffAccess>.Failure(NavigationErrorCodes.SymbolNotFound,
+                    "The raw identifier did not produce an owner-bound assembly handoff.");
+            identifier = handoff;
+        }
+
         var resolved = await AssemblySymbolHandoffResolver.ResolveAsync(identifier, ct).ConfigureAwait(false);
         if (!resolved.IsSuccess) return resolved;
         if (!string.Equals(Path.GetFullPath(resolved.Value!.Origin.CanonicalPath), target.CanonicalPath, StringComparison.OrdinalIgnoreCase))
