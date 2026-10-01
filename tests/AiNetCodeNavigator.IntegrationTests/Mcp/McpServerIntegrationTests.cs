@@ -931,7 +931,7 @@ public sealed class McpServerIntegrationTests
         var configPath = Path.Combine(Path.GetTempPath(), "ainet-owner-" + Guid.NewGuid().ToString("N") + ".json");
         var hostLogDirectory = Path.Combine(Path.GetTempPath(), "ainet-owner-logs-" + Guid.NewGuid().ToString("N"));
         var cPath = AssemblyTestHelper.EmitAssembly(fixture, "ClosureC", "[assembly: System.Reflection.AssemblyVersion(\"4.2.0.0\")] namespace ClosureFixture; public class ClosureOnlyC { public string Value => \"from C\"; public string Read() => Value; public string LocalRun() => Read(); }");
-        var bPath = AssemblyTestHelper.EmitAssembly(fixture, "ClosureB", "namespace ClosureFixture; public class ClosureB : ClosureOnlyC { public string Run() => Read(); }", cPath);
+        var bPath = AssemblyTestHelper.EmitAssembly(fixture, "ClosureB", "namespace ClosureFixture; public class ClosureB : ClosureOnlyC { public string Run() => Read(); public string Another() => Read(); }", cPath);
         var aPath = AssemblyTestHelper.EmitAssembly(fixture, "ClosureA", "namespace ClosureFixture; public class ClosureA { public string Run() => new ClosureB().Run(); }", bPath, cPath);
         var foreignPath = AssemblyTestHelper.EmitAssembly(fixture, "ClosureForeign", "namespace ClosureFixture; public class ForeignMarker { }");
         await using (var cImage = File.OpenRead(cPath))
@@ -1127,6 +1127,124 @@ public sealed class McpServerIntegrationTests
             Assert.False(mermaidOwnerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(mermaidOwnerBody));
             Assert.Contains("Read()", GetFirstText(mermaidOwnerBody), StringComparison.Ordinal);
 
+            await SendRequestAsync(process, 41, "tools/call", new
+            {
+                name = "get_impact",
+                arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 1, maxResults = 20 },
+            }, timeout.Token);
+            var closureImpact = await ReadResponseAsync(process, 41, timeout.Token);
+            for (var requestId = 42; GetFirstText(closureImpact).Contains("operation=running", StringComparison.Ordinal) && requestId < 44; requestId++)
+            {
+                var operationToken = ReadStringLine(GetFirstText(closureImpact), "operationToken");
+                await SendRequestAsync(process, requestId, "tools/call", new
+                {
+                    name = "get_impact",
+                    arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 1, maxResults = 20, operationToken },
+                }, timeout.Token);
+                closureImpact = await ReadResponseAsync(process, requestId, timeout.Token);
+            }
+            var closureImpactText = GetFirstText(closureImpact);
+            Assert.False(closureImpact.GetProperty("result").GetProperty("isError").GetBoolean(), closureImpactText);
+            var closureImpactPayload = ParsePayload(closureImpactText);
+            Assert.Equal(3, closureImpactPayload.GetProperty("directCallersCount").GetInt32());
+            Assert.Equal(3, closureImpactPayload.GetProperty("transitiveImpactCount").GetInt32());
+            var impactBCaller = closureImpactPayload.GetProperty("callSites").EnumerateArray()
+                .Single(site => site.GetProperty("callingMember").GetString() == "ClosureB.Run");
+            Assert.Equal(Path.GetFullPath(bPath), impactBCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
+            var impactBHandle = impactBCaller.GetProperty("callingMemberHandoffId").GetString();
+            Assert.StartsWith("h:", impactBHandle, StringComparison.Ordinal);
+            await SendRequestAsync(process, 44, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = bPath, symbolIdentifiers = new[] { impactBHandle } },
+            }, timeout.Token);
+            var impactBBody = await ReadResponseAsync(process, 44, timeout.Token);
+            Assert.False(impactBBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(impactBBody));
+            Assert.Contains("Run()", GetFirstText(impactBBody), StringComparison.Ordinal);
+            var impactCCaller = closureImpactPayload.GetProperty("callSites").EnumerateArray()
+                .Single(site => site.GetProperty("callingMember").GetString() == "ClosureOnlyC.LocalRun");
+            Assert.Equal(Path.GetFullPath(ownedCPath), impactCCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
+            var impactCHandle = impactCCaller.GetProperty("callingMemberHandoffId").GetString();
+            await SendRequestAsync(process, 45, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = ownedCPath, symbolIdentifiers = new[] { impactCHandle } },
+            }, timeout.Token);
+            var impactCBody = await ReadResponseAsync(process, 45, timeout.Token);
+            Assert.False(impactCBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(impactCBody));
+            Assert.Contains("LocalRun()", GetFirstText(impactCBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 48, "tools/call", new
+            {
+                name = "get_impact",
+                arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 1, maxResults = 1 },
+            }, timeout.Token);
+            var cappedClosureImpact = await ReadResponseAsync(process, 48, timeout.Token);
+            var cappedImpactText = GetFirstText(cappedClosureImpact);
+            Assert.False(cappedClosureImpact.GetProperty("result").GetProperty("isError").GetBoolean(), cappedImpactText);
+            var cappedImpactPayload = ParsePayload(cappedImpactText);
+            Assert.Equal(3, cappedImpactPayload.GetProperty("directCallersCount").GetInt32());
+            Assert.Equal(3, cappedImpactPayload.GetProperty("transitiveImpactCount").GetInt32());
+            Assert.Single(cappedImpactPayload.GetProperty("callSites").EnumerateArray());
+            Assert.True(cappedImpactPayload.GetProperty("isTruncated").GetBoolean(), cappedImpactText);
+
+            await SendRequestAsync(process, 46, "tools/call", new
+            {
+                name = "get_assembly_context",
+                arguments = new
+                {
+                    targetPath = aPath,
+                    symbolIdentifier = methodHandoff,
+                    includeReferences = true,
+                    includeBody = true,
+                    includeClassStructure = true,
+                    includeCallers = true,
+                    includeImpact = true,
+                    maxBodyLines = 20,
+                    maxCallers = 10,
+                    depth = 1,
+                    topN = 10,
+                    detailLevel = "full",
+                },
+            }, timeout.Token);
+            var closureContext = await ReadResponseAsync(process, 46, timeout.Token);
+            var closureContextText = GetFirstText(closureContext);
+            Assert.False(closureContext.GetProperty("result").GetProperty("isError").GetBoolean(), closureContextText);
+            Assert.Contains("## Callers", closureContextText, StringComparison.Ordinal);
+            Assert.Contains("## Impact", closureContextText, StringComparison.Ordinal);
+            Assert.Contains("ClosureB.Run", closureContextText, StringComparison.Ordinal);
+            Assert.Contains("ClosureOnlyC.LocalRun", closureContextText, StringComparison.Ordinal);
+            Assert.Contains($"targetPath: {bPath}", closureContextText, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains($"targetPath: {ownedCPath}", closureContextText, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("ClosureOnlyC.Read()", closureContextText, StringComparison.Ordinal);
+            var contextLocalRunLine = closureContextText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .First(line => line.Contains("ClosureOnlyC.LocalRun", StringComparison.Ordinal)
+                    && line.Contains("targetPath:", StringComparison.OrdinalIgnoreCase)
+                    && line.Contains("handoff:", StringComparison.Ordinal));
+            var contextLocalRunHandle = contextLocalRunLine.Split("handoff:", StringSplitOptions.None)[1].Split(']')[0].Trim();
+            await SendRequestAsync(process, 49, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = ownedCPath, symbolIdentifiers = new[] { contextLocalRunHandle } },
+            }, timeout.Token);
+            var contextLocalRunBody = await ReadResponseAsync(process, 49, timeout.Token);
+            Assert.False(contextLocalRunBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(contextLocalRunBody));
+            Assert.Contains("LocalRun()", GetFirstText(contextLocalRunBody), StringComparison.Ordinal);
+            var contextCallerLine = closureContextText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .First(line => line.Contains("ClosureB.Run", StringComparison.Ordinal)
+                    && line.Contains("targetPath:", StringComparison.OrdinalIgnoreCase)
+                    && line.Contains("handoff:", StringComparison.Ordinal));
+            var contextCallerHandle = contextCallerLine.Split("handoff:", StringSplitOptions.None)[1].Split(']')[0].Trim();
+            await SendRequestAsync(process, 47, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = bPath, symbolIdentifiers = new[] { contextCallerHandle } },
+            }, timeout.Token);
+            var contextCallerBody = await ReadResponseAsync(process, 47, timeout.Token);
+            Assert.False(contextCallerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(contextCallerBody));
+            Assert.Contains("Run()", GetFirstText(contextCallerBody), StringComparison.Ordinal);
+            Assert.Contains("completeness=complete", closureContextText, StringComparison.Ordinal);
+
             await SendRequestAsync(process, 32, "tools/call", new
             {
                 name = "find_references",
@@ -1136,6 +1254,27 @@ public sealed class McpServerIntegrationTests
             Assert.False(depthTwoReferences.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(depthTwoReferences));
             Assert.Contains("completeness=truncated", GetFirstText(depthTwoReferences), StringComparison.Ordinal);
             Assert.Contains("Cross-assembly caller chaining", GetFirstText(depthTwoReferences), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 51, "tools/call", new
+            {
+                name = "get_assembly_context",
+                arguments = new
+                {
+                    targetPath = aPath,
+                    symbolIdentifier = methodHandoff,
+                    includeReferences = true,
+                    includeCallers = true,
+                    includeImpact = true,
+                    depth = 2,
+                    maxCallers = 10,
+                    topN = 10,
+                    detailLevel = "full",
+                },
+            }, timeout.Token);
+            var depthTwoContext = await ReadResponseAsync(process, 51, timeout.Token);
+            Assert.False(depthTwoContext.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(depthTwoContext));
+            Assert.Contains("completeness=truncated", GetFirstText(depthTwoContext), StringComparison.Ordinal);
+            Assert.Contains("Cross-assembly caller chaining", GetFirstText(depthTwoContext), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 20, "tools/call", new
             {
@@ -1782,8 +1921,21 @@ public sealed class McpServerIntegrationTests
             }, timeout.Token);
             var incompleteAssemblyImpact = await ReadResponseAsync(process, 73, timeout.Token);
             Assert.False(incompleteAssemblyImpact.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(incompleteAssemblyImpact));
-            Assert.Contains("completeness=truncated", GetFirstText(incompleteAssemblyImpact), StringComparison.Ordinal);
-            Assert.Contains("Referenced assembly source is not included yet", GetFirstText(incompleteAssemblyImpact), StringComparison.Ordinal);
+            var closureImpactText = GetFirstText(incompleteAssemblyImpact);
+            Assert.Contains("completeness=complete", closureImpactText, StringComparison.Ordinal);
+            var closureImpactCaller = ParsePayload(closureImpactText).GetProperty("callSites").EnumerateArray()
+                .Single(item => item.GetProperty("callingMember").GetString() == "BetaInvoker.Invoke");
+            Assert.Equal(Path.GetFullPath(assemblyPath), Path.GetFullPath(closureImpactCaller.GetProperty("ownerTargetPath").GetString()!), StringComparer.OrdinalIgnoreCase);
+            var closureImpactCallerHandle = closureImpactCaller.GetProperty("callingMemberHandoffId").GetString();
+            Assert.StartsWith("h:", closureImpactCallerHandle, StringComparison.Ordinal);
+            await SendRequestAsync(process, 83, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { closureImpactCallerHandle } },
+            }, timeout.Token);
+            var closureImpactCallerBody = await ReadResponseAsync(process, 83, timeout.Token);
+            Assert.False(closureImpactCallerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(closureImpactCallerBody));
+            Assert.Contains("Invoke", GetFirstText(closureImpactCallerBody), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 76, "tools/call", new
             {

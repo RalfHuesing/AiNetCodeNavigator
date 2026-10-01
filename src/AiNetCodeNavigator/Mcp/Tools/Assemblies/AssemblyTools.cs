@@ -7,6 +7,7 @@ using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Core.Workspace;
 using AiNetCodeNavigator.Mcp.Formatting;
 using AiNetCodeNavigator.Mcp.Tools;
+using AiNetCodeNavigator.Mcp.Tools.Relationships;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Microsoft.CodeAnalysis;
@@ -43,7 +44,12 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                 var resolved = await AssemblySymbolHandoffResolver.ResolveAsync(symbolIdentifier, ct).ConfigureAwait(false);
                 if (!resolved.IsSuccess) return NavigationToolSupport.Failure(resolved.Error!.Value, effectiveResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                 await using var access = resolved.Value!;
-                if (!string.Equals(Path.GetFullPath(access.Origin.CanonicalPath), target.CanonicalPath, StringComparison.OrdinalIgnoreCase))
+                var ownerPath = Path.GetFullPath(access.Origin.CanonicalPath);
+                var isTargetOwner = string.Equals(ownerPath, target.CanonicalPath, StringComparison.OrdinalIgnoreCase);
+                var isResolvedReferenceOwner = includeReferences && payload.References.Any(reference => reference.Resolved
+                    && !string.IsNullOrWhiteSpace(reference.ResolvedPath)
+                    && string.Equals(Path.GetFullPath(reference.ResolvedPath), ownerPath, StringComparison.OrdinalIgnoreCase));
+                if (!isTargetOwner && !isResolvedReferenceOwner)
                     return McpToolResults.InvalidArgument("The symbol handoff belongs to another assembly.", "$.symbolIdentifier", "Use a handoff produced by this targetPath.", maxResponseBytes: effectiveResponseBytes, maxResponseTokens: maxResponseTokens);
                 var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
                     access.Generation, access.ReferenceSnapshotHash);
@@ -69,9 +75,10 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                     $"## Symbol\n{access.Symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}"
                 };
                 var truncated = payload.Truncated;
+                var incompleteActions = new List<string>();
                 if (includeBody)
                 {
-                    var result = await AssemblySymbolBodyScanner.GetAsync(symbolIdentifier, maxBodyLines, 1, ct, target.CanonicalPath).ConfigureAwait(false);
+                    var result = await AssemblySymbolBodyScanner.GetAsync(symbolIdentifier, maxBodyLines, 1, ct, ownerPath).ConfigureAwait(false);
                     if (result.Error is { } error) return NavigationToolSupport.Failure(error, effectiveResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                     var body = result.Body!;
                     sections.Add($"## Body\n```csharp\n{body.Body.TrimEnd()}\n```");
@@ -82,7 +89,7 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                     var type = access.Symbol as INamedTypeSymbol ?? access.Symbol.ContainingType;
                     if (type is null) return McpToolResults.InvalidArgument("The symbol has no containing type.", "$.symbolIdentifier",
                         "Use a type or a member declared in a type.", maxResponseBytes: effectiveResponseBytes, maxResponseTokens: maxResponseTokens);
-                    var structure = StructureTools.BuildAssemblyClassStructure(type, access.Origin.CanonicalPath, identity,
+                    var structure = StructureTools.BuildAssemblyClassStructure(type, ownerPath, identity,
                         "lines", Math.Min(maxResults, 200), null, null);
                     sections.Add($"## Class Structure\n{StructureTools.FormatClassStructure(structure)}");
                     truncated |= structure.Truncated;
@@ -90,20 +97,49 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                 var graphLimit = Math.Min(Math.Clamp(maxCallers, 1, 200), Math.Clamp(topN, 1, 200));
                 if (includeCallers)
                 {
-                    var references = await FindReferencesResolver.FindReferencesAsync(access.Symbol, access.Solution,
-                        graphLimit, Math.Clamp(depth, 1, 3), ct, handoffFormatter: FormatOwnedHandoff).ConfigureAwait(false);
-                    sections.Add(FormatReferences(references));
-                    truncated |= references.IsTruncated || references.IsTruncatedByNodeLimit || references.IsDepthClamped;
+                    if (includeReferences)
+                    {
+                        var closure = await AssemblyReferencesClosureScanner.ScanAsync(target.CanonicalPath, symbolIdentifier,
+                            graphLimit, Math.Clamp(depth, 1, 3), SymbolScopeType.All, includeGenerated: false, ct).ConfigureAwait(false);
+                        if (closure.Error is { } error)
+                            return NavigationToolSupport.Failure(error, effectiveResponseBytes, maxResponseTokens, closure.ErrorField);
+                        sections.Add(FormatReferences(closure.References!));
+                        truncated |= closure.IsTruncated;
+                        if (closure.IsTruncated && !string.IsNullOrWhiteSpace(closure.NextAction)) incompleteActions.Add(closure.NextAction);
+                    }
+                    else
+                    {
+                        var references = await FindReferencesResolver.FindReferencesAsync(access.Symbol, access.Solution,
+                            graphLimit, Math.Clamp(depth, 1, 3), ct, handoffFormatter: FormatOwnedHandoff,
+                            ownerTargetPath: ownerPath).ConfigureAwait(false);
+                        sections.Add(FormatReferences(references));
+                        truncated |= references.IsTruncated || references.IsTruncatedByNodeLimit || references.IsDepthClamped;
+                    }
                 }
                 if (includeImpact)
                 {
-                    var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(access.Symbol, access.Solution,
-                        maxDepth: Math.Clamp(depth, 1, 3), maxResults: graphLimit, ct: ct, handoffFormatter: FormatOwnedHandoff).ConfigureAwait(false);
-                    sections.Add(FormatImpact(impact));
-                    truncated |= !impact.IsComplete;
+                    if (includeReferences)
+                    {
+                        var closure = await AssemblyImpactClosureScanner.ScanAsync(target.CanonicalPath, symbolIdentifier,
+                            Math.Clamp(depth, 1, 3), graphLimit, ct).ConfigureAwait(false);
+                        if (closure.Error is { } error)
+                            return NavigationToolSupport.Failure(error, effectiveResponseBytes, maxResponseTokens, closure.ErrorField);
+                        sections.Add(FormatImpact(closure.Impact!));
+                        truncated |= closure.IsTruncated;
+                        if (closure.IsTruncated && !string.IsNullOrWhiteSpace(closure.NextAction)) incompleteActions.Add(closure.NextAction);
+                    }
+                    else
+                    {
+                        var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(access.Symbol, access.Solution,
+                            maxDepth: Math.Clamp(depth, 1, 3), maxResults: graphLimit, ct: ct, handoffFormatter: FormatOwnedHandoff).ConfigureAwait(false);
+                        sections.Add(FormatImpact(impact));
+                        truncated |= !impact.IsComplete;
+                    }
                 }
-                return NavigationToolSupport.SuccessText(string.Join("\n\n", sections), truncated,
-                    truncated ? "Increase maxResults, maxBodyLines, maxCallers, depth, or topN and repeat the query." : null);
+                var nextAction = incompleteActions.Count == 0
+                    ? truncated ? "Increase maxResults, maxBodyLines, maxCallers, depth, or topN and repeat the query." : null
+                    : string.Join(" ", incompleteActions.Distinct(StringComparer.Ordinal));
+                return NavigationToolSupport.SuccessText(string.Join("\n\n", sections), truncated, nextAction);
             }, AnalysisTargetType.Assembly, cancellationToken);
     }
 
@@ -137,7 +173,8 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
         foreach (var site in impact.CallSites)
         {
             var handoff = site.CallingMemberHandoffId is null ? string.Empty : $" [handoff: {site.CallingMemberHandoffId}]";
-            output.AppendLine($"- {site.FilePath}:{site.Line}: {site.CallingMember} (depth {site.Depth}){handoff}");
+            var owner = string.IsNullOrWhiteSpace(site.OwnerTargetPath) ? string.Empty : $" (targetPath: {site.OwnerTargetPath})";
+            output.AppendLine($"- {site.FilePath}:{site.Line}: {site.CallingMember} (depth {site.Depth}){handoff}{owner}");
         }
         return output.ToString().TrimEnd();
     }
@@ -151,7 +188,8 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
         foreach (var reference in references.References)
         {
             var handoff = reference.EnclosingSymbolHandoffId is null ? string.Empty : $" [handoff: {reference.EnclosingSymbolHandoffId}]";
-            output.AppendLine($"- {reference.FilePath}:{reference.Line}: {reference.EnclosingSymbolName}{handoff}");
+            var owner = string.IsNullOrWhiteSpace(reference.OwnerTargetPath) ? string.Empty : $" (targetPath: {reference.OwnerTargetPath})";
+            output.AppendLine($"- {reference.FilePath}:{reference.Line}: {reference.EnclosingSymbolName}{handoff}{owner}");
             if (!string.IsNullOrWhiteSpace(reference.Snippet)) output.AppendLine($"  {reference.Snippet}");
         }
         return output.ToString().TrimEnd();

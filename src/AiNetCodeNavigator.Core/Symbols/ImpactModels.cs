@@ -13,7 +13,8 @@ public sealed record ImpactCallSiteEntry(
     string ProjectName,
     int Depth,
     string ReachedFromSymbolId = "",
-    string? ReachedFromSymbolHandoffId = null);
+    string? ReachedFromSymbolHandoffId = null,
+    string? OwnerTargetPath = null);
 
 public sealed record SymbolImpactPayload(
     string TargetSymbol,
