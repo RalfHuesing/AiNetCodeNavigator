@@ -1,5 +1,6 @@
 #nullable enable
 
+using System;
 using System.Collections.Generic;
 using Microsoft.CodeAnalysis;
 
@@ -52,4 +53,5 @@ public sealed record CallTreeBuildRequest(
     CallTreeDirection Direction = CallTreeDirection.Incoming,
     bool IncludeBcl = false,
     AiNetCodeNavigator.Core.Symbols.SymbolScopeType Scope = AiNetCodeNavigator.Core.Symbols.SymbolScopeType.All,
-    bool IncludeGenerated = false);
+    bool IncludeGenerated = false,
+    Func<ISymbol, string?>? HandoffFormatter = null);

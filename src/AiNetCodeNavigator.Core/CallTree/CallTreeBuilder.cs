@@ -34,7 +34,9 @@ public static class CallTreeBuilder
         var solutionDir = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
         var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
 
-        var state = new BuilderState(request.Solution, solutionDir, depth, Math.Max(request.TopN, 1), request.IncludeBcl, handoffIdentity, request.Scope, request.IncludeGenerated);
+        var handoffFormatter = request.HandoffFormatter ?? (symbol => SourceHandoffFormatter.Format(symbol, request.Solution, handoffIdentity));
+        var state = new BuilderState(request.Solution, solutionDir, depth, Math.Max(request.TopN, 1), request.IncludeBcl,
+            handoffFormatter, request.Scope, request.IncludeGenerated);
 
         if (request.SeedSymbol is INamedTypeSymbol namedType)
         {
@@ -299,7 +301,7 @@ public static class CallTreeBuilder
         public int MaxDepth { get; }
         public int TopN { get; }
         public bool IncludeBcl { get; }
-        public AnalysisSymbolIdentity? HandoffIdentity { get; }
+        public Func<ISymbol, string?> HandoffFormatter { get; }
 
         private readonly Dictionary<ISymbol, CallGraphNode> _nodesBySymbol = new(SymbolEqualityComparer.Default);
         private readonly List<CallGraphNode> _nodes = [];
@@ -311,14 +313,15 @@ public static class CallTreeBuilder
         public SymbolScopeType Scope { get; }
         public bool IncludeGenerated { get; }
 
-        public BuilderState(Solution solution, string solutionDir, int maxDepth, int topN, bool includeBcl, AnalysisSymbolIdentity? handoffIdentity, SymbolScopeType scope, bool includeGenerated)
+        public BuilderState(Solution solution, string solutionDir, int maxDepth, int topN, bool includeBcl,
+            Func<ISymbol, string?> handoffFormatter, SymbolScopeType scope, bool includeGenerated)
         {
             Solution = solution;
             SolutionDir = solutionDir;
             MaxDepth = maxDepth;
             TopN = topN;
             IncludeBcl = includeBcl;
-            HandoffIdentity = handoffIdentity;
+            HandoffFormatter = handoffFormatter;
             Scope = scope;
             IncludeGenerated = includeGenerated;
         }
@@ -340,7 +343,7 @@ public static class CallTreeBuilder
             var name = FormatSymbolName(symbol);
             var displayLine = FormatDisplayLine(symbol, SolutionDir);
             var docCommentId = symbol.GetDocumentationCommentId() ?? symbol.ToDisplayString();
-            var handoffId = SourceHandoffFormatter.Format(symbol, Solution, HandoffIdentity);
+            var handoffId = HandoffFormatter(symbol);
 
             var node = new CallGraphNode(
                 NodeId: nodeId,

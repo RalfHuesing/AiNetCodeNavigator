@@ -36,8 +36,9 @@ public static class FindReferencesResolver
         CancellationToken ct = default,
         int maxNodes = DefaultMaxVisitedSymbols,
         SymbolScopeType scope = SymbolScopeType.All,
-        bool includeGenerated = false)
-        => await FindReferencesAsyncCore(targetSymbol, solution, maxResults, depth, maxNodes, ct, scope, includeGenerated).ConfigureAwait(false);
+        bool includeGenerated = false,
+        Func<ISymbol, string?>? handoffFormatter = null)
+        => await FindReferencesAsyncCore(targetSymbol, solution, maxResults, depth, maxNodes, ct, scope, includeGenerated, handoffFormatter).ConfigureAwait(false);
 
     private static async Task<FindReferencesResult> FindReferencesAsyncCore(
         ISymbol targetSymbol,
@@ -47,7 +48,8 @@ public static class FindReferencesResolver
         int maxNodes,
         CancellationToken ct,
         SymbolScopeType scope,
-        bool includeGenerated)
+        bool includeGenerated,
+        Func<ISymbol, string?>? handoffFormatter = null)
     {
         ArgumentNullException.ThrowIfNull(targetSymbol);
         ArgumentNullException.ThrowIfNull(solution);
@@ -119,14 +121,18 @@ public static class FindReferencesResolver
                         _ => enclosing?.Name ?? string.Empty
                     };
 
-                    var callerHandoff = SourceHandoffFormatter.Format(enclosing, solution, handoffIdentity);
+                    var callerHandoff = handoffFormatter is null
+                        ? SourceHandoffFormatter.Format(enclosing, solution, handoffIdentity)
+                        : enclosing is null ? null : handoffFormatter(enclosing);
                     var reachedFromName = currentSymbol switch
                     {
                         IMethodSymbol method => $"{method.ContainingType?.Name}.{method.Name}",
                         IPropertySymbol property => $"{property.ContainingType?.Name}.{property.Name}",
                         _ => currentSymbol.Name
                     };
-                    var reachedFromHandoff = SourceHandoffFormatter.Format(currentSymbol, solution, handoffIdentity);
+                    var reachedFromHandoff = handoffFormatter is null
+                        ? SourceHandoffFormatter.Format(currentSymbol, solution, handoffIdentity)
+                        : handoffFormatter(currentSymbol);
 
                     entries.Add((new ReferenceLocationEntry(
                             FilePath: relPath,

@@ -68,8 +68,11 @@ public static class ClassStructureScanner
         if (namedType is null) return null;
 
         var solutionDir = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
-        var (files, totalLines) = CollectDeclarationFiles(namedType, solutionDir);
-        var extractedMembers = ExtractMembers(namedType, request.Solution, solutionDir, identity);
+        var typeDeclarations = await GetEligibleDeclarationsAsync(namedType, request.Solution, request.ScopeType,
+            request.IncludeGenerated, ct).ConfigureAwait(false);
+        var (files, totalLines) = CollectDeclarationFiles(typeDeclarations, solutionDir);
+        var extractedMembers = await ExtractMembersAsync(namedType, request.Solution, solutionDir, identity,
+            request.ScopeType, request.IncludeGenerated, ct).ConfigureAwait(false);
 
         var filteredMembers = FilterMembers(extractedMembers, request.KindFilter, request.NameFilter);
         var sortedMembers = SortMembers(filteredMembers, request.SortBy);
@@ -120,13 +123,13 @@ public static class ClassStructureScanner
     }
 
     private static (List<string> Files, int TotalLines) CollectDeclarationFiles(
-        INamedTypeSymbol namedType,
+        IReadOnlyList<SyntaxReference> declarations,
         string solutionDir)
     {
         var files = new List<string>();
         int totalLines = 0;
 
-        foreach (var syntaxRef in namedType.DeclaringSyntaxReferences)
+        foreach (var syntaxRef in declarations)
         {
             var path = syntaxRef.SyntaxTree.FilePath;
             var relPath = PathNormalizer.ToRelative(solutionDir, path);
@@ -143,42 +146,57 @@ public static class ClassStructureScanner
         return (files, totalLines);
     }
 
-    private static List<ClassStructureMemberEntry> ExtractMembers(
+    private static async Task<List<ClassStructureMemberEntry>> ExtractMembersAsync(
         INamedTypeSymbol namedType,
         Solution solution,
         string solutionDir,
-        AnalysisSymbolIdentity? handoffIdentity)
+        AnalysisSymbolIdentity? handoffIdentity,
+        SymbolScopeType scopeType,
+        bool includeGenerated,
+        CancellationToken cancellationToken)
     {
         var result = new List<ClassStructureMemberEntry>();
         if (namedType.IsRecord)
         {
-            result.AddRange(ExtractRecordPrimaryConstructorParameters(namedType, solutionDir));
+            result.AddRange(await ExtractRecordPrimaryConstructorParametersAsync(namedType, solution, solutionDir,
+                scopeType, includeGenerated, cancellationToken).ConfigureAwait(false));
         }
 
         foreach (var m in namedType.GetMembers())
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (ShouldSkipMember(m)) continue;
-            result.Add(CreateMemberEntry(m, solution, solutionDir, handoffIdentity));
+            var declaration = await FirstEligibleDeclarationAsync(m, solution, scopeType, includeGenerated, cancellationToken).ConfigureAwait(false);
+            if (declaration is null) continue;
+            result.Add(CreateMemberEntry(m, declaration, solution, solutionDir, handoffIdentity));
         }
 
         return result;
     }
 
-    private static IEnumerable<ClassStructureMemberEntry> ExtractRecordPrimaryConstructorParameters(
+    private static async Task<IReadOnlyList<ClassStructureMemberEntry>> ExtractRecordPrimaryConstructorParametersAsync(
         INamedTypeSymbol namedType,
-        string solutionDir)
+        Solution solution,
+        string solutionDir,
+        SymbolScopeType scopeType,
+        bool includeGenerated,
+        CancellationToken cancellationToken)
     {
+        var result = new List<ClassStructureMemberEntry>();
         var primaryConstructor = namedType.InstanceConstructors
             .FirstOrDefault(constructor => constructor.DeclaringSyntaxReferences
                 .Any(reference => reference.GetSyntax() is RecordDeclarationSyntax { ParameterList: not null }));
         if (primaryConstructor is null || primaryConstructor.Parameters.Length == 0)
         {
-            yield break;
+            return result;
         }
 
         foreach (var parameter in primaryConstructor.Parameters)
         {
-            var syntax = parameter.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
+            cancellationToken.ThrowIfCancellationRequested();
+            var declaration = await FirstEligibleDeclarationAsync(parameter, solution, scopeType, includeGenerated, cancellationToken).ConfigureAwait(false);
+            if (declaration is null) continue;
+            var syntax = await declaration.GetSyntaxAsync(cancellationToken).ConfigureAwait(false);
             var location = syntax?.GetLocation() ?? parameter.Locations.FirstOrDefault(location => location.IsInSource);
             var startLine = 0;
             var endLine = 0;
@@ -194,7 +212,7 @@ public static class ClassStructureScanner
                 }
             }
 
-            yield return new ClassStructureMemberEntry(
+            result.Add(new ClassStructureMemberEntry(
                 Kind: PrimaryConstructorParameterKind,
                 Name: parameter.Name,
                 Visibility: "public",
@@ -203,8 +221,43 @@ public static class ClassStructureScanner
                 LineCount: 0,
                 Signature: $"{parameter.Name} : {parameter.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}",
                 FilePath: filePath,
-                HandoffId: null);
+                HandoffId: null));
         }
+        return result;
+    }
+
+    private static async Task<IReadOnlyList<SyntaxReference>> GetEligibleDeclarationsAsync(
+        ISymbol symbol, Solution solution, SymbolScopeType scopeType, bool includeGenerated, CancellationToken cancellationToken)
+    {
+        var result = new List<SyntaxReference>();
+        foreach (var declaration in symbol.DeclaringSyntaxReferences)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var document = solution.GetDocument(declaration.SyntaxTree);
+            if (document is null || !MatchesScope(document, scopeType)) continue;
+            if (!includeGenerated && await GeneratedDocumentDetector.IsGeneratedDocumentAsync(document, cancellationToken).ConfigureAwait(false)) continue;
+            result.Add(declaration);
+        }
+        return result;
+    }
+
+    private static async Task<SyntaxReference?> FirstEligibleDeclarationAsync(
+        ISymbol symbol, Solution solution, SymbolScopeType scopeType, bool includeGenerated, CancellationToken cancellationToken)
+    {
+        var declarations = await GetEligibleDeclarationsAsync(symbol, solution, scopeType, includeGenerated, cancellationToken).ConfigureAwait(false);
+        return declarations.FirstOrDefault();
+    }
+
+    private static bool MatchesScope(Document document, SymbolScopeType scopeType)
+    {
+        if (scopeType == SymbolScopeType.All) return true;
+        var isTest = TestDetector.IsTestProject(document.Project) || TestDetector.IsTestFile(document.FilePath ?? document.Name);
+        return scopeType switch
+        {
+            SymbolScopeType.Production => !isTest,
+            SymbolScopeType.Tests => isTest,
+            _ => true
+        };
     }
 
     private static bool ShouldSkipMember(ISymbol m)
@@ -237,11 +290,12 @@ public static class ClassStructureScanner
 
     private static ClassStructureMemberEntry CreateMemberEntry(
         ISymbol m,
+        SyntaxReference declaration,
         Solution solution,
         string solutionDir,
         AnalysisSymbolIdentity? handoffIdentity)
     {
-        var syntaxNode = m.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
+        var syntaxNode = declaration.GetSyntax();
         var loc = syntaxNode?.GetLocation() ?? m.Locations.FirstOrDefault(l => l.IsInSource) ?? m.Locations.FirstOrDefault();
         var memberFilePath = loc?.SourceTree?.FilePath is not null
             ? PathNormalizer.ToRelative(solutionDir, loc.SourceTree.FilePath)

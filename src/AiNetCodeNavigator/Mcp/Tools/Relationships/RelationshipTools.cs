@@ -401,21 +401,26 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         {
             var byPath = solution.Projects.SelectMany(project => project.Documents)
                 .Where(document => !string.IsNullOrWhiteSpace(document.FilePath))
-                .ToDictionary(document => Path.GetFullPath(document.FilePath!), StringComparer.OrdinalIgnoreCase);
+                .GroupBy(document => Path.GetFullPath(document.FilePath!), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.OrderBy(document => document.Project.FilePath, StringComparer.OrdinalIgnoreCase).ToArray(), StringComparer.OrdinalIgnoreCase);
             var changedSymbols = new List<ISymbol>();
             foreach (var relative in changedPaths)
             {
                 ct.ThrowIfCancellationRequested();
                 var fullPath = Path.GetFullPath(Path.Combine(gitRoot, relative));
-                if (!IsWithin(gitRoot, fullPath) || !byPath.TryGetValue(fullPath, out var document)) continue;
-                var root = await document.GetSyntaxRootAsync(ct).ConfigureAwait(false);
-                var model = await document.GetSemanticModelAsync(ct).ConfigureAwait(false);
-                if (root is null || model is null) continue;
-                foreach (var node in root.DescendantNodes().Where(node => node is Microsoft.CodeAnalysis.CSharp.Syntax.BaseTypeDeclarationSyntax
-                             or Microsoft.CodeAnalysis.CSharp.Syntax.DelegateDeclarationSyntax or Microsoft.CodeAnalysis.CSharp.Syntax.BaseMethodDeclarationSyntax
-                             or Microsoft.CodeAnalysis.CSharp.Syntax.PropertyDeclarationSyntax or Microsoft.CodeAnalysis.CSharp.Syntax.EventDeclarationSyntax))
+                if (!IsWithin(gitRoot, fullPath) || !byPath.TryGetValue(fullPath, out var documents)) continue;
+                foreach (var document in documents)
                 {
-                    if (model.GetDeclaredSymbol(node, ct) is { } symbol) changedSymbols.Add(symbol);
+                    var root = await document.GetSyntaxRootAsync(ct).ConfigureAwait(false);
+                    var model = await document.GetSemanticModelAsync(ct).ConfigureAwait(false);
+                    if (root is null || model is null) continue;
+                    foreach (var node in root.DescendantNodes().Where(node => node is Microsoft.CodeAnalysis.CSharp.Syntax.BaseTypeDeclarationSyntax
+                                 or Microsoft.CodeAnalysis.CSharp.Syntax.DelegateDeclarationSyntax or Microsoft.CodeAnalysis.CSharp.Syntax.BaseMethodDeclarationSyntax
+                                 or Microsoft.CodeAnalysis.CSharp.Syntax.PropertyDeclarationSyntax or Microsoft.CodeAnalysis.CSharp.Syntax.EventDeclarationSyntax))
+                    {
+                        if (model.GetDeclaredSymbol(node, ct) is { } symbol) changedSymbols.Add(symbol);
+                        if (changedSymbols.Count >= Math.Clamp(maxChangedSymbols, 1, 100)) break;
+                    }
                     if (changedSymbols.Count >= Math.Clamp(maxChangedSymbols, 1, 100)) break;
                 }
                 if (changedSymbols.Count >= Math.Clamp(maxChangedSymbols, 1, 100)) break;

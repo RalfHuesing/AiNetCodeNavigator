@@ -54,28 +54,55 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     {
         var arguments = new { root, view, includeExtensions, fileFilter, excludePatterns, maxDepth, treeDepth, maxResults, sortBy, includeMetadata, includeLineCount };
         return NavigationToolSupport.RouteAsync(runtime, "get_file_tree", targetPath, arguments, operationToken, continuationToken,
-            maxResponseBytes, maxResponseTokens, (target, ct) =>
+            maxResponseBytes, maxResponseTokens, async (target, ct) =>
             {
-                var rootDirectory = Path.GetDirectoryName(target.CanonicalPath)!;
-                var result = GetFileTreeScanner.Scan(new FileTreeScanRequest(
-                    rootDirectory,
-                    root ?? ".",
-                    view,
-                    fileFilter,
-                    MaxDepth: maxDepth,
-                    MaxResults: maxResults,
-                    IncludeExtensions: includeExtensions,
-                    ExcludePatterns: excludePatterns,
-                    TreeDepth: treeDepth,
-                    SortBy: sortBy,
-                    IncludeMetadata: includeMetadata,
-                    IncludeLineCount: includeLineCount), ct);
-                if (!result.ScanCompleted || result.Error is not null)
-                    return Task.FromResult(McpToolResults.InvalidArgument(result.Error ?? "The requested file tree could not be scanned.", "$.root",
-                        "Use a relative root within the selected target directory and supported view/filter values.",
-                        maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
-                return Task.FromResult(NavigationToolSupport.SuccessText(result.FormattedText, result.IsTruncated,
-                    result.Next?.Action ?? "Increase maxResults or depth and repeat the query."));
+                string rootDirectory;
+                AssemblyNavigationSessionScope? assemblyScope = null;
+                if (target.TargetType == AnalysisTargetType.Project)
+                {
+                    rootDirectory = Path.GetDirectoryName(target.CanonicalPath)!;
+                }
+                else
+                {
+                    var opened = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
+                    if (!opened.IsSuccess) return NavigationToolSupport.Failure(opened.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
+                    assemblyScope = opened.Value!;
+                    rootDirectory = assemblyScope.Context.DecompiledProjectPaths?.DecompiledSourceRoot ?? string.Empty;
+                    if (rootDirectory.Length == 0)
+                    {
+                        await assemblyScope.DisposeAsync().ConfigureAwait(false);
+                        return McpToolResults.Recoverable(NavigationErrorCodes.AssemblyTargetUnsupported,
+                            "The assembly has no materialized decompiled source tree.",
+                            "Use inspect_assembly for metadata-only navigation.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                    }
+                }
+
+                try
+                {
+                    var result = GetFileTreeScanner.Scan(new FileTreeScanRequest(
+                        rootDirectory,
+                        root ?? ".",
+                        view,
+                        fileFilter,
+                        MaxDepth: maxDepth,
+                        MaxResults: maxResults,
+                        IncludeExtensions: includeExtensions,
+                        ExcludePatterns: excludePatterns,
+                        TreeDepth: treeDepth,
+                        SortBy: sortBy,
+                        IncludeMetadata: includeMetadata,
+                        IncludeLineCount: includeLineCount), ct);
+                    if (!result.ScanCompleted || result.Error is not null)
+                        return McpToolResults.InvalidArgument(result.Error ?? "The requested file tree could not be scanned.", "$.root",
+                            "Use a relative root within the selected target source tree and supported view/filter values.",
+                            maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                    return NavigationToolSupport.SuccessText(result.FormattedText, result.IsTruncated,
+                        result.Next?.Action ?? "Increase maxResults or depth and repeat the query.");
+                }
+                finally
+                {
+                    if (assemblyScope is not null) await assemblyScope.DisposeAsync().ConfigureAwait(false);
+                }
             }, null, cancellationToken);
     }
 
@@ -90,23 +117,28 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         CancellationToken cancellationToken = default)
     {
         if (filePaths.Length == 0 || filePaths.Any(string.IsNullOrWhiteSpace))
-            return Task.FromResult(McpToolResults.InvalidArgument("filePaths must contain one or more non-empty relative paths.", "$.filePaths",
-                "Provide workspace-relative source paths.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
+            return Task.FromResult(McpToolResults.InvalidArgument("filePaths must contain one or more non-empty paths or symbol handoffs.", "$.filePaths",
+                "Provide an indexed source path or a source/assembly symbol handoff.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
         return NavigationToolSupport.RouteAsync(runtime, "get_file_skeleton", targetPath, new { filePaths }, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens, async (target, ct) =>
             {
                 if (target.TargetType == AnalysisTargetType.Project)
                     return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target,
                         async (solution, token) => await BuildSkeletonsAsync(solution, target.CanonicalPath, filePaths,
-                            await AnalysisSymbolIdentity.ForSourceAsync(solution, token).ConfigureAwait(false), token).ConfigureAwait(false),
+                            await AnalysisSymbolIdentity.ForSourceAsync(solution, token).ConfigureAwait(false), token, maxResponseBytes, maxResponseTokens).ConfigureAwait(false),
                         maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
 
                 var opened = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
                 if (!opened.IsSuccess) return NavigationToolSupport.Failure(opened.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
                 await using var scope = opened.Value!;
+                    var sourceRoot = scope.Context.DecompiledProjectPaths?.DecompiledSourceRoot;
+                    if (string.IsNullOrWhiteSpace(sourceRoot))
+                        return McpToolResults.Recoverable(NavigationErrorCodes.AssemblyTargetUnsupported,
+                            "The assembly has no materialized decompiled source tree.",
+                            "Use inspect_assembly for metadata-only navigation.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                 var identity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash,
                     scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
-                return await BuildSkeletonsAsync(scope.Solution, target.CanonicalPath, filePaths, identity, ct).ConfigureAwait(false);
+                    return await BuildSkeletonsAsync(scope.Solution, target.CanonicalPath, filePaths, identity, ct, maxResponseBytes, maxResponseTokens, sourceRoot).ConfigureAwait(false);
             }, null, cancellationToken);
     }
 
@@ -132,6 +164,12 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         if (scopeType is not ("all" or "production" or "tests"))
             return Task.FromResult(McpToolResults.InvalidArgument("scopeType must be all, production, or tests.", "$.scopeType", "Choose a supported source scope.",
                 maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
+        var parsedScope = scopeType switch
+        {
+            "production" => SymbolScopeType.Production,
+            "tests" => SymbolScopeType.Tests,
+            _ => SymbolScopeType.All,
+        };
         var args = new { symbolIdentifier, sortBy, maxMembers, kindFilter, nameFilter, scopeType, includeGenerated };
         return NavigationToolSupport.RouteAsync(runtime, "get_class_structure", targetPath, args, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens, async (target, ct) =>
@@ -141,7 +179,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                     {
                         var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, token).ConfigureAwait(false);
                         var result = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(
-                            solution, symbolIdentifier, sortBy, maxMembers, kindFilter, nameFilter, identity), token).ConfigureAwait(false);
+                            solution, symbolIdentifier, sortBy, maxMembers, kindFilter, nameFilter, identity, parsedScope, includeGenerated), token).ConfigureAwait(false);
                         if (result is null) return McpToolResults.InvalidArgument("The identifier did not resolve to a type.", "$.symbolIdentifier", "Use a type name or type handoff.",
                             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                         if (result.Error is { } error) return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
@@ -205,31 +243,91 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             }, null, cancellationToken);
     }
 
-    private static async Task<CallToolResult> BuildSkeletonsAsync(Solution solution, string targetPath, string[] filePaths, AnalysisSymbolIdentity? identity, CancellationToken ct)
+    private static async Task<CallToolResult> BuildSkeletonsAsync(Solution solution, string targetPath, string[] filePaths,
+        AnalysisSymbolIdentity? identity, CancellationToken ct, int maxResponseBytes, int? maxResponseTokens, string? selectedRoot = null)
     {
-        var targetDirectory = Path.GetDirectoryName(targetPath)!;
+        var targetDirectory = Path.GetFullPath(selectedRoot ?? Path.GetDirectoryName(targetPath)!);
         var chunks = new List<string>();
+        var successfulFiles = 0;
+        var hasMissing = false;
+        ResultError? firstHandoffError = null;
         foreach (var path in filePaths)
         {
             ct.ThrowIfCancellationRequested();
-            if (Path.IsPathRooted(path))
+            if (path.StartsWith("h:", StringComparison.Ordinal))
             {
-                chunks.Add($"## {path}\nAbsolute paths are not accepted; use a path relative to the target.");
+                var resolved = await ResolveSkeletonHandoffAsync(path, solution, targetPath, identity, ct).ConfigureAwait(false);
+                if (resolved.Error is { } handoffError)
+                {
+                    chunks.Add($"## {path}\n{handoffError.Code}: {handoffError.Message}");
+                    firstHandoffError ??= handoffError;
+                    hasMissing = true;
+                    continue;
+                }
+                var handleDocuments = resolved.Documents!;
+                if (handleDocuments.Length != 1)
+                {
+                    chunks.Add($"## {path}\nThe handoff resolves to {handleDocuments.Length} declaration files and cannot select one file skeleton.");
+                    hasMissing = true;
+                    continue;
+                }
+                var handleMarkdown = await FileSkeletonBuilder.BuildMarkdownForDocumentAsync(handleDocuments[0], targetPath,
+                    formatSymbolId: null, formatSymbol: symbol =>
+                    {
+                        var internalId = identity?.FormatHandoff(symbol, solution);
+                        return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
+                    }, ct: ct).ConfigureAwait(false);
+                chunks.Add(handleMarkdown);
+                successfulFiles++;
                 continue;
             }
-            var fullPath = Path.GetFullPath(Path.Combine(targetDirectory, path));
-            if (!IsWithin(targetDirectory, fullPath))
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(targetDirectory, path));
+            }
+            catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+            {
+                chunks.Add($"## {path}\nThe requested path is invalid: {ex.Message}");
+                hasMissing = true;
+                continue;
+            }
+            if (identity?.IsAssembly == true && !IsWithin(targetDirectory, fullPath))
             {
                 chunks.Add($"## {path}\nThe requested path is outside the selected target.");
+                hasMissing = true;
                 continue;
             }
-            var document = solution.Projects.SelectMany(project => project.Documents)
-                .FirstOrDefault(item => item.FilePath is { } documentPath && string.Equals(Path.GetFullPath(documentPath), fullPath, StringComparison.OrdinalIgnoreCase));
-            if (document is null)
+            var indexedDocuments = solution.Projects.SelectMany(project => project.Documents)
+                .Where(item => item.FilePath is not null)
+                .ToArray();
+            var documents = indexedDocuments
+                .Where(item => string.Equals(Path.GetFullPath(item.FilePath!), fullPath, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (documents.Length == 0 && !Path.IsPathRooted(path))
+            {
+                var normalizedSuffix = path.Replace('\\', '/').TrimStart('/');
+                documents = indexedDocuments.Where(item =>
+                {
+                    var candidate = Path.GetFullPath(item.FilePath!).Replace('\\', '/');
+                    return candidate.EndsWith("/" + normalizedSuffix, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(Path.GetFileName(candidate), normalizedSuffix, StringComparison.OrdinalIgnoreCase);
+                }).ToArray();
+            }
+            if (documents.Length == 0)
             {
                 chunks.Add($"## {path}\nThe file is not part of the loaded source index.");
+                hasMissing = true;
                 continue;
             }
+            if (documents.Length > 1)
+            {
+                var projects = string.Join(", ", documents.Select(document => document.Project.FilePath ?? document.Project.Name).Distinct(StringComparer.OrdinalIgnoreCase));
+                chunks.Add($"## {path}\nThe file is linked into multiple projects and has no unique semantic owner: {projects}");
+                hasMissing = true;
+                continue;
+            }
+            var document = documents[0];
             var markdown = await FileSkeletonBuilder.BuildMarkdownForDocumentAsync(document, targetPath,
                 formatSymbolId: null, formatSymbol: symbol =>
                 {
@@ -237,11 +335,58 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                     return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
                 }, ct: ct).ConfigureAwait(false);
             chunks.Add(markdown);
+            successfulFiles++;
         }
-        var hasMissing = chunks.Any(chunk => chunk.Contains("not part of the loaded source index", StringComparison.Ordinal)
-            || chunk.Contains("outside the selected target", StringComparison.Ordinal));
+        if (successfulFiles == 0)
+        {
+            if (firstHandoffError is { } error)
+                return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.filePaths");
+            return McpToolResults.InvalidArgument(chunks.FirstOrDefault() ?? "No source file could be selected.", "$.filePaths",
+                "Use an indexed source path present in exactly one loaded project, or a current handoff that identifies one declaration file.",
+                maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        }
         return NavigationToolSupport.SuccessText(string.Join("\n\n", chunks), hasMissing,
-            hasMissing ? "Correct missing or out-of-target paths and repeat the file skeleton query." : null);
+            hasMissing ? "Correct invalid, missing, out-of-target, or ambiguous paths and repeat the file skeleton query." : null);
+    }
+
+    private static async Task<(Document[]? Documents, ResultError? Error)> ResolveSkeletonHandoffAsync(
+        string handoff, Solution solution, string targetPath, AnalysisSymbolIdentity? identity, CancellationToken ct)
+    {
+        if (identity is null)
+            return (null, new ResultError(NavigationErrorCodes.InvalidHandoff, "A canonical target identity could not be created."));
+        if (!identity.IsAssembly)
+        {
+            var resolved = await SourceHandoffResolver.ResolveAsync(solution, handoff, identity, ct).ConfigureAwait(false);
+            if (!resolved.IsSuccess) return (null, resolved.Error);
+            var documents = resolved.Value?.DeclaringSyntaxReferences
+                .Select(reference => solution.GetDocument(reference.SyntaxTree))
+                .Where(document => document is not null)
+                .Cast<Document>()
+                .DistinctBy(document => document.Id)
+                .ToArray() ?? [];
+            return (documents, null);
+        }
+
+        var assembly = await AssemblySymbolHandoffResolver.ResolveAsync(handoff, ct).ConfigureAwait(false);
+        if (!assembly.IsSuccess) return (null, assembly.Error);
+        await using var access = assembly.Value!;
+        if (!string.Equals(Path.GetFullPath(access.Origin.CanonicalPath), Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
+            return (null, new ResultError(NavigationErrorCodes.TargetMismatch, "The symbol handoff belongs to another assembly.",
+                "Use a handoff produced by this targetPath."));
+
+        var rootPath = access.DecompiledProjectPaths?.DecompiledSourceRoot;
+        if (string.IsNullOrWhiteSpace(rootPath))
+            return (null, new ResultError(NavigationErrorCodes.AssemblyTargetUnsupported, "The assembly has no materialized decompiled source tree."));
+        var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var assemblyDocuments = access.Symbol.DeclaringSyntaxReferences
+            .Select(reference => access.Solution.GetDocument(reference.SyntaxTree))
+            .Where(document => document?.FilePath is { } filePath
+                && (Path.GetFullPath(filePath).StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(Path.GetFullPath(filePath), root, StringComparison.OrdinalIgnoreCase)))
+            .Cast<Document>()
+            .DistinctBy(document => document.Id)
+            .ToArray();
+        return (assemblyDocuments, null);
     }
 
     private static async Task<CallToolResult> ScanNamespaceTreeAsync(Solution solution, string? project, string? prefix, int depth,
@@ -262,7 +407,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         return NavigationToolSupport.SuccessText(payload.FormattedText, payload.Truncated, payload.NextAction);
     }
 
-    private static string FormatClassStructure(ClassStructurePayload result)
+    internal static string FormatClassStructure(ClassStructurePayload result)
     {
         var output = new StringBuilder();
         output.AppendLine($"# {result.Kind} {result.TypeName}");
@@ -276,7 +421,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         return output.ToString().TrimEnd();
     }
 
-    private static ClassStructurePayload BuildAssemblyClassStructure(INamedTypeSymbol type, string assemblyPath, AnalysisSymbolIdentity identity,
+    internal static ClassStructurePayload BuildAssemblyClassStructure(INamedTypeSymbol type, string assemblyPath, AnalysisSymbolIdentity identity,
         string sortBy, int maxMembers, string? kindFilter, string? nameFilter)
     {
         var directory = Path.GetDirectoryName(assemblyPath)!;

@@ -40,4 +40,6 @@ public sealed record ClassStructureScanRequest(
     int MaxMembers = 50,
     string? KindFilter = null,
     string? NameFilter = null,
-    AnalysisSymbolIdentity? HandoffIdentity = null);
+    AnalysisSymbolIdentity? HandoffIdentity = null,
+    SymbolScopeType ScopeType = SymbolScopeType.All,
+    bool IncludeGenerated = false);

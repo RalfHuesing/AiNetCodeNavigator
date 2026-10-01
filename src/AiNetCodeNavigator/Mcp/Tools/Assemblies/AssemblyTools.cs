@@ -1,11 +1,15 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text;
 using AiNetCodeNavigator.Core.Assemblies;
+using AiNetCodeNavigator.Core.CallTree;
 using AiNetCodeNavigator.Core.Models;
+using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Core.Workspace;
 using AiNetCodeNavigator.Mcp.Formatting;
 using AiNetCodeNavigator.Mcp.Tools;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Mcp.Tools.Assemblies;
 
@@ -17,33 +21,157 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
         bool includeReferences = false, bool includeCallers = false, bool includeImpact = false, bool includeBody = false,
         bool includeClassStructure = false, [Range(1, 1000)] int maxResults = 100, [Range(1, 1000)] int maxBodyLines = 80,
         [Range(1, 200)] int maxCallers = 10, [Range(1, 3)] int depth = 1, [Range(1, 200)] int topN = 10,
-        string detailLevel = "standard", [Range(512, 65536)] int maxResponseBytes = 24576,
+        string detailLevel = "standard", [Range(0, 65536)] int? maxResponseBytes = null,
         [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
-        string? continuationToken = null, CancellationToken cancellationToken = default) =>
-        NavigationToolSupport.RouteAsync(runtime, "get_assembly_context", targetPath,
+        string? continuationToken = null, CancellationToken cancellationToken = default)
+    {
+        if (maxResponseBytes is > 0 and < McpResponseBudgetLimits.MinimumBytes)
+            return Task.FromResult(Invalid("maxResponseBytes", $"Use {McpResponseBudgetLimits.MinimumBytes} to {McpResponseBudgetLimits.MaximumBytes} bytes."));
+        if (symbolIdentifier is not null && string.IsNullOrWhiteSpace(symbolIdentifier))
+            return Task.FromResult(Invalid("symbolIdentifier", "Provide a current symbol handoff or omit this optional argument."));
+        if (!TryGetDetailBudget(detailLevel, maxResponseBytes, out var effectiveResponseBytes))
+            return Task.FromResult(Invalid("detailLevel", "Use compact, standard, or full."));
+        return NavigationToolSupport.RouteAsync(runtime, "get_assembly_context", targetPath,
             new { symbolIdentifier, includeReferences, includeCallers, includeImpact, includeBody, includeClassStructure, maxResults, maxBodyLines, maxCallers, depth, topN, detailLevel },
-            operationToken, continuationToken, maxResponseBytes, maxResponseTokens,
+            operationToken, continuationToken, effectiveResponseBytes, maxResponseTokens,
             async (target, ct) =>
             {
                 var context = await AssemblyContextScanner.GetAsync(new AssemblyContextRequest(target.CanonicalPath, maxResults, includeReferences), ct).ConfigureAwait(false);
-                if (!context.IsSuccess) return NavigationToolSupport.Failure(context.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
+                if (!context.IsSuccess) return NavigationToolSupport.Failure(context.Error!.Value, effectiveResponseBytes, maxResponseTokens, "$.targetPath");
                 var payload = context.Value!;
                 if (symbolIdentifier is null) return NavigationToolSupport.Success(payload, payload.Truncated, "Increase maxResults and repeat the query.");
                 var resolved = await AssemblySymbolHandoffResolver.ResolveAsync(symbolIdentifier, ct).ConfigureAwait(false);
-                if (!resolved.IsSuccess) return NavigationToolSupport.Failure(resolved.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
+                if (!resolved.IsSuccess) return NavigationToolSupport.Failure(resolved.Error!.Value, effectiveResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                 await using var access = resolved.Value!;
                 if (!string.Equals(Path.GetFullPath(access.Origin.CanonicalPath), target.CanonicalPath, StringComparison.OrdinalIgnoreCase))
-                    return McpToolResults.InvalidArgument("The symbol handoff belongs to another assembly.", "$.symbolIdentifier", "Use a handoff produced by this targetPath.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-                object? body = null;
+                    return McpToolResults.InvalidArgument("The symbol handoff belongs to another assembly.", "$.symbolIdentifier", "Use a handoff produced by this targetPath.", maxResponseBytes: effectiveResponseBytes, maxResponseTokens: maxResponseTokens);
+                var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
+                    access.Generation, access.ReferenceSnapshotHash);
+                string? FormatOwnedHandoff(ISymbol symbol)
+                {
+                    if (!HasRootSourceDeclaration(symbol, access.Solution, access.DecompiledProjectPaths?.DecompiledSourceRoot)) return null;
+                    var declarationId = DocumentationCommentId.CreateDeclarationId(symbol);
+                    if (string.IsNullOrWhiteSpace(declarationId))
+                        return null;
+                    var ownedSymbols = DocumentationCommentId.GetSymbolsForDeclarationId(declarationId, access.Compilation)
+                        .Where(candidate => SymbolEqualityComparer.Default.Equals(candidate.ContainingAssembly, access.Assembly))
+                        .Distinct(SymbolEqualityComparer.Default)
+                        .Take(2)
+                        .ToArray();
+                    if (ownedSymbols.Length != 1) return null;
+                    var internalId = identity.FormatHandoff(ownedSymbols[0]);
+                    return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
+                }
+
+                var sections = new List<string>
+                {
+                    FormatAssemblyOverview(payload),
+                    $"## Symbol\n{access.Symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}"
+                };
+                var truncated = payload.Truncated;
                 if (includeBody)
                 {
-                    var result = await AssemblySymbolBodyScanner.GetAsync(symbolIdentifier, maxBodyLines, 1, ct).ConfigureAwait(false);
-                    if (result.Error is { } error) return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
-                    body = result.Body;
+                    var result = await AssemblySymbolBodyScanner.GetAsync(symbolIdentifier, maxBodyLines, 1, ct, target.CanonicalPath).ConfigureAwait(false);
+                    if (result.Error is { } error) return NavigationToolSupport.Failure(error, effectiveResponseBytes, maxResponseTokens, "$.symbolIdentifier");
+                    var body = result.Body!;
+                    sections.Add($"## Body\n```csharp\n{body.Body.TrimEnd()}\n```");
+                    truncated |= body.HasMore;
                 }
-                return NavigationToolSupport.Success(new { assembly = payload, symbol = access.Symbol.ToDisplayString(), body }, payload.Truncated,
-                    "Increase maxResults or maxBodyLines and repeat the query.");
+                if (includeClassStructure)
+                {
+                    var type = access.Symbol as INamedTypeSymbol ?? access.Symbol.ContainingType;
+                    if (type is null) return McpToolResults.InvalidArgument("The symbol has no containing type.", "$.symbolIdentifier",
+                        "Use a type or a member declared in a type.", maxResponseBytes: effectiveResponseBytes, maxResponseTokens: maxResponseTokens);
+                    var structure = StructureTools.BuildAssemblyClassStructure(type, access.Origin.CanonicalPath, identity,
+                        "lines", Math.Min(maxResults, 200), null, null);
+                    sections.Add($"## Class Structure\n{StructureTools.FormatClassStructure(structure)}");
+                    truncated |= structure.Truncated;
+                }
+                var graphLimit = Math.Min(Math.Clamp(maxCallers, 1, 200), Math.Clamp(topN, 1, 200));
+                if (includeCallers)
+                {
+                    var references = await FindReferencesResolver.FindReferencesAsync(access.Symbol, access.Solution,
+                        graphLimit, Math.Clamp(depth, 1, 3), ct, handoffFormatter: FormatOwnedHandoff).ConfigureAwait(false);
+                    sections.Add(FormatReferences(references));
+                    truncated |= references.IsTruncated || references.IsTruncatedByNodeLimit || references.IsDepthClamped;
+                }
+                if (includeImpact)
+                {
+                    var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(access.Symbol, access.Solution,
+                        maxDepth: Math.Clamp(depth, 1, 3), maxResults: graphLimit, ct: ct, handoffFormatter: FormatOwnedHandoff).ConfigureAwait(false);
+                    sections.Add(FormatImpact(impact));
+                    truncated |= !impact.IsComplete;
+                }
+                return NavigationToolSupport.SuccessText(string.Join("\n\n", sections), truncated,
+                    truncated ? "Increase maxResults, maxBodyLines, maxCallers, depth, or topN and repeat the query." : null);
             }, AnalysisTargetType.Assembly, cancellationToken);
+    }
+
+    private static string FormatAssemblyOverview(AssemblyContextPayload payload)
+    {
+        var output = new StringBuilder()
+            .AppendLine("## Assembly")
+            .AppendLine($"- Target: {payload.AssemblyPath}")
+            .AppendLine($"- Identity: {payload.Identity?.Name ?? "unknown"}")
+            .AppendLine($"- Status: {payload.Status}")
+            .AppendLine($"- Types: {payload.TotalTypes}; namespaces: {payload.TotalNamespaces}")
+            .AppendLine($"- References: {payload.TotalReferenceCount}");
+        foreach (var name in payload.Namespaces) output.AppendLine($"- Namespace: {name}");
+        foreach (var name in payload.Types) output.AppendLine($"- Type: {name}");
+        foreach (var reference in payload.References)
+        {
+            var path = reference.ResolvedPath is null ? string.Empty : $" — {reference.ResolvedPath}";
+            output.AppendLine($"- Reference: {reference.Name}, {reference.ResolutionState}{path}");
+        }
+        foreach (var diagnostic in payload.Diagnostics) output.AppendLine($"- Diagnostic: {diagnostic}");
+        return output.ToString().TrimEnd();
+    }
+
+    private static string FormatImpact(SymbolImpactPayload impact)
+    {
+        var output = new StringBuilder()
+            .AppendLine("## Impact")
+            .AppendLine($"- Direct callers: {impact.DirectCallersCount}")
+            .AppendLine($"- Transitive call sites: {impact.TransitiveImpactCount}")
+            .AppendLine($"- Visited symbols: {impact.VisitedSymbolCount}");
+        foreach (var site in impact.CallSites)
+        {
+            var handoff = site.CallingMemberHandoffId is null ? string.Empty : $" [handoff: {site.CallingMemberHandoffId}]";
+            output.AppendLine($"- {site.FilePath}:{site.Line}: {site.CallingMember} (depth {site.Depth}){handoff}");
+        }
+        return output.ToString().TrimEnd();
+    }
+
+    private static string FormatReferences(FindReferencesResult references)
+    {
+        var output = new StringBuilder()
+            .AppendLine("## Callers")
+            .AppendLine($"- References: {references.TotalCount}")
+            .AppendLine($"- Visited symbols: {references.VisitedSymbolCount}");
+        foreach (var reference in references.References)
+        {
+            var handoff = reference.EnclosingSymbolHandoffId is null ? string.Empty : $" [handoff: {reference.EnclosingSymbolHandoffId}]";
+            output.AppendLine($"- {reference.FilePath}:{reference.Line}: {reference.EnclosingSymbolName}{handoff}");
+            if (!string.IsNullOrWhiteSpace(reference.Snippet)) output.AppendLine($"  {reference.Snippet}");
+        }
+        return output.ToString().TrimEnd();
+    }
+
+    private static bool HasRootSourceDeclaration(ISymbol symbol, Solution solution, string? decompiledSourceRoot)
+    {
+        if (string.IsNullOrWhiteSpace(decompiledSourceRoot)) return false;
+        var root = Path.GetFullPath(decompiledSourceRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        foreach (var location in symbol.Locations.Where(location => location.IsInSource && location.SourceTree is not null))
+        {
+            var document = solution.GetDocument(location.SourceTree!);
+            if (document?.FilePath is not { } filePath) continue;
+            var fullPath = Path.GetFullPath(filePath);
+            if (fullPath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(fullPath, root, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
 
     [McpServerTool(Name = "inspect_assembly", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     public Task<CallToolResult> InspectAssembly([Required] string targetPath, string? @namespace = null,
@@ -113,5 +241,29 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
             }, AnalysisTargetType.Assembly, cancellationToken);
 
     private CallToolResult Invalid(string field, string hint) => McpToolResults.InvalidArgument("The requested value is not supported.", "$." + field, hint);
-    private static bool TryDetail(string value) => value is "compact" or "standard" or "full";
+    private static bool TryDetail(string value) => TryGetDetailBudget(value, null, out _);
+
+    private static bool TryGetDetailBudget(string value, int? requestedBytes, out int budget)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            budget = McpResponseBudgetLimits.DefaultBytes;
+            return false;
+        }
+        var normalized = value.Trim();
+        if (normalized.Equals("compact", StringComparison.OrdinalIgnoreCase))
+            budget = 32_768;
+        else if (normalized.Equals("standard", StringComparison.OrdinalIgnoreCase))
+            budget = 32_768;
+        else if (normalized.Equals("full", StringComparison.OrdinalIgnoreCase))
+            budget = McpResponseBudgetLimits.MaximumBytes;
+        else
+        {
+            budget = McpResponseBudgetLimits.DefaultBytes;
+            return false;
+        }
+
+        if (requestedBytes is > 0) budget = requestedBytes.Value;
+        return true;
+    }
 }

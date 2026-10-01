@@ -26,7 +26,8 @@ public static class ImpactAnalyzer
         int maxDepth = 3,
         int maxResults = 50,
         CancellationToken ct = default,
-        int maxNodes = MaxNodes)
+        int maxNodes = MaxNodes,
+        Func<ISymbol, string?>? handoffFormatter = null)
     {
         ArgumentNullException.ThrowIfNull(symbol);
         ArgumentNullException.ThrowIfNull(solution);
@@ -62,7 +63,9 @@ public static class ImpactAnalyzer
 
             var references = await SymbolFinder.FindReferencesAsync(currentSymbol, solution, ct).ConfigureAwait(false);
             var reachedFromSymbolId = RelationshipSymbolIdentity.GetStableId(currentSymbol);
-            var reachedFromSymbolHandoffId = SourceHandoffFormatter.Format(currentSymbol, solution, handoffIdentity);
+            var reachedFromSymbolHandoffId = handoffFormatter is null
+                ? SourceHandoffFormatter.Format(currentSymbol, solution, handoffIdentity)
+                : handoffFormatter(currentSymbol);
 
             foreach (var reference in references)
             {
@@ -95,7 +98,9 @@ public static class ImpactAnalyzer
                         _ => caller.Name
                     };
 
-                    var handoff = SourceHandoffFormatter.Format(caller, solution, handoffIdentity);
+                    var handoff = handoffFormatter is null
+                        ? SourceHandoffFormatter.Format(caller, solution, handoffIdentity)
+                        : handoffFormatter(caller);
 
                     allSites.Add(new ImpactCallSiteEntry(
                         FilePath: relPath,

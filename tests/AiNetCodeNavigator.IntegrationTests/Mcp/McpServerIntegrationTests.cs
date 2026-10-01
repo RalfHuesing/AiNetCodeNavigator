@@ -304,6 +304,7 @@ public sealed class McpServerIntegrationTests
             var sourceFind = await ReadResponseAsync(process, 3, timeout.Token);
             Assert.False(sourceFind.GetProperty("result").GetProperty("isError").GetBoolean());
             var sourceText = GetFirstText(sourceFind);
+            Assert.Contains("CounterConsumer", sourceText, StringComparison.Ordinal);
             var sourceHandle = ExtractHandoff(sourceText);
             Assert.StartsWith("h:", sourceHandle, StringComparison.Ordinal);
 
@@ -316,7 +317,7 @@ public sealed class McpServerIntegrationTests
             Assert.False(sourceTypeOrigin.GetProperty("result").GetProperty("isError").GetBoolean());
             var sourceOriginText = GetFirstText(sourceTypeOrigin);
             Assert.Contains("NavigationFixture.Counter", sourceOriginText, StringComparison.Ordinal);
-            Assert.Contains("\"projectName\": \"NavigationFixture\"", sourceOriginText, StringComparison.Ordinal);
+            Assert.Equal("NavigationFixture", ParsePayload(sourceOriginText).GetProperty("projectName").GetString());
             Assert.Contains("NavigationFixture.cs", sourceOriginText, StringComparison.Ordinal);
 
             await SendRequestAsync(process, 31, "tools/call", new
@@ -441,6 +442,65 @@ public sealed class McpServerIntegrationTests
             Assert.Contains("CounterConsumer", GetFirstText(skeleton), StringComparison.Ordinal);
             Assert.Contains("handoffId: `h:", GetFirstText(skeleton), StringComparison.Ordinal);
 
+            var absoluteSourcePath = Path.Combine(Path.GetDirectoryName(solutionPath)!, "NavigationFixture.cs");
+            await SendRequestAsync(process, 36, "tools/call", new
+            {
+                name = "get_file_skeleton",
+                arguments = new { targetPath = solutionPath, filePaths = new[] { absoluteSourcePath, "../Shared/LinkedFixture.cs" } },
+            }, timeout.Token);
+            var linkedSourceSkeleton = await ReadResponseAsync(process, 36, timeout.Token);
+            Assert.False(linkedSourceSkeleton.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(linkedSourceSkeleton));
+            Assert.Contains("ICounter", GetFirstText(linkedSourceSkeleton), StringComparison.Ordinal);
+            Assert.Contains("multiple projects", GetFirstText(linkedSourceSkeleton), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 42, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = solutionPath, pattern = "LinkedFeature", kind = "class", maxResults = 10 },
+            }, timeout.Token);
+            var linkedFeatureSearch = await ReadResponseAsync(process, 42, timeout.Token);
+            Assert.False(linkedFeatureSearch.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(linkedFeatureSearch));
+            var linkedFeatureLines = GetFirstText(linkedFeatureSearch).Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Where(line => line.Contains("LinkedFeature", StringComparison.Ordinal) && line.Contains("[handoff: ", StringComparison.Ordinal))
+                .ToArray();
+            Assert.Equal(2, linkedFeatureLines.Length);
+            var linkedFeatureHandle = ExtractHandoff(linkedFeatureLines[0]);
+            await SendRequestAsync(process, 43, "tools/call", new
+            {
+                name = "get_file_skeleton",
+                arguments = new { targetPath = solutionPath, filePaths = new[] { linkedFeatureHandle } },
+            }, timeout.Token);
+            var linkedFeatureSkeleton = await ReadResponseAsync(process, 43, timeout.Token);
+            Assert.False(linkedFeatureSkeleton.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(linkedFeatureSkeleton));
+            Assert.Contains("LinkedFeature", GetFirstText(linkedFeatureSkeleton), StringComparison.Ordinal);
+            var linkedFeatureMemberHandle = ExtractSkeletonHandoff(GetFirstText(linkedFeatureSkeleton), "Value(");
+            await SendRequestAsync(process, 44, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = solutionPath, symbolIdentifiers = new[] { linkedFeatureMemberHandle } },
+            }, timeout.Token);
+            var linkedFeatureBody = await ReadResponseAsync(process, 44, timeout.Token);
+            Assert.False(linkedFeatureBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(linkedFeatureBody));
+            Assert.Contains("Value()", GetFirstText(linkedFeatureBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 37, "tools/call", new
+            {
+                name = "get_file_skeleton",
+                arguments = new { targetPath = solutionPath, filePaths = new[] { sourceHandle } },
+            }, timeout.Token);
+            var sourceHandleSkeleton = await ReadResponseAsync(process, 37, timeout.Token);
+            Assert.False(sourceHandleSkeleton.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(sourceHandleSkeleton));
+            Assert.Contains("CounterConsumer", GetFirstText(sourceHandleSkeleton), StringComparison.Ordinal);
+            var sourceSkeletonHandle = ExtractSkeletonHandoff(GetFirstText(sourceHandleSkeleton), "Run(");
+            await SendRequestAsync(process, 38, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = solutionPath, symbolIdentifiers = new[] { sourceSkeletonHandle } },
+            }, timeout.Token);
+            var sourceSkeletonBody = await ReadResponseAsync(process, 38, timeout.Token);
+            Assert.False(sourceSkeletonBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(sourceSkeletonBody));
+            Assert.Contains("Run(", GetFirstText(sourceSkeletonBody), StringComparison.Ordinal);
+
             await SendRequestAsync(process, 8, "tools/call", new
             {
                 name = "get_class_structure",
@@ -450,6 +510,50 @@ public sealed class McpServerIntegrationTests
             Assert.False(structure.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("CounterConsumer", GetFirstText(structure), StringComparison.Ordinal);
             Assert.Contains("[handoff: h:", GetFirstText(structure), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 80, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = solutionPath, pattern = "ScopeWidget", kind = "class", maxResults = 10 },
+            }, timeout.Token);
+            var scopedWidgetFind = await ReadResponseAsync(process, 80, timeout.Token);
+            Assert.False(scopedWidgetFind.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(scopedWidgetFind));
+            var scopedWidgetHandle = ExtractHandoff(GetFirstText(scopedWidgetFind));
+
+            await SendRequestAsync(process, 81, "tools/call", new
+            {
+                name = "get_class_structure",
+                arguments = new { targetPath = solutionPath, symbolIdentifier = scopedWidgetHandle, scopeType = "production", includeGenerated = false, maxMembers = 50 },
+            }, timeout.Token);
+            var productionStructure = await ReadResponseAsync(process, 81, timeout.Token);
+            var productionStructureText = GetFirstText(productionStructure);
+            Assert.False(productionStructure.GetProperty("result").GetProperty("isError").GetBoolean(), productionStructureText);
+            Assert.Contains("ProductionOnly", productionStructureText, StringComparison.Ordinal);
+            Assert.DoesNotContain("TestOnly", productionStructureText, StringComparison.Ordinal);
+            Assert.DoesNotContain("GeneratedOnly", productionStructureText, StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 82, "tools/call", new
+            {
+                name = "get_class_structure",
+                arguments = new { targetPath = solutionPath, symbolIdentifier = scopedWidgetHandle, scopeType = "tests", includeGenerated = false, maxMembers = 50 },
+            }, timeout.Token);
+            var testStructure = await ReadResponseAsync(process, 82, timeout.Token);
+            var testStructureText = GetFirstText(testStructure);
+            Assert.False(testStructure.GetProperty("result").GetProperty("isError").GetBoolean(), testStructureText);
+            Assert.Contains("TestOnly", testStructureText, StringComparison.Ordinal);
+            Assert.DoesNotContain("ProductionOnly", testStructureText, StringComparison.Ordinal);
+            Assert.DoesNotContain("GeneratedOnly", testStructureText, StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 83, "tools/call", new
+            {
+                name = "get_class_structure",
+                arguments = new { targetPath = solutionPath, symbolIdentifier = scopedWidgetHandle, scopeType = "production", includeGenerated = true, maxMembers = 50 },
+            }, timeout.Token);
+            var generatedStructure = await ReadResponseAsync(process, 83, timeout.Token);
+            var generatedStructureText = GetFirstText(generatedStructure);
+            Assert.False(generatedStructure.GetProperty("result").GetProperty("isError").GetBoolean(), generatedStructureText);
+            Assert.Contains("GeneratedOnly", generatedStructureText, StringComparison.Ordinal);
+            Assert.DoesNotContain("TestOnly", generatedStructureText, StringComparison.Ordinal);
 
             await SendRequestAsync(process, 9, "tools/call", new
             {
@@ -1012,16 +1116,27 @@ public sealed class McpServerIntegrationTests
         var repositoryRoot = SolutionRootLocator.Find();
         var hostAssemblyPath = GetHostAssemblyPath(repositoryRoot);
         using var fixture = TestTempDirectory.Create("assembly-search-cursor-");
+        var budgetTypeSource = string.Join(Environment.NewLine, Enumerable.Range(0, 600).Select(index =>
+            $"namespace BudgetFixture.GeneratedNamespaceWithLongLabel{index:D4} {{ public sealed class BudgetPaddingTypeWithLongName{index:D4} {{ }} }}"));
         var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "SearchCursorFixture", """
-            namespace SearchCursorFixture;
-            public class PagedAlpha { }
-            public class PagedBeta
+            namespace SearchCursorFixture
             {
-                public string ReadBeta() => "beta";
+                public class PagedAlpha { }
+                public class PagedBeta
+                {
+                    public string ReadBeta()
+                    {
+                        var result = "beta";
+                        return result;
+                    }
+                }
+                public sealed class BetaInvoker { public string Invoke() => new PagedBeta().ReadBeta(); }
+                public class PagedGamma { }
             }
-            public class PagedGamma { }
-            """);
+            """ + Environment.NewLine + budgetTypeSource);
         var replacementPath = AssemblyTestHelper.EmitAssembly(fixture, "SearchCursorReplacement", "namespace SearchCursorFixture; public class Replacement { }");
+        var neighborSentinelPath = Path.Combine(Path.GetDirectoryName(assemblyPath)!, "NeighborSentinel.cs");
+        await File.WriteAllTextAsync(neighborSentinelPath, "public sealed class NeighborSentinel { }");
         var originalBytes = await File.ReadAllBytesAsync(assemblyPath);
         var configPath = Path.Combine(Path.GetTempPath(), "ainet-search-cursor-" + Guid.NewGuid().ToString("N") + ".json");
         var logDirectory = Path.Combine(Path.GetTempPath(), "ainet-search-cursor-logs-" + Guid.NewGuid().ToString("N"));
@@ -1130,6 +1245,131 @@ public sealed class McpServerIntegrationTests
             Assert.False(betaStructure.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(betaStructure));
             Assert.Contains("PagedBeta", GetFirstText(betaStructure), StringComparison.Ordinal);
 
+            await SendRequestAsync(process, 23, "tools/call", new
+            {
+                name = "get_assembly_context",
+                arguments = new
+                {
+                    targetPath = assemblyPath,
+                    symbolIdentifier = betaHandle,
+                    includeBody = true,
+                    includeClassStructure = true,
+                    includeCallers = true,
+                    includeImpact = true,
+                    maxBodyLines = 1,
+                    maxCallers = 10,
+                    depth = 1,
+                    topN = 10,
+                    detailLevel = " STANDARD ",
+                },
+            }, timeout.Token);
+            var composedAssemblyContext = await ReadResponseAsync(process, 23, timeout.Token);
+            var composedAssemblyContextText = GetFirstText(composedAssemblyContext);
+            Assert.False(composedAssemblyContext.GetProperty("result").GetProperty("isError").GetBoolean(), composedAssemblyContextText);
+            Assert.Contains("## Class Structure", composedAssemblyContextText, StringComparison.Ordinal);
+            Assert.Contains("## Callers", composedAssemblyContextText, StringComparison.Ordinal);
+            Assert.Contains("BetaInvoker.Invoke", composedAssemblyContextText, StringComparison.Ordinal);
+            Assert.Contains("## Impact", composedAssemblyContextText, StringComparison.Ordinal);
+            Assert.Contains("## Body", composedAssemblyContextText, StringComparison.Ordinal);
+            Assert.Contains("completeness=truncated", composedAssemblyContextText, StringComparison.Ordinal);
+            var betaInvokerLine = composedAssemblyContextText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .First(line => line.Contains("BetaInvoker.Invoke", StringComparison.Ordinal) && line.Contains("[handoff: ", StringComparison.Ordinal));
+            var betaInvokerHandleStart = betaInvokerLine.IndexOf("[handoff: ", StringComparison.Ordinal);
+            Assert.True(betaInvokerHandleStart >= 0, $"Expected a proven assembly-owner handoff on the caller line: {betaInvokerLine}");
+            var betaInvokerHandle = betaInvokerLine[(betaInvokerHandleStart + "[handoff: ".Length)..].Split(']')[0];
+            await SendRequestAsync(process, 24, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { betaInvokerHandle } },
+            }, timeout.Token);
+            var betaInvokerBody = await ReadResponseAsync(process, 24, timeout.Token);
+            Assert.False(betaInvokerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(betaInvokerBody));
+            Assert.Contains("Invoke()", GetFirstText(betaInvokerBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 25, "tools/call", new
+            {
+                name = "get_assembly_context",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = betaHandle, detailLevel = "tiny" },
+            }, timeout.Token);
+            var invalidContextDetail = await ReadResponseAsync(process, 25, timeout.Token);
+            Assert.True(invalidContextDetail.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(invalidContextDetail));
+            Assert.Contains("detailLevel", GetFirstText(invalidContextDetail), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 26, "tools/call", new
+            {
+                name = "get_assembly_context",
+                arguments = new { targetPath = assemblyPath, includeReferences = true, maxResults = 100, detailLevel = "FULL", maxResponseBytes = 512 },
+            }, timeout.Token);
+            var smallBudgetContext = await ReadResponseAsync(process, 26, timeout.Token);
+            Assert.False(smallBudgetContext.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(smallBudgetContext));
+            Assert.Contains("completeness=truncated", GetFirstText(smallBudgetContext), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 27, "tools/call", new
+            {
+                name = "get_assembly_context",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = " " },
+            }, timeout.Token);
+            var blankContextSymbol = await ReadResponseAsync(process, 27, timeout.Token);
+            Assert.True(blankContextSymbol.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(blankContextSymbol));
+            Assert.Contains("symbolIdentifier", GetFirstText(blankContextSymbol), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 28, "tools/call", new
+            {
+                name = "get_assembly_context",
+                arguments = new { targetPath = assemblyPath, maxResults = 1000, detailLevel = "standard" },
+            }, timeout.Token);
+            var standardDefaultBudget = await ReadResponseAsync(process, 28, timeout.Token);
+            Assert.False(standardDefaultBudget.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(standardDefaultBudget));
+            Assert.Contains("completeness=truncated", GetFirstText(standardDefaultBudget), StringComparison.Ordinal);
+            var standardDefaultText = GetFirstText(standardDefaultBudget);
+            Assert.NotNull(TryReadStringLine(standardDefaultText, "continuationToken"));
+
+            await SendRequestAsync(process, 29, "tools/call", new
+            {
+                name = "get_assembly_context",
+                arguments = new { targetPath = assemblyPath, maxResults = 1000, detailLevel = "full" },
+            }, timeout.Token);
+            var fullDefaultBudget = await ReadResponseAsync(process, 29, timeout.Token);
+            Assert.False(fullDefaultBudget.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(fullDefaultBudget));
+            var fullDefaultText = GetFirstText(fullDefaultBudget);
+            Assert.True(fullDefaultText.Length > standardDefaultText.Length,
+                "The 64 KiB full default should return a larger first response window than the 32 KiB standard default.");
+            var fullDefaultPageCount = 1;
+            var fullDefaultRequestId = 30;
+            while (TryReadStringLine(fullDefaultText, "continuationToken") is { } fullDefaultToken)
+            {
+                Assert.True(fullDefaultRequestId < 40, "The full-default response should finish within the bounded page loop.");
+                await SendRequestAsync(process, fullDefaultRequestId, "tools/call", new
+                {
+                    name = "get_assembly_context",
+                    arguments = new { targetPath = assemblyPath, maxResults = 1000, detailLevel = "full", continuationToken = fullDefaultToken },
+                }, timeout.Token);
+                var page = await ReadResponseAsync(process, fullDefaultRequestId++, timeout.Token);
+                fullDefaultText = GetFirstText(page);
+                Assert.False(page.GetProperty("result").GetProperty("isError").GetBoolean(), fullDefaultText);
+                fullDefaultPageCount++;
+            }
+            Assert.True(fullDefaultPageCount > 1, "The large context should exercise full-default response paging.");
+            Assert.Contains("completeness=complete", fullDefaultText, StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 40, "tools/call", new
+            {
+                name = "get_file_skeleton",
+                arguments = new { targetPath = assemblyPath, filePaths = new[] { betaHandle } },
+            }, timeout.Token);
+            var assemblyHandleSkeleton = await ReadResponseAsync(process, 40, timeout.Token);
+            Assert.False(assemblyHandleSkeleton.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(assemblyHandleSkeleton));
+            Assert.Contains("PagedBeta", GetFirstText(assemblyHandleSkeleton), StringComparison.Ordinal);
+            var assemblySkeletonHandle = ExtractSkeletonHandoff(GetFirstText(assemblyHandleSkeleton));
+            await SendRequestAsync(process, 41, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { assemblySkeletonHandle } },
+            }, timeout.Token);
+            var assemblyHandleBody = await ReadResponseAsync(process, 41, timeout.Token);
+            Assert.False(assemblyHandleBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(assemblyHandleBody));
+            Assert.Contains("ReadBeta", GetFirstText(assemblyHandleBody), StringComparison.Ordinal);
+
             await SendRequestAsync(process, 16, "tools/call", new
             {
                 name = "get_class_structure",
@@ -1138,6 +1378,69 @@ public sealed class McpServerIntegrationTests
             var foreignTargetStructure = await ReadResponseAsync(process, 16, timeout.Token);
             Assert.True(foreignTargetStructure.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignTargetStructure));
             Assert.Contains("INVALID_ARGUMENT", GetFirstText(foreignTargetStructure), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 17, "tools/call", new
+            {
+                name = "get_file_tree",
+                arguments = new { targetPath = assemblyPath, view = "files", includeExtensions = new[] { ".cs" }, fileFilter = "*PagedBeta.cs", includeMetadata = false, maxResults = 100 },
+            }, timeout.Token);
+            var assemblyFileTree = await ReadResponseAsync(process, 17, timeout.Token);
+            var assemblyFileTreeText = GetFirstText(assemblyFileTree);
+            Assert.False(assemblyFileTree.GetProperty("result").GetProperty("isError").GetBoolean(), assemblyFileTreeText);
+            Assert.Contains("PagedBeta.cs", assemblyFileTreeText, StringComparison.Ordinal);
+            Assert.DoesNotContain("NeighborSentinel.cs", assemblyFileTreeText, StringComparison.Ordinal);
+            var betaTreePath = assemblyFileTreeText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Trim())
+                .Single(line => line.Contains("PagedBeta.cs", StringComparison.Ordinal));
+            betaTreePath = betaTreePath.StartsWith("- ", StringComparison.Ordinal) ? betaTreePath[2..] : betaTreePath;
+
+            await SendRequestAsync(process, 18, "tools/call", new
+            {
+                name = "get_file_skeleton",
+                arguments = new { targetPath = assemblyPath, filePaths = new[] { betaTreePath } },
+            }, timeout.Token);
+            var assemblySkeleton = await ReadResponseAsync(process, 18, timeout.Token);
+            var assemblySkeletonText = GetFirstText(assemblySkeleton);
+            Assert.False(assemblySkeleton.GetProperty("result").GetProperty("isError").GetBoolean(), assemblySkeletonText);
+            Assert.Contains("ReadBeta", assemblySkeletonText, StringComparison.Ordinal);
+            var skeletonMemberHandle = ExtractSkeletonHandoff(assemblySkeletonText);
+            await SendRequestAsync(process, 19, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { skeletonMemberHandle } },
+            }, timeout.Token);
+            var skeletonMemberBody = await ReadResponseAsync(process, 19, timeout.Token);
+            Assert.False(skeletonMemberBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(skeletonMemberBody));
+            Assert.Contains("ReadBeta()", GetFirstText(skeletonMemberBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 20, "tools/call", new
+            {
+                name = "get_file_skeleton",
+                arguments = new { targetPath = assemblyPath, filePaths = new[] { betaTreePath, "MissingNavigationFixture.cs" } },
+            }, timeout.Token);
+            var mixedAssemblySkeleton = await ReadResponseAsync(process, 20, timeout.Token);
+            var mixedAssemblySkeletonText = GetFirstText(mixedAssemblySkeleton);
+            Assert.False(mixedAssemblySkeleton.GetProperty("result").GetProperty("isError").GetBoolean(), mixedAssemblySkeletonText);
+            Assert.Contains("ReadBeta", mixedAssemblySkeletonText, StringComparison.Ordinal);
+            Assert.Contains("completeness=truncated", mixedAssemblySkeletonText, StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 21, "tools/call", new
+            {
+                name = "get_file_skeleton",
+                arguments = new { targetPath = assemblyPath, filePaths = new[] { "MissingNavigationFixture.cs" } },
+            }, timeout.Token);
+            var allMissingSkeleton = await ReadResponseAsync(process, 21, timeout.Token);
+            Assert.True(allMissingSkeleton.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(allMissingSkeleton));
+            Assert.Contains("INVALID_ARGUMENT", GetFirstText(allMissingSkeleton), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 22, "tools/call", new
+            {
+                name = "get_file_skeleton",
+                arguments = new { targetPath = assemblyPath, filePaths = new[] { secondPayload.GetProperty("results")[0].GetProperty("filePath").GetString() } },
+            }, timeout.Token);
+            var absoluteAssemblySkeleton = await ReadResponseAsync(process, 22, timeout.Token);
+            Assert.False(absoluteAssemblySkeleton.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(absoluteAssemblySkeleton));
+            Assert.Contains("ReadBeta", GetFirstText(absoluteAssemblySkeleton), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 12, "tools/call", new
             {
@@ -1547,25 +1850,43 @@ public sealed class McpServerIntegrationTests
         var solutionPath = Path.Combine(repositoryPath, "NavigationFixture.slnx");
         var projectPath = Path.Combine(repositoryPath, "NavigationFixture.csproj");
         var sourcePath = Path.Combine(repositoryPath, "NavigationFixture.cs");
-        await File.WriteAllTextAsync(solutionPath, "<Solution><Project Path=\"NavigationFixture.csproj\" /></Solution>");
+        var sharedDirectory = Path.Combine(fixtureRoot, "Shared");
+        Directory.CreateDirectory(sharedDirectory);
+        await File.WriteAllTextAsync(Path.Combine(sharedDirectory, "LinkedFixture.cs"),
+            "namespace NavigationFixture; public sealed class LinkedFeature { public int Value() => 42; }");
+        await File.WriteAllTextAsync(solutionPath, "<Solution><Project Path=\"NavigationFixture.csproj\" /><Project Path=\"LinkedConsumer.csproj\" /></Solution>");
         await File.WriteAllTextAsync(projectPath,
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>");
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup><ItemGroup><Compile Include=\"..\\Shared\\LinkedFixture.cs\" Link=\"LinkedFixture.cs\" /></ItemGroup></Project>");
+        var linkedConsumerProject = Path.Combine(repositoryPath, "LinkedConsumer.csproj");
+        await File.WriteAllTextAsync(linkedConsumerProject,
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup><ItemGroup><Compile Include=\"..\\Shared\\LinkedFixture.cs\" Link=\"LinkedFixture.cs\" /></ItemGroup></Project>");
         const string baseline = "namespace NavigationFixture;\npublic interface ICounter { int Read(); }\npublic sealed class Counter : ICounter { public int Read() => 1; }\npublic sealed class CounterConsumer { public int Run(ICounter counter) => counter.Read(); }\npublic static class CounterExtensions { public static int Double(this Counter counter) => counter.Read() * 2; }\n";
         await File.WriteAllTextAsync(sourcePath, baseline);
+        await File.WriteAllTextAsync(Path.Combine(repositoryPath, "ScopeWidget.cs"),
+            "namespace NavigationFixture; public partial class ScopeWidget { public void ProductionOnly() { } }");
+        await File.WriteAllTextAsync(Path.Combine(repositoryPath, "ScopeWidget.Tests.cs"),
+            "namespace NavigationFixture; public partial class ScopeWidget { public void TestOnly() { } }");
+        await File.WriteAllTextAsync(Path.Combine(repositoryPath, "ScopeWidget.g.cs"),
+            "namespace NavigationFixture; public partial class ScopeWidget { public void GeneratedOnly() { } }");
         await File.WriteAllTextAsync(Path.Combine(repositoryPath, "AFirstNonMatching.cs"), "namespace NavigationFixture; public sealed class Alpha { }\n");
         await File.WriteAllTextAsync(Path.Combine(repositoryPath, "ZLastCounter.cs"), "namespace NavigationFixture; public sealed class CounterTail { }\n");
         await RestoreProjectAsync(projectPath, repositoryPath);
+        await RestoreProjectAsync(linkedConsumerProject, repositoryPath);
         await RunCommandAsync("dotnet", repositoryPath, "build", projectPath, "--no-restore", "--configuration", "Debug");
+        await RunCommandAsync("dotnet", repositoryPath, "build", linkedConsumerProject, "--no-restore", "--configuration", "Debug");
         await RunCommandAsync("git", repositoryPath, "init", "--quiet");
         await RunCommandAsync("git", repositoryPath, "config", "user.name", "Navigation Integration Test");
         await RunCommandAsync("git", repositoryPath, "config", "user.email", "navigation-test@example.invalid");
-        await RunCommandAsync("git", repositoryPath, "add", "NavigationFixture.slnx", "NavigationFixture.csproj", "NavigationFixture.cs", "AFirstNonMatching.cs", "ZLastCounter.cs");
+        await RunCommandAsync("git", repositoryPath, "add", "NavigationFixture.slnx", "NavigationFixture.csproj", "LinkedConsumer.csproj", "NavigationFixture.cs", "ScopeWidget.cs", "ScopeWidget.Tests.cs", "ScopeWidget.g.cs", "AFirstNonMatching.cs", "ZLastCounter.cs");
         await RunCommandAsync("git", repositoryPath, "commit", "--quiet", "-m", "fixture baseline");
         await RunCommandAsync("git", repositoryPath, "worktree", "add", "--quiet", "--detach", worktreePath, "HEAD");
         Assert.True(File.Exists(Path.Combine(worktreePath, ".git")), "The Git impact fixture must exercise a .git-file worktree.");
         var worktreeProjectPath = Path.Combine(worktreePath, "NavigationFixture.csproj");
         await RestoreProjectAsync(worktreeProjectPath, worktreePath);
+        var worktreeLinkedConsumerProject = Path.Combine(worktreePath, "LinkedConsumer.csproj");
+        await RestoreProjectAsync(worktreeLinkedConsumerProject, worktreePath);
         await RunCommandAsync("dotnet", worktreePath, "build", worktreeProjectPath, "--no-restore", "--configuration", "Debug");
+        await RunCommandAsync("dotnet", worktreePath, "build", worktreeLinkedConsumerProject, "--no-restore", "--configuration", "Debug");
         var worktreeSourcePath = Path.Combine(worktreePath, "NavigationFixture.cs");
         await File.WriteAllTextAsync(worktreeSourcePath, baseline.Replace("Read() => 1", "Read() => 2", StringComparison.Ordinal));
         return (Path.Combine(worktreePath, "NavigationFixture.slnx"), Path.Combine(worktreePath, "bin", "Debug", "net10.0", "NavigationFixture.dll"));
@@ -1707,6 +2028,21 @@ public sealed class McpServerIntegrationTests
         var valueEnd = text.IndexOf(']', valueStart);
         Assert.True(valueEnd > valueStart, "The navigation result included a malformed opaque handoff.");
         return text[valueStart..valueEnd];
+    }
+
+    private static string ExtractSkeletonHandoff(string text, string? lineContains = null)
+    {
+        const string marker = "handoffId: `";
+        var candidateText = lineContains is null
+            ? text
+            : text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault(line => line.Contains(lineContains, StringComparison.Ordinal) && line.Contains(marker, StringComparison.Ordinal)) ?? string.Empty;
+        var markerStart = candidateText.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(markerStart >= 0, "The file skeleton did not include a reusable opaque handoff.");
+        var valueStart = markerStart + marker.Length;
+        var valueEnd = candidateText.IndexOf('`', valueStart);
+        Assert.True(valueEnd > valueStart, "The file skeleton included a malformed opaque handoff.");
+        return candidateText[valueStart..valueEnd];
     }
 
     private static Dictionary<string, string> CaptureWorkspaceSnapshot(string root)
