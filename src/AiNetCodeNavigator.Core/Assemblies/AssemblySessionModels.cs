@@ -44,13 +44,6 @@ public enum AssemblySessionStatus
 
 public static class AssemblySessionStatusExtensions
 {
-    internal static AssemblySessionStatus ResolveEffectiveStatus(
-        this AssemblySessionStatus status,
-        IReadOnlyCollection<string> diagnostics) =>
-        status == AssemblySessionStatus.Complete && diagnostics.Count > 0
-            ? AssemblySessionStatus.Partial
-            : status;
-
     internal static string ToWireValue(this AssemblySessionStatus status) =>
         status.ToString().ToLowerInvariant();
 
@@ -78,37 +71,6 @@ internal enum AssemblyDiagnosticSeverity
 {
     Warning,
     Error,
-}
-
-internal static class AssemblyDiagnosticSeverityExtensions
-{
-    internal const string WarningWireValue = "warning";
-    internal const string ErrorWireValue = "error";
-
-    internal static string ToWireValue(this AssemblyDiagnosticSeverity severity) => severity switch
-    {
-        AssemblyDiagnosticSeverity.Warning => WarningWireValue,
-        AssemblyDiagnosticSeverity.Error => ErrorWireValue,
-        _ => throw new ArgumentOutOfRangeException(nameof(severity), severity, "Unknown assembly diagnostic severity.")
-    };
-
-    internal static bool TryParseWireValue(string? value, out AssemblyDiagnosticSeverity severity)
-    {
-        if (string.Equals(value, WarningWireValue, StringComparison.OrdinalIgnoreCase))
-        {
-            severity = AssemblyDiagnosticSeverity.Warning;
-            return true;
-        }
-
-        if (string.Equals(value, ErrorWireValue, StringComparison.OrdinalIgnoreCase))
-        {
-            severity = AssemblyDiagnosticSeverity.Error;
-            return true;
-        }
-
-        severity = default;
-        return false;
-    }
 }
 
 internal sealed record AssemblySessionDiagnostic(

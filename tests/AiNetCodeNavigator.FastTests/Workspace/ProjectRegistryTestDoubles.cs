@@ -30,7 +30,6 @@ internal sealed class TrackingSolutionFactory
     private int loadsCancelled;
     private int solutionsDisposed;
     private int failLoads;
-    private readonly Dictionary<ResidentSolution, int> disposalCounts = new();
 
     internal int InstancesCreated => instancesCreated;
 
@@ -41,14 +40,6 @@ internal sealed class TrackingSolutionFactory
     internal int SolutionsDisposed => Volatile.Read(ref solutionsDisposed);
 
     internal Action<ResidentSolution>? OnSolutionDisposed { get; set; }
-
-    internal int DisposalsFor(ResidentSolution solution)
-    {
-        lock (disposalCounts)
-        {
-            return disposalCounts.TryGetValue(solution, out var count) ? count : 0;
-        }
-    }
 
     internal bool FailLoads
     {
@@ -104,11 +95,6 @@ internal sealed class TrackingSolutionFactory
     private void RecordDisposal(ResidentSolution solution)
     {
         Interlocked.Increment(ref solutionsDisposed);
-        lock (disposalCounts)
-        {
-            disposalCounts[solution] = (disposalCounts.TryGetValue(solution, out var count) ? count : 0) + 1;
-        }
-
         OnSolutionDisposed?.Invoke(solution);
     }
 }
