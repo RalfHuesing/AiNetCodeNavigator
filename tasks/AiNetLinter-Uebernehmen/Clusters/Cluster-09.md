@@ -24,14 +24,16 @@
   - [x] Verified the registered navigation purpose/enum descriptions, selected zero-default equivalence, assembly `includeDiagnostics`, large line-safe find/body/context paging, Unicode/space Git paths, and bounded call-tree recovery guidance.
   - [x] Verified sanitized one-token `InvalidParams` for schema-valid scope, direction, target-routing, and assembly detail errors; scope/detail also pass at 16 and 32 tokens.
   - [ ] Complete all twenty navigation contracts, including public budget/error recovery, assembly-reference consumer closure, and full parameter/filter parity.
-  - [ ] Beziehungs-Tools: `get_call_tree`, `find_references`, `get_type_hierarchy`, `find_implementations`, `get_impact`, `dependency_graph`, `resolve_type_origin`
-  - [ ] Assembly-Tools: `get_assembly_context`, `inspect_assembly`, `search_assembly`, `find_assembly_extensions`
-  - [ ] Kontext-Tools: `get_feature_context`, `get_test_context`
-  - [ ] Review/Audit zu 9.2 durchführen; Findings ergänzen und umsetzen.
+  - [x] Beziehungs-Tools: `get_call_tree`, `find_references`, `get_type_hierarchy`, `find_implementations`, `get_impact`, `dependency_graph`, `resolve_type_origin` (registration and connected source/assembly routes; remaining contract finding below).
+  - [x] Assembly-Tools: `get_assembly_context`, `inspect_assembly`, `search_assembly`, `find_assembly_extensions` (registration and connected assembly routes).
+  - [x] Kontext-Tools: `get_feature_context`, `get_test_context` (registered source-only contracts).
+  - [ ] Fix audit-1 P2: assembly `get_impact` must resolve raw symbol inputs with omitted/false `includeReferences`, preserving strict owner-bound handoff errors; bundle with the next public-contract implementation block.
+  - [ ] Deferred nonblocking audit-1 P3: align assembly class structure's omitted/lines member ordering before `maxMembers`; keep visible technical debt while prioritizing Cluster 10.
+  - [ ] Review/Audit zu 9.2 durchführen; Findings ergänzen und umsetzen (independent audit 1/3 performed; P2 remediation pending).
 - [ ] 9.3 Host- & Handshake-Integrationstests:
   - [ ] Test der Tool-Registrierungen, Argumentfilter und MCP-Handshakes
   - [ ] Review/Audit zu 9.3 durchführen; Findings ergänzen und umsetzen.
 - [ ] 9.4 Realen Host-Lebenszyklus verifizieren: Stdio-Handshake, parallele Anfragen, Cancellation, Neustart, Logging nur auf `stderr`/Datei und sauberes Herunterfahren; der bisherige Typ-Existenztest genügt dafür nicht.
   - [ ] Review/Audit zu 9.4 durchführen; Findings ergänzen und umsetzen.
 
-Point 9.1 is closed after [independent audit 2/3](../Reviews/Cluster-09.md#point-91-independent-audit-23--accepted) accepted fixed commit `3cd6919e9c2c8f2c543082cd93fb662f2e406ae5`. All twenty navigation tools are now registered beside the two maintenance tools. Several source/assembly, relationship, raw-input, Git change-context, selected zero-default, tool-discovery, and large line-safe paging contracts have verified real-stdio evidence, but the complete per-field default/filter matrix remains open. Point 9.2 and its independent audit remain open at 0/3. Point 8.5 remains 0/3 pending full per-tool acceptance; process cancellation remains separate lifecycle work under 9.4.
+Point 9.1 is closed after [independent audit 2/3](../Reviews/Cluster-09.md#point-91-independent-audit-23--accepted) accepted fixed commit `3cd6919e9c2c8f2c543082cd93fb662f2e406ae5`. All twenty navigation registrations and their connected handlers are independently checked at `2da5c6d3bd4d3c2e139c9d4bbe0048f1d67b1bfe`. [Point 9.2 audit 1/3](../Reviews/Cluster-09.md#point-92-independent-audit-13--registration-verified-contract-finding-open) leaves the parent and audit acceptance open for a concrete default-false raw assembly Impact defect. The three tool-category registration children are closed; they do not imply complete per-field or end-to-end acceptance. Point 8.5 remains 0/3 for the complete public budget/recovery matrix; process cancellation remains separate lifecycle work under 9.4. The next implementation block will bundle these public-contract tasks before prioritizing Cluster 10.
