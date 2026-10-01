@@ -86,15 +86,34 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         return await NavigationToolSupport.RouteAsync(runtime, "get_type_hierarchy", targetPath,
             new { symbolIdentifier, maxResults, scopeType, includeGenerated }, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens,
-            async (target, ct) => await WithSource(target, async solution =>
+            async (target, ct) =>
             {
+                if (target.TargetType == AnalysisTargetType.Assembly)
+                {
+                    var accessResult = await ResolveAssemblySymbolAsync(target, symbolIdentifier, ct).ConfigureAwait(false);
+                    if (!accessResult.IsSuccess) return NavigationToolSupport.Failure(accessResult.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
+                    await using var access = accessResult.Value!;
+                    if (access.Symbol is not INamedTypeSymbol assemblyNamed)
+                        return Invalid("symbolIdentifier", "Resolve a named class, interface, or struct.");
+                    var formatter = CreateAssemblyHandoffFormatter(access);
+                    var assemblyResult = await TypeHierarchyScanner.ScanAsync(assemblyNamed, access.Solution, maxResults, ct,
+                        scope, includeGenerated, formatter).ConfigureAwait(false);
+                    if (!assemblyResult.IsSuccess)
+                        return McpToolResults.InvalidArgument(assemblyResult.ErrorMessage!, "$.symbolIdentifier", "Choose a supported named type.",
+                            maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                    return NavigationToolSupport.Success(assemblyResult, assemblyResult.IsTruncated,
+                        "Increase maxResults and repeat the query.");
+                }
+                return await WithSource(target, async solution =>
+                {
                 var symbol = await Resolve(solution, symbolIdentifier, ct).ConfigureAwait(false);
                 if (symbol.Error is not null) return Fail(symbol.Error.Value, "$.symbolIdentifier");
                 if (symbol.Symbol is not INamedTypeSymbol named) return Invalid("symbolIdentifier", "Resolve a named class, interface, or struct.");
                 var result = await TypeHierarchyScanner.ScanAsync(named, solution, maxResults, ct, scope, includeGenerated).ConfigureAwait(false);
                 if (!result.IsSuccess) return McpToolResults.InvalidArgument(result.ErrorMessage!, "$.symbolIdentifier", "Choose a supported named type.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                 return NavigationToolSupport.Success(result, result.IsTruncated, "Increase maxResults and repeat the query.");
-            }, maxResponseBytes, maxResponseTokens, ct), AnalysisTargetType.Project, cancellationToken);
+                }, maxResponseBytes, maxResponseTokens, ct);
+            }, null, cancellationToken);
 
         CallToolResult Invalid(string field, string hint) => McpToolResults.InvalidArgument("The requested value is not supported.", "$." + field, hint,
             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
@@ -111,14 +130,32 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         return await NavigationToolSupport.RouteAsync(runtime, "find_implementations", targetPath,
             new { symbolIdentifier, maxResults, scopeType, includeGenerated }, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens,
-            async (target, ct) => await WithSource(target, async solution =>
+            async (target, ct) =>
             {
+                if (target.TargetType == AnalysisTargetType.Assembly)
+                {
+                    var accessResult = await ResolveAssemblySymbolAsync(target, symbolIdentifier, ct).ConfigureAwait(false);
+                    if (!accessResult.IsSuccess) return NavigationToolSupport.Failure(accessResult.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
+                    await using var access = accessResult.Value!;
+                    var formatter = CreateAssemblyHandoffFormatter(access);
+                    var assemblyResult = await FindReferencesResolver.FindImplementationsAsync(access.Symbol, access.Solution,
+                        maxResults, ct, scope, includeGenerated, formatter).ConfigureAwait(false);
+                    if (assemblyResult.ErrorMessage is not null)
+                        return McpToolResults.InvalidArgument(assemblyResult.ErrorMessage, "$.symbolIdentifier",
+                            "Use an interface, abstract/virtual member, or overridable class.",
+                            maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                    return NavigationToolSupport.Success(assemblyResult, assemblyResult.IsTruncated,
+                        "Increase maxResults and repeat the query.");
+                }
+                return await WithSource(target, async solution =>
+                {
                 var symbol = await Resolve(solution, symbolIdentifier, ct).ConfigureAwait(false);
                 if (symbol.Error is not null) return Fail(symbol.Error.Value, "$.symbolIdentifier");
                 var result = await FindReferencesResolver.FindImplementationsAsync(symbol.Symbol!, solution, maxResults, ct, scope, includeGenerated).ConfigureAwait(false);
                 if (result.ErrorMessage is not null) return McpToolResults.InvalidArgument(result.ErrorMessage, "$.symbolIdentifier", "Use an interface, abstract/virtual member, or overridable class.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                 return NavigationToolSupport.Success(result, result.IsTruncated, "Increase maxResults and repeat the query.");
-            }, maxResponseBytes, maxResponseTokens, ct), AnalysisTargetType.Project, cancellationToken);
+                }, maxResponseBytes, maxResponseTokens, ct);
+            }, null, cancellationToken);
 
         CallToolResult Invalid(string field, string hint) => McpToolResults.InvalidArgument("The requested value is not supported.", "$." + field, hint,
             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
@@ -346,6 +383,58 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     private async Task<CallToolResult> WithSource(AnalysisTarget target, Func<Solution, Task<CallToolResult>> operation,
         int bytes, int? tokens, CancellationToken ct) => await NavigationToolSupport.WithSourceSolutionAsync(runtime, target,
         (solution, _) => operation(solution), bytes, tokens, ct).ConfigureAwait(false);
+
+    private static async Task<Result<AssemblySymbolHandoffAccess>> ResolveAssemblySymbolAsync(
+        AnalysisTarget target, string identifier, CancellationToken ct)
+    {
+        var resolved = await AssemblySymbolHandoffResolver.ResolveAsync(identifier, ct).ConfigureAwait(false);
+        if (!resolved.IsSuccess) return resolved;
+        if (!string.Equals(Path.GetFullPath(resolved.Value!.Origin.CanonicalPath), target.CanonicalPath, StringComparison.OrdinalIgnoreCase))
+        {
+            await resolved.Value.DisposeAsync().ConfigureAwait(false);
+            return Result<AssemblySymbolHandoffAccess>.Failure(
+                NavigationErrorCodes.TargetMismatch,
+                "The symbol handoff belongs to another assembly.",
+                "Use a handoff returned for this targetPath.");
+        }
+        return resolved;
+    }
+
+    private static Func<ISymbol, string?> CreateAssemblyHandoffFormatter(AssemblySymbolHandoffAccess access)
+    {
+        var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
+            access.Generation, access.ReferenceSnapshotHash);
+        var sourceRoot = access.DecompiledProjectPaths?.DecompiledSourceRoot;
+        return symbol =>
+        {
+            if (!HasAssemblySourceDeclaration(symbol, access.Solution, sourceRoot)) return null;
+            var declarationId = DocumentationCommentId.CreateDeclarationId(symbol);
+            if (string.IsNullOrWhiteSpace(declarationId)) return null;
+            var owned = DocumentationCommentId.GetSymbolsForDeclarationId(declarationId, access.Compilation)
+                .Where(candidate => SymbolEqualityComparer.Default.Equals(candidate.ContainingAssembly, access.Assembly))
+                .Distinct(SymbolEqualityComparer.Default)
+                .Take(2)
+                .ToArray();
+            if (owned.Length != 1) return null;
+            var internalId = identity.FormatHandoff(owned[0]);
+            return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
+        };
+    }
+
+    private static bool HasAssemblySourceDeclaration(ISymbol symbol, Solution solution, string? sourceRoot)
+    {
+        if (string.IsNullOrWhiteSpace(sourceRoot)) return false;
+        var root = Path.GetFullPath(sourceRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        foreach (var location in symbol.Locations.Where(item => item.IsInSource && item.SourceTree is not null))
+        {
+            var document = solution.GetDocument(location.SourceTree!);
+            if (document?.FilePath is not { } filePath) continue;
+            var fullPath = Path.GetFullPath(filePath);
+            if (fullPath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(fullPath, root, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
 
     private static async Task<(ISymbol? Symbol, ResultError? Error)> Resolve(Solution solution, string identifier, CancellationToken ct)
     {

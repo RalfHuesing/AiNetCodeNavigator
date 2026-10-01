@@ -204,7 +204,8 @@ public static class FindReferencesResolver
         int maxResults = 50,
         CancellationToken ct = default,
         SymbolScopeType scope = SymbolScopeType.All,
-        bool includeGenerated = false)
+        bool includeGenerated = false,
+        Func<ISymbol, string?>? handoffFormatter = null)
     {
         ArgumentNullException.ThrowIfNull(targetSymbol);
         ArgumentNullException.ThrowIfNull(solution);
@@ -309,7 +310,9 @@ public static class FindReferencesResolver
                 : string.Empty;
 
             var line = loc?.GetLineSpan().StartLinePosition.Line + 1 ?? 0;
-            var handoff = SourceHandoffFormatter.Format(impl, solution, handoffIdentity);
+            var handoff = handoffFormatter is null
+                ? SourceHandoffFormatter.Format(impl, solution, handoffIdentity)
+                : handoffFormatter(impl);
 
             var projectName = impl.ContainingAssembly?.Name ?? string.Empty;
             var signature = impl.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);

@@ -1121,9 +1121,17 @@ public sealed class McpServerIntegrationTests
         var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "SearchCursorFixture", """
             namespace SearchCursorFixture
             {
-                public class PagedAlpha { }
-                public class PagedBeta
+                public class PagedAlpha
                 {
+                    public virtual string Label { get; set; } = "alpha";
+                    public virtual string ReadAlpha() => "alpha";
+                }
+                public interface IBetaContract { string ReadBeta(); string ContractLabel { get; set; } }
+                public class PagedBeta : PagedAlpha, IBetaContract
+                {
+                    public override string Label { get; set; } = "beta";
+                    public override string ReadAlpha() => "beta";
+                    public string ContractLabel { get; set; } = "beta";
                     public string ReadBeta()
                     {
                         var result = "beta";
@@ -1225,6 +1233,195 @@ public sealed class McpServerIntegrationTests
             var wrongTarget = await ReadResponseAsync(process, 6, timeout.Token);
             Assert.True(wrongTarget.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("INVALID_ARGUMENT", GetFirstText(wrongTarget), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 42, "tools/call", new
+            {
+                name = "get_type_hierarchy",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = firstHits[0].GetProperty("handoffId").GetString(), maxResults = 10 },
+            }, timeout.Token);
+            var hierarchy = await ReadResponseAsync(process, 42, timeout.Token);
+            var hierarchyText = GetFirstText(hierarchy);
+
+            await SendRequestAsync(process, 43, "tools/call", new
+            {
+                name = "search_assembly",
+                arguments = new { targetPath = assemblyPath, pattern = "IBetaContract", kind = "type", isRegex = false, maxFiles = 0, maxResults = 10 },
+            }, timeout.Token);
+            var interfaceSearch = await ReadResponseAsync(process, 43, timeout.Token);
+            var interfaceSearchText = GetFirstText(interfaceSearch);
+            Assert.False(interfaceSearch.GetProperty("result").GetProperty("isError").GetBoolean(), interfaceSearchText);
+            var interfaceHandle = ParsePayload(interfaceSearchText).GetProperty("results")[0].GetProperty("handoffId").GetString();
+            await SendRequestAsync(process, 44, "tools/call", new
+            {
+                name = "find_implementations",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = interfaceHandle, maxResults = 10 },
+            }, timeout.Token);
+            var implementations = await ReadResponseAsync(process, 44, timeout.Token);
+            var implementationsText = GetFirstText(implementations);
+            Assert.False(hierarchy.GetProperty("result").GetProperty("isError").GetBoolean(),
+                $"Assembly hierarchy failed: {hierarchyText}\nAssembly implementation call: {implementationsText}");
+            Assert.False(implementations.GetProperty("result").GetProperty("isError").GetBoolean(), implementationsText);
+            var hierarchyPayload = ParsePayload(hierarchyText);
+            var betaSubtype = hierarchyPayload.GetProperty("subtypes").EnumerateArray()
+                .Single(entry => entry.GetProperty("name").GetString()!.Contains("PagedBeta", StringComparison.Ordinal));
+            Assert.StartsWith("h:", betaSubtype.GetProperty("handoffId").GetString(), StringComparison.Ordinal);
+            var betaImplementation = ParsePayload(implementationsText).GetProperty("implementations").EnumerateArray()
+                .Single(entry => entry.GetProperty("symbolName").GetString() == "PagedBeta");
+            Assert.StartsWith("h:", betaImplementation.GetProperty("handoffId").GetString(), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 45, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { betaSubtype.GetProperty("handoffId").GetString() } },
+            }, timeout.Token);
+            var hierarchyBody = await ReadResponseAsync(process, 45, timeout.Token);
+            Assert.False(hierarchyBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(hierarchyBody));
+            Assert.Contains("class PagedBeta", GetFirstText(hierarchyBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 46, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { betaImplementation.GetProperty("handoffId").GetString() } },
+            }, timeout.Token);
+            var implementationBody = await ReadResponseAsync(process, 46, timeout.Token);
+            Assert.False(implementationBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(implementationBody));
+            Assert.Contains("class PagedBeta", GetFirstText(implementationBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 47, "tools/call", new
+            {
+                name = "get_type_hierarchy",
+                arguments = new { targetPath = hostAssemblyPath, symbolIdentifier = firstHits[0].GetProperty("handoffId").GetString(), maxResults = 10 },
+            }, timeout.Token);
+            var foreignHierarchy = await ReadResponseAsync(process, 47, timeout.Token);
+            Assert.True(foreignHierarchy.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignHierarchy));
+            Assert.Contains("TARGET_MISMATCH", GetFirstText(foreignHierarchy), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 48, "tools/call", new
+            {
+                name = "find_implementations",
+                arguments = new { targetPath = hostAssemblyPath, symbolIdentifier = interfaceHandle, maxResults = 10 },
+            }, timeout.Token);
+            var foreignImplementations = await ReadResponseAsync(process, 48, timeout.Token);
+            Assert.True(foreignImplementations.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignImplementations));
+            Assert.Contains("TARGET_MISMATCH", GetFirstText(foreignImplementations), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 49, "tools/call", new
+            {
+                name = "search_assembly",
+                arguments = new { targetPath = assemblyPath, pattern = "ReadAlpha", kind = "method", isRegex = false, maxFiles = 0, maxResults = 10 },
+            }, timeout.Token);
+            var virtualMethodSearch = await ReadResponseAsync(process, 49, timeout.Token);
+            var virtualMethodSearchText = GetFirstText(virtualMethodSearch);
+            Assert.False(virtualMethodSearch.GetProperty("result").GetProperty("isError").GetBoolean(), virtualMethodSearchText);
+            var methodHits = ParsePayload(virtualMethodSearchText).GetProperty("results").EnumerateArray().ToArray();
+            var baseMethodHandle = methodHits.Single(hit => hit.GetProperty("text").GetString()!.Contains("virtual", StringComparison.Ordinal))
+                .GetProperty("handoffId").GetString();
+            await SendRequestAsync(process, 50, "tools/call", new
+            {
+                name = "find_implementations",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = baseMethodHandle, maxResults = 10 },
+            }, timeout.Token);
+            var methodOverrides = await ReadResponseAsync(process, 50, timeout.Token);
+            var methodOverridesText = GetFirstText(methodOverrides);
+            Assert.False(methodOverrides.GetProperty("result").GetProperty("isError").GetBoolean(), methodOverridesText);
+            var methodOverride = ParsePayload(methodOverridesText).GetProperty("implementations").EnumerateArray()
+                .Single(entry => entry.GetProperty("symbolName").GetString() == "ReadAlpha");
+            await SendRequestAsync(process, 51, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { methodOverride.GetProperty("handoffId").GetString() } },
+            }, timeout.Token);
+            var methodOverrideBody = await ReadResponseAsync(process, 51, timeout.Token);
+            Assert.False(methodOverrideBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(methodOverrideBody));
+            Assert.Contains("beta", GetFirstText(methodOverrideBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 52, "tools/call", new
+            {
+                name = "get_class_structure",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = firstHits[0].GetProperty("handoffId").GetString(), nameFilter = "Label" },
+            }, timeout.Token);
+            var propertySearch = await ReadResponseAsync(process, 52, timeout.Token);
+            var propertySearchText = GetFirstText(propertySearch);
+            Assert.False(propertySearch.GetProperty("result").GetProperty("isError").GetBoolean(), propertySearchText);
+            Assert.Contains("Label", propertySearchText, StringComparison.Ordinal);
+            var basePropertyHandle = ExtractHandoff(propertySearchText);
+            await SendRequestAsync(process, 53, "tools/call", new
+            {
+                name = "find_implementations",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = basePropertyHandle, maxResults = 10 },
+            }, timeout.Token);
+            var propertyOverrides = await ReadResponseAsync(process, 53, timeout.Token);
+            var propertyOverridesText = GetFirstText(propertyOverrides);
+            Assert.False(propertyOverrides.GetProperty("result").GetProperty("isError").GetBoolean(), propertyOverridesText);
+            var propertyOverride = ParsePayload(propertyOverridesText).GetProperty("implementations").EnumerateArray()
+                .Single(entry => entry.GetProperty("symbolName").GetString() == "Label");
+            await SendRequestAsync(process, 54, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { propertyOverride.GetProperty("handoffId").GetString() } },
+            }, timeout.Token);
+            var propertyOverrideBody = await ReadResponseAsync(process, 54, timeout.Token);
+            Assert.False(propertyOverrideBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(propertyOverrideBody));
+            Assert.Contains("beta", GetFirstText(propertyOverrideBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 55, "tools/call", new
+            {
+                name = "search_assembly",
+                arguments = new { targetPath = assemblyPath, pattern = "ReadBeta", kind = "method", isRegex = false, maxFiles = 0, maxResults = 10 },
+            }, timeout.Token);
+            var contractMethodSearch = await ReadResponseAsync(process, 55, timeout.Token);
+            var contractMethodSearchText = GetFirstText(contractMethodSearch);
+            Assert.False(contractMethodSearch.GetProperty("result").GetProperty("isError").GetBoolean(), contractMethodSearchText);
+            var contractMethodHits = ParsePayload(contractMethodSearchText).GetProperty("results").EnumerateArray().ToArray();
+            var contractMethodHandle = contractMethodHits.Single(hit => hit.GetProperty("text").GetString()!.TrimEnd().EndsWith(";", StringComparison.Ordinal))
+                .GetProperty("handoffId").GetString();
+            await SendRequestAsync(process, 56, "tools/call", new
+            {
+                name = "find_implementations",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = contractMethodHandle, maxResults = 10 },
+            }, timeout.Token);
+            var contractMethodImplementations = await ReadResponseAsync(process, 56, timeout.Token);
+            var contractMethodImplementationsText = GetFirstText(contractMethodImplementations);
+            Assert.False(contractMethodImplementations.GetProperty("result").GetProperty("isError").GetBoolean(), contractMethodImplementationsText);
+            var contractMethodImplementation = ParsePayload(contractMethodImplementationsText).GetProperty("implementations").EnumerateArray()
+                .Single(entry => entry.GetProperty("symbolName").GetString() == "ReadBeta");
+            await SendRequestAsync(process, 57, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { contractMethodImplementation.GetProperty("handoffId").GetString() } },
+            }, timeout.Token);
+            var contractMethodBody = await ReadResponseAsync(process, 57, timeout.Token);
+            Assert.False(contractMethodBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(contractMethodBody));
+            Assert.Contains("ReadBeta", GetFirstText(contractMethodBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 58, "tools/call", new
+            {
+                name = "get_class_structure",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = interfaceHandle, nameFilter = "ContractLabel" },
+            }, timeout.Token);
+            var contractPropertySearch = await ReadResponseAsync(process, 58, timeout.Token);
+            var contractPropertySearchText = GetFirstText(contractPropertySearch);
+            Assert.False(contractPropertySearch.GetProperty("result").GetProperty("isError").GetBoolean(), contractPropertySearchText);
+            Assert.Contains("ContractLabel", contractPropertySearchText, StringComparison.Ordinal);
+            var contractPropertyHandle = ExtractHandoff(contractPropertySearchText);
+            await SendRequestAsync(process, 59, "tools/call", new
+            {
+                name = "find_implementations",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = contractPropertyHandle, maxResults = 10 },
+            }, timeout.Token);
+            var contractPropertyImplementations = await ReadResponseAsync(process, 59, timeout.Token);
+            var contractPropertyImplementationsText = GetFirstText(contractPropertyImplementations);
+            Assert.False(contractPropertyImplementations.GetProperty("result").GetProperty("isError").GetBoolean(), contractPropertyImplementationsText);
+            var contractPropertyImplementation = ParsePayload(contractPropertyImplementationsText).GetProperty("implementations").EnumerateArray()
+                .Single(entry => entry.GetProperty("symbolName").GetString() == "ContractLabel");
+            await SendRequestAsync(process, 60, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { contractPropertyImplementation.GetProperty("handoffId").GetString() } },
+            }, timeout.Token);
+            var contractPropertyBody = await ReadResponseAsync(process, 60, timeout.Token);
+            Assert.False(contractPropertyBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(contractPropertyBody));
+            Assert.Contains("ContractLabel", GetFirstText(contractPropertyBody), StringComparison.Ordinal);
 
             var betaHandle = secondPayload.GetProperty("results")[0].GetProperty("handoffId").GetString()!;
             await SendRequestAsync(process, 7, "tools/call", new
