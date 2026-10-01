@@ -64,8 +64,8 @@ public sealed class InspectAssemblyScannerTests
         var payload = result.Value!;
         var text = payload.FormattedText;
 
-        Assert.Contains("Vollständigkeit: `complete`", text, StringComparison.Ordinal);
-        Assert.Contains("Quelle: Dekompilat", text, StringComparison.Ordinal);
+        Assert.Contains("Completeness: `complete`", text, StringComparison.Ordinal);
+        Assert.Contains("Source: Decompilation", text, StringComparison.Ordinal);
         Assert.Contains("`Probe.Api.PublicApi`; handoffId: `h:", text, StringComparison.Ordinal);
         var apiType = Assert.Single(payload.Types);
         Assert.True(apiType.Handoff);
@@ -144,9 +144,9 @@ public sealed class InspectAssemblyScannerTests
 
         Assert.True(result.IsSuccess);
         var text = result.Value!.FormattedText;
-        Assert.Contains("Öffentliche API-Typen: 1 von 2 (gekürzt: maxResults)", text, StringComparison.Ordinal);
+        Assert.Contains("Public API types: 1 of 2 (truncated: maxResults)", text, StringComparison.Ordinal);
         Assert.StartsWith("v1.1.", ExtractContinuationToken(text), StringComparison.Ordinal);
-        Assert.Contains("Vollständigkeit: `complete`", text, StringComparison.Ordinal);
+        Assert.Contains("Completeness: `complete`", text, StringComparison.Ordinal);
         Assert.DoesNotContain("unrelated.dll", text, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -182,7 +182,7 @@ public sealed class InspectAssemblyScannerTests
         Assert.Contains("`Probe.Alpha`", firstText, StringComparison.Ordinal);
         Assert.DoesNotContain("`Probe.Alpha`", secondText, StringComparison.Ordinal);
         Assert.Contains("`Probe.Beta`", secondText, StringComparison.Ordinal);
-        Assert.Contains("Öffentliche API-Typen: 1 von 3", secondText, StringComparison.Ordinal);
+        Assert.Contains("Public API types: 1 of 3", secondText, StringComparison.Ordinal);
         Assert.StartsWith("v1.2.", ExtractContinuationToken(secondText), StringComparison.Ordinal);
     }
 
@@ -267,7 +267,7 @@ public sealed class InspectAssemblyScannerTests
             MaxResults: 100));
         Assert.False(missing.IsSuccess);
         Assert.Equal(NavigationErrorCodes.InvalidArgument, missing.Error!.Value.Code);
-        Assert.Contains("nicht gefunden", missing.Error!.Value.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not found", missing.Error!.Value.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -295,7 +295,7 @@ public sealed class InspectAssemblyScannerTests
         Assert.Contains("decompileRoot:", text, StringComparison.Ordinal);
         Assert.DoesNotContain(assemblyPath, text, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Describe()", text, StringComparison.Ordinal);
-        Assert.Contains("Vollständigkeit: `complete`", text, StringComparison.Ordinal);
+        Assert.Contains("Completeness: `complete`", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -304,7 +304,7 @@ public sealed class InspectAssemblyScannerTests
         var nativeAssemblyPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.System),
             "kernel32.dll");
-        Assert.True(File.Exists(nativeAssemblyPath), $"Native PE fixture fehlt: {nativeAssemblyPath}");
+        Assert.True(File.Exists(nativeAssemblyPath), $"Native PE fixture is missing: {nativeAssemblyPath}");
 
         var result = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(
             nativeAssemblyPath,
@@ -335,8 +335,8 @@ public sealed class InspectAssemblyScannerTests
 
         Assert.True(result.IsSuccess);
         var text = result.Value!.FormattedText;
-        Assert.Contains("Öffentliche Namespaces: 12", text, StringComparison.Ordinal);
-        Assert.Contains("Top 10 Namespaces und 2 weitere", text, StringComparison.Ordinal);
+        Assert.Contains("Public Namespaces: 12", text, StringComparison.Ordinal);
+        Assert.Contains("Top 10 Namespaces and 2 more", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -364,7 +364,7 @@ public sealed class InspectAssemblyScannerTests
 
         Assert.True(result.IsSuccess);
         var text = result.Value!.FormattedText;
-        Assert.Contains("Member 2 von 5 gezeigt (gekürzt: maxMembers)", text, StringComparison.Ordinal);
+        Assert.Contains("Member 2 of 5 gezeigt (truncated: maxMembers)", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -424,7 +424,7 @@ public sealed class InspectAssemblyScannerTests
             assemblyPath,
             TypeName: "AnyType"));
         Assert.True(withoutRefs.IsSuccess);
-        Assert.Contains("- Referenzdetails nicht angefordert", withoutRefs.Value!.FormattedText, StringComparison.Ordinal);
+        Assert.Contains("- Reference details not requested", withoutRefs.Value!.FormattedText, StringComparison.Ordinal);
 
         // When IncludeReferences is explicitly true
         var withRefs = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(
@@ -432,7 +432,7 @@ public sealed class InspectAssemblyScannerTests
             TypeName: "AnyType",
             IncludeReferences: true));
         Assert.True(withRefs.IsSuccess);
-        Assert.DoesNotContain("- Referenzdetails nicht angefordert", withRefs.Value!.FormattedText, StringComparison.Ordinal);
+        Assert.DoesNotContain("- Reference details not requested", withRefs.Value!.FormattedText, StringComparison.Ordinal);
         Assert.NotEmpty(withRefs.Value!.References);
     }
 }

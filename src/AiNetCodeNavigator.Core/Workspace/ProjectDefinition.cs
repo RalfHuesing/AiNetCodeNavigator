@@ -3,7 +3,7 @@
 namespace AiNetCodeNavigator.Core.Workspace;
 
 /// <summary>
-/// Unveränderlicher Werttyp einer geladenen Projektdefinition.
-/// Der Pfad ist absolut und existenzgeprüft.
+/// Immutable value type for a loaded project definition.
+/// The path is absolute and has been verified to exist.
 /// </summary>
 public sealed record ProjectDefinition(string SolutionPath);

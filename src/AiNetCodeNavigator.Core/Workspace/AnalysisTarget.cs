@@ -17,12 +17,12 @@ public enum AnalysisTargetOrigin
 }
 
 /// <summary>
-/// Request-Modell des einheitlichen targetPath-only Vertrags.
+/// Request model for the unified targetPath-only contract.
 /// </summary>
 public sealed record AnalysisTargetRequest(string? TargetPath);
 
 /// <summary>
-/// Strukturierter Fehler bei der Ziel-Auflösung.
+/// Structured error during target resolution.
 /// </summary>
 public sealed record AnalysisTargetError(
     string Code,
@@ -40,7 +40,7 @@ public sealed record AnalysisTargetError(
 }
 
 /// <summary>
-/// Ergebnis einer Ziel-Auflösung.
+/// Result of target resolution.
 /// </summary>
 public sealed record AnalysisTargetResolution(
     AnalysisTarget? Target,
@@ -50,7 +50,7 @@ public sealed record AnalysisTargetResolution(
 }
 
 /// <summary>
-/// Aufgelöstes Analyse-Ziel (entweder Source-Projekt oder kompilierte Assembly).
+/// Resolved analysis target (either a source project or a compiled assembly).
 /// </summary>
 public sealed record AnalysisTarget(
     AnalysisTargetType TargetType,

@@ -128,7 +128,7 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
         {
             return FailureResultSingle(new(
                 AssemblyDiagnosticCodes.For(nameof(AssemblyAnalysisSession), nameof(AssemblyAnalysisSession.Dispose)),
-                "Die Assembly-Session wurde bereits beendet.",
+                "The assembly session has already ended.",
                 AssemblyDiagnosticSeverity.Error));
         }
 
@@ -146,7 +146,7 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
         {
             return FailureResultSingle(new(
                 AssemblyDiagnosticCodes.For(nameof(AssemblyFingerprintCalculator), nameof(AssemblyFingerprintCalculator.TryCreate)),
-                "Die Assembly-Fingerprint konnte nicht erzeugt werden.",
+                "The assembly fingerprint could not be created.",
                 AssemblyDiagnosticSeverity.Error));
         }
 
@@ -163,7 +163,7 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
                         ?? references.Diagnostics.FirstOrDefault()
                         ?? new AssemblySessionDiagnostic(
                             AssemblyDiagnosticCodes.MetadataMissing,
-                            "Assembly-Metadaten konnten nicht gelesen werden.",
+                            "Assembly metadata could not be read.",
                             AssemblyDiagnosticSeverity.Error)));
         }
 
@@ -216,7 +216,7 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
             var diagnostics = CombineDiagnostics(cacheDiagnostics, references.Diagnostics, decompilation.Diagnostics);
             if (!decompilation.IsComplete || decompilation.Documents.Count == 0)
             {
-                return FailureResult(EnsureDiagnostic(diagnostics, AssemblyDiagnosticCodes.For(nameof(AssemblyAnalysisSession), nameof(DecompilationResult.Documents)), "Die Decompilation hat keine vollständige, analysierbare Generation erzeugt."));
+                return FailureResult(EnsureDiagnostic(diagnostics, AssemblyDiagnosticCodes.For(nameof(AssemblyAnalysisSession), nameof(DecompilationResult.Documents)), "Decompilation did not produce a complete, analyzable generation."));
             }
 
             var status = DetermineStatus(references.Diagnostics, decompilation);
@@ -334,7 +334,7 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
         catch (InvalidOperationException ex)
         {
             snapshot?.Dispose();
-            return new WorkspaceCreationResult(null, [new(AssemblyDiagnosticCodes.For(nameof(AssemblyRoslynWorkspaceFactory), nameof(AssemblySessionStatus.Failed)), $"Roslyn-Snapshot konnte nicht erzeugt werden: {ex.Message}", AssemblyDiagnosticSeverity.Error)]);
+            return new WorkspaceCreationResult(null, [new(AssemblyDiagnosticCodes.For(nameof(AssemblyRoslynWorkspaceFactory), nameof(AssemblySessionStatus.Failed)), $"Could not create the Roslyn snapshot: {ex.Message}", AssemblyDiagnosticSeverity.Error)]);
         }
     }
 #pragma warning restore CA2000
@@ -359,13 +359,13 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
         {
             return [new(
                 AssemblyDiagnosticCodes.For(nameof(AssemblyRoslynWorkspaceFactory), nameof(AssemblyRoslynSnapshot.Compilation)),
-                $"Die dekompilierte Compilation enthält nicht parsbaren Quelltext: {string.Join("; ", syntaxErrors.Select(diagnostic => diagnostic.Id + " " + diagnostic.GetMessage()))}.",
+                $"The decompiled compilation contains source text that cannot be parsed: {string.Join("; ", syntaxErrors.Select(diagnostic => diagnostic.Id + " " + diagnostic.GetMessage()))}.",
                 AssemblyDiagnosticSeverity.Warning)];
         }
 
         return [new(
             AssemblyDiagnosticCodes.For(nameof(AssemblyRoslynWorkspaceFactory), nameof(AssemblyRoslynSnapshot.Solution)),
-            $"Die dekompilierte Compilation enthält {errors.Count} semantische Decompiler-/Referenzdiagnosen: {string.Join("; ", errors.Take(5).Select(diagnostic => diagnostic.Id + " " + diagnostic.GetMessage()))}.",
+            $"The decompiled compilation contains {errors.Count} semantic decompiler/reference diagnostics: {string.Join("; ", errors.Take(5).Select(diagnostic => diagnostic.Id + " " + diagnostic.GetMessage()))}.",
             AssemblyDiagnosticSeverity.Warning)];
     }
 
@@ -377,7 +377,7 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
             if (disposed)
             {
                 generation.Snapshot.Dispose();
-                var diagnostic = new AssemblySessionDiagnostic(AssemblyDiagnosticCodes.For(nameof(AssemblyAnalysisSession), nameof(AssemblyAnalysisSession.Dispose)), "Die Assembly-Session wurde während des Aufbaus beendet.", AssemblyDiagnosticSeverity.Error);
+                var diagnostic = new AssemblySessionDiagnostic(AssemblyDiagnosticCodes.For(nameof(AssemblyAnalysisSession), nameof(AssemblyAnalysisSession.Dispose)), "The assembly session ended during initialization.", AssemblyDiagnosticSeverity.Error);
                 state = state with
                 {
                     Status = AssemblySessionStatus.Failed,
@@ -462,7 +462,7 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
         lock (gate)
         {
             var status = current is null ? AssemblySessionStatus.Failed : AssemblySessionStatus.Degraded;
-            var visible = DistinctDiagnostics(EnsureDiagnostic(diagnostics, AssemblyDiagnosticCodes.For(nameof(AssemblyAnalysisSession), nameof(AssemblySessionRefreshResult.Diagnostics)), "Assembly-Refresh konnte keinen neuen analysierbaren Snapshot erzeugen."));
+            var visible = DistinctDiagnostics(EnsureDiagnostic(diagnostics, AssemblyDiagnosticCodes.For(nameof(AssemblyAnalysisSession), nameof(AssemblySessionRefreshResult.Diagnostics)), "Assembly refresh could not create a new analyzable snapshot."));
             state = state with
             {
                 Status = status,
@@ -514,7 +514,7 @@ internal sealed class AssemblyAnalysisSession : IDisposable, IAsyncDisposable
             return true;
         }
 
-        diagnostic = new(AssemblyDiagnosticCodes.For(nameof(AssemblyAnalysisSessionOptions), nameof(AssemblyAnalysisSessionOptions.CacheRoot)), "Die Assembly-Decompilation-Optionen enthalten ungültige Werte.", AssemblyDiagnosticSeverity.Error);
+        diagnostic = new(AssemblyDiagnosticCodes.For(nameof(AssemblyAnalysisSessionOptions), nameof(AssemblyAnalysisSessionOptions.CacheRoot)), "The assembly decompilation options contain invalid values.", AssemblyDiagnosticSeverity.Error);
         return false;
     }
 

@@ -6,8 +6,8 @@ using System.Threading;
 namespace AiNetCodeNavigator.Core.Workspace;
 
 /// <summary>
-/// Repräsentiert einen aktiven Zugriff auf eine residente Projektinstanz.
-/// Beim Verwerfen (<see cref="Dispose"/>) wird der In-Flight-Zähler dekrementiert.
+/// Represents active access to a resident project instance.
+/// Disposal (<see cref="Dispose"/>) decrements the in-flight counter.
 /// </summary>
 public sealed class ProjectLease(
     string rootPath,

@@ -42,7 +42,7 @@ public sealed class AnalysisTargetResolverTests
         Assert.Null(result.Target);
         Assert.NotNull(result.Error);
         Assert.Equal(NavigationErrorCodes.InvalidArgument, result.Error!.Code);
-        Assert.Contains("erforderlich", result.Error.Message, StringComparison.Ordinal);
+        Assert.Contains("required", result.Error.Message, StringComparison.Ordinal);
         Assert.Equal("$.targetPath", result.Error.FieldPath);
     }
 
@@ -67,7 +67,7 @@ public sealed class AnalysisTargetResolverTests
         Assert.NotNull(result.Error);
         Assert.Equal(NavigationErrorCodes.InvalidArgument, result.Error!.Code);
         Assert.Contains("INVALID_ARGUMENT", result.Error.FormattedMessage, StringComparison.Ordinal);
-        Assert.Contains("Endung", result.Error.FormattedMessage, StringComparison.Ordinal);
+        Assert.Contains("extension", result.Error.FormattedMessage, StringComparison.Ordinal);
         Assert.Contains("fieldPath: $.targetPath", result.Error.FormattedMessage, StringComparison.Ordinal);
     }
 
@@ -145,7 +145,7 @@ public sealed class AnalysisTargetResolverTests
         Assert.Equal("$.targetPath", result.Error.FieldPath);
         Assert.Equal(path, result.Error.Context);
         Assert.Contains("Fingerprint", result.Error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Leseberechtigung", result.Error.Hint, StringComparison.Ordinal);
+        Assert.Contains("read permissions", result.Error.Hint, StringComparison.Ordinal);
         Assert.Contains("Status: operation=error, completeness=not_applicable", result.Error.FullMessage, StringComparison.Ordinal);
     }
 
@@ -186,8 +186,8 @@ public sealed class AnalysisTargetResolverTests
         Assert.NotNull(result.Error);
         Assert.Equal(NavigationErrorCodes.InvalidArgument, result.Error!.Code);
         Assert.Contains("INVALID_ARGUMENT", result.Error.FormattedMessage, StringComparison.Ordinal);
-        Assert.Contains("Wildcards oder Suchmasken", result.Error.FormattedMessage, StringComparison.Ordinal);
-        Assert.Contains("keine Globs", result.Error.FormattedMessage, StringComparison.Ordinal);
+        Assert.Contains("wildcards or search patterns", result.Error.FormattedMessage, StringComparison.Ordinal);
+        Assert.Contains("do not use globs", result.Error.FormattedMessage, StringComparison.Ordinal);
         Assert.Contains("Status: operation=error, completeness=not_applicable", result.Error.FullMessage, StringComparison.Ordinal);
     }
 

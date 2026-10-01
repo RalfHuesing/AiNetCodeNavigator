@@ -6,7 +6,7 @@ using System.IO;
 namespace AiNetCodeNavigator.Core.Workspace;
 
 /// <summary>
-/// Lädt die Definition für eine konkrete, bereits adressierte Solution-Datei (.sln oder .slnx).
+/// Loads the definition for a concrete, already specified solution file (.sln or .slnx).
 /// </summary>
 public static class ProjectDefinitionLoader
 {
@@ -16,14 +16,14 @@ public static class ProjectDefinitionLoader
         {
             return Fail(
                 NavigationErrorCodes.InvalidArgument,
-                "Der Parameter 'targetPath' ist erforderlich; übergib den absoluten Pfad einer vorhandenen .sln- oder .slnx-Datei.");
+                "The parameter 'targetPath' is required; provide the absolute path of an existing .sln or .slnx file.");
         }
 
         if (solutionPath.Contains('*') || solutionPath.Contains('?'))
         {
             return Fail(
                 NavigationErrorCodes.InvalidArgument,
-                $"Der Parameter 'targetPath' darf keine Wildcards oder Suchmasken enthalten: '{solutionPath}'.");
+                $"The parameter 'targetPath' must not contain wildcards or search patterns: '{solutionPath}'.");
         }
 
         var canonicalSolutionPath = Canonicalize(solutionPath);
@@ -33,8 +33,8 @@ public static class ProjectDefinitionLoader
         {
             return Fail(
                 ProjectErrorCodes.SolutionNotFound,
-                $"Solution-Datei nicht gefunden oder nicht unterstützt: '{solutionPath}'. " +
-                "Erforderlich ist der absolute Pfad einer vorhandenen .sln- oder .slnx-Datei.");
+                $"Solution file not found or not supported: '{solutionPath}'. " +
+                "The absolute path of an existing .sln or .slnx file is required.");
         }
 
         return ProjectDefinitionLoadResult.Success(new ProjectDefinition(canonicalSolutionPath));

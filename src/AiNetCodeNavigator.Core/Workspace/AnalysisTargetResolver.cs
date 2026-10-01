@@ -8,8 +8,8 @@ using System.Security.Cryptography;
 namespace AiNetCodeNavigator.Core.Workspace;
 
 /// <summary>
-/// Löst den releaseweiten Kernvertrag auf: genau ein absoluter, vorhandener
-/// Dateipfad. Die Dateiendung bestimmt Source- oder Decompiled-Assembly-Modus.
+/// Resolves the release-wide core contract: exactly one absolute path to an existing
+/// file. The extension determines source or decompiled-assembly mode.
 /// </summary>
 public static class AnalysisTargetResolver
 {
@@ -39,7 +39,7 @@ public static class AnalysisTargetResolver
         }
 
         var message = resolution.Error?.FormattedMessage
-            ?? "Operation akzeptiert nur den absoluten Pfad einer vorhandenen .sln- oder .slnx-Datei.";
+            ?? "The operation accepts only the absolute path of an existing .sln or .slnx file.";
         throw new InvalidOperationException(message);
     }
 
@@ -49,8 +49,8 @@ public static class AnalysisTargetResolver
         if (string.IsNullOrWhiteSpace(request.TargetPath))
         {
             return Invalid(
-                "Der Parameter 'targetPath' ist erforderlich.",
-                "Den absoluten Pfad einer vorhandenen .sln, .slnx, .dll oder .exe übergeben.",
+                "The parameter 'targetPath' is required.",
+                "Provide the absolute path of an existing .sln, .slnx, .dll or .exe file.",
                 request.TargetPath);
         }
 
@@ -66,8 +66,8 @@ public static class AnalysisTargetResolver
         if (targetKind is null)
         {
             return Invalid(
-                $"Der Parameter 'targetPath' hat eine nicht unterstützte Endung: '{canonicalPath}'.",
-                "Eine vorhandene Datei mit Endung .sln, .slnx, .dll oder .exe übergeben.",
+                $"The parameter 'targetPath' has an unsupported extension: '{canonicalPath}'.",
+                "Provide an existing file with the extension .sln, .slnx, .dll or .exe.",
                 canonicalPath);
         }
 
@@ -107,16 +107,16 @@ public static class AnalysisTargetResolver
         {
             return new PathResolution(
                 null,
-                $"Der Parameter 'targetPath' darf keine Wildcards oder Suchmasken enthalten: '{targetPath}'.",
-                "Eine konkrete vorhandene .sln, .slnx, .dll oder .exe angeben; keine Globs verwenden.");
+                $"The parameter 'targetPath' must not contain wildcards or search patterns: '{targetPath}'.",
+                "Specify a concrete existing .sln, .slnx, .dll or .exe file; do not use globs.");
         }
 
         if (!Path.IsPathFullyQualified(path))
         {
             return new PathResolution(
                 null,
-                "Der Parameter 'targetPath' muss ein absoluter Pfad sein.",
-                "targetPath mit einem absoluten Dateipfad angeben.");
+                "The parameter 'targetPath' must be an absolute path.",
+                "Specify targetPath as an absolute file path.");
         }
 
         string canonicalPath;
@@ -128,24 +128,24 @@ public static class AnalysisTargetResolver
         {
             return new PathResolution(
                 null,
-                $"Der Parameter 'targetPath' ist kein gültiger Pfad: '{targetPath}'.",
-                "Einen gültigen absoluten Dateipfad angeben.");
+                $"The parameter 'targetPath' is not a valid path: '{targetPath}'.",
+                "Specify a valid absolute file path.");
         }
 
         if (Directory.Exists(canonicalPath))
         {
             return new PathResolution(
                 null,
-                $"Der Parameter 'targetPath' muss auf eine Datei zeigen, kein Verzeichnis: '{canonicalPath}'.",
-                "Eine konkrete vorhandene .sln/.slnx/.dll/.exe-Datei angeben.");
+                $"The parameter 'targetPath' must point to a file, not a directory: '{canonicalPath}'.",
+                "Specify a concrete existing .sln/.slnx/.dll/.exe file.");
         }
 
         if (!File.Exists(canonicalPath))
         {
             return new PathResolution(
                 null,
-                $"Der Parameter 'targetPath' muss auf eine vorhandene Datei zeigen: '{canonicalPath}'.",
-                "Eine vorhandene .sln/.slnx/.dll/.exe-Datei angeben.");
+                $"The parameter 'targetPath' must point to an existing file: '{canonicalPath}'.",
+                "Specify an existing .sln/.slnx/.dll/.exe file.");
         }
 
         return new PathResolution(canonicalPath, null, null);
@@ -167,7 +167,7 @@ public static class AnalysisTargetResolver
             new AnalysisTargetError(
                 NavigationErrorCodes.InvalidArgument,
                 message,
-                hint ?? "targetPath mit dem absoluten Pfad einer vorhandenen .sln/.slnx/.dll/.exe-Datei übergeben.",
+                hint ?? "Provide targetPath as the absolute path of an existing .sln/.slnx/.dll/.exe file.",
                 Context: targetPath,
                 FieldPath: "$.targetPath"));
 
@@ -176,8 +176,8 @@ public static class AnalysisTargetResolver
             null,
             new AnalysisTargetError(
                 NavigationErrorCodes.TargetUnreadable,
-                $"Die Datei konnte zum Berechnen des Fingerprints nicht gelesen werden: '{exception.Message}'.",
-                "Leseberechtigung prüfen und den Aufruf wiederholen, sobald die Datei verfügbar ist.",
+                $"The file could not be read to compute the fingerprint: '{exception.Message}'.",
+                "Check read permissions and retry the call once the file is available.",
                 Context: canonicalPath,
                 FieldPath: "$.targetPath"));
 

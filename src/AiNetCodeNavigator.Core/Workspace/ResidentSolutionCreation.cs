@@ -3,8 +3,8 @@
 namespace AiNetCodeNavigator.Core.Workspace;
 
 /// <summary>
-/// Ergebnis der Instanz-Erzeugung im Registry-Pfad: entweder eine konfigurierte
-/// residente Solution oder Fehlercode plus Ursprungsmeldung ohne Eintrag in der Registry.
+/// Result of instance creation through the registry: either a configured
+/// resident solution or an error code and original message without a registry entry.
 /// </summary>
 public sealed record ResidentSolutionCreation(
     ResidentSolution? Solution,

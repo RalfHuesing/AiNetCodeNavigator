@@ -3,7 +3,7 @@
 namespace AiNetCodeNavigator.Core.Workspace;
 
 /// <summary>
-/// Lebenszyklus-Zustand des Solution-Ladens für residente Sessions.
+/// Lifecycle state of solution loading for resident sessions.
 /// </summary>
 public enum ServerLoadState
 {

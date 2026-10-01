@@ -14,8 +14,8 @@ using Microsoft.CodeAnalysis.MSBuild;
 namespace AiNetCodeNavigator.Core.Workspace;
 
 /// <summary>
-/// Lädt echte .sln- und .slnx-Dateien über den Roslyn <see cref="MSBuildWorkspace"/>
-/// mit Design-Time-Build-Flags (schnell, ohne Compiler-Ausführung und Analyzer).
+/// Loads actual .sln and .slnx files through Roslyn <see cref="MSBuildWorkspace"/>
+/// with design-time build flags (fast, without compiler execution or analyzers).
 /// </summary>
 public static class MSBuildSolutionLoader
 {
@@ -87,7 +87,7 @@ public static class MSBuildSolutionLoader
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[WARN]: MSBuildLocator konnte nicht registriert werden: {ex.Message}");
+                Console.Error.WriteLine($"[WARN]: MSBuildLocator could not be registered: {ex.Message}");
             }
             finally
             {
@@ -111,7 +111,7 @@ public static class MSBuildSolutionLoader
         ArgumentNullException.ThrowIfNull(solutionPath);
         if (!File.Exists(solutionPath))
         {
-            throw new FileNotFoundException($"Solution-Datei nicht gefunden: {solutionPath}", solutionPath);
+            throw new FileNotFoundException($"Solution file not found: {solutionPath}", solutionPath);
         }
 
         var workspace = CreateWorkspace();

@@ -3,9 +3,9 @@
 namespace AiNetCodeNavigator.Core.Workspace;
 
 /// <summary>
-/// Ergebnis des Ladens einer Projektdefinition (Result-Pattern): entweder eine vollständige,
-/// existenzgeprüfte Definition (<see cref="Succeeded"/>) oder ein Fehler mit Code aus
-/// <see cref="ProjectErrorCodes"/> oder <see cref="NavigationErrorCodes"/>.
+/// Result of loading a project definition (result pattern): either a complete
+/// definition verified to exist (<see cref="Succeeded"/>) or an error with a code from
+/// <see cref="ProjectErrorCodes"/> or <see cref="NavigationErrorCodes"/>.
 /// </summary>
 public sealed record ProjectDefinitionLoadResult(ProjectDefinition? Definition, string? ErrorCode, string? Message)
 {

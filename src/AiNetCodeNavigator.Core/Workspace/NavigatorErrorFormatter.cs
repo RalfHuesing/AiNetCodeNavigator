@@ -5,7 +5,7 @@ using System.Text;
 namespace AiNetCodeNavigator.Core.Workspace;
 
 /// <summary>
-/// Erzeugt strukturierte Fehlermeldungen für maschinenlesbares Parsing durch LLM-Agenten.
+/// Creates structured error messages for machine-readable parsing by LLM agents.
 /// Format: [ERROR]: {code}: {message}[\n  context:   {context}][\n  hint:      {hint}][\n  fieldPath: {fieldPath}]
 /// </summary>
 public static class NavigatorErrorFormatter

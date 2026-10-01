@@ -96,7 +96,7 @@ internal sealed class TrackingSolutionFactory
                 Interlocked.Increment(ref loadsCancelled);
                 RecordDisposal(solution!);
             });
-            return Task.FromException<Solution?>(new InvalidOperationException("Solution kann nicht geladen werden."));
+            return Task.FromException<Solution?>(new InvalidOperationException("Solution cannot be loaded."));
         });
         return solution;
     }

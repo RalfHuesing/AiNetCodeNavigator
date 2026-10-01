@@ -32,7 +32,7 @@ public static class InspectAssemblyScanner
             return Result<InspectAssemblyPayload>.Failure(
                 NavigationErrorCodes.InvalidArgument,
                 pathError,
-                "targetPath muss ein existierender absoluter lokaler .dll- oder .exe-Pfad sein.");
+                "targetPath must be an existing absolute local .dll or .exe path.");
         }
 
         var opened = await AssemblyNavigationSessionScope.OpenAsync(fullPath, cancellationToken).ConfigureAwait(false);
@@ -52,8 +52,8 @@ public static class InspectAssemblyScanner
         {
             return Result<InspectAssemblyPayload>.Failure(
                 NavigationErrorCodes.InvalidArgument,
-                "continuationToken ist nicht an Target, Assembly-Hash und Abfrage gebunden oder abgelaufen.",
-                "den zuletzt gelieferten continuationToken unverändert mit derselben Abfrage wiederverwenden.");
+                "continuationToken is not bound to the target, assembly hash and query, or has expired.",
+                "reuse the most recently returned continuationToken unchanged with the same query.");
         }
 
         var maxResults = NormalizeLimit(request.MaxResults, DefaultMaxResults, MaxResults);
@@ -131,13 +131,13 @@ public static class InspectAssemblyScanner
         error = string.Empty;
         if (string.IsNullOrWhiteSpace(assemblyPath))
         {
-            error = "Pflichtparameter 'targetPath' fehlt oder ist leer.";
+            error = "Required parameter 'targetPath' is missing or empty.";
             return false;
         }
 
         if (!Path.IsPathFullyQualified(assemblyPath))
         {
-            error = $"Der Parameter 'targetPath' muss ein absoluter lokaler Pfad sein: '{assemblyPath}'.";
+            error = $"The parameter 'targetPath' must be an absolute local path: '{assemblyPath}'.";
             return false;
         }
 
@@ -147,7 +147,7 @@ public static class InspectAssemblyScanner
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            error = $"Der Parameter 'targetPath' ist kein gültiger lokaler Pfad: '{assemblyPath}' ({ex.Message}).";
+            error = $"The parameter 'targetPath' is not a valid local path: '{assemblyPath}' ({ex.Message}).";
             return false;
         }
 
@@ -155,13 +155,13 @@ public static class InspectAssemblyScanner
         if (!string.Equals(ext, ".dll", StringComparison.OrdinalIgnoreCase)
             && !string.Equals(ext, ".exe", StringComparison.OrdinalIgnoreCase))
         {
-            error = $"Der Parameter 'targetPath' muss auf eine .dll- oder .exe-Datei zeigen: '{assemblyPath}'.";
+            error = $"The parameter 'targetPath' must point to a .dll or .exe file: '{assemblyPath}'.";
             return false;
         }
 
         if (!File.Exists(fullPath))
         {
-            error = $"Die Assembly-Datei wurde nicht gefunden: '{fullPath}'.";
+            error = $"The assembly file was not found: '{fullPath}'.";
             return false;
         }
 
@@ -301,7 +301,7 @@ public static class InspectAssemblyScanner
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return ["<Attribute konnten nicht aufgelöst werden>"];
+            return ["<Attributes could not be resolved>"];
         }
     }
 

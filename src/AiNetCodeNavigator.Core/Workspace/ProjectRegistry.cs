@@ -10,8 +10,8 @@ using System.Threading.Tasks;
 namespace AiNetCodeNavigator.Core.Workspace;
 
 /// <summary>
-/// Verwaltet residente Solution-Instanzen im Arbeitsspeicher mit Least-Recently-Used (LRU)-Verdrängung,
-/// TTL-Prüfung und nebenläufigkeitssicherer Deduplizierung paralleler Anfragen.
+/// Manages resident solution instances in memory with least-recently-used (LRU) eviction,
+/// TTL checks and concurrency-safe deduplication of parallel requests.
 /// </summary>
 public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
 {
@@ -279,7 +279,7 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
 
                 return ProjectLeaseResult.Failure(
                     ProjectErrorCodes.RegistryDisposed,
-                    "Die Projekt-Registry wurde beendet, bevor die neue Solution veröffentlicht werden konnte.");
+                    "The project registry was shut down before the new solution could be published.");
             }
 
             if (!created.Succeeded)
@@ -382,7 +382,7 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
             if (!projects.TryGetValue(lease.RootPath, out var entry)
                 || !ReferenceEquals(entry.ResidentSolution, lease.ResidentSolution))
             {
-                throw new InvalidOperationException("Der Projekt-Lease ist nicht mehr resident.");
+                throw new InvalidOperationException("The project lease is no longer resident.");
             }
 
             return SnapshotOf(entry);
@@ -486,7 +486,7 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
     {
         if (!Path.IsPathFullyQualified(solutionPath))
         {
-            throw new ArgumentException("Der Solution-Pfad muss absolut sein.", nameof(solutionPath));
+            throw new ArgumentException("The solution path must be absolute.", nameof(solutionPath));
         }
 
         return Path.GetFullPath(solutionPath);

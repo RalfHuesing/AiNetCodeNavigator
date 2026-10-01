@@ -3,7 +3,7 @@
 namespace AiNetCodeNavigator.Core.Workspace;
 
 /// <summary>
-/// Fehlercodes beim Verwalten und Laden von Projekten und Solutions.
+/// Error codes for managing and loading projects and solutions.
 /// </summary>
 public static class ProjectErrorCodes
 {

@@ -3,7 +3,7 @@
 namespace AiNetCodeNavigator.Core.Workspace;
 
 /// <summary>
-/// Definierte Fehlercodes für maschinenlesbares Error-Reporting in AiNetCodeNavigator.
+/// Defined error codes for machine-readable error reporting in AiNetCodeNavigator.
 /// </summary>
 public static class NavigationErrorCodes
 {

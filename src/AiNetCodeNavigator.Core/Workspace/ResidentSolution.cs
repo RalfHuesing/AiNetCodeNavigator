@@ -26,10 +26,10 @@ public sealed record ResidentLoadedState(Solution Solution, Microsoft.CodeAnalys
 }
 
 /// <summary>
-/// Hält die geladene Roslyn-<see cref="Solution"/> über die Lebensdauer resident im Speicher.
-/// Unterstützt Hintergrund-Laden und lazy Staleness-Erkennung (Dateiänderungen auf der Platte
-/// werden nach einem Inhalts-Hashvergleich auf alle Dokumente des Dateipfads angewendet und inkrementell
-/// über <see cref="Solution.WithDocumentText"/> übernommen).
+/// Keeps the loaded Roslyn <see cref="Solution"/> resident in memory for its lifetime.
+/// Supports background loading and lazy staleness detection (file changes on disk
+/// are applied to all documents sharing the file path after a content-hash comparison and incorporated incrementally
+/// through <see cref="Solution.WithDocumentText"/>).
 /// </summary>
 public sealed class ResidentSolution : IDisposable, IAsyncDisposable
 {
@@ -47,7 +47,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
     private int disposed;
 
     /// <summary>
-    /// Erzeugt eine synchrone residente Instanz aus einem bereits geladenen Snapshot.
+    /// Creates a synchronous resident instance from an already loaded snapshot.
     /// </summary>
     public ResidentSolution(Solution solution, Microsoft.CodeAnalysis.Workspace? workspace = null, string? solutionPath = null)
     {
@@ -63,7 +63,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// Erzeugt eine asynchrone residente Instanz mit Hintergrund-Laden.
+    /// Creates an asynchronous resident instance with background loading.
     /// </summary>
     public ResidentSolution(Func<CancellationToken, Task<Solution?>> loadFunc)
         : this(async ct =>
@@ -75,7 +75,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// Erzeugt eine asynchrone residente Instanz mit Hintergrund-Laden inkl. Workspace-Besitz.
+    /// Creates an asynchronous resident instance with background loading and workspace ownership.
     /// </summary>
     public ResidentSolution(Func<CancellationToken, Task<ResidentLoadedState?>> loadFunc, string? solutionPath = null)
     {
@@ -165,8 +165,8 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// Liefert die geladene Solution mit automatischer Prüfung auf geänderte Datei-Inhalte.
-    /// Für Änderungen an Dateien, Projekten oder Referenzen die asynchrone Snapshot-Methode verwenden.
+    /// Returns the loaded solution with automatic checks for changed file contents.
+    /// Use the asynchronous snapshot method for changes to files, projects or references.
     /// </summary>
     public Solution? GetCurrentSolution()
     {

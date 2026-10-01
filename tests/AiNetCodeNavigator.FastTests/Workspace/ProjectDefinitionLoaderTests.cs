@@ -83,7 +83,7 @@ public sealed class ProjectDefinitionLoaderTests
         var failed = AsFailed(ProjectDefinitionLoader.LoadSolutionTarget(wildcardPath));
 
         Assert.Equal(NavigationErrorCodes.InvalidArgument, failed.ErrorCode);
-        Assert.Contains("Wildcards oder Suchmasken", failed.Message, StringComparison.Ordinal);
+        Assert.Contains("wildcards or search patterns", failed.Message, StringComparison.Ordinal);
     }
 
     private static ProjectDefinition AsLoaded(ProjectDefinitionLoadResult result)

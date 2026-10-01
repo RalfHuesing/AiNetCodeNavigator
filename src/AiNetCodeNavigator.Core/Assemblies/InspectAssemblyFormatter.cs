@@ -13,7 +13,7 @@ namespace AiNetCodeNavigator.Core.Assemblies;
 public static partial class InspectAssemblyFormatter
 {
     public const int MaxDisplayedNamespaces = 10;
-    public const string NamespaceSummaryPrefix = "Top 10 Namespaces und ";
+    public const string NamespaceSummaryPrefix = "Top 10 Namespaces and ";
 
     private static readonly Regex BodyLocationPathRegex = new(
         "(?i)(?<=— `)(?:[A-Z]:[\\\\/]|\\\\\\\\|/)[^`]+(?=`)",
@@ -31,7 +31,7 @@ public static partial class InspectAssemblyFormatter
 
         return namespaces
             .Take(MaxDisplayedNamespaces)
-            .Append($"{NamespaceSummaryPrefix}{namespaces.Count - MaxDisplayedNamespaces} weitere")
+            .Append($"{NamespaceSummaryPrefix}{namespaces.Count - MaxDisplayedNamespaces} more")
             .ToList();
     }
 
@@ -50,9 +50,9 @@ public static partial class InspectAssemblyFormatter
 
     private static void AppendHeader(StringBuilder builder, InspectAssemblyPayload payload)
     {
-        builder.AppendLine($"Assembly: `{payload.Identity?.Name ?? "unbekannt"}`");
+        builder.AppendLine($"Assembly: `{payload.Identity?.Name ?? "unknown"}`");
         AppendDecompileRoot(builder, payload.DecompiledSourceRoot);
-        builder.AppendLine($"Vollständigkeit: `{payload.Completeness}`");
+        builder.AppendLine($"Completeness: `{payload.Completeness}`");
         if (payload.Origin is { } origin)
         {
             AppendOrigin(builder, origin);
@@ -60,7 +60,7 @@ public static partial class InspectAssemblyFormatter
         builder.AppendLine();
         if (payload.Identity is { } identity)
         {
-            builder.AppendLine($"Identität: {identity.Name}, Version {identity.Version}, Kultur {identity.Culture}");
+            builder.AppendLine($"Identity: {identity.Name}, Version {identity.Version}, Culture {identity.Culture}");
         }
     }
 
@@ -68,18 +68,18 @@ public static partial class InspectAssemblyFormatter
     {
         if (origin.IsDecompiled)
         {
-            builder.AppendLine("Quelle: Dekompilat");
+            builder.AppendLine("Source: Decompilation");
             return;
         }
 
-        builder.AppendLine($"Quelle: `{origin.OriginKind}`");
+        builder.AppendLine($"Source: `{origin.OriginKind}`");
     }
 
     private static void AppendDecompileRoot(StringBuilder builder, string? decompiledSourceRoot)
     {
         if (!string.IsNullOrWhiteSpace(decompiledSourceRoot))
         {
-            builder.AppendLine($"decompileRoot: `{decompiledSourceRoot}` (lokal lesbar; generiert; sessiongebunden)");
+            builder.AppendLine($"decompileRoot: `{decompiledSourceRoot}` (locally readable; generated; session-bound)");
         }
     }
 
@@ -97,7 +97,7 @@ public static partial class InspectAssemblyFormatter
     private static void AppendTypes(StringBuilder builder, InspectAssemblyPayload payload, bool publicOnly)
     {
         var typesTruncated = payload.ShownCount < payload.TotalTypes;
-        builder.AppendLine($"{VisibilityLabel(publicOnly)}API-Typen: {payload.ShownCount} von {payload.TotalTypes}{FormatTruncation(typesTruncated, payload.TruncatedBy)}");
+        builder.AppendLine($"{VisibilityLabel(publicOnly)}API types: {payload.ShownCount} of {payload.TotalTypes}{FormatTruncation(typesTruncated, payload.TruncatedBy)}");
         foreach (var type in payload.Types) AppendType(builder, type);
     }
 
@@ -105,8 +105,8 @@ public static partial class InspectAssemblyFormatter
     {
         var qualifiedName = string.IsNullOrEmpty(type.Namespace) ? type.Name : $"{type.Namespace}.{type.Name}";
         var memberCount = type.MembersTruncated
-            ? $", Member {type.Members.Count} von {type.TotalMembers} gezeigt{FormatTruncation(true, type.TruncatedBy)}"
-            : $", {type.TotalMembers} Member";
+            ? $", Member {type.Members.Count} of {type.TotalMembers} gezeigt{FormatTruncation(true, type.TruncatedBy)}"
+            : $", {type.TotalMembers} members";
         builder.AppendLine($"- `{qualifiedName}`{FormatHandoffId(type.Id)} ({type.Kind}, {type.Accessibility}{memberCount})");
         foreach (var member in type.Members)
         {
@@ -118,7 +118,7 @@ public static partial class InspectAssemblyFormatter
     {
         if (!string.IsNullOrWhiteSpace(continuationToken))
         {
-            builder.AppendLine($"Fortsetzung: continuationToken: `{continuationToken}` unverändert mit derselben Abfrage verwenden.");
+            builder.AppendLine($"Continuation: continuationToken: `{continuationToken}` reuse unchanged with the same query.");
         }
     }
 
@@ -129,16 +129,16 @@ public static partial class InspectAssemblyFormatter
     {
         var referenceCount = summary is null
             ? references.Count.ToString()
-            : $"{summary.ShownReferenceCount} von {summary.TotalReferenceCount}";
-        builder.AppendLine($"Referenzen: {referenceCount}{(summary?.ReferencesTruncated == true ? " (gekürzt)" : string.Empty)}");
+            : $"{summary.ShownReferenceCount} of {summary.TotalReferenceCount}";
+        builder.AppendLine($"References: {referenceCount}{(summary?.ReferencesTruncated == true ? " (truncated)" : string.Empty)}");
         if (summary?.ReferencesTruncated == true && references.Count == 0)
         {
-            builder.AppendLine("- Referenzdetails nicht angefordert; includeReferences=true für die Liste");
+            builder.AppendLine("- Reference details not requested; includeReferences=true for the list");
         }
         foreach (var reference in references)
         {
             var diagnostic = string.IsNullOrWhiteSpace(reference.Diagnostic) ? string.Empty : $": {reference.Diagnostic}";
-            builder.AppendLine($"- {reference.Name}, Version {reference.Version} (Tiefe {reference.Depth}, Zustand {reference.ResolutionState}, {(reference.Resolved ? "aufgelöst" : "nicht aufgelöst")}{diagnostic})");
+            builder.AppendLine($"- {reference.Name}, Version {reference.Version} (Depth {reference.Depth}, State {reference.ResolutionState}, {(reference.Resolved ? "resolved" : "unresolved")}{diagnostic})");
         }
 
         builder.AppendLine();
@@ -147,11 +147,11 @@ public static partial class InspectAssemblyFormatter
     private static void AppendDiagnostics(StringBuilder builder, IReadOnlyList<string> diagnostics)
     {
         if (diagnostics.Count == 0) return;
-        builder.AppendLine($"Diagnosen: {diagnostics.Count}");
+        builder.AppendLine($"Diagnostics: {diagnostics.Count}");
         foreach (var diagnostic in diagnostics) builder.AppendLine($"- {diagnostic}");
     }
 
-    private static string VisibilityLabel(bool publicOnly) => publicOnly ? "Öffentliche " : string.Empty;
+    private static string VisibilityLabel(bool publicOnly) => publicOnly ? "Public " : string.Empty;
 
     private static string FormatHandoffId(string? id) =>
         string.IsNullOrWhiteSpace(id)
@@ -160,13 +160,13 @@ public static partial class InspectAssemblyFormatter
 
     private static string FormatTruncation(bool truncated, IReadOnlyList<string>? reasons) =>
         truncated
-            ? $" (gekürzt{(reasons is { Count: > 0 } ? $": {string.Join(", ", reasons)}" : string.Empty)})"
+            ? $" (truncated{(reasons is { Count: > 0 } ? $": {string.Join(", ", reasons)}" : string.Empty)})"
             : string.Empty;
 
     internal static string SanitizeText(string text)
     {
         var lines = text.Split('\n')
-            .Where(line => !line.Contains("Pfade: decompiledProject", StringComparison.OrdinalIgnoreCase))
+            .Where(line => !line.Contains("Paths: decompiledProject", StringComparison.OrdinalIgnoreCase))
             .Where(line => !line.TrimStart().StartsWith("- Generation:", StringComparison.OrdinalIgnoreCase))
             .Where(line => !line.TrimStart().StartsWith("- GeneratedPath:", StringComparison.OrdinalIgnoreCase))
             .Select(line => SanitizeLine(line
