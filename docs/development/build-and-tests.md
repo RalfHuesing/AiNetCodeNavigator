@@ -59,10 +59,6 @@ pwsh -File ./scripts/build.ps1
 - `TreatWarningsAsErrors` and `Nullable` reference types are enabled across all projects in `Directory.Build.props`.
 - Roslyn analyzers (`Meziantou.Analyzer` and `Microsoft.CodeAnalysis.NetAnalyzers`) are enforced with `.editorconfig` severity mappings.
 
-## Translation Scan
-
-Run the [translation detector](../../temp/uebersetzung-deutsch-englisch/find_german_texts.py) with Python to regenerate the detailed findings and English summary in its directory. The heuristic scans repository text outside task specifications, agent rules, temporary/generated content, audit reports, and dependency/build directories. It preserves Markdown link destinations and explicitly listed proper names, Unicode fixtures, and negative assertions that guard against German output labels. Exceptions mask only their configured text in the owning file; other prose on the same line remains detectable.
-
 ## Running Tests
 
 Run the test suites using the dedicated test scripts:
