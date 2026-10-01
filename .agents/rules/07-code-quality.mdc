@@ -1,0 +1,32 @@
+---
+alwaysApply: true
+---
+
+## Authority
+- Read the relevant approved intent, non-goals, boundaries and ownership before editing.
+- Treat existing code as evidence, not authority; do not propagate known deviations.
+- Preserve scope, contracts and boundaries unless explicitly changed by approved requirements. Escalate unresolved architectural conflicts.
+
+## Ownership
+- Find existing owners and extension points before adding implementations.
+- Keep domain names consistent with behavior; correct misleading names and comments within scope.
+- Centralize shared business semantics, not coincidentally similar syntax.
+- Prefer typed contracts and explicit dependencies, state and effects. Isolate required dynamic wiring at discoverable boundaries.
+- Extract cohesive responsibilities, not line-count slices. Add abstractions for current needs, not hypothetical reuse.
+
+## Changes
+- Inspect definitions, relevant callers and runtime wiring; verify external APIs against referenced versions.
+- Make task-bounded but complete changes across callers, registrations, configuration, serialization and tests.
+- Fix causes in the owning component; avoid accumulating special-case wrappers.
+- Preserve failure, cancellation, transaction and resource-lifetime semantics; never disguise failures as success.
+- Remove superseded paths within scope after checking runtime and external consumers; document why required compatibility paths remain.
+- Change generation inputs and regenerate outputs; do not hand-edit generated code.
+
+## Verification
+- Test requirements and regressions, not implementation details; run repository-required checks for affected targets.
+- Do not weaken tests, analyzers, architecture checks or baselines merely to pass.
+- Review the diff and affected dependencies against approved intent and boundaries; report unresolved deviations.
+
+## Continuity
+- Update affected canonical documentation for approved changes; do not rewrite the intended architecture to justify drift.
+- Record verified results, unrun checks and remaining work in existing handoff notes.

@@ -6,10 +6,9 @@ alwaysApply: true
 
 # Verification
 
-- Do not change observable production behavior without an automated test at the appropriate level; test contracts and failure cases, not implementation details.
+- Cover observable production behavior changes with automated tests at the appropriate level, including contracts and failure cases.
 - For reproducible defects, verify a failing test before fixing them. If a deterministic reproduction is infeasible, state why and verify the fix with the strongest practical check.
 - Do not claim a test, build, or product behavior passed without running the relevant check.
-- Do not weaken or skip a failing relevant test to make a change appear complete.
 - For code changes, run the affected tests and required project gates using the official PowerShell scripts before committing. For documentation-only changes, review the diff and run `git diff --check`.
 - Execute verification gates via:
   - `pwsh -File ./scripts/build.ps1` to build the solution with all analyzers and warnings-as-errors enabled.
