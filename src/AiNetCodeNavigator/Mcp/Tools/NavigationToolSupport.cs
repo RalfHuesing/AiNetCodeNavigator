@@ -54,7 +54,8 @@ internal static class NavigationToolSupport
         int? maxResponseTokens,
         Func<AnalysisTarget, CancellationToken, Task<CallToolResult>> operation,
         AnalysisTargetType? requiredType,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool acceptsDomainCursor = false)
     {
         ArgumentNullException.ThrowIfNull(runtime);
         ArgumentNullException.ThrowIfNull(operation);
@@ -86,7 +87,10 @@ internal static class NavigationToolSupport
             operationToken,
             continuationToken,
             maxResponseBytes,
-            maxResponseTokens);
+            maxResponseTokens,
+            DomainCursor: acceptsDomainCursor && continuationToken?.StartsWith("v1.", StringComparison.Ordinal) == true
+                ? continuationToken
+                : null);
         return await runtime.Operations.RunAsync(request, cancellationToken).ConfigureAwait(false);
     }
 

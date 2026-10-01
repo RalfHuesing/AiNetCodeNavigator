@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection.PortableExecutable;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -94,9 +95,13 @@ internal sealed class AssemblyDecompilationAdapter
         ICollection<AssemblySessionDiagnostic> diagnostics)
     {
         Directory.CreateDirectory(stagingDirectory);
-        using var module = new PEFile(request.AssemblyPath);
+        using var module = new PEFile(request.AssemblyPath, PEStreamOptions.PrefetchEntireImage);
         var targetFrameworkId = module.DetectTargetFrameworkId();
-        var resolver = new UniversalAssemblyResolver(request.AssemblyPath, throwOnError: false, targetFrameworkId);
+        var resolver = new UniversalAssemblyResolver(
+            request.AssemblyPath,
+            throwOnError: false,
+            targetFrameworkId,
+            streamOptions: PEStreamOptions.PrefetchEntireImage);
         var assemblyDirectory = Path.GetDirectoryName(request.AssemblyPath);
         if (!string.IsNullOrWhiteSpace(assemblyDirectory)) resolver.AddSearchDirectory(assemblyDirectory);
         if (references?.References is { Count: > 0 } resolvedReferences)

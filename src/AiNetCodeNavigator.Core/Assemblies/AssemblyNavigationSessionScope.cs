@@ -51,7 +51,8 @@ public sealed class AssemblyNavigationSessionScope : IAsyncDisposable
             generation.Origin with { BodyAvailability = "available", ContentMode = "decompiledProject" },
             generation.Number,
             generation.Status,
-            generation.DecompiledProjectPaths);
+            generation.DecompiledProjectPaths,
+            generation.ReferenceSnapshotHash);
         return Result<AssemblyNavigationSessionScope>.Success(new(sessionAccess, context));
     }
 

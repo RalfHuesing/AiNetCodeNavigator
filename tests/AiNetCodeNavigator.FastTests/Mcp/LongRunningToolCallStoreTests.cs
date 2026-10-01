@@ -47,6 +47,32 @@ public sealed class LongRunningToolCallStoreTests
     }
 
     [Fact]
+    public async Task DomainCursorMayAccompanyOperationPollAndIsPartOfOperationIdentity()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromMilliseconds(20));
+        var cursor = "v1.1.bound-query";
+        var release = new TaskCompletionSource<CallToolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var starts = 0;
+        Task<CallToolResult> Start(CancellationToken _) { Interlocked.Increment(ref starts); return release.Task; }
+        var original = new LongRunningToolCallRequest("inspect_assembly", "target", "query=maxResults:1", Start,
+            ContinuationToken: cursor, DomainCursor: cursor);
+
+        var pending = await store.RunAsync(original);
+        var operationToken = TokenOf(pending, "operationToken");
+        Assert.Contains("operation=running", TextOf(pending), StringComparison.Ordinal);
+
+        var wrongCursor = await store.RunAsync(original with { OperationToken = operationToken, ContinuationToken = "v1.2.other-query", DomainCursor = "v1.2.other-query" });
+        Assert.True(wrongCursor.IsError);
+        Assert.Contains("OPERATION_EXPIRED", TextOf(wrongCursor), StringComparison.Ordinal);
+
+        release.SetResult(new CallToolResult { Content = [new TextContentBlock { Text = "Second domain page." }] });
+        var completed = await store.RunAsync(original with { OperationToken = operationToken });
+
+        Assert.Contains("Second domain page.", TextOf(completed), StringComparison.Ordinal);
+        Assert.Equal(1, starts);
+    }
+
+    [Fact]
     public async Task SynchronouslyBlockingDelegateDoesNotHoldStoreLockOrResponseWindow()
     {
         await using var store = new LongRunningToolCallStore(TimeSpan.FromMilliseconds(30));

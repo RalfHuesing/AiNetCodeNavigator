@@ -165,12 +165,24 @@ public sealed record AnalysisSymbolIdentity(string ContentHash, long Generation)
             .SequenceEqual(other.SourceProjectMarkers.Values.OrderBy(marker => marker, StringComparer.Ordinal), StringComparer.Ordinal);
     }
 
-    public static AnalysisSymbolIdentity ForAssembly(string canonicalPath, string contentHash, long generation = 0) =>
-        new(contentHash, generation)
+    public static AnalysisSymbolIdentity ForAssembly(
+        string canonicalPath,
+        string contentHash,
+        long generation = 0,
+        string referenceSnapshotHash = "") =>
+        new(CreateAssemblyHandoffContentHash(contentHash, referenceSnapshotHash, generation), generation)
         {
             CanonicalPath = canonicalPath,
             IsAssembly = true,
         };
+
+    public static string CreateAssemblyHandoffContentHash(string contentHash, string referenceSnapshotHash, long generation)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentHash);
+        if (string.IsNullOrWhiteSpace(referenceSnapshotHash)) return contentHash;
+        var material = string.Join("\0", contentHash, referenceSnapshotHash, generation.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
+    }
 
     public static AnalysisSymbolIdentity ForSource(string canonicalPath, string snapshotHash, Solution? solution = null) =>
         new(snapshotHash, 0)

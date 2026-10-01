@@ -43,7 +43,11 @@ public static class InspectAssemblyScanner
         await using var scope = opened.Value!;
         var context = scope.Context;
 
-        var binding = AssemblyPaging.CreateInspectBinding(fullPath, context.Origin.ContentHash, request);
+        var binding = AssemblyPaging.CreateInspectBinding(
+            fullPath,
+            context.Origin.ContentHash,
+            context.ReferenceSnapshotHash,
+            request);
         if (!AssemblyPaging.TryReadBoundOffset(request.Cursor, binding, out var offset))
         {
             return Result<InspectAssemblyPayload>.Failure(
@@ -67,7 +71,8 @@ public static class InspectAssemblyScanner
         var handoffIdentity = AnalysisSymbolIdentity.ForAssembly(
             context.Origin.CanonicalPath,
             context.Origin.ContentHash,
-            context.Generation);
+            context.Generation,
+            context.ReferenceSnapshotHash);
 
         var typeDtos = limitedTypes
             .Select(type => ToTypeDto(type, request, maxMembers, handoffIdentity))

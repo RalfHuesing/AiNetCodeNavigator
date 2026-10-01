@@ -459,4 +459,5 @@ public sealed record AssemblyContext(
     AssemblyOrigin Origin,
     long Generation,
     AssemblySessionStatus Status,
-    DecompiledProjectPaths? DecompiledProjectPaths = null);
+    DecompiledProjectPaths? DecompiledProjectPaths = null,
+    string ReferenceSnapshotHash = "");

@@ -41,7 +41,8 @@ public sealed record SymbolLocationEntry(
     int EndLine,
     string ProjectName,
     string Signature,
-    IReadOnlyList<SymbolLocationItem>? Locations = null);
+    IReadOnlyList<SymbolLocationItem>? Locations = null,
+    string? OwnerTargetPath = null);
 
 public sealed record SymbolLocationItem(
     string FilePath,

@@ -222,6 +222,35 @@ public sealed class InspectAssemblyScannerTests
     }
 
     [Fact]
+    public async Task InspectAssembly_CursorExpiresWhenTransitiveReferenceSnapshotChanges()
+    {
+        using var temp = TestTempDirectory.Create("assembly-inspect-reference-cursor-");
+        var leaf = AssemblyTestHelper.EmitAssembly(temp, "CursorLeaf", "namespace Probe.Leaf; public sealed class Leaf { public int Version => 1; }");
+        var dependency = AssemblyTestHelper.EmitAssembly(temp, "CursorDependency", "namespace Probe.Reference; public sealed class Dependency { public Probe.Leaf.Leaf? Value; }", leaf);
+        var target = AssemblyTestHelper.EmitAssembly(temp, "CursorTarget", "public sealed class Alpha { public Probe.Reference.Dependency? Value; } public sealed class Beta { }", dependency);
+
+        var first = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(target, MaxResults: 1, MaxMembers: 20));
+        Assert.True(first.IsSuccess, first.Error?.ToString());
+        Assert.NotNull(first.Value!.ContinuationToken);
+        var originalGeneration = first.Value.Generation;
+
+        using var replacementTemp = TestTempDirectory.Create("assembly-inspect-reference-cursor-replacement-");
+        var replacement = AssemblyTestHelper.EmitAssembly(replacementTemp, "CursorLeaf", "namespace Probe.Leaf; public sealed class Leaf { public int Version => 2; public int Added => 3; }");
+        File.Copy(replacement, leaf, overwrite: true);
+
+        var stale = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(
+            target,
+            MaxResults: 1,
+            MaxMembers: 20,
+            Cursor: first.Value.ContinuationToken));
+
+        Assert.False(stale.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.InvalidArgument, stale.Error!.Value.Code);
+        Assert.True(stale.Error.Value.Message.Contains("continuationToken", StringComparison.Ordinal));
+        Assert.True(originalGeneration > 0);
+    }
+
+    [Fact]
     public async Task InspectAssembly_RejectsRelativeAndMissingPathsWithoutRuntimeLoading()
     {
         var relative = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(

@@ -62,7 +62,11 @@ public static class AssemblyFindSymbolScanner
             var isTest = project is not null && TestDetector.IsTestProject(project);
             if (scope == SymbolScopeType.Tests && !isTest || scope == SymbolScopeType.Production && isTest) continue;
 
-            var identity = AnalysisSymbolIdentity.ForAssembly(context.Origin.CanonicalPath, context.Origin.ContentHash, context.Generation);
+            var identity = AnalysisSymbolIdentity.ForAssembly(
+                context.Origin.CanonicalPath,
+                context.Origin.ContentHash,
+                context.Generation,
+                context.ReferenceSnapshotHash);
             foreach (var symbol in EnumerateSymbols(context.Assembly))
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -101,7 +105,8 @@ public static class AssemblyFindSymbolScanner
                     locations[0].EndLine,
                     locations[0].ProjectName,
                     symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
-                    locations));
+                    locations,
+                    context.Origin.CanonicalPath));
             }
         }
 
@@ -113,7 +118,14 @@ public static class AssemblyFindSymbolScanner
             .ToList();
         if (!nameFound)
         {
-            return new FindSymbolScanResult($"No symbols matched '{namePattern}' in the selected assembly scope.", [], 0, 0, false, [], []);
+            return new FindSymbolScanResult(
+                $"No symbols matched '{namePattern}' in the selected assembly scope.",
+                [],
+                0,
+                0,
+                incompleteReferences,
+                incompleteReferences ? ["unresolvedReferences"] : [],
+                []);
         }
 
         var filtered = kind == SymbolKindFilter.All ? ordered : ordered.Where(entry => KindNameMatches(entry.Kind, kind)).ToList();

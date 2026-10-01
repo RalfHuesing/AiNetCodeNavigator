@@ -17,7 +17,8 @@ internal sealed record LongRunningToolCallRequest(
     int MaxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
     int? MaxResponseTokens = null,
     bool DomainTruncated = false,
-    string? DomainNextAction = null);
+    string? DomainNextAction = null,
+    string? DomainCursor = null);
 
 /// <summary>Owns bounded tool executions and their opaque operation/continuation tokens.</summary>
 internal sealed class LongRunningToolCallStore : IAsyncDisposable
@@ -74,7 +75,7 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Target);
         ArgumentNullException.ThrowIfNull(request.ArgumentsKey);
         ArgumentNullException.ThrowIfNull(request.Operation);
-        if (request.OperationToken is not null && request.ContinuationToken is not null)
+        if (request.OperationToken is not null && request.ContinuationToken is not null && request.DomainCursor is null)
         {
             return McpToolResults.InvalidArgument("Only one continuation token may be supplied.", "operationToken",
                 "Supply either operationToken or continuationToken.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
@@ -84,7 +85,12 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         await ExpireEntriesAsync().ConfigureAwait(false);
         if (request.ContinuationToken is { } continuationToken)
         {
-            return _continuations.GetPage(continuationToken, request);
+            if (request.DomainCursor is null)
+            {
+                return _continuations.GetPage(continuationToken, request);
+            }
+
+            request = request with { ContinuationToken = null };
         }
 
         if (request.OperationToken is { } operationToken)
@@ -371,7 +377,8 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         internal bool Matches(LongRunningToolCallRequest other) =>
             string.Equals(Request.ToolName, other.ToolName, StringComparison.Ordinal)
             && string.Equals(Request.Target, other.Target, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(Request.ArgumentsKey, other.ArgumentsKey, StringComparison.Ordinal);
+            && string.Equals(Request.ArgumentsKey, other.ArgumentsKey, StringComparison.Ordinal)
+            && string.Equals(Request.DomainCursor, other.DomainCursor, StringComparison.Ordinal);
     }
 }
 

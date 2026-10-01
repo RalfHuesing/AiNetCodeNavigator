@@ -29,10 +29,15 @@ public static class AssemblyPaging
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
     }
 
-    public static string CreateInspectBinding(string canonicalPath, string contentHash, InspectAssemblyRequest arguments) =>
+    public static string CreateInspectBinding(
+        string canonicalPath,
+        string contentHash,
+        string referenceSnapshotHash,
+        InspectAssemblyRequest arguments) =>
         CreateBinding(
             canonicalPath,
             contentHash,
+            referenceSnapshotHash,
             "inspect_assembly",
             arguments.Namespace,
             arguments.TypeName,

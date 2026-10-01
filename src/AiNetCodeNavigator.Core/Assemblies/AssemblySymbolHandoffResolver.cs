@@ -52,8 +52,12 @@ public static class AssemblySymbolHandoffResolver
                 fingerprintDiagnostic?.Message ?? "The assembly target is no longer readable.");
         }
 
+        var currentHandoffContentHash = AnalysisSymbolIdentity.CreateAssemblyHandoffContentHash(
+            currentFingerprint.Sha256,
+            sessionAccess.Generation.ReferenceSnapshotHash,
+            sessionAccess.Generation.Number);
         var contentMatches = SymbolHandoffToken.TryCreateContent(
-                currentFingerprint.Sha256,
+                currentHandoffContentHash,
                 out var currentContentToken)
             && string.Equals(currentContentToken, identifier.ContentToken, StringComparison.Ordinal);
         if (!contentMatches)
@@ -98,6 +102,8 @@ public sealed class AssemblySymbolHandoffAccess : IAsyncDisposable
     public ISymbol Symbol { get; }
     public Solution Solution => sessionAccess.Generation.Snapshot.Solution;
     public AssemblyOrigin Origin => sessionAccess.Generation.Origin;
+    public long Generation => sessionAccess.Generation.Number;
+    public string ReferenceSnapshotHash => sessionAccess.Generation.ReferenceSnapshotHash;
 
     public ValueTask DisposeAsync() => sessionAccess.DisposeAsync();
 }

@@ -135,6 +135,8 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                     var response = await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, token) =>
                     {
                         var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, token).ConfigureAwait(false);
+                        ResultError? firstSourceResolutionError = null;
+                        var resolvedSourceBodies = 0;
                         foreach (var identifier in symbolIdentifiers)
                         {
                             token.ThrowIfCancellationRequested();
@@ -145,39 +147,52 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                                 suggestedStartLine = Math.Max(suggestedStartLine, resolved.Body.DisplayedEnd + 1);
                             if (resolved.Error is { } error)
                             {
+                                firstSourceResolutionError ??= error;
                                 var candidates = resolved.ResolutionCandidates.Count == 0 ? string.Empty
                                     : $" Candidates: {string.Join(", ", resolved.ResolutionCandidates.Select(candidate => candidate.Name))}.";
                                 items.Add($"Could not resolve {identifier}: {error.Code}: {error.Message}{candidates}");
                             }
                             else if (resolved.Body is { } body)
                             {
+                                resolvedSourceBodies++;
                                 items.Add(FormatBody(identifier, body));
                             }
                         }
+                        if (resolvedSourceBodies == 0 && firstSourceResolutionError is { } resolutionError)
+                            return NavigationToolSupport.Failure(resolutionError, maxResponseBytes, maxResponseTokens, "$.symbolIdentifiers");
+
                         return NavigationToolSupport.SuccessText(string.Join("\n\n", items), hasDomainGaps,
                             hasDomainGaps ? $"Resolve item errors and repeat; for a body with more lines set startLine to {suggestedStartLine}." : null);
                     }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
                     return response;
                 }
 
+                ResultError? firstAssemblyResolutionError = null;
+                var resolvedAssemblyBodies = 0;
                 foreach (var identifier in symbolIdentifiers)
                 {
                     ct.ThrowIfCancellationRequested();
-                    var resolved = await AssemblySymbolBodyScanner.GetAsync(identifier, effectiveLines, startLine, ct).ConfigureAwait(false);
+                    var resolved = await AssemblySymbolBodyScanner.GetAsync(
+                        identifier, effectiveLines, startLine, ct, expectedTargetPath: target.CanonicalPath).ConfigureAwait(false);
                     hasDomainGaps |= resolved.Error is not null || resolved.Body?.HasMore == true;
                     if (resolved.Body?.HasMore == true)
                         suggestedStartLine = Math.Max(suggestedStartLine, resolved.Body.DisplayedEnd + 1);
                     if (resolved.Error is { } error)
                     {
+                        firstAssemblyResolutionError ??= error;
                         var candidates = resolved.ResolutionCandidates.Count == 0 ? string.Empty
                             : $" Candidates: {string.Join(", ", resolved.ResolutionCandidates.Select(candidate => candidate.Name))}.";
                         items.Add($"Could not resolve {identifier}: {error.Code}: {error.Message}{candidates}");
                     }
                     else if (resolved.Body is { } body)
                     {
+                        resolvedAssemblyBodies++;
                         items.Add(FormatBody(identifier, body));
                     }
                 }
+                if (resolvedAssemblyBodies == 0 && firstAssemblyResolutionError is { } resolutionError)
+                    return NavigationToolSupport.Failure(resolutionError, maxResponseBytes, maxResponseTokens, "$.symbolIdentifiers");
+
                 return NavigationToolSupport.SuccessText(string.Join("\n\n", items), hasDomainGaps,
                     hasDomainGaps ? $"Resolve item errors and repeat; for a body with more lines set startLine to {suggestedStartLine}." : null);
             }, null, cancellationToken);
@@ -226,14 +241,19 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
 
     private static string FormatAssemblyFindResult(FindSymbolScanResult result)
     {
-        if (result.Entries.Count == 0) return result.Text;
+        if (result.Entries.Count == 0)
+            return result.IsTruncated
+                ? $"{result.Text}\nSearch incomplete: {string.Join(", ", result.TruncatedBy)}."
+                : result.Text;
         var lines = result.Entries.Select(entry =>
         {
             var handoff = entry.HandoffId is null ? string.Empty : $" [handoff: {entry.HandoffId}]";
-            return $"- {entry.Kind} {entry.Name} in {entry.FilePath}:{entry.Line} ({entry.ProjectName}) {entry.Signature}{handoff}";
+            var owner = string.IsNullOrWhiteSpace(entry.OwnerTargetPath) ? string.Empty : $" [targetPath: {entry.OwnerTargetPath}]";
+            return $"- {entry.Kind} {entry.Name} in {entry.FilePath}:{entry.Line} ({entry.ProjectName}) {entry.Signature}{owner}{handoff}";
         });
         var summary = $"Found {result.TotalMatches} matching assembly symbol(s); returned {result.ReturnedMatches}.";
-        return summary + "\n" + string.Join("\n", lines);
+        var incomplete = result.IsTruncated ? $"\nSearch incomplete: {string.Join(", ", result.TruncatedBy)}." : string.Empty;
+        return summary + "\n" + string.Join("\n", lines) + incomplete;
     }
 
     private static bool TryKind(string? value, out SymbolKindFilter kind)

@@ -104,7 +104,8 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 var opened = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
                 if (!opened.IsSuccess) return NavigationToolSupport.Failure(opened.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
                 await using var scope = opened.Value!;
-                var identity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash, scope.Context.Generation);
+                var identity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash,
+                    scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
                 return await BuildSkeletonsAsync(scope.Solution, target.CanonicalPath, filePaths, identity, ct).ConfigureAwait(false);
             }, null, cancellationToken);
     }
@@ -154,7 +155,8 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 var type = access.Symbol as INamedTypeSymbol ?? access.Symbol.ContainingType;
                 if (type is null) return McpToolResults.InvalidArgument("The assembly handle did not resolve to a type.", "$.symbolIdentifier", "Use a type handoff from an assembly navigation result.",
                     maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-                var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash, 0);
+                var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
+                    access.Generation, access.ReferenceSnapshotHash);
                 var result = BuildAssemblyClassStructure(type, access.Origin.CanonicalPath, identity, sortBy, maxMembers, kindFilter, nameFilter);
                 return NavigationToolSupport.SuccessText(FormatClassStructure(result), result.Truncated,
                     result.Truncated ? "Increase maxMembers up to 200 and repeat the query." : null);

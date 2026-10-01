@@ -71,6 +71,22 @@ public sealed class AssemblyFingerprintAndReferenceTests
     }
 
     [Fact]
+    public void Resolve_TraversesRootToBToCReferenceClosure()
+    {
+        using var tempDir = TestTempDirectory.Create("assembly-reference-closure-");
+        var leaf = AssemblyTestHelper.EmitAssembly(tempDir, "ClosureLeaf", "namespace Closure.Leaf; public sealed class C { }");
+        var middle = AssemblyTestHelper.EmitAssembly(tempDir, "ClosureMiddle", "namespace Closure.Middle; public sealed class B { public Closure.Leaf.C? Value; }", leaf);
+        var root = AssemblyTestHelper.EmitAssembly(tempDir, "ClosureRoot", "namespace Closure.Root; public sealed class A { public Closure.Middle.B? Value; }", middle);
+
+        var resolution = new AssemblyReferenceResolver().Resolve(root);
+
+        var referenceC = Assert.Single(resolution.References.Where(reference => reference.Name == "ClosureLeaf"));
+        Assert.True(referenceC.Resolved);
+        Assert.Equal(Path.GetFullPath(leaf), Path.GetFullPath(referenceC.ResolvedPath!));
+        Assert.Equal(2, referenceC.Depth);
+    }
+
+    [Fact]
     public void Resolve_MissingFile_ReturnsErrorDiagnostic()
     {
         var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".dll");

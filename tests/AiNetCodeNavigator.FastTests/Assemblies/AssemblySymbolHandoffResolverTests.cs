@@ -38,6 +38,22 @@ public sealed class AssemblySymbolHandoffResolverTests
         Assert.Contains($"handoffId: `{typeHandle}`", inspected.Value.FormattedText, StringComparison.Ordinal);
         Assert.Contains($"handoffId: `{memberHandle}`", inspected.Value.FormattedText, StringComparison.Ordinal);
 
+        var scopeResult = await AssemblyNavigationSessionScope.OpenAsync(path, default);
+        Assert.True(scopeResult.IsSuccess, scopeResult.Error?.ToString());
+        await using var scope = scopeResult.Value!;
+        Assert.True(HandoffHandleRegistry.Default.RestoreInternalHandoffForInput(typeHandle).IsSuccess);
+        Assert.True(SymbolHandoffIdentifier.TryParse(type.Id!, out var identifier));
+        Assert.True(SymbolHandoffToken.TryCreateTarget(Path.GetFullPath(path), out var expectedTargetToken));
+        Assert.True(SymbolHandoffToken.TryCreateContent(
+            AnalysisSymbolIdentity.CreateAssemblyHandoffContentHash(scope.Context.Origin.ContentHash, scope.Context.ReferenceSnapshotHash, scope.Context.Generation),
+            out var expectedContentToken));
+        Assert.Equal(expectedTargetToken, identifier.TargetToken);
+        Assert.Equal(expectedContentToken, identifier.ContentToken);
+        var nextGenerationIdentity = AnalysisSymbolIdentity.ForAssembly(path, scope.Context.Origin.ContentHash,
+            scope.Context.Generation + 1, scope.Context.ReferenceSnapshotHash);
+        Assert.NotEqual(AnalysisSymbolIdentity.ForAssembly(path, scope.Context.Origin.ContentHash,
+            scope.Context.Generation, scope.Context.ReferenceSnapshotHash).ContentHash, nextGenerationIdentity.ContentHash);
+
         var resolvedType = await AssemblySymbolBodyScanner.GetAsync(typeHandle);
         var resolvedMember = await AssemblySymbolBodyScanner.GetAsync(memberHandle);
         var structuredId = await AssemblySymbolBodyScanner.GetAsync(type.Id!);
@@ -153,7 +169,8 @@ public sealed class AssemblySymbolHandoffResolverTests
     public async Task ResidentSession_RefreshesRemovedAndReplacedReferencesWithoutTargetChanges()
     {
         using var temp = TestTempDirectory.Create("assembly-reference-refresh-");
-        var dependency = AssemblyTestHelper.EmitAssembly(temp, "RefreshDependency", "namespace Probe.Dependency; public sealed class Dependency { public int Version => 1; }");
+        var leaf = AssemblyTestHelper.EmitAssembly(temp, "RefreshLeaf", "namespace Probe.Leaf; public sealed class Leaf { public int Version => 1; }");
+        var dependency = AssemblyTestHelper.EmitAssembly(temp, "RefreshDependency", "namespace Probe.Dependency; public sealed class Dependency { public Probe.Leaf.Leaf? Value; }", leaf);
         var consumer = AssemblyTestHelper.EmitAssembly(temp, "RefreshConsumer", "public sealed class Consumer { public Probe.Dependency.Dependency? Value; }", dependency);
 
         var initial = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(consumer));
@@ -165,27 +182,37 @@ public sealed class AssemblySymbolHandoffResolverTests
 
         GC.Collect();
         GC.WaitForPendingFinalizers();
-        File.Delete(dependency);
+        File.Delete(leaf);
         var missing = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(consumer));
         Assert.True(missing.IsSuccess, missing.Error?.ToString());
         Assert.True(missing.Value!.Generation > initialGeneration);
-        Assert.Contains(missing.Value.Diagnostics, diagnostic => diagnostic.Contains("Dependency not resolvable", StringComparison.Ordinal));
+        Assert.Contains(missing.Value.Diagnostics, diagnostic => diagnostic.Contains("RefreshLeaf", StringComparison.Ordinal));
         var bodyWithMissingReference = await AssemblySymbolBodyScanner.GetAsync(handoff);
-        Assert.Null(bodyWithMissingReference.Error);
-        Assert.Equal(handoff, bodyWithMissingReference.Body!.HandoffId);
-        Assert.Contains("Consumer", bodyWithMissingReference.Body.Body, StringComparison.Ordinal);
+        Assert.NotNull(bodyWithMissingReference.Error);
+        Assert.Equal(NavigationErrorCodes.StaleSnapshot, bodyWithMissingReference.Error!.Value.Code);
+        var missingReferenceType = Assert.Single(missing.Value.Types.Where(type => type.Name == "Consumer"));
+        var missingReferenceHandle = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(missingReferenceType.Id!);
+        var currentBodyWithMissingReference = await AssemblySymbolBodyScanner.GetAsync(missingReferenceHandle);
+        Assert.Null(currentBodyWithMissingReference.Error);
+        Assert.Equal(missingReferenceHandle, currentBodyWithMissingReference.Body!.HandoffId);
+        Assert.Contains("Consumer", currentBodyWithMissingReference.Body.Body, StringComparison.Ordinal);
 
         using var replacementTemp = TestTempDirectory.Create("assembly-reference-replacement-");
-        var replacement = AssemblyTestHelper.EmitAssembly(replacementTemp, "RefreshDependency", "namespace Probe.Dependency; public sealed class Dependency { public int Version => 2; public int Added => 3; }");
-        File.Copy(replacement, dependency, overwrite: true);
+        var replacement = AssemblyTestHelper.EmitAssembly(replacementTemp, "RefreshLeaf", "namespace Probe.Leaf; public sealed class Leaf { public int Version => 2; public int Added => 3; }");
+        File.Copy(replacement, leaf, overwrite: true);
         var restored = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(consumer));
 
         Assert.True(restored.IsSuccess, restored.Error?.ToString());
         Assert.True(restored.Value!.Generation > missing.Value.Generation);
         Assert.DoesNotContain(restored.Value.Diagnostics, diagnostic => diagnostic.Contains("Dependency not resolvable", StringComparison.Ordinal));
-        var bodyWithReplacementReference = await AssemblySymbolBodyScanner.GetAsync(handoff);
+        var staleMissingReferenceHandle = await AssemblySymbolBodyScanner.GetAsync(missingReferenceHandle);
+        Assert.NotNull(staleMissingReferenceHandle.Error);
+        Assert.Equal(NavigationErrorCodes.StaleSnapshot, staleMissingReferenceHandle.Error!.Value.Code);
+        var restoredType = Assert.Single(restored.Value.Types.Where(type => type.Name == "Consumer"));
+        var restoredHandle = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(restoredType.Id!);
+        var bodyWithReplacementReference = await AssemblySymbolBodyScanner.GetAsync(restoredHandle);
         Assert.Null(bodyWithReplacementReference.Error);
-        Assert.Equal(handoff, bodyWithReplacementReference.Body!.HandoffId);
+        Assert.Equal(restoredHandle, bodyWithReplacementReference.Body!.HandoffId);
         Assert.Contains("Consumer", bodyWithReplacementReference.Body.Body, StringComparison.Ordinal);
         Assert.Equal(originalBytes, await File.ReadAllBytesAsync(consumer));
     }
@@ -214,7 +241,11 @@ public sealed class AssemblySymbolHandoffResolverTests
         var refreshed = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(consumer, TypeName: "Consumer"));
         var refreshedSearch = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(consumer, Query: "ReplacementValue"));
         var staleSearch = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(consumer, Query: "OriginalValue"));
-        var refreshedBody = await AssemblySymbolBodyScanner.GetAsync(getHandle);
+        var refreshedType = Assert.Single(refreshed.Value!.Types);
+        var refreshedHandle = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(
+            Assert.Single(refreshedType.Members.Where(member => member.Name == "Get")).Id!);
+        var refreshedBody = await AssemblySymbolBodyScanner.GetAsync(refreshedHandle);
+        var staleBody = await AssemblySymbolBodyScanner.GetAsync(getHandle);
 
         Assert.True(refreshed.IsSuccess, refreshed.Error?.ToString());
         Assert.True(refreshed.Value!.Generation > initial.Value.Generation);
@@ -228,6 +259,8 @@ public sealed class AssemblySymbolHandoffResolverTests
         Assert.Null(refreshedBody.Error);
         Assert.Contains("ReplacementValue", refreshedBody.Body!.Body, StringComparison.Ordinal);
         Assert.DoesNotContain("OriginalValue", refreshedBody.Body.Body, StringComparison.Ordinal);
+        Assert.Equal(NavigationErrorCodes.StaleSnapshot, staleBody.Error!.Value.Code);
+        Assert.Null(staleBody.Body);
         Assert.Equal(originalConsumerBytes, await File.ReadAllBytesAsync(consumer));
     }
 

@@ -59,11 +59,12 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
             {
                 if (!TryDetail(detailLevel)) return Invalid("detailLevel", "Use compact, standard, or full.");
                 var result = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(target.CanonicalPath, @namespace,
-                    typeName, memberName, publicOnly, maxResults, exactTypeName, memberNames, maxMembers, includeReferences), ct).ConfigureAwait(false);
+                    typeName, memberName, publicOnly, maxResults, exactTypeName, memberNames, maxMembers, includeReferences,
+                    Cursor: continuationToken), ct).ConfigureAwait(false);
                 return result.IsSuccess ? NavigationToolSupport.Success(result.Value!, result.Value!.Truncated,
                     result.Value.ContinuationToken is null ? null : "Repeat the query with the returned continuationToken.")
                     : NavigationToolSupport.Failure(result.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
-            }, AnalysisTargetType.Assembly, cancellationToken);
+            }, AnalysisTargetType.Assembly, cancellationToken, acceptsDomainCursor: true);
 
     [McpServerTool(Name = "search_assembly", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     public Task<CallToolResult> SearchAssembly([Required] string targetPath, string searchKind = "text",
