@@ -1,5 +1,7 @@
 # Documentation Index
 
+The binding product references are these current-state pages, the [public host and tool contract matrix](../tasks/Navigator-Migration/Reviews/public-contract-matrix.md), and the local Navigator code and tests. Task specifications describe planned acceptance work and historical evidence.
+
 ## Development
 
 - [Build and Tests](development/build-and-tests.md): Solution structure, PowerShell scripts, and static log files in `temp/`.

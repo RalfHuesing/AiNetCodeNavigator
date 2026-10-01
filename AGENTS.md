@@ -1,11 +1,12 @@
 # AiNetCodeNavigator agent map
 
-This repository contains product specifications, an MCP server for agentic C# code navigation, and automated test infrastructure. Treat `docs/` as the current-state reference once implemented and verify implementation claims against code and tests; specifications under `tasks/` describe work that may still be planned.
+This repository contains product specifications, an autonomous MCP server for agentic C# code navigation, and automated test infrastructure. Its binding product references are `docs/`, the local public contract matrix, and Navigator code and tests. Verify implementation claims against these local sources; specifications under `tasks/` describe work that may still be planned.
 
 ## Where to look
 
 - [Project status and entry points](README.md)
 - [Current-state documentation index](docs/README.md)
+- [Public host and tool contract matrix](tasks/Navigator-Migration/Reviews/public-contract-matrix.md)
 - [Agent rules](.agents/rules/README.md)
 - [Optional task workflow](.agents/agent-workflow/README.md); use a step only when the task invokes it
 
