@@ -1,0 +1,63 @@
+# Roadmap: Funktionsfähiger MCP-Server für C#-Navigation
+
+Verbindlich sind [Konzept](Konzept.md), [Serververträge](konzept/01-server.md) und [Verifikation](konzept/02-verifikation.md). Die Roadmap ordnet diese Anforderungen, ergänzt keine Produktanforderungen und verändert den Konzeptstatus nicht. Ihre Erstellung ist ausdrücklich beauftragt; Umsetzung beginnt erst mit dem entsprechenden Nutzerauftrag.
+
+## Durchführung und Nachweise
+
+Die Punkte werden in dieser Reihenfolge seriell bearbeitet, jeweils als ein fachlicher Auftrag. Es gibt keine zusätzlichen Milestones oder Leaf-Dateien; der unabhängige Audit folgt am Ende. Implementierer: `gpt-6-luna/high`. Auditor: `gpt-6.1-sol/high`.
+
+Für jeden Umsetzungspunkt gelten die Vorgaben des Konzepts: Ist-Stand anhand der betroffenen Definitionen, Aufrufer und Tests prüfen; korrekte Komponenten wiederverwenden; nur belegte Lücken schließen; passende vorhandene Tests nutzen. Betroffene aktuelle Dokumentation wird im selben Slice aktualisiert. Abnahme und Selbstprüfung müssen vor Abhaken und atomarem Commit erfüllt sein. HEAD und Arbeitsbaum erfassen, fremde Änderungen erhalten, explizite Pfade stagen; nicht pushen oder amenden.
+
+Die Gates stehen ausschließlich im Abschnitt „Offizielle Gates und Nachweise“ der [Verifikation](konzept/02-verifikation.md): pro Code-Slice Build und begründete betroffene Testauswahl, vollständiger zulässiger Solutionlauf einmal zum Abschluss. Jeder Testlauf schließt E2E ausdrücklich aus. Gemeinsame Mechanismusfälle werden einmal geprüft; unterschiedliche fachliche Wege und Regressionen behalten eigene Nachweise.
+
+Zusätzliche strukturelle Refactorings benötigen vor Umsetzung die im [Hauptkonzept](Konzept.md) definierte Festlegung durch den Auditor. Auftrag und Nachweise stehen beim betroffenen Roadmappunkt. Kein eigenständiges Aufräumen, keine zusätzliche Prüfschleife. Abschlussdaten werden in der konzeptgemäßen `Abnahmematrix.md` zusammengeführt; keine zusätzlichen Fortschritts-, Schulden- oder Auditberichte.
+
+## Geordnete Arbeitspunkte
+
+- [ ] **1 — Testauswahl und Git-Fixtures für kurze Änderungsschritte anpassen**
+  - **Intention:** Lange vollständige Integrationstestläufe vor kleinen Commits vermeiden und belegte unnötige Fixturearbeit entfernen.
+  - **Scope:** Testfälle nach tatsächlichem Ablauf inventarisieren, E2E kategorisieren und die auftragsbezogenen Filter-/Commitregeln samt Build-/Testdokumentation aktualisieren. Im vorhandenen Testowner die drei in Kapitel 02 benannten Source-Git-Fälle an eine leichte Sourcevorbereitung anbinden; erforderliche Assemblyvorbereitung bleibt bei Assemblyfällen. Fixturevorbereitung vor/nach Änderung ohne Hostablauf messen.
+  - **Nicht:** E2E ausführen, Assertions abschwächen, Dummy-Assets, reine Timeoutänderungen, neue Fixtureframeworks oder gemeinsam veränderliche Git-Repositories.
+  - **Abnahme:** Ausschlussinventar und tatsächliche Auswahl stimmen überein. Source-Git-Vorbereitung erhält fachliche Inhalte und Isolation, startet keine Builds und restored nur die zwei Worktreeprojekte; im Baseline-Repository kein Restore/Build. Die drei bestehenden Fälle behalten ihre fachlichen Assertions. Laufzeiten und Restore-/Buildprozesszahlen des gemessenen Fixtureanteils sind belegt. Die produktiven Git-Vertragsnachweise folgen in Punkt 5.
+
+- [ ] **2 — Source-Workspace, Fingerprints und gemeinsame Symbolidentität absichern**
+  - **Intention:** Jede Navigation arbeitet auf einem aktuellen, eindeutig zugeordneten und unveränderten Target.
+  - **Scope:** Source-Targetauflösung, TestKit, Compilationcache, ProjectRegistry und Resident-Snapshots gegen die Basisinvarianten prüfen. MSBuild-Wildcard-/Conditional-/External-Compile-Invalidierung einschließlich unaufgelöster Expressions korrigieren. Gemeinsame Source-Handoff-/Rawauflösung und Ambiguitätsfehler absichern. Loader-Scratch, Custom-Targets und Cleanup gemäß Read-only-Vertrag nachweisen. Verantwortliche sind die vorhandenen Workspace-/Symbolkomponenten.
+  - **Nicht:** Eigene MSBuild-Sprache, allgemeine Sicherheits-Sandbox, neue Workspacearchitektur oder nachträgliches Zurückkopieren analysierter Inputs.
+  - **Abnahme:** Sämtliche Source-/TestKit-/Cache-/Registryinvarianten sowie die konkreten MSBuild-Fälle aus Kapitel 01 sind belegt. Linked-Dokumente werden konsistent refreshed; fehlgeschlagenes Laden liefert Recovery statt eines scheinbar aktuellen Altsnapshots. Source-Handoffs sind eindeutig und lehnen unknown/foreign/stale ab. Datei-/Verzeichnissnapshots einschließlich obj/bin bleiben nach Dispose unverändert, Scratch ist bereinigt.
+
+- [ ] **3 — Gemeinsamen MCP-Aufrufpfad, Budgets, Runtime und Wartung vervollständigen**
+  - **Intention:** Registrierte Tools sind bindbar; Antworten und Folgeaufrufe bleiben unter harten Grenzen zuverlässig ausführbar.
+  - **Scope:** Originale SDK-Registrierung und Validierung für exakt 22 Tools prüfen, erforderliche interne Validatorprüfung gemäß Kapitel 01 ermöglichen. Die festgelegten öffentlichen Parameter von `get_index_scope` an das vorhandene Routing anbinden. Gemeinsame Formatter-/Operations-/Continuationverträge, Loading, Cancellation, Ablauf/Capacity und Disposal absichern. `get_server_health`, `reload_config`, Logging-/CLI-Writer und Hostanbindung prüfen beziehungsweise korrigieren.
+  - **Nicht:** Neuer Registrierungs-/Binder-/Storemechanismus, kopierte Validierungsregeln, automatische Budgetanhebung, MCP-Transporttests oder Benutzerconfigänderungen.
+  - **Abnahme:** SDK-Definitionen, Metadaten, Bindung und Hostfilter entsprechen dem Konzept. Byte-/Tokenmessung, ausführbare Mindestwertpaare, passende Antwortseiten, Replay ohne Neuanalyse und Tiny-Budget-Fallback bestehen an den gemeinsamen unterschiedlichen Antwortwegen. Loading→Retry/Poll→Ergebnis, Waiter-Cancellation, Grenzen und Stop-/Disposeverhalten sind komponentennah belegt. Health lädt kein Target; Reload publiziert nur nach Budgetpreflight und erhält bei Fehlern den alten Zustand. Toolabhängige Projektionen werden in Punkten 4–6 nachgewiesen.
+
+- [ ] **4 — Source-Suche, Struktur und statischen Testkontext vollständig nachweisen**
+  - **Intention:** Agenten finden Source-Symbole und erhalten korrekte Struktur, Bodies und nutzbare Folgeauswahlen.
+  - **Scope:** Sourcewege von `find_symbol`, `get_symbol_body`, `get_file_skeleton`, `get_class_structure`, `get_file_tree`, `get_namespace_tree`, `get_index_scope`, `get_feature_context` und `get_test_context`. Alle jeweiligen Funktionen, Parameter, Defaults, Filter/Caps, Sortierungen und fachlichen Fehler aus den beiden Kapiteln prüfen und erforderliche Defekte beim zuständigen Owner korrigieren. Die tatsächlichen Budget-/Pagingprojektionen an das in Punkt 3 geprüfte Routing anbinden und nachweisen.
+  - **Nicht:** Neue Inventoryfilter, physische Vollinventur außerhalb des Roslyn-Scope, gemessene Testabdeckung oder zusätzliche Produkttools.
+  - **Abnahme:** Normales Handlerresultat je genanntem Sourceweg; Source-bezogene fachliche Fehlerfälle, Handoffs und unterschiedliche Projektionen aus Kapitel 02 bestanden. Assemblybezogene Fehlerfälle gehören in Punkt 6. Kinds/Scopes/Generated werden korrekt gefiltert und gezählt, Batch-/Partial-/Multi-Variable-/Recordfälle bleiben korrekt. Reparsegrenzen und projektgenaue Totals gelten. Testkandidaten bleiben projektgenau und ausdrücklich heuristisch.
+
+- [ ] **5 — Source-Beziehungen und Git-Impact fertigstellen**
+  - **Intention:** Beziehungen, Herkunft und Änderungsfolgen liefern verlässliche Ergebnisse mit ehrlichen Grenzen.
+  - **Scope:** Sourcewege von `get_call_tree`, `find_references`, `get_type_hierarchy`, `find_implementations`, `get_impact`, `dependency_graph` und `resolve_type_origin`. Symbol- und Gitmodus getrennt prüfen; sämtliche Source-Relationship-, Traversierungs-, Hunk-/Repository-/Ref-/Callerfälle gemäß Kapitel 01 erfüllen. Produktive Git-Komponenten/Handler mit der in Punkt 1 angepassten tatsächlichen Sourcevorbereitung direkt prüfen. Gitprozessabbruch am Prozessowner nachweisen.
+  - **Nicht:** Git-Stdio-E2E, neue Domaincursor, willkürliche Zuordnung gelöschter/unmapped Hunks oder unbelegte vollständige Traversierung.
+  - **Abnahme:** Normales Source-Handlerresultat je Tool; Source-bezogene Fehler-/Budgetprojektionen aus Kapitel 02 bestanden. Assemblybezogene Fehlerfälle gehören in Punkt 6. Callsite-Spalten, Provenienz, gemeinsame Both-TopN-Grenzen, spätere Dokumentfenster und projektgenaue generische Beziehungen stimmen. Git-Nachweise umfassen Worktree, Hunks, Caller, Repositoryzustände, Omitted-/Zero-Defaults, Pending→Poll→Endresultat und Prozess-Cancellation ohne Hosttransport. Bekannte Totals werden vor Caps gezählt.
+
+- [ ] **6 — Sämtliche unterstützten Assemblywege vervollständigen**
+  - **Intention:** Navigation und Folgeaufrufe erreichen den tatsächlichen Assemblyowner und die aktuelle dekompilierte Generation.
+  - **Scope:** Alle mit Target A gekennzeichneten Wege der Tooltabelle in Kapitel 01 einschließlich `get_assembly_context`, `inspect_assembly`, `search_assembly` und `find_assembly_extensions`. Assemblyregistry/-cache, Generation/Referenzfingerprints, Source-/Ownergrenzen, Rawauflösung und Handoffs prüfen. Die festgelegte Assembly-Membersortierung, öffentlichen Zero-Defaults, Context-Sectionfehler und Domain-/Textpagingfälle erfüllen; gemeinsame Sourceprüfungen nicht kopieren.
+  - **Nicht:** Universeller Assemblyindex, Referenzclosure für die rootbezogene Hierarchie/Implementierungen, Ausführung analysierter Binaries oder Klassifikation von Assemblycode als Source-Tests.
+  - **Abnahme:** Normales Handlerresultat je unterstütztem Assemblyweg sowie alle zugeordneten Fehler-/Budget-/Domainpagingfälle aus Kapitel 02 bestanden. Root→B→C-Ownerfollowups, same-identity Ersatz und Missing/Native/Locked sind ehrlich behandelt. Rawinputs von Assembly-Impact stimmen bei omitted/false `includeReferences` mit opaken Handoffs überein. Deklarationssortierung greift vor Cap; Context verbirgt keine Sectionfehler. Lease-/Cache-/Generationgrenzen und alle Assembly-Handoffarten sind belegt.
+
+- [ ] **7 — Kompakte Referenz, vollständige Nachweise und Abschlussgates liefern**
+  - **Intention:** Den fertigen Stand verständlich dokumentieren und vollständig innerhalb der vereinbarten Testgrenzen abnehmen.
+  - **Scope:** Englische gemeinsame Toolreferenz und gemeinsame Setupseite gemäß Kapitel 02 vervollständigen; betroffene aktuelle Dokumentation/Indizes/Rules abgleichen. `Abnahmematrix.md` mit genau einer Zeile je Tool und gemeinsamen Mechanismus-/Gatebelegen vervollständigen. Fehlende Pflichtnachweise aus Punkten 1–6 ergänzen und den offiziellen Build sowie den vollständigen zulässigen Routine-Solutionlauf einmal ausführen; betroffene zulässige Extendedfälle gezielt ergänzen.
+  - **Nicht:** JSON-Katalogexport, 22 Einzeltoolseiten, zusätzliche Einzelsetupseiten, Installation/Deployment, Clientstarts, unselektierter E2E-Lauf oder mehrfache vollständige Wiederholung unveränderter Suites.
+  - **Abnahme:** Alle Muss-Verträge besitzen konkrete bestandene Nachweise; keine leeren Auswahlen oder unbeabsichtigten Skips. Finale Gates, Commitbezug und Ergebniszahlen sind gesichert. Referenz/Setup stimmen mit SDK-Definitionen, Handlern und aktueller offizieller Clientdokumentation überein; Quellen/Prüfdatum und gültige Links sind enthalten. Ausgeschlossene Prüfungen und Grenzen werden ehrlich genannt. Abschlussstand ist für den Audit festgelegt.
+
+- [ ] **8 — Unabhängiger Abschlussaudit und begrenzte Korrektur**
+  - **Intention:** Pflichtdefekte ausschließen und nach erfüllter Abnahme abschließen.
+  - **Scope:** Auditor prüft den festen Abschlussstand ausschließlich lesend gegen das gesamte Konzept, tatsächlichen Code, Tests, Nachweise und Nicht-Ziele. Findings mit Fundstelle und Vertragsbezug direkt hier festhalten. Erforderliche Korrekturen samt begrenzten Refactorings zu höchstens einem Korrekturauftrag bündeln; dessen Kriterien definiert der Auditor vor Umsetzung. Ohne Findings keinen Korrekturauftrag starten.
+  - **Nicht:** Produktionsänderungen durch den Auditor, zusätzliche Audit-/Korrekturschleifen, neue Milestones, Stilbereinigung oder Scopeerweiterung.
+  - **Abnahme:** Kein offener Pflichtdefekt gemäß Abschlussdefinition. Nach einer notwendigen Korrektur werden nur vereinbarte Kriterien, Regressionen und betroffene Gates kontrolliert; unveränderte Prüfungen nicht erneut vollständig laufen lassen. Ein verbleibender Pflichtdefekt bleibt eine gemeldete Blockade und verhindert das Abhaken. Zulässige offene P3-Beobachtungen sind begründet dokumentiert. Bei erfüllter Abnahme Abschlussbericht mit tatsächlichen Nachweisen liefern und stoppen.
