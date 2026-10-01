@@ -8,6 +8,112 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class McpServerIntegrationTests
 {
     [Fact]
+    public async Task TinyTokenBudgetOnEarlyNavigationErrorsReturnsSanitizedInvalidParams()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        using var process = StartHost(repositoryRoot, GetHostAssemblyPath(repositoryRoot), null);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+
+        try
+        {
+            await SendRequestAsync(process, 1, "initialize", new
+            {
+                protocolVersion = "2025-03-26",
+                capabilities = new { },
+                clientInfo = new { name = "tiny-budget-test", version = "1.0" },
+            }, timeout.Token);
+            var initialized = await ReadResponseAsync(process, 1, timeout.Token);
+            Assert.Equal("2025-03-26", initialized.GetProperty("result").GetProperty("protocolVersion").GetString());
+            await SendNotificationAsync(process, "notifications/initialized", timeout.Token);
+
+            await SendRequestAsync(process, 101, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = "missing.slnx", symbolIdentifier = "T:Missing.Type", scopeType = "unsupported", maxResponseTokens = 1 },
+            }, timeout.Token);
+            var invalidScope = await ReadResponseAsync(process, 101, timeout.Token);
+            AssertTinyBudgetErrorIsSanitized(invalidScope);
+
+            await SendRequestAsync(process, 104, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = "missing.slnx", symbolIdentifier = "T:Missing.Type", direction = "sideways", maxResponseTokens = 1 },
+            }, timeout.Token);
+            var invalidDirection = await ReadResponseAsync(process, 104, timeout.Token);
+            AssertTinyBudgetErrorIsSanitized(invalidDirection);
+
+            await SendRequestAsync(process, 102, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = Path.Combine(Path.GetTempPath(), "missing-" + Guid.NewGuid().ToString("N") + ".slnx"), symbolIdentifier = "T:Missing.Type", maxResponseTokens = 1 },
+            }, timeout.Token);
+            var invalidTarget = await ReadResponseAsync(process, 102, timeout.Token);
+            AssertTinyBudgetErrorIsSanitized(invalidTarget);
+
+            await SendRequestAsync(process, 103, "tools/call", new
+            {
+                name = "inspect_assembly",
+                arguments = new { targetPath = GetHostAssemblyPath(repositoryRoot), detailLevel = "unsupported", maxResponseTokens = 1 },
+            }, timeout.Token);
+            var invalidAssemblyDetail = await ReadResponseAsync(process, 103, timeout.Token);
+            AssertTinyBudgetErrorIsSanitized(invalidAssemblyDetail);
+
+            await SendRequestAsync(process, 105, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = "missing.slnx", symbolIdentifier = "T:Missing.Type", scopeType = "unsupported", maxResponseTokens = 16 },
+            }, timeout.Token);
+            var narrowInvalidScope = await ReadResponseAsync(process, 105, timeout.Token);
+            AssertTinyBudgetErrorIsSanitized(narrowInvalidScope);
+
+            await SendRequestAsync(process, 106, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = "missing.slnx", symbolIdentifier = "T:Missing.Type", scopeType = "unsupported", maxResponseTokens = 32 },
+            }, timeout.Token);
+            var mediumInvalidScope = await ReadResponseAsync(process, 106, timeout.Token);
+            AssertTinyBudgetErrorIsSanitized(mediumInvalidScope);
+
+            await SendRequestAsync(process, 107, "tools/call", new
+            {
+                name = "inspect_assembly",
+                arguments = new { targetPath = GetHostAssemblyPath(repositoryRoot), detailLevel = "unsupported", maxResponseTokens = 16 },
+            }, timeout.Token);
+            var narrowInvalidAssemblyDetail = await ReadResponseAsync(process, 107, timeout.Token);
+            AssertTinyBudgetErrorIsSanitized(narrowInvalidAssemblyDetail);
+
+            await SendRequestAsync(process, 108, "tools/call", new
+            {
+                name = "inspect_assembly",
+                arguments = new { targetPath = GetHostAssemblyPath(repositoryRoot), detailLevel = "unsupported", maxResponseTokens = 32 },
+            }, timeout.Token);
+            var mediumInvalidAssemblyDetail = await ReadResponseAsync(process, 108, timeout.Token);
+            AssertTinyBudgetErrorIsSanitized(mediumInvalidAssemblyDetail);
+
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            var stderr = await stderrTask;
+            Assert.DoesNotContain("InternalError", stderr, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+        }
+    }
+
+    private static void AssertTinyBudgetErrorIsSanitized(JsonElement response)
+    {
+        Assert.True(response.TryGetProperty("error", out var error), response.ToString());
+        Assert.Equal(-32602, error.GetProperty("code").GetInt32());
+        var message = error.GetProperty("message").GetString()!;
+        Assert.Contains("response token budget is too small", message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ArgumentOutOfRangeException", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("InternalError", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task StdioHostCompletesHandshakeListsMaintenanceToolsServesCallsAndExitsOnEof()
     {
         var repositoryRoot = SolutionRootLocator.Find();

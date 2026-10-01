@@ -21,6 +21,7 @@
   - [x] Verified Root → B → C relationship traversal through depth 2, fixture depth-3 queries, and owner-bound relationship handoffs for references, call tree, impact, and assembly context.
   - [x] Verified raw managed-assembly symbol inputs (names, documentation IDs, positions, line-only) and selectable owner-bound ambiguity results through public consumers.
   - [x] Verified Git change-context hunk mapping, sibling declarations, staged/unstaged/untracked changes, deletion completeness, repository status, and invalid refs through real stdio fixtures.
+  - [x] Verified sanitized one-token `InvalidParams` for schema-valid scope, direction, target-routing, and assembly detail errors; scope/detail also pass at 16 and 32 tokens.
   - [ ] Complete all twenty navigation contracts, including public budget/error recovery, assembly-reference consumer closure, and full parameter/filter parity.
   - [ ] Beziehungs-Tools: `get_call_tree`, `find_references`, `get_type_hierarchy`, `find_implementations`, `get_impact`, `dependency_graph`, `resolve_type_origin`
   - [ ] Assembly-Tools: `get_assembly_context`, `inspect_assembly`, `search_assembly`, `find_assembly_extensions`

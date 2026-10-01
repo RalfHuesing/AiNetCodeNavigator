@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using AiNetCodeNavigator.Mcp.Formatting;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,9 +31,49 @@ internal static class McpArgumentValidationFilter
                 return error;
             }
 
-            return await next(context, cancellationToken).ConfigureAwait(false);
+            var arguments = context.Params?.Arguments ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            var budget = ReadErrorBudgets(arguments);
+            try
+            {
+                var result = await next(context, cancellationToken).ConfigureAwait(false);
+                EnsureErrorFitsRequestedBudget(result, arguments, budget);
+                return result;
+            }
+            catch (ArgumentOutOfRangeException exception) when (HasExplicitResponseBudget(arguments)
+                && exception.ParamName is "maxResponseBytes" or "maxResponseTokens")
+            {
+                throw CreateBudgetInvalidParams(exception.ParamName == "maxResponseTokens");
+            }
         });
     }
+
+    private static void EnsureErrorFitsRequestedBudget(
+        CallToolResult result,
+        IDictionary<string, JsonElement> arguments,
+        (int MaxResponseBytes, int? MaxResponseTokens) budget)
+    {
+        if (result.IsError != true || !HasExplicitResponseBudget(arguments)) return;
+
+        var text = string.Join("\n", result.Content.OfType<TextContentBlock>().Select(static block => block.Text));
+        var exceedsBytes = Encoding.UTF8.GetByteCount(text) > budget.MaxResponseBytes;
+        var exceedsTokens = budget.MaxResponseTokens is { } maxTokens
+            && McpResponseFormatter.CountTokens(text) > maxTokens;
+        if (exceedsBytes || exceedsTokens)
+        {
+            throw CreateBudgetInvalidParams(exceedsTokens);
+        }
+    }
+
+    private static bool HasExplicitResponseBudget(IDictionary<string, JsonElement> arguments) =>
+        TryReadInt32(arguments, "maxResponseBytes", out var bytes) && McpResponseBudgetLimits.IsPublicBudget(bytes)
+        || TryReadInt32(arguments, "maxResponseTokens", out var tokens) && tokens > 0;
+
+    private static McpProtocolException CreateBudgetInvalidParams(bool tokenBudget) => new(
+        tokenBudget
+            ? "The response token budget is too small to return the required tool error."
+            : "The response byte budget is too small to return the required tool error.",
+        null,
+        McpErrorCode.InvalidParams);
 
     internal static async Task<CallToolResult?> ValidateAsync(
         RequestContext<CallToolRequestParams> context,
