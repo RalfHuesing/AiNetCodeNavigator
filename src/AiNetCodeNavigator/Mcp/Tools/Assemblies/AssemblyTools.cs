@@ -19,14 +19,16 @@ namespace AiNetCodeNavigator.Mcp.Tools.Assemblies;
 public sealed class AssemblyTools(NavigatorHostRuntime runtime)
 {
     [McpServerTool(Name = "get_assembly_context", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Combine assembly metadata, body, structure, callers, and impact sections for a selected target or symbol.")]
     public Task<CallToolResult> GetAssemblyContext([Required] string targetPath, string? symbolIdentifier = null,
         bool includeReferences = false, bool includeCallers = false, bool includeImpact = false, bool includeBody = false,
-        bool includeClassStructure = false, [Range(1, 1000)] int maxResults = 100, [Range(1, 1000)] int maxBodyLines = 80,
+        bool includeClassStructure = false, [System.ComponentModel.Description("Maximum overview entries; zero uses the default of 100.")] [Range(0, 1000)] int maxResults = 100, [Range(1, 1000)] int maxBodyLines = 80,
         [Range(1, 200)] int maxCallers = 10, [Range(1, 3)] int depth = 1, [Range(1, 200)] int topN = 10,
-        string detailLevel = "standard", [Range(0, 65536)] int? maxResponseBytes = null,
+        [System.ComponentModel.Description("Default response detail: compact, standard (default), or full. An explicit positive maxResponseBytes takes precedence.")] string detailLevel = "standard", [Range(0, 65536)] int? maxResponseBytes = null,
         [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
         string? continuationToken = null, CancellationToken cancellationToken = default)
     {
+        maxResults = maxResults == 0 ? 100 : maxResults;
         if (maxResponseBytes is > 0 and < McpResponseBudgetLimits.MinimumBytes)
             return Task.FromResult(Invalid("maxResponseBytes", $"Use {McpResponseBudgetLimits.MinimumBytes} to {McpResponseBudgetLimits.MaximumBytes} bytes."));
         if (symbolIdentifier is not null && string.IsNullOrWhiteSpace(symbolIdentifier))
@@ -236,37 +238,51 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "inspect_assembly", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Inspect types and members in a managed assembly, optionally including referenced assemblies.")]
     public Task<CallToolResult> InspectAssembly([Required] string targetPath, string? @namespace = null,
         string? typeName = null, string? memberName = null, bool publicOnly = true, bool exactTypeName = false,
-        string[]? memberNames = null, [Range(1, 1000)] int maxResults = 100, [Range(1, 1000)] int maxMembers = 100,
-        bool? includeReferences = null, string detailLevel = "standard", [Range(512, 65536)] int maxResponseBytes = 24576,
+        string[]? memberNames = null,
+        [System.ComponentModel.Description("Maximum types to return; zero uses the default of 100.")] [Range(0, 1000)] int maxResults = 100,
+        [System.ComponentModel.Description("Maximum members per type; zero uses the default of 100.")] [Range(0, 1000)] int maxMembers = 100,
+        [System.ComponentModel.Description("When omitted, include references unless typeName, memberName, or memberNames narrows the inspection.")] bool? includeReferences = null,
+        [System.ComponentModel.Description("Response detail: compact, standard (default), or full.")] string detailLevel = "standard",
+        [System.ComponentModel.Description("Optional byte cap; zero uses this tool's 24,576-byte default.")] [Range(0, 65536)] int maxResponseBytes = 24576,
         [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
-        string? continuationToken = null, CancellationToken cancellationToken = default) =>
-        NavigationToolSupport.RouteAsync(runtime, "inspect_assembly", targetPath,
-            new { @namespace, typeName, memberName, publicOnly, exactTypeName, memberNames, maxResults, maxMembers, includeReferences, detailLevel },
-            operationToken, continuationToken, maxResponseBytes, maxResponseTokens,
+        string? continuationToken = null, CancellationToken cancellationToken = default)
+    {
+        var effectiveResponseBytes = maxResponseBytes == 0 ? 24_576 : maxResponseBytes;
+        var effectiveMaxResults = maxResults == 0 ? 100 : maxResults;
+        var effectiveMaxMembers = maxMembers == 0 ? 100 : maxMembers;
+        return NavigationToolSupport.RouteAsync(runtime, "inspect_assembly", targetPath,
+            new { @namespace, typeName, memberName, publicOnly, exactTypeName, memberNames, maxResults = effectiveMaxResults, maxMembers = effectiveMaxMembers, includeReferences, detailLevel },
+            operationToken, continuationToken, effectiveResponseBytes, maxResponseTokens,
             async (target, ct) =>
             {
                 if (!TryDetail(detailLevel)) return Invalid("detailLevel", "Use compact, standard, or full.");
                 var result = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(target.CanonicalPath, @namespace,
-                    typeName, memberName, publicOnly, maxResults, exactTypeName, memberNames, maxMembers, includeReferences,
+                    typeName, memberName, publicOnly, effectiveMaxResults, exactTypeName, memberNames, effectiveMaxMembers, includeReferences,
                     Cursor: continuationToken), ct).ConfigureAwait(false);
                 return result.IsSuccess ? NavigationToolSupport.Success(result.Value!, result.Value!.Truncated,
                     result.Value.ContinuationToken is null ? null : "Repeat the query with the returned continuationToken.")
-                    : NavigationToolSupport.Failure(result.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
+                    : NavigationToolSupport.Failure(result.Error!.Value, effectiveResponseBytes, maxResponseTokens, "$.targetPath");
             }, AnalysisTargetType.Assembly, cancellationToken, acceptsDomainCursor: true);
+    }
 
     [McpServerTool(Name = "search_assembly", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    public Task<CallToolResult> SearchAssembly([Required] string targetPath, string searchKind = "text",
-        string? pattern = null, bool? isRegex = null, bool caseSensitive = false, bool declarationOnly = false,
-        string? kind = null, string? fileFilter = null, [Range(0, 5)] int contextLines = 0,
-        [Range(0, 1000)] int maxResults = 50, [Range(0, 2000)] int maxFiles = 0,
-        string detailLevel = "standard", [Range(512, 65536)] int maxResponseBytes = 24576,
+    [System.ComponentModel.Description("Search decompiled assembly declarations or text with optional regex, kind, file, and result filters.")]
+    public Task<CallToolResult> SearchAssembly([Required] string targetPath, [System.ComponentModel.Description("Search mode: text (default), external_calls, or data_access. Use declarationOnly and kind to filter declarations.")] string searchKind = "text",
+        string? pattern = null, [System.ComponentModel.Description("Regex mode: null auto-detects regex, true requires regex, and false searches literally.")] bool? isRegex = null, bool caseSensitive = false, bool declarationOnly = false,
+        [System.ComponentModel.Description("Declaration kind filter: method, type, or property.")] string? kind = null, string? fileFilter = null, [Range(0, 5)] int contextLines = 0,
+        [System.ComponentModel.Description("Maximum matches to return; zero uses the default limit of 50.")] [Range(0, 1000)] int maxResults = 50,
+        [System.ComponentModel.Description("Maximum matching files to search; zero (default) means no matching-file limit. Positive values are capped at 2000.")] [Range(0, 2000)] int maxFiles = 0,
+        [System.ComponentModel.Description("Response detail: compact, standard (default), or full.")] string detailLevel = "standard", [System.ComponentModel.Description("Optional byte cap; zero uses this tool's 24,576-byte default.")] [Range(0, 65536)] int maxResponseBytes = 24576,
         [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
-        string? continuationToken = null, CancellationToken cancellationToken = default) =>
-        NavigationToolSupport.RouteAsync(runtime, "search_assembly", targetPath,
+        string? continuationToken = null, CancellationToken cancellationToken = default)
+    {
+        var effectiveResponseBytes = maxResponseBytes == 0 ? 24_576 : maxResponseBytes;
+        return NavigationToolSupport.RouteAsync(runtime, "search_assembly", targetPath,
             new { searchKind, pattern, isRegex, caseSensitive, declarationOnly, kind, fileFilter, contextLines, maxResults, maxFiles, detailLevel },
-            operationToken, continuationToken, maxResponseBytes, maxResponseTokens,
+            operationToken, continuationToken, effectiveResponseBytes, maxResponseTokens,
             async (target, ct) =>
             {
                 if (!TryDetail(detailLevel)) return Invalid("detailLevel", "Use compact, standard, or full.");
@@ -280,27 +296,33 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                         : result.Value.TruncatedBy?.Contains("maxFiles", StringComparer.Ordinal) == true
                             ? "Increase maxFiles and repeat the same query."
                             : "Increase maxResults and repeat the same query.")
-                    : NavigationToolSupport.Failure(result.Error!.Value, maxResponseBytes, maxResponseTokens, "$.pattern");
+                    : NavigationToolSupport.Failure(result.Error!.Value, effectiveResponseBytes, maxResponseTokens, "$.pattern");
             }, AnalysisTargetType.Assembly, cancellationToken, acceptsDomainCursor: true);
+    }
 
     [McpServerTool(Name = "find_assembly_extensions", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Find extension methods in a managed assembly by receiver type, extension name, or namespace.")]
     public Task<CallToolResult> FindAssemblyExtensions([Required] string targetPath, string? receiverType = null,
         string? extensionName = null, string? @namespace = null, bool includeReferences = false,
-        [Range(1, 1000)] int maxResults = 100, string detailLevel = "standard",
-        [Range(512, 65536)] int maxResponseBytes = 16384, [Range(1, int.MaxValue)] int? maxResponseTokens = null,
-        string? operationToken = null, string? continuationToken = null, CancellationToken cancellationToken = default) =>
-        NavigationToolSupport.RouteAsync(runtime, "find_assembly_extensions", targetPath,
+        [System.ComponentModel.Description("Maximum extensions to return; zero uses the default of 100.")] [Range(0, 1000)] int maxResults = 100, [System.ComponentModel.Description("Response detail: compact, standard (default), or full.")] string detailLevel = "standard",
+        [System.ComponentModel.Description("Optional byte cap; zero uses this tool's 16,384-byte default.")] [Range(0, 65536)] int maxResponseBytes = 16384, [Range(1, int.MaxValue)] int? maxResponseTokens = null,
+        string? operationToken = null, string? continuationToken = null, CancellationToken cancellationToken = default)
+    {
+        var effectiveResponseBytes = maxResponseBytes == 0 ? 16_384 : maxResponseBytes;
+        return NavigationToolSupport.RouteAsync(runtime, "find_assembly_extensions", targetPath,
             new { receiverType, extensionName, @namespace, includeReferences, maxResults, detailLevel }, operationToken,
-            continuationToken, maxResponseBytes, maxResponseTokens,
+            continuationToken, effectiveResponseBytes, maxResponseTokens,
             async (target, ct) =>
             {
+                var effectiveMaxResults = maxResults == 0 ? 100 : maxResults;
                 if (!TryDetail(detailLevel)) return Invalid("detailLevel", "Use compact, standard, or full.");
                 var result = await FindAssemblyExtensionsScanner.FindAsync(new FindAssemblyExtensionsRequest(target.CanonicalPath,
-                    receiverType, extensionName, @namespace, includeReferences, maxResults), ct).ConfigureAwait(false);
+                    receiverType, extensionName, @namespace, includeReferences, effectiveMaxResults), ct).ConfigureAwait(false);
                 return result.IsSuccess ? NavigationToolSupport.Success(result.Value!, result.Value!.Truncated,
                     "Increase maxResults and repeat the same query.")
-                    : NavigationToolSupport.Failure(result.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
+                    : NavigationToolSupport.Failure(result.Error!.Value, effectiveResponseBytes, maxResponseTokens, "$.targetPath");
             }, AnalysisTargetType.Assembly, cancellationToken);
+    }
 
     private CallToolResult Invalid(string field, string hint) => McpToolResults.InvalidArgument("The requested value is not supported.", "$." + field, hint);
     private static bool TryDetail(string value) => TryGetDetailBudget(value, null, out _);

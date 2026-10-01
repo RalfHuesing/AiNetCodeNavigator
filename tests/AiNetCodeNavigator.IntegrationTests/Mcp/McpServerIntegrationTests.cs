@@ -8,6 +8,334 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class McpServerIntegrationTests
 {
     [Fact]
+    public async Task NavigationToolListExplainsPurposeAndCriticalWireValues()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        var configPath = Path.Combine(Path.GetTempPath(), "ainet-tool-descriptions-" + Guid.NewGuid().ToString("N") + ".json");
+        var logDirectory = Path.Combine(Path.GetTempPath(), "ainet-tool-description-logs-" + Guid.NewGuid().ToString("N"));
+        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
+        Process? process = null;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+        try
+        {
+            process = await StartInitializedHostAsync(repositoryRoot, GetHostAssemblyPath(repositoryRoot), configPath, timeout.Token, logDirectory);
+            await SendRequestAsync(process, 2, "tools/list", new { }, timeout.Token);
+            var response = await ReadResponseAsync(process, 2, timeout.Token);
+            var registered = response.GetProperty("result").GetProperty("tools").EnumerateArray()
+                .ToDictionary(tool => tool.GetProperty("name").GetString()!, StringComparer.Ordinal);
+
+            var navigationTools = new[]
+            {
+                "find_symbol", "get_symbol_body", "get_file_skeleton", "get_class_structure", "get_file_tree",
+                "get_namespace_tree", "get_index_scope", "get_call_tree", "find_references", "get_type_hierarchy",
+                "find_implementations", "get_impact", "dependency_graph", "resolve_type_origin", "get_assembly_context",
+                "inspect_assembly", "search_assembly", "find_assembly_extensions", "get_feature_context", "get_test_context",
+            };
+            foreach (var name in navigationTools)
+            {
+                var tool = registered[name];
+                Assert.True(tool.TryGetProperty("description", out var description), $"{name} has no tool description in tools/list.");
+                Assert.True((description.GetString()?.Length ?? 0) >= 32, $"{name} has no useful purpose description.");
+            }
+
+            AssertPropertyDescriptionContains(registered["get_call_tree"], "direction", "incoming", "outgoing", "both", "default");
+            AssertPropertyDescriptionContains(registered["get_call_tree"], "format", "ascii", "mermaid", "default");
+            AssertPropertyDescriptionContains(registered["get_call_tree"], "includeDiagnostics", "assembly", "false", "source");
+            AssertPropertyDescriptionContains(registered["find_symbol"], "namePatterns", "exactly one", "pattern");
+            AssertPropertyDescriptionContains(registered["find_symbol"], "kind", "record class", "record struct", "delegate");
+            AssertPropertyDescriptionContains(registered["get_file_tree"], "view", "tree", "files", "summary", "default");
+            AssertPropertyDescriptionContains(registered["get_namespace_tree"], "kind", "all", "class", "interface", "record", "struct", "enum");
+            AssertPropertyDescriptionContains(registered["inspect_assembly"], "detailLevel", "compact", "standard", "full");
+            AssertPropertyDescriptionContains(registered["search_assembly"], "detailLevel", "compact", "standard", "full");
+            AssertPropertyDescriptionContains(registered["find_assembly_extensions"], "detailLevel", "compact", "standard", "full");
+            AssertPropertyDescriptionContains(registered["get_impact"], "detailLevel", "callers", "change-context", "default");
+            AssertPropertyDescriptionContains(registered["get_assembly_context"], "detailLevel", "compact", "standard", "full");
+            AssertPropertyDescriptionContains(registered["inspect_assembly"], "includeReferences", "omitted", "typeName", "memberNames");
+            AssertPropertyDescriptionContains(registered["search_assembly"], "isRegex", "null", "false", "literal");
+            AssertPropertyDescriptionContains(registered["search_assembly"], "searchKind", "text", "external_calls", "data_access");
+
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
+        }
+        finally
+        {
+            if (process is not null && !process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            process?.Dispose();
+            File.Delete(configPath);
+            if (Directory.Exists(logDirectory)) Directory.Delete(logDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task AssemblyZeroLimitsAndZeroByteBudgetUseTheirToolDefaults()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        var fixtureRoot = Path.Combine(Path.GetTempPath(), "ainet-zero-default-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(fixtureRoot);
+        var projectPath = Path.Combine(fixtureRoot, "ZeroMatrix.csproj");
+        var sourcePath = Path.Combine(fixtureRoot, "ZeroMatrix.cs");
+        var assemblyPath = Path.Combine(fixtureRoot, "bin", "Debug", "net10.0", "ZeroMatrix.dll");
+        await File.WriteAllTextAsync(projectPath, "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>");
+        await File.WriteAllTextAsync(sourcePath, "namespace ZeroMatrix; public sealed class ZeroBox { public int Read() => 1; public int First() => 2; public int Second() => 3; }");
+        await File.WriteAllTextAsync(Path.Combine(fixtureRoot, "ZeroMatrixTwo.cs"), "namespace ZeroMatrix; public sealed class ZeroBoxTwo { public int Read() => 2; public int First() => 3; public int Second() => 4; }");
+        await File.WriteAllTextAsync(Path.Combine(fixtureRoot, "ZeroMatrixThree.cs"), "namespace ZeroMatrix; public sealed class ZeroBoxThree { public int Read() => 3; public int First() => 4; public int Second() => 5; }");
+        await File.WriteAllTextAsync(Path.Combine(fixtureRoot, "ZeroExtensions.cs"), "namespace ZeroMatrix; public static class ZeroExtensions { public static int PlusOne(this ZeroBox value) => value.Read() + 1; public static int PlusTwo(this ZeroBox value) => value.Read() + 2; public static int PlusThree(this ZeroBox value) => value.Read() + 3; }");
+        await RestoreProjectAsync(projectPath, fixtureRoot);
+        await RunCommandAsync("dotnet", fixtureRoot, "build", projectPath, "--no-restore", "--configuration", "Debug");
+        var pageFixtureRoot = Path.Combine(fixtureRoot, "large-page-fixture");
+        Directory.CreateDirectory(pageFixtureRoot);
+        var pageProjectPath = Path.Combine(pageFixtureRoot, "LargePageMatrix.csproj");
+        var pageAssemblyPath = Path.Combine(pageFixtureRoot, "bin", "Debug", "net10.0", "LargePageMatrix.dll");
+        await File.WriteAllTextAsync(pageProjectPath, "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>");
+        var manyMethods = string.Join(Environment.NewLine, Enumerable.Range(0, 200).Select(index => $"    public int Many{index:D4}() => {index};"));
+        await File.WriteAllTextAsync(Path.Combine(pageFixtureRoot, "ManyMethods.cs"), $"namespace LargePageMatrix; public sealed class ManyMethods\n{{\n{manyMethods}\n}}");
+        var longBodyLines = string.Join(Environment.NewLine, Enumerable.Range(0, 800).Select(index => $"        System.Console.WriteLine(\"line-{index:D4}\");"));
+        await File.WriteAllTextAsync(Path.Combine(pageFixtureRoot, "LargeBody.cs"), $"namespace LargePageMatrix; public sealed class LargeBody {{ public void WriteMany() {{\n{longBodyLines}\n    }} }}");
+        await RestoreProjectAsync(pageProjectPath, pageFixtureRoot);
+        await RunCommandAsync("dotnet", pageFixtureRoot, "build", pageProjectPath, "--no-restore", "--configuration", "Debug");
+        using var process = StartHost(repositoryRoot, GetHostAssemblyPath(repositoryRoot), null);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+
+        try
+        {
+            await SendRequestAsync(process, 1, "initialize", new
+            {
+                protocolVersion = "2025-03-26",
+                capabilities = new { },
+                clientInfo = new { name = "assembly-zero-default-test", version = "1.0" },
+            }, timeout.Token);
+            _ = await ReadResponseAsync(process, 1, timeout.Token);
+            await SendNotificationAsync(process, "notifications/initialized", timeout.Token);
+
+            await SendRequestAsync(process, 2, "tools/call", new
+            {
+                name = "inspect_assembly",
+                arguments = new { targetPath = assemblyPath, includeReferences = false },
+            }, timeout.Token);
+            var inspect = await ReadResponseAsync(process, 2, timeout.Token);
+            var inspectText = GetFirstText(inspect);
+            Assert.False(inspect.GetProperty("result").GetProperty("isError").GetBoolean(), inspectText);
+            var inspectPayload = ParsePayload(inspectText);
+            Assert.True(inspectPayload.GetProperty("shownCount").GetInt32() >= 3, inspectText);
+            Assert.True(inspectPayload.GetProperty("totalTypes").GetInt32() >= 3, inspectText);
+            Assert.True(inspectPayload.GetProperty("types").EnumerateArray().Max(type => type.GetProperty("members").GetArrayLength()) >= 3, inspectText);
+
+            await SendRequestAsync(process, 6, "tools/call", new
+            {
+                name = "inspect_assembly",
+                arguments = new { targetPath = assemblyPath, includeReferences = false, maxResults = 0, maxMembers = 0, maxResponseBytes = 0 },
+            }, timeout.Token);
+            var zeroInspect = await ReadResponseAsync(process, 6, timeout.Token);
+            var zeroInspectText = GetFirstText(zeroInspect);
+            Assert.False(zeroInspect.GetProperty("result").GetProperty("isError").GetBoolean(), zeroInspectText);
+            var zeroInspectPayload = ParsePayload(zeroInspectText);
+            Assert.Equal(inspectPayload.GetProperty("totalTypes").GetInt32(), zeroInspectPayload.GetProperty("totalTypes").GetInt32());
+            Assert.Equal(inspectPayload.GetProperty("shownCount").GetInt32(), zeroInspectPayload.GetProperty("shownCount").GetInt32());
+            Assert.Equal(inspectPayload.GetProperty("types").EnumerateArray().Select(type => type.GetProperty("name").GetString()),
+                zeroInspectPayload.GetProperty("types").EnumerateArray().Select(type => type.GetProperty("name").GetString()));
+            Assert.True(zeroInspectPayload.GetProperty("types").EnumerateArray().Max(type => type.GetProperty("members").GetArrayLength()) >= 3, zeroInspectText);
+
+            await SendRequestAsync(process, 3, "tools/call", new
+            {
+                name = "search_assembly",
+                arguments = new { targetPath = assemblyPath, searchKind = "text", pattern = "Read", declarationOnly = true, kind = "method", isRegex = false },
+            }, timeout.Token);
+            var search = await ReadResponseAsync(process, 3, timeout.Token);
+            var searchText = GetFirstText(search);
+            Assert.False(search.GetProperty("result").GetProperty("isError").GetBoolean(), searchText);
+            var searchPayload = ParsePayload(searchText);
+            Assert.NotEmpty(searchPayload.GetProperty("results").EnumerateArray());
+
+            await SendRequestAsync(process, 7, "tools/call", new
+            {
+                name = "search_assembly",
+                arguments = new { targetPath = assemblyPath, searchKind = "text", pattern = "Read", declarationOnly = true, kind = "method", isRegex = false, maxResults = 0, maxFiles = 0, maxResponseBytes = 0 },
+            }, timeout.Token);
+            var zeroSearch = await ReadResponseAsync(process, 7, timeout.Token);
+            var zeroSearchText = GetFirstText(zeroSearch);
+            Assert.False(zeroSearch.GetProperty("result").GetProperty("isError").GetBoolean(), zeroSearchText);
+            var zeroSearchPayload = ParsePayload(zeroSearchText);
+            Assert.True(searchPayload.GetProperty("totalCount").GetInt32() >= 3, searchText);
+            Assert.True(searchPayload.GetProperty("results").EnumerateArray().Select(hit => hit.GetProperty("filePath").GetString()).Distinct(StringComparer.OrdinalIgnoreCase).Count() >= 3, searchText);
+            Assert.Equal(searchPayload.GetProperty("totalCount").GetInt32(), zeroSearchPayload.GetProperty("totalCount").GetInt32());
+            Assert.Equal(searchPayload.GetProperty("results").EnumerateArray().Select(hit => hit.GetProperty("filePath").GetString()),
+                zeroSearchPayload.GetProperty("results").EnumerateArray().Select(hit => hit.GetProperty("filePath").GetString()));
+
+            await SendRequestAsync(process, 4, "tools/call", new
+            {
+                name = "find_assembly_extensions",
+                arguments = new { targetPath = assemblyPath, receiverType = "ZeroMatrix.ZeroBox" },
+            }, timeout.Token);
+            var extensions = await ReadResponseAsync(process, 4, timeout.Token);
+            var extensionsText = GetFirstText(extensions);
+            Assert.False(extensions.GetProperty("result").GetProperty("isError").GetBoolean(), extensionsText);
+            var extensionPayload = ParsePayload(extensionsText);
+            Assert.True(extensionPayload.GetProperty("totalCount").GetInt32() >= 3, extensionsText);
+            Assert.Contains(extensionPayload.GetProperty("extensions").EnumerateArray(), extension => extension.GetProperty("name").GetString() == "PlusOne");
+
+            await SendRequestAsync(process, 8, "tools/call", new
+            {
+                name = "find_assembly_extensions",
+                arguments = new { targetPath = assemblyPath, receiverType = "ZeroMatrix.ZeroBox", maxResults = 0, maxResponseBytes = 0 },
+            }, timeout.Token);
+            var zeroExtensions = await ReadResponseAsync(process, 8, timeout.Token);
+            var zeroExtensionsText = GetFirstText(zeroExtensions);
+            Assert.False(zeroExtensions.GetProperty("result").GetProperty("isError").GetBoolean(), zeroExtensionsText);
+            var zeroExtensionPayload = ParsePayload(zeroExtensionsText);
+            Assert.Equal(extensionPayload.GetProperty("totalCount").GetInt32(), zeroExtensionPayload.GetProperty("totalCount").GetInt32());
+            Assert.Equal(extensionPayload.GetProperty("extensions").EnumerateArray().Select(extension => extension.GetProperty("name").GetString()),
+                zeroExtensionPayload.GetProperty("extensions").EnumerateArray().Select(extension => extension.GetProperty("name").GetString()));
+            Assert.True(zeroExtensionPayload.GetProperty("extensions").GetArrayLength() >= 3, zeroExtensionsText);
+
+            await SendRequestAsync(process, 5, "tools/call", new
+            {
+                name = "get_assembly_context",
+                arguments = new { targetPath = assemblyPath, detailLevel = "standard" },
+            }, timeout.Token);
+            var context = await ReadResponseAsync(process, 5, timeout.Token);
+            var contextText = GetFirstText(context);
+            Assert.False(context.GetProperty("result").GetProperty("isError").GetBoolean(), contextText);
+            var contextPayload = ParsePayload(contextText);
+            Assert.True(contextPayload.GetProperty("shownCount").GetInt32() > 0, contextText);
+
+            await SendRequestAsync(process, 9, "tools/call", new
+            {
+                name = "get_assembly_context",
+                arguments = new { targetPath = assemblyPath, maxResults = 0, maxResponseBytes = 0, detailLevel = "standard" },
+            }, timeout.Token);
+            var zeroContext = await ReadResponseAsync(process, 9, timeout.Token);
+            var zeroContextText = GetFirstText(zeroContext);
+            Assert.False(zeroContext.GetProperty("result").GetProperty("isError").GetBoolean(), zeroContextText);
+            var zeroContextPayload = ParsePayload(zeroContextText);
+            Assert.Equal(contextPayload.GetProperty("totalTypes").GetInt32(), zeroContextPayload.GetProperty("totalTypes").GetInt32());
+            Assert.Equal(contextPayload.GetProperty("shownCount").GetInt32(), zeroContextPayload.GetProperty("shownCount").GetInt32());
+
+            await SendRequestAsync(process, 10, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = "T:ZeroMatrix.ZeroBox", includeDiagnostics = false },
+            }, timeout.Token);
+            var callTreeWithoutDiagnostics = await ReadResponseAsync(process, 10, timeout.Token);
+            var callTreeWithoutDiagnosticsText = GetFirstText(callTreeWithoutDiagnostics);
+            Assert.False(callTreeWithoutDiagnostics.GetProperty("result").GetProperty("isError").GetBoolean(), callTreeWithoutDiagnosticsText);
+            Assert.Contains("Diagnostics count:", callTreeWithoutDiagnosticsText, StringComparison.Ordinal);
+            Assert.DoesNotContain("## Diagnostics", callTreeWithoutDiagnosticsText, StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 11, "tools/call", new
+            {
+                name = "get_call_tree",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = "T:ZeroMatrix.ZeroBox", includeDiagnostics = true },
+            }, timeout.Token);
+            var callTreeWithDiagnostics = await ReadResponseAsync(process, 11, timeout.Token);
+            var callTreeWithDiagnosticsText = GetFirstText(callTreeWithDiagnostics);
+            Assert.False(callTreeWithDiagnostics.GetProperty("result").GetProperty("isError").GetBoolean(), callTreeWithDiagnosticsText);
+            Assert.Contains("Diagnostics count:", callTreeWithDiagnosticsText, StringComparison.Ordinal);
+            Assert.Contains("## Diagnostics", callTreeWithDiagnosticsText, StringComparison.Ordinal);
+
+            async Task<(string Text, int Pages)> ReadAllTextPagesAsync(string toolName, Dictionary<string, object?> arguments, int firstRequestId)
+            {
+                var text = new System.Text.StringBuilder();
+                var pages = 0;
+                var requestId = firstRequestId;
+                while (true)
+                {
+                    Assert.True(requestId < firstRequestId + 80, $"{toolName} response paging exceeded its bounded page loop.");
+                    await SendRequestAsync(process, requestId, "tools/call", new { name = toolName, arguments }, timeout.Token);
+                    var response = await ReadResponseAsync(process, requestId++, timeout.Token);
+                    var pageText = GetFirstText(response);
+                    Assert.False(response.GetProperty("result").GetProperty("isError").GetBoolean(), pageText);
+                    text.AppendLine(pageText);
+                    pages++;
+                    var continuation = TryReadStringLine(pageText, "continuationToken");
+                    if (continuation is null) return (text.ToString(), pages);
+                    arguments = new Dictionary<string, object?>(arguments, StringComparer.Ordinal)
+                    {
+                        ["continuationToken"] = continuation,
+                    };
+                }
+            }
+
+            var manyMethodPages = await ReadAllTextPagesAsync("find_symbol", new Dictionary<string, object?>
+            {
+                ["targetPath"] = pageAssemblyPath,
+                ["pattern"] = "Many",
+                ["kind"] = "method",
+                ["maxResults"] = 1000,
+                ["maxResponseBytes"] = 8192,
+            }, 12);
+            Assert.True(manyMethodPages.Pages > 1, $"A large find_symbol result should continue across line-safe response windows (pages={manyMethodPages.Pages}, chars={manyMethodPages.Text.Length}, preview={manyMethodPages.Text[..Math.Min(1000, manyMethodPages.Text.Length)]}).");
+            Assert.Contains("Many0000", manyMethodPages.Text, StringComparison.Ordinal);
+            Assert.Contains("Many0199", manyMethodPages.Text, StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 100, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = pageAssemblyPath, pattern = "WriteMany", kind = "method", maxResults = 10, maxResponseBytes = 8192 },
+            }, timeout.Token);
+            var largeBodyFind = await ReadResponseAsync(process, 100, timeout.Token);
+            var largeBodyFindText = GetFirstText(largeBodyFind);
+            Assert.False(largeBodyFind.GetProperty("result").GetProperty("isError").GetBoolean(), largeBodyFindText);
+            Assert.Contains("WriteMany", largeBodyFindText, StringComparison.Ordinal);
+            var largeBodyHandle = ExtractHandoff(largeBodyFindText);
+
+            var bodyPages = await ReadAllTextPagesAsync("get_symbol_body", new Dictionary<string, object?>
+            {
+                ["targetPath"] = pageAssemblyPath,
+                ["symbolIdentifiers"] = new[] { largeBodyHandle },
+                ["maxBodyLines"] = 1000,
+                ["maxResponseBytes"] = 8192,
+            }, 101);
+            Assert.True(bodyPages.Pages > 1, $"The large method body should continue across response windows (pages={bodyPages.Pages}, chars={bodyPages.Text.Length}, preview={bodyPages.Text[..Math.Min(1000, bodyPages.Text.Length)]}).");
+            Assert.Contains("line-0000", bodyPages.Text, StringComparison.Ordinal);
+            Assert.Contains("line-0799", bodyPages.Text, StringComparison.Ordinal);
+            Assert.Equal(800, bodyPages.Text.Split("line-", StringSplitOptions.None).Length - 1);
+
+            var contextPages = await ReadAllTextPagesAsync("get_assembly_context", new Dictionary<string, object?>
+            {
+                ["targetPath"] = pageAssemblyPath,
+                ["symbolIdentifier"] = largeBodyHandle,
+                ["includeBody"] = true,
+                ["maxBodyLines"] = 1000,
+                ["maxResponseBytes"] = 8192,
+                ["detailLevel"] = "full",
+            }, 190);
+            Assert.True(contextPages.Pages > 1, "A context with a large body should continue across response windows.");
+            Assert.Contains("## Body", contextPages.Text, StringComparison.Ordinal);
+            Assert.Contains("line-0000", contextPages.Text, StringComparison.Ordinal);
+            Assert.Contains("line-0799", contextPages.Text, StringComparison.Ordinal);
+            Assert.Equal(800, contextPages.Text.Split("line-", StringSplitOptions.None).Length - 1);
+            Assert.Contains("completeness=complete", contextPages.Text, StringComparison.Ordinal);
+
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
+            _ = await stderrTask;
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            var resolvedFixtureRoot = Path.GetFullPath(fixtureRoot);
+            var temporaryRoot = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            Assert.StartsWith(temporaryRoot, resolvedFixtureRoot, StringComparison.OrdinalIgnoreCase);
+            Assert.StartsWith("ainet-zero-default-", Path.GetFileName(resolvedFixtureRoot), StringComparison.Ordinal);
+            if (Directory.Exists(resolvedFixtureRoot)) Directory.Delete(resolvedFixtureRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task TinyTokenBudgetOnEarlyNavigationErrorsReturnsSanitizedInvalidParams()
     {
         var repositoryRoot = SolutionRootLocator.Find();
@@ -977,6 +1305,17 @@ public sealed class McpServerIntegrationTests
             Assert.False(typeOrigin.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("NavigationFixture.Counter", GetFirstText(typeOrigin), StringComparison.Ordinal);
 
+            await SendRequestAsync(process, 20, "tools/call", new
+            {
+                name = "resolve_type_origin",
+                arguments = new { targetPath = fixtureAssemblyPath, symbolIdentifier = "T:NavigationFixture.Counter" },
+            }, timeout.Token);
+            var rawTypeOrigin = await ReadResponseAsync(process, 20, timeout.Token);
+            var rawTypeOriginText = GetFirstText(rawTypeOrigin);
+            Assert.False(rawTypeOrigin.GetProperty("result").GetProperty("isError").GetBoolean(), rawTypeOriginText);
+            Assert.Equal("local", ParsePayload(rawTypeOriginText).GetProperty("originKind").GetString());
+            Assert.Contains("NavigationFixture.Counter", rawTypeOriginText, StringComparison.Ordinal);
+
             await SendRequestAsync(process, 25, "tools/call", new { name = "get_impact", arguments = new { targetPath = fixtureAssemblyPath, symbolIdentifier = assemblyHandle } }, timeout.Token);
             var assemblyImpact = await ReadResponseAsync(process, 25, timeout.Token);
             Assert.False(assemblyImpact.GetProperty("result").GetProperty("isError").GetBoolean());
@@ -1067,7 +1406,9 @@ public sealed class McpServerIntegrationTests
                 .Select(entry => entry.GetProperty("symbol").GetString()).ToArray();
             Assert.Contains("NavigationFixture.Counter.firstValue", stagedSymbols);
             Assert.Contains("NavigationFixture.Counter.muchLongerValue", stagedSymbols);
-            Assert.Contains("NavigationFixture.UntrackedGitImpact.Added()", stagedSymbols);
+            Assert.True(stagedSymbols.Contains("NavigationFixture.UntrackedGitImpact.Added()", StringComparer.Ordinal), stagedText);
+            Assert.Contains("Untracked Git ü Impact.cs", stagedPayload.GetProperty("changedFiles").EnumerateArray()
+                .Select(path => path.GetString()), StringComparer.Ordinal);
             Assert.Equal("partial", stagedPayload.GetProperty("completeness").GetString());
             var stagedUnresolvedFiles = stagedPayload.GetProperty("unresolvedFiles").EnumerateArray().Select(path => path.GetString()).ToArray();
             Assert.Contains("NavigationFixture.cs", stagedUnresolvedFiles);
@@ -1086,7 +1427,7 @@ public sealed class McpServerIntegrationTests
             Assert.Contains("INVALID_ARGUMENT", GetFirstText(missingRef), StringComparison.Ordinal);
             Assert.Contains("fieldPath: $.gitRef", GetFirstText(missingRef), StringComparison.Ordinal);
 
-            await RunCommandAsync("git", worktreeDirectory, "add", "UntrackedGitImpact.cs");
+            await RunCommandAsync("git", worktreeDirectory, "add", "Untracked Git ü Impact.cs");
             await RunCommandAsync("git", worktreeDirectory, "commit", "--quiet", "-m", "fixture change context");
             process.StandardInput.Close();
             await process.WaitForExitAsync(timeout.Token);
@@ -1102,6 +1443,73 @@ public sealed class McpServerIntegrationTests
             if (Directory.Exists(Path.Combine(fixtureRoot, "repository", ".git")))
             {
                 await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "remove", "--force", worktreeDirectory);
+                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "prune");
+            }
+            if (Directory.Exists(fixtureRoot))
+            {
+                ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
+                Directory.Delete(fixtureRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ImpactZeroLimitsUseTheSameDefaultsAsOmittedLimits()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        var hostAssemblyPath = GetHostAssemblyPath(repositoryRoot);
+        var fixtureRoot = Directory.CreateTempSubdirectory("ainet-contract-fixture-impact-zero-").FullName;
+        var configPath = Path.Combine(Path.GetTempPath(), "ainet-impact-zero-" + Guid.NewGuid().ToString("N") + ".json");
+        var hostLogDirectory = Path.Combine(Path.GetTempPath(), "ainet-impact-zero-logs-" + Guid.NewGuid().ToString("N"));
+        var (solutionPath, _) = await CreateNavigationFixtureAsync(fixtureRoot);
+        var worktreeDirectory = Path.GetDirectoryName(solutionPath)!;
+        await File.WriteAllTextAsync(Path.Combine(worktreeDirectory, "NavigationFixture.cs"),
+            (await File.ReadAllTextAsync(Path.Combine(worktreeDirectory, "NavigationFixture.cs")))
+                .Replace("firstValue = 1", "firstValue = 2", StringComparison.Ordinal));
+        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(4));
+        using var process = await StartInitializedHostAsync(repositoryRoot, hostAssemblyPath, configPath, timeout.Token, hostLogDirectory);
+        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+
+        try
+        {
+            var omittedArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["detailLevel"] = "change-context" };
+            await SendRequestAsync(process, 1, "tools/call", new { name = "get_impact", arguments = omittedArguments }, timeout.Token);
+            var omittedResponse = await PollRunningImpactAsync(process, 1, await ReadResponseAsync(process, 1, timeout.Token), omittedArguments, timeout.Token);
+            var omittedText = GetFirstText(omittedResponse);
+            Assert.False(omittedResponse.GetProperty("result").GetProperty("isError").GetBoolean(), omittedText);
+            var omitted = ParsePayload(omittedText);
+
+            var zeroArguments = new Dictionary<string, object?>
+            {
+                ["targetPath"] = solutionPath,
+                ["detailLevel"] = "change-context",
+                ["maxChangedSymbols"] = 0,
+                ["maxTestsPerSymbol"] = 0,
+            };
+            await SendRequestAsync(process, 2, "tools/call", new { name = "get_impact", arguments = zeroArguments }, timeout.Token);
+            var zeroResponse = await PollRunningImpactAsync(process, 2, await ReadResponseAsync(process, 2, timeout.Token), zeroArguments, timeout.Token);
+            var zeroText = GetFirstText(zeroResponse);
+            Assert.False(zeroResponse.GetProperty("result").GetProperty("isError").GetBoolean(), zeroText);
+            var zero = ParsePayload(zeroText);
+            Assert.Equal(omitted.GetProperty("totalChangedSymbols").GetInt32(), zero.GetProperty("totalChangedSymbols").GetInt32());
+            Assert.Equal(omitted.GetProperty("analyzedSymbols").EnumerateArray().Select(entry => entry.GetProperty("symbol").GetString()),
+                zero.GetProperty("analyzedSymbols").EnumerateArray().Select(entry => entry.GetProperty("symbol").GetString()));
+
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
+            _ = await stderrTask;
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            File.Delete(configPath);
+            if (Directory.Exists(hostLogDirectory)) Directory.Delete(hostLogDirectory, recursive: true);
+            if (Directory.Exists(Path.Combine(fixtureRoot, "repository", ".git")))
+            {
+                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "remove", "--force", Path.Combine(fixtureRoot, "worktree"));
                 await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "prune");
             }
             if (Directory.Exists(fixtureRoot))
@@ -1145,7 +1553,7 @@ public sealed class McpServerIntegrationTests
                 Assert.EndsWith(")", symbol, StringComparison.Ordinal);
             });
 
-            await RunCommandAsync("git", worktreeDirectory, "add", "NavigationFixture.cs", "UntrackedGitImpact.cs");
+            await RunCommandAsync("git", worktreeDirectory, "add", "NavigationFixture.cs", "Untracked Git ü Impact.cs");
             await RunCommandAsync("git", worktreeDirectory, "commit", "--quiet", "-m", "fixture clean state");
             var cleanArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["gitRef"] = "HEAD", ["detailLevel"] = "change-context" };
             await SendRequestAsync(process, 3, "tools/call", new { name = "get_impact", arguments = cleanArguments }, timeout.Token);
@@ -1660,6 +2068,7 @@ public sealed class McpServerIntegrationTests
             var outgoingDepthTwoText = GetFirstText(outgoingDepthTwo);
             Assert.False(outgoingDepthTwo.GetProperty("result").GetProperty("isError").GetBoolean(), outgoingDepthTwoText);
             Assert.Contains("completeness=complete", outgoingDepthTwoText, StringComparison.Ordinal);
+            Assert.DoesNotContain("not composed yet", outgoingDepthTwoText, StringComparison.OrdinalIgnoreCase);
             var cReadNodeLine = outgoingDepthTwoText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .FirstOrDefault(line => line.Contains("(ClosureOnlyC.Read)", StringComparison.Ordinal));
             Assert.NotNull(cReadNodeLine);
@@ -2099,10 +2508,11 @@ public sealed class McpServerIntegrationTests
         using var fixture = TestTempDirectory.Create("assembly-calltree-cap-");
         var configPath = Path.Combine(Path.GetTempPath(), "ainet-calltree-cap-" + Guid.NewGuid().ToString("N") + ".json");
         var cSource = "namespace CallTreeCap; public class Callee { public void Read() { } "
-            + string.Join(" ", Enumerable.Range(0, 130).Select(index => $"public void Local{index:D3}() => Read();")) + " }";
-        var callerNames = Enumerable.Range(0, 130).Select(index => $"Caller{index:D3}").ToArray();
+            + string.Join(" ", Enumerable.Range(0, 260).Select(index => $"public void Local{index:D3}() => Read();")) + " }";
+        var callerNames = Enumerable.Range(0, 260).Select(index => $"Caller{index:D3}").ToArray();
+        var startCallerNames = callerNames.Take(130).ToArray();
         var bSource = "namespace CallTreeCap; public class Bridge : Callee { public void Start() { "
-            + string.Join(" ", callerNames.Select(name => $"{name}();")) + " } "
+            + string.Join(" ", startCallerNames.Select(name => $"{name}();")) + " } "
             + string.Join(" ", callerNames.Select(name => $"public void {name}() => Read();")) + " }";
         var cPath = AssemblyTestHelper.EmitAssembly(fixture, "CallTreeCapC", cSource);
         var bPath = AssemblyTestHelper.EmitAssembly(fixture, "CallTreeCapB", bSource, cPath);
@@ -2142,6 +2552,7 @@ public sealed class McpServerIntegrationTests
             Assert.False(callTree.GetProperty("result").GetProperty("isError").GetBoolean(), text);
             Assert.Contains("completeness=truncated", text, StringComparison.Ordinal);
             Assert.Contains("weitere Aufrufe", text, StringComparison.Ordinal);
+            Assert.Contains("Some reachable owner symbols could not be mapped or expanded within the bounded reference closure", text, StringComparison.Ordinal);
             var visibleHandoffCount = text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Count(line => line.StartsWith("- [n", StringComparison.Ordinal) && line.Contains("`h:", StringComparison.Ordinal));
             Assert.Equal(250, visibleHandoffCount);
@@ -3262,6 +3673,137 @@ public sealed class McpServerIntegrationTests
     }
 
     [Fact]
+    public async Task ColdSolutionsWithSameProjectNameRemainIsolatedAndWriteNothingToEitherWorkspace()
+    {
+        var repositoryRoot = SolutionRootLocator.Find();
+        var hostAssemblyPath = GetHostAssemblyPath(repositoryRoot);
+        var fixtureRoot = Directory.CreateTempSubdirectory("ainet-cold-pair-").FullName;
+        var firstRoot = Path.Combine(fixtureRoot, "First");
+        var secondRoot = Path.Combine(fixtureRoot, "Second");
+        Directory.CreateDirectory(firstRoot);
+        Directory.CreateDirectory(secondRoot);
+        var firstSolution = Path.Combine(firstRoot, "First.slnx");
+        var secondSolution = Path.Combine(secondRoot, "Second.slnx");
+        var firstProject = Path.Combine(firstRoot, "Shared.csproj");
+        var secondProject = Path.Combine(secondRoot, "Shared.csproj");
+        var configPath = Path.Combine(Path.GetTempPath(), "ainet-cold-pair-config-" + Guid.NewGuid().ToString("N") + ".json");
+        var logDirectory = Path.Combine(Path.GetTempPath(), "ainet-cold-pair-logs-" + Guid.NewGuid().ToString("N"));
+        Process? process = null;
+
+        await File.WriteAllTextAsync(firstSolution, "<Solution><Project Path=\"Shared.csproj\" /></Solution>");
+        await File.WriteAllTextAsync(secondSolution, "<Solution><Project Path=\"Shared.csproj\" /></Solution>");
+        const string project = "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>";
+        await File.WriteAllTextAsync(firstProject, project);
+        await File.WriteAllTextAsync(secondProject, project);
+        await File.WriteAllTextAsync(Path.Combine(firstRoot, "FirstOnly.cs"),
+            "namespace ColdPair.FirstApi; public sealed class FirstOnlyMarker { public string Origin() => \"first\"; }");
+        await File.WriteAllTextAsync(Path.Combine(secondRoot, "SecondOnly.cs"),
+            "namespace ColdPair.SecondApi; public sealed class SecondOnlyMarker { public string Origin() => \"second\"; }");
+        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
+
+        try
+        {
+            await RestoreProjectAsync(firstProject, firstRoot);
+            await RestoreProjectAsync(secondProject, secondRoot);
+            Assert.False(Directory.Exists(Path.Combine(firstRoot, "bin")));
+            Assert.False(Directory.Exists(Path.Combine(secondRoot, "bin")));
+            var beforeFirst = CaptureWorkspaceSnapshot(firstRoot);
+            var beforeSecond = CaptureWorkspaceSnapshot(secondRoot);
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            process = await StartInitializedHostAsync(repositoryRoot, hostAssemblyPath, configPath, timeout.Token, logDirectory);
+            var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+
+            await SendRequestAsync(process, 2, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = firstSolution, pattern = "FirstOnlyMarker", maxResults = 10 },
+            }, timeout.Token);
+            var firstSearch = await ReadResponseAsync(process, 2, timeout.Token);
+            var firstSearchText = GetFirstText(firstSearch);
+            Assert.False(firstSearch.GetProperty("result").GetProperty("isError").GetBoolean(), firstSearchText);
+            Assert.Contains("FirstOnlyMarker", firstSearchText, StringComparison.Ordinal);
+            Assert.Contains("(Shared)", firstSearchText, StringComparison.Ordinal);
+            var firstHandle = ExtractHandoff(firstSearchText);
+
+            await SendRequestAsync(process, 3, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = secondSolution, pattern = "SecondOnlyMarker", maxResults = 10 },
+            }, timeout.Token);
+            var secondSearch = await ReadResponseAsync(process, 3, timeout.Token);
+            var secondSearchText = GetFirstText(secondSearch);
+            Assert.False(secondSearch.GetProperty("result").GetProperty("isError").GetBoolean(), secondSearchText);
+            Assert.Contains("SecondOnlyMarker", secondSearchText, StringComparison.Ordinal);
+            Assert.Contains("(Shared)", secondSearchText, StringComparison.Ordinal);
+            var secondHandle = ExtractHandoff(secondSearchText);
+
+            foreach (var (requestId, target, handoff, expected, unexpected) in new[]
+            {
+                (4, firstSolution, firstHandle, "first", "SecondOnlyMarker"),
+                (5, secondSolution, secondHandle, "second", "FirstOnlyMarker"),
+            })
+            {
+                await SendRequestAsync(process, requestId, "tools/call", new
+                {
+                    name = "get_symbol_body",
+                    arguments = new { targetPath = target, symbolIdentifiers = new[] { handoff } },
+                }, timeout.Token);
+                var body = await ReadResponseAsync(process, requestId, timeout.Token);
+                var bodyText = GetFirstText(body);
+                Assert.False(body.GetProperty("result").GetProperty("isError").GetBoolean(), bodyText);
+                Assert.Contains($"\"{expected}\"", bodyText, StringComparison.Ordinal);
+                Assert.DoesNotContain(unexpected, bodyText, StringComparison.Ordinal);
+            }
+
+            await SendRequestAsync(process, 6, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = secondSolution, symbolIdentifiers = new[] { firstHandle } },
+            }, timeout.Token);
+            var crossedHandle = await ReadResponseAsync(process, 6, timeout.Token);
+            Assert.True(crossedHandle.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(crossedHandle));
+            Assert.Contains("TARGET_MISMATCH", GetFirstText(crossedHandle), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 7, "tools/call", new
+            {
+                name = "find_symbol",
+                arguments = new { targetPath = secondSolution, pattern = "FirstOnlyMarker", maxResults = 10 },
+            }, timeout.Token);
+            var isolatedSearch = await ReadResponseAsync(process, 7, timeout.Token);
+            var isolatedSearchText = GetFirstText(isolatedSearch);
+            Assert.Contains("Keine Treffer für", isolatedSearchText, StringComparison.Ordinal);
+            Assert.DoesNotContain("[handoff:", isolatedSearchText, StringComparison.Ordinal);
+
+            AssertWorkspaceUnchanged(beforeFirst, CaptureWorkspaceSnapshot(firstRoot));
+            AssertWorkspaceUnchanged(beforeSecond, CaptureWorkspaceSnapshot(secondRoot));
+            process.StandardInput.Close();
+            await process.WaitForExitAsync(timeout.Token);
+            Assert.Equal(0, process.ExitCode);
+            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
+            _ = await stderrTask;
+            AssertWorkspaceUnchanged(beforeFirst, CaptureWorkspaceSnapshot(firstRoot));
+            AssertWorkspaceUnchanged(beforeSecond, CaptureWorkspaceSnapshot(secondRoot));
+        }
+        finally
+        {
+            if (process is not null && !process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            process?.Dispose();
+            File.Delete(configPath);
+            if (Directory.Exists(logDirectory)) Directory.Delete(logDirectory, recursive: true);
+            var resolvedFixtureRoot = Path.GetFullPath(fixtureRoot);
+            var tempRoot = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            Assert.StartsWith(tempRoot, resolvedFixtureRoot, StringComparison.OrdinalIgnoreCase);
+            Assert.StartsWith("ainet-cold-pair-", Path.GetFileName(resolvedFixtureRoot), StringComparison.Ordinal);
+            if (Directory.Exists(resolvedFixtureRoot)) Directory.Delete(resolvedFixtureRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ColdSourceSolutionNavigationDoesNotAddOrChangeWorkspaceFiles()
     {
         var repositoryRoot = SolutionRootLocator.Find();
@@ -3419,7 +3961,7 @@ public sealed class McpServerIntegrationTests
         await File.WriteAllTextAsync(worktreeSourcePath, baseline
             .Replace("public sealed class Counter", "public sealed partial class Counter", StringComparison.Ordinal)
             .Replace("Read() => firstValue", "Read() => firstValue + 1", StringComparison.Ordinal));
-        await File.WriteAllTextAsync(Path.Combine(worktreePath, "UntrackedGitImpact.cs"),
+        await File.WriteAllTextAsync(Path.Combine(worktreePath, "Untracked Git ü Impact.cs"),
             "namespace NavigationFixture;\npublic sealed class UntrackedGitImpact\n{\n    public int Added() => 1;\n}\n");
         return (Path.Combine(worktreePath, "NavigationFixture.slnx"), Path.Combine(worktreePath, "bin", "Debug", "net10.0", "NavigationFixture.dll"));
     }
@@ -3576,6 +4118,19 @@ public sealed class McpServerIntegrationTests
         Assert.True(payloadStart >= 0, "The tool response omitted its JSON payload.");
         using var document = JsonDocument.Parse(text[payloadStart..]);
         return document.RootElement.Clone();
+    }
+
+    private static void AssertPropertyDescriptionContains(JsonElement tool, string propertyName, params string[] expectedFragments)
+    {
+        var properties = tool.GetProperty("inputSchema").GetProperty("properties");
+        Assert.True(properties.TryGetProperty(propertyName, out var property), $"{tool.GetProperty("name").GetString()} omitted {propertyName}.");
+        Assert.True(property.TryGetProperty("description", out var description),
+            $"{tool.GetProperty("name").GetString()}.{propertyName} has no parameter description.");
+        var text = description.GetString() ?? string.Empty;
+        foreach (var fragment in expectedFragments)
+        {
+            Assert.Contains(fragment, text, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     private static int ReadIntegerLine(string text, string name)

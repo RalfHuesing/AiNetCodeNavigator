@@ -24,10 +24,12 @@ namespace AiNetCodeNavigator.Mcp.Tools.Relationships;
 public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 {
     [McpServerTool(Name = "get_call_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Trace incoming, outgoing, or combined call relationships from a source or assembly symbol.")]
     public async Task<CallToolResult> GetCallTree([Required] string targetPath, [Required] string symbolIdentifier,
-        string direction = "incoming", [Range(1, 5)] int depth = 2, [Range(1, 250)] int topN = 10,
-        string format = "ascii", bool includeBcl = false, string scopeType = "all", bool includeGenerated = false,
-        bool includeReferences = false, [Range(512, 65536)] int maxResponseBytes = 32768,
+        [System.ComponentModel.Description("Traversal direction: incoming (default), outgoing, or both.")] string direction = "incoming", [Range(1, 5)] int depth = 2, [Range(1, 250)] int topN = 10,
+        [System.ComponentModel.Description("Rendering: ascii (default) or mermaid.")] string format = "ascii", bool includeBcl = false, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", bool includeGenerated = false,
+        bool includeReferences = false, [System.ComponentModel.Description("For assembly targets, include navigation/decompilation and graph-expansion diagnostics. Default false; source targets do not add this section.")] bool includeDiagnostics = false,
+        [Range(512, 65536)] int maxResponseBytes = 32768,
         [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
         string? continuationToken = null, CancellationToken cancellationToken = default)
     {
@@ -35,7 +37,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         if (format is not ("ascii" or "mermaid")) return Invalid("format", "Use ascii or mermaid.");
         if (!TryScope(scopeType, out var scope)) return Invalid("scopeType", "Use all, production, or tests.");
         return await NavigationToolSupport.RouteAsync(runtime, "get_call_tree", targetPath,
-            new { symbolIdentifier, direction, depth, topN, format, includeBcl, scopeType, includeGenerated, includeReferences },
+            new { symbolIdentifier, direction, depth, topN, format, includeBcl, scopeType, includeGenerated, includeReferences, includeDiagnostics },
             operationToken, continuationToken, maxResponseBytes, maxResponseTokens,
             async (target, ct) =>
             {
@@ -43,7 +45,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 {
                     if (includeReferences)
                         return await BuildAssemblyCallTreeWithClosureAsync(target, symbolIdentifier, depth, topN,
-                            parsedDirection, includeBcl, scope, includeGenerated, format, maxResponseBytes,
+                            parsedDirection, includeBcl, scope, includeGenerated, format, includeDiagnostics, maxResponseBytes,
                             maxResponseTokens, ct).ConfigureAwait(false);
                     var accessResult = await ResolveAssemblySymbolAsync(target, symbolIdentifier, ct).ConfigureAwait(false);
                     if (!accessResult.IsSuccess) return NavigationToolSupport.Failure(accessResult.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
@@ -58,11 +60,14 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                             : node with { OwnerTargetPath = access.Origin.CanonicalPath }).ToArray(),
                     };
                     var body = format == "mermaid" ? CallTreeMermaidRenderer.RenderMermaid(graph) : CallGraphTextRenderer.RenderAscii(graph);
-                    var incomplete = graph.Truncated || includeReferences;
-                    return NavigationToolSupport.SuccessText(body, incomplete,
-                        includeReferences
-                            ? "Referenced assembly source is not included yet; treat this result as root-only and incomplete."
-                            : graph.Truncated ? "Increase depth or topN and repeat the query." : null);
+                    var diagnosticScope = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
+                    if (!diagnosticScope.IsSuccess)
+                        return NavigationToolSupport.Failure(diagnosticScope.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
+                    IReadOnlyList<string> sessionDiagnostics;
+                    await using (var scopeAccess = diagnosticScope.Value!) sessionDiagnostics = scopeAccess.Context.Diagnostics;
+                    body = AppendCallTreeDiagnostics(body, graph, sessionDiagnostics, includeDiagnostics);
+                    return NavigationToolSupport.SuccessText(body, graph.Truncated,
+                        graph.Truncated ? "Increase depth or topN and repeat the query." : null);
                 }
                 return await WithSource(target, async solution =>
                 {
@@ -81,8 +86,9 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "find_references", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Find source locations that reference a symbol, optionally traversing bounded assembly references.")]
     public async Task<CallToolResult> FindReferences([Required] string targetPath, [Required] string symbolIdentifier,
-        [Range(1, 3)] int depth = 1, [Range(1, 50)] int maxResults = 50, string scopeType = "all",
+        [Range(1, 3)] int depth = 1, [Range(1, 50)] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all",
         bool includeGenerated = false, bool includeReferences = false, [Range(512, 65536)] int maxResponseBytes = 16384,
         [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
         string? continuationToken = null, CancellationToken cancellationToken = default)
@@ -130,8 +136,9 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "get_type_hierarchy", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Show base types, interfaces, and derived types for a selected type.")]
     public async Task<CallToolResult> GetTypeHierarchy([Required] string targetPath, [Required] string symbolIdentifier,
-        [Range(1, 1000)] int maxResults = 50, string scopeType = "all", bool includeGenerated = false,
+        [Range(1, 1000)] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", bool includeGenerated = false,
         [Range(512, 65536)] int maxResponseBytes = 16384, [Range(1, int.MaxValue)] int? maxResponseTokens = null,
         string? operationToken = null, string? continuationToken = null, CancellationToken cancellationToken = default)
     {
@@ -174,8 +181,9 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "find_implementations", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Find concrete type or member implementations of a selected contract or virtual member.")]
     public async Task<CallToolResult> FindImplementations([Required] string targetPath, [Required] string symbolIdentifier,
-        [Range(1, 1000)] int maxResults = 50, string scopeType = "all", bool includeGenerated = false,
+        [Range(1, 1000)] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", bool includeGenerated = false,
         [Range(512, 65536)] int maxResponseBytes = 16384, [Range(1, int.MaxValue)] int? maxResponseTokens = null,
         string? operationToken = null, string? continuationToken = null, CancellationToken cancellationToken = default)
     {
@@ -216,13 +224,16 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "get_impact", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Summarize callers affected by a symbol or map changed declarations from a Git revision/worktree.")]
     public async Task<CallToolResult> GetImpact([Required] string targetPath, string? symbolIdentifier = null,
-        string? gitRef = null, string detailLevel = "callers", [Range(1, 3)] int depth = 1,
-        [Range(1, 1000)] int maxResults = 50, [Range(1, 100)] int maxChangedSymbols = 20,
-        [Range(1, 50)] int maxTestsPerSymbol = 10, bool includeReferences = false,
+        string? gitRef = null, [System.ComponentModel.Description("Impact view: callers (default) or change-context for declarations changed in Git.")] string detailLevel = "callers", [Range(1, 3)] int depth = 1,
+        [Range(1, 1000)] int maxResults = 50, [System.ComponentModel.Description("Maximum changed declarations; zero uses the default of 20.")] [Range(0, 100)] int maxChangedSymbols = 20,
+        [System.ComponentModel.Description("Maximum test candidates per changed declaration; zero uses the default of 10.")] [Range(0, 50)] int maxTestsPerSymbol = 10, bool includeReferences = false,
         [Range(512, 65536)] int maxResponseBytes = 16384, [Range(1, int.MaxValue)] int? maxResponseTokens = null,
         string? operationToken = null, string? continuationToken = null, CancellationToken cancellationToken = default)
     {
+        maxChangedSymbols = maxChangedSymbols == 0 ? 20 : maxChangedSymbols;
+        maxTestsPerSymbol = maxTestsPerSymbol == 0 ? 10 : maxTestsPerSymbol;
         if (detailLevel is not ("callers" or "change-context")) return Invalid("detailLevel", "Use callers or change-context.");
         if (symbolIdentifier is not null && gitRef is not null) return Invalid("symbolIdentifier", "Specify symbolIdentifier or gitRef, not both.");
         return await NavigationToolSupport.RouteAsync(runtime, "get_impact", targetPath,
@@ -248,11 +259,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         return Invalid("symbolIdentifier", "Use a handoff produced by this targetPath.");
                     var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(lease.Symbol, lease.Solution, depth, maxResults, ct,
                         handoffFormatter: CreateAssemblyHandoffFormatter(access.Value!)).ConfigureAwait(false);
-                    var incomplete = impact.IsTruncated || impact.IsTruncatedByNodeLimit || impact.IsDepthClamped || includeReferences;
-                    return NavigationToolSupport.Success(impact, incomplete,
-                        includeReferences
-                            ? "Referenced assembly source is not included yet; treat this result as root-only and incomplete."
-                            : "Increase depth or maxResults and repeat the query.");
+                    var incomplete = impact.IsTruncated || impact.IsTruncatedByNodeLimit || impact.IsDepthClamped;
+                    return NavigationToolSupport.Success(impact, incomplete, "Increase depth or maxResults and repeat the query.");
                 }
                 if (symbolIdentifier is not null)
                     return await WithSource(target, async solution =>
@@ -270,10 +278,11 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "dependency_graph", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Trace dependencies from exactly one file path or symbol identifier in the selected target.")]
     public async Task<CallToolResult> DependencyGraph([Required] string targetPath,
         string? filePath = null,
-        string? symbolIdentifier = null, string direction = "both", [Range(1, 3)] int depth = 1,
-        [Range(1, 500)] int maxResults = 50, string scopeType = "all", bool includeGenerated = false,
+        string? symbolIdentifier = null, [System.ComponentModel.Description("Traversal direction: both (default), incoming, or outgoing.")] string direction = "both", [Range(1, 3)] int depth = 1,
+        [Range(1, 500)] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", bool includeGenerated = false,
         [Range(512, 65536)] int maxResponseBytes = 24576, [Range(1, int.MaxValue)] int? maxResponseTokens = null,
         string? operationToken = null, string? continuationToken = null, CancellationToken cancellationToken = default)
     {
@@ -410,8 +419,9 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "resolve_type_origin", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Resolve a type name or symbol identifier to its source or metadata assembly origin.")]
     public async Task<CallToolResult> ResolveTypeOrigin([Required] string targetPath, string? symbolIdentifier = null,
-        string? typeName = null, [Range(512, 65536)] int maxResponseBytes = 16384,
+        [System.ComponentModel.Description("Exactly one of this type name or symbolIdentifier is required.")] string? typeName = null, [Range(512, 65536)] int maxResponseBytes = 16384,
         [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
         string? continuationToken = null, CancellationToken cancellationToken = default)
     {
@@ -457,8 +467,9 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "get_feature_context", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Summarize source callers and tests associated with a feature symbol.")]
     public async Task<CallToolResult> GetFeatureContext([Required] string targetPath, [Required] string symbolIdentifier,
-        string scopeType = "all", bool includeGenerated = false, [Range(1, 50)] int maxCallers = 10,
+        [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", bool includeGenerated = false, [Range(1, 50)] int maxCallers = 10,
         [Range(1, 50)] int maxTests = 10, [Range(512, 65536)] int maxResponseBytes = 24576,
         [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
         string? continuationToken = null, CancellationToken cancellationToken = default)
@@ -478,8 +489,9 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "get_test_context", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Find source tests and related context for a selected symbol.")]
     public async Task<CallToolResult> GetTestContext([Required] string targetPath, [Required] string symbolIdentifier,
-        string scopeType = "all", bool includeGenerated = false, [Range(1, 100)] int maxResults = 30,
+        [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", bool includeGenerated = false, [Range(1, 100)] int maxResults = 30,
         [Range(512, 65536)] int maxResponseBytes = 16384, [Range(1, int.MaxValue)] int? maxResponseTokens = null,
         string? operationToken = null, string? continuationToken = null, CancellationToken cancellationToken = default)
     {
@@ -553,6 +565,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         SymbolScopeType scope,
         bool includeGenerated,
         string format,
+        bool includeDiagnostics,
         int maxResponseBytes,
         int? maxResponseTokens,
         CancellationToken ct)
@@ -749,8 +762,9 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
             var graphResult = new CallGraphPayload(selectedNodeKeys.Length > 0 ? selectedNodeIds[selectedNodeKeys[0]] : string.Empty,
                 outputNodes, mergedEdges, methodHints, truncated, hiddenEdges, owners.Sum(owner => owner.Graph.PendingNodeCount));
             var body = format == "mermaid" ? CallTreeMermaidRenderer.RenderMermaid(graphResult) : CallGraphTextRenderer.RenderAscii(graphResult);
+            body = AppendCallTreeDiagnostics(body, graphResult, owners.SelectMany(owner => owner.Scope.Context.Diagnostics), includeDiagnostics);
             var nextAction = crossOwnerDepthNotTraversed
-                ? "Cross-assembly call-chain expansion beyond each owner solution is not composed yet; this result is incomplete."
+                ? "Some reachable owner symbols could not be mapped or expanded within the bounded reference closure; inspect unresolved or unsupported references, then repeat the query."
                 : failedOwners || unresolvedReferences || ownerLimitReached
                     ? "The bounded reference-source closure is incomplete; inspect unresolved or unsupported references, then repeat the query."
                     : truncated ? "Increase topN or reduce the graph scope and repeat the query." : null;
@@ -970,6 +984,27 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var result = await SourceSymbolResolver.ResolveAsync(solution, identifier, identity, ct).ConfigureAwait(false);
         return result.IsSuccess ? (result.Symbol, null) : (null, result.Error);
+    }
+
+    private static string AppendCallTreeDiagnostics(string body, CallGraphPayload graph,
+        IEnumerable<string> sessionDiagnostics, bool includeDiagnostics)
+    {
+        var diagnostics = sessionDiagnostics.Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.Ordinal).ToList();
+        if (graph.HiddenEdgeCount > 0)
+            diagnostics.Add($"The graph cap omitted {graph.HiddenEdgeCount} call edge(s).");
+        if (graph.PendingNodeCount > 0)
+            diagnostics.Add($"{graph.PendingNodeCount} call node(s) remain unexplored.");
+        if (graph.Truncated && diagnostics.Count == 0)
+            diagnostics.Add("Call graph expansion is incomplete.");
+
+        var output = new StringBuilder(body).AppendLine().AppendLine().AppendLine($"Diagnostics count: {diagnostics.Count}");
+        if (!includeDiagnostics) return output.ToString().TrimEnd();
+
+        output.AppendLine().AppendLine("## Diagnostics");
+        if (diagnostics.Count == 0) output.AppendLine("- No navigation or assembly-resolution diagnostics.");
+        else foreach (var diagnostic in diagnostics) output.AppendLine($"- {diagnostic}");
+        return output.ToString().TrimEnd();
     }
 
     private static bool TryScope(string value, out SymbolScopeType scope)
@@ -1233,7 +1268,16 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     private static async Task<(int ExitCode, string StandardOutput, string StandardError)> RunGitAsync(string workingDirectory, IReadOnlyList<string> arguments, CancellationToken ct)
     {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = workingDirectory, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
         start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start Git.");

@@ -18,6 +18,7 @@ namespace AiNetCodeNavigator.Mcp.Tools;
 public sealed class StructureTools(NavigatorHostRuntime runtime)
 {
     [McpServerTool(Name = "get_index_scope", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Summarize which source projects and documents are included in the loaded solution index.")]
     public Task<CallToolResult> GetIndexScope([Required] string targetPath, CancellationToken cancellationToken = default)
     {
         return NavigationToolSupport.RouteAsync(runtime, "get_index_scope", targetPath, new { targetPath }, null, null,
@@ -34,17 +35,18 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "get_file_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("List indexed source files as a tree or flat file list, with optional path filters and metadata.")]
     public Task<CallToolResult> GetFileTree(
         [Required] string targetPath,
         string? root = null,
-        string view = "tree",
+        [System.ComponentModel.Description("Output view: tree (default), files, or summary.")] string view = "tree",
         string[]? includeExtensions = null,
         string? fileFilter = null,
         string[]? excludePatterns = null,
         [Range(0, 32)] int? maxDepth = null,
         [Range(0, 32)] int? treeDepth = null,
         [Range(1, 2000)] int maxResults = 20,
-        string sortBy = "path",
+        [System.ComponentModel.Description("Ordering: path (default), size_desc, or extension.")] string sortBy = "path",
         bool includeMetadata = true,
         bool includeLineCount = false,
         string? operationToken = null,
@@ -108,6 +110,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "get_file_skeleton", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Show declarations in selected source files and provide navigable handles for their symbols.")]
     public Task<CallToolResult> GetFileSkeleton(
         [Required] string targetPath,
         [Required] string[] filePaths,
@@ -144,15 +147,16 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "get_class_structure", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Inspect the members and declaration structure of a source or decompiled type.")]
     public Task<CallToolResult> GetClassStructure(
         [Required] string targetPath,
         [Required] string symbolIdentifier,
-        string sortBy = "lines",
+        [System.ComponentModel.Description("Member ordering: lines (default), kind, or name.")] string sortBy = "lines",
         [Range(1, 200)] int maxMembers = 50,
         string? kindFilter = null,
         string? nameFilter = null,
-        string scopeType = "all",
-        bool includeGenerated = false,
+        [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all",
+        [System.ComponentModel.Description("Include generated source files; defaults to false.")] bool includeGenerated = false,
         string? operationToken = null,
         string? continuationToken = null,
         [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes)] int maxResponseBytes = 16 * 1024,
@@ -224,13 +228,14 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "get_namespace_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Browse namespaces and their types in a source project or owned assembly target.")]
     public Task<CallToolResult> GetNamespaceTree(
         [Required] string targetPath,
-        string? project = null,
-        string? namespacePrefix = null,
-        [Range(1, 3)] int depth = 1,
+        [System.ComponentModel.Description("Optional exact project name or canonical project path used to disambiguate duplicate names.")] string? project = null,
+        [System.ComponentModel.Description("Optional namespace prefix to select a project or namespace subtree.")] string? namespacePrefix = null,
+        [System.ComponentModel.Description("Namespace depth from 1 through 3; defaults to 1.")] [Range(1, 3)] int depth = 1,
         bool includeTypes = true,
-        string kind = "all",
+        [System.ComponentModel.Description("Type kind: all (default), class, interface, record, struct, or enum.")] string kind = "all",
         [Range(1, 200)] int maxResults = 50,
         bool includeGenerated = false,
         string? operationToken = null,

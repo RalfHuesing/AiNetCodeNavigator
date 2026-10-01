@@ -14,11 +14,15 @@ namespace AiNetCodeNavigator.Mcp.Tools.Symbols;
 public sealed class SymbolTools(NavigatorHostRuntime runtime)
 {
     [McpServerTool(Name = "find_symbol", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Find C# types or members by one or more name patterns and return source locations with navigable symbol handles.")]
     public Task<CallToolResult> FindSymbol(
         [Required] string targetPath,
-        string[]? namePatterns = null,
+        [System.ComponentModel.Description("Specify exactly one of this field or pattern. This field accepts one to ten non-empty name patterns.")] string[]? namePatterns = null,
+        [System.ComponentModel.Description("A single non-empty name pattern. Specify this or namePatterns, but not both.")]
         string? pattern = null,
+        [System.ComponentModel.Description("Optional C# symbol kind filter: class, interface, record, record class, record struct, struct, enum, delegate, method, property, or field.")]
         string? kind = null,
+        [System.ComponentModel.Description("Source scope: all (default), production, or tests.")]
         string scopeType = "all",
         bool includeGenerated = false,
         [Range(1, 1000)] int maxResults = 50,
@@ -98,6 +102,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "get_symbol_body", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Read source or decompiled text for one or more current symbol handoffs, with line-bounded output.")]
     public Task<CallToolResult> GetSymbolBody(
         [Required] string targetPath,
         [Required] string[] symbolIdentifiers,
