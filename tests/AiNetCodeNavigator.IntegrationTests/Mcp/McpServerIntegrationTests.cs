@@ -1460,6 +1460,60 @@ public sealed class McpServerIntegrationTests
             Assert.Contains("completeness=truncated", GetFirstText(incompleteAssemblyImpact), StringComparison.Ordinal);
             Assert.Contains("Referenced assembly source is not included yet", GetFirstText(incompleteAssemblyImpact), StringComparison.Ordinal);
 
+            await SendRequestAsync(process, 76, "tools/call", new
+            {
+                name = "dependency_graph",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = referenceCallerHandle, direction = "outgoing", depth = 1, maxResults = 20 },
+            }, timeout.Token);
+            var assemblyDependencyGraph = await ReadResponseAsync(process, 76, timeout.Token);
+            var assemblyDependencyText = GetFirstText(assemblyDependencyGraph);
+            Assert.False(assemblyDependencyGraph.GetProperty("result").GetProperty("isError").GetBoolean(), assemblyDependencyText);
+            var dependencyEdges = ParsePayload(assemblyDependencyText).GetProperty("typeDependencies").EnumerateArray().ToArray();
+            Assert.True(dependencyEdges.Length > 0, assemblyDependencyText);
+            var betaDependency = dependencyEdges.Single(edge => edge.GetProperty("fromTypeName").GetString()!.Contains("BetaInvoker", StringComparison.Ordinal)
+                && edge.GetProperty("toTypeName").GetString()!.Contains("PagedBeta", StringComparison.Ordinal));
+            var dependencySourceHandle = betaDependency.GetProperty("fromHandoffId").GetString();
+            var dependencyTargetHandle = betaDependency.GetProperty("toHandoffId").GetString();
+            Assert.StartsWith("h:", dependencySourceHandle, StringComparison.Ordinal);
+            Assert.StartsWith("h:", dependencyTargetHandle, StringComparison.Ordinal);
+            await SendRequestAsync(process, 79, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { dependencySourceHandle } },
+            }, timeout.Token);
+            var dependencySourceBody = await ReadResponseAsync(process, 79, timeout.Token);
+            Assert.False(dependencySourceBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(dependencySourceBody));
+            Assert.Contains("Invoke", GetFirstText(dependencySourceBody), StringComparison.Ordinal);
+            await SendRequestAsync(process, 77, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { dependencyTargetHandle } },
+            }, timeout.Token);
+            var dependencyTargetBody = await ReadResponseAsync(process, 77, timeout.Token);
+            Assert.False(dependencyTargetBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(dependencyTargetBody));
+            Assert.Contains("PagedBeta", GetFirstText(dependencyTargetBody), StringComparison.Ordinal);
+
+            await SendRequestAsync(process, 78, "tools/call", new
+            {
+                name = "dependency_graph",
+                arguments = new { targetPath = assemblyPath, filePath = betaDependency.GetProperty("fromFile").GetString(), direction = "outgoing", depth = 1, maxResults = 20 },
+            }, timeout.Token);
+            var assemblyFileDependencyGraph = await ReadResponseAsync(process, 78, timeout.Token);
+            var assemblyFileDependencyText = GetFirstText(assemblyFileDependencyGraph);
+            Assert.False(assemblyFileDependencyGraph.GetProperty("result").GetProperty("isError").GetBoolean(), assemblyFileDependencyText);
+            var fileDependencyEdges = ParsePayload(assemblyFileDependencyText).GetProperty("typeDependencies").EnumerateArray().ToArray();
+            Assert.Contains(fileDependencyEdges, edge => edge.GetProperty("fromTypeName").GetString() == betaDependency.GetProperty("fromTypeName").GetString()
+                && edge.GetProperty("toTypeName").GetString() == betaDependency.GetProperty("toTypeName").GetString());
+
+            await SendRequestAsync(process, 81, "tools/call", new
+            {
+                name = "dependency_graph",
+                arguments = new { targetPath = hostAssemblyPath, symbolIdentifier = concreteReadBetaHandle, direction = "outgoing" },
+            }, timeout.Token);
+            var foreignTargetDependency = await ReadResponseAsync(process, 81, timeout.Token);
+            Assert.True(foreignTargetDependency.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignTargetDependency));
+            Assert.Contains("TARGET_MISMATCH", GetFirstText(foreignTargetDependency), StringComparison.Ordinal);
+
             await SendRequestAsync(process, 64, "tools/call", new
             {
                 name = "get_call_tree",
@@ -1529,6 +1583,14 @@ public sealed class McpServerIntegrationTests
             var sourceSymbolText = GetFirstText(sourceSymbol);
             Assert.False(sourceSymbol.GetProperty("result").GetProperty("isError").GetBoolean(), sourceSymbolText);
             var sourceHandle = ExtractHandoff(sourceSymbolText);
+            await SendRequestAsync(process, 82, "tools/call", new
+            {
+                name = "dependency_graph",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = sourceHandle, direction = "outgoing" },
+            }, timeout.Token);
+            var sourceHandleDependency = await ReadResponseAsync(process, 82, timeout.Token);
+            Assert.True(sourceHandleDependency.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(sourceHandleDependency));
+            Assert.Contains("TARGET_MISMATCH", GetFirstText(sourceHandleDependency), StringComparison.Ordinal);
             await SendRequestAsync(process, 75, "tools/call", new
             {
                 name = "get_call_tree",
@@ -1933,6 +1995,19 @@ public sealed class McpServerIntegrationTests
             var graphText = GetFirstText(graph);
             Assert.Contains("LeafFirst", graphText, StringComparison.Ordinal);
             Assert.DoesNotContain("LeafSecond", graphText, StringComparison.Ordinal);
+            var ownerEdge = ParsePayload(graphText).GetProperty("typeDependencies").EnumerateArray()
+                .Single(edge => edge.GetProperty("fromTypeName").GetString()!.Contains("Consumer", StringComparison.Ordinal)
+                    && edge.GetProperty("toTypeName").GetString()!.Contains("LeafFirst", StringComparison.Ordinal));
+            var sourceDependencyHandle = ownerEdge.GetProperty("toHandoffId").GetString();
+            Assert.StartsWith("h:", sourceDependencyHandle, StringComparison.Ordinal);
+            await SendRequestAsync(process, 9, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = solutionPath, symbolIdentifiers = new[] { sourceDependencyHandle } },
+            }, timeout.Token);
+            var sourceDependencyBody = await ReadResponseAsync(process, 9, timeout.Token);
+            Assert.False(sourceDependencyBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(sourceDependencyBody));
+            Assert.Contains("LeafFirst", GetFirstText(sourceDependencyBody), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 4, "tools/call", new
             {

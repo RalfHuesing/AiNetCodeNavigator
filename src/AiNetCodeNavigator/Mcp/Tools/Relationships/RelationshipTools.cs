@@ -257,8 +257,61 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         return await NavigationToolSupport.RouteAsync(runtime, "dependency_graph", targetPath,
             new { filePath, symbolIdentifier, direction, depth, maxResults, scopeType, includeGenerated }, operationToken,
             continuationToken, maxResponseBytes, maxResponseTokens,
-            async (target, ct) => await WithSource(target, async solution =>
+            async (target, ct) =>
             {
+                if (target.TargetType == AnalysisTargetType.Assembly)
+                {
+                    if (symbolIdentifier is not null)
+                    {
+                        var accessResult = await ResolveAssemblySymbolAsync(target, symbolIdentifier, ct).ConfigureAwait(false);
+                        if (!accessResult.IsSuccess)
+                            return NavigationToolSupport.Failure(accessResult.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
+                        await using var access = accessResult.Value!;
+                        var targetSymbol = access.Symbol as INamedTypeSymbol ?? access.Symbol.ContainingType;
+                        if (targetSymbol is null || !targetSymbol.Locations.Any(location => location.IsInSource))
+                            return McpToolResults.InvalidArgument("The handoff has no source type in this assembly.", "$.symbolIdentifier",
+                                "Use a handoff for a type or member declared in the selected assembly source.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                        string targetTypeId;
+                        try { targetTypeId = DependencyGraphScanner.GetSourceTypeId(access.Solution, targetSymbol); }
+                        catch (ArgumentException)
+                        {
+                            return McpToolResults.InvalidArgument("The handoff has no source type in this assembly.", "$.symbolIdentifier",
+                                "Use a handoff for a type or member declared in the selected assembly source.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                        }
+                        var scan = await DependencyGraphScanner.ScanSolutionAsync(access.Solution, ct,
+                            new DependencyGraphScanOptions(PageSize: maxResults, TargetTypeName: targetSymbol.ToDisplayString(),
+                                TargetTypeId: targetTypeId, Direction: parsedDirection, Depth: depth, ScopeType: parsedScope,
+                                IncludeGenerated: includeGenerated), CreateAssemblyHandoffFormatter(access)).ConfigureAwait(false);
+                        return NavigationToolSupport.Success(scan, scan.IsTruncated,
+                            "Increase maxResults, depth, or document coverage and repeat the query.");
+                    }
+
+                    var opened = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
+                    if (!opened.IsSuccess) return NavigationToolSupport.Failure(opened.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
+                    await using var scope = opened.Value!;
+                    var sourceRoot = scope.Context.DecompiledProjectPaths?.DecompiledSourceRoot;
+                    if (string.IsNullOrWhiteSpace(sourceRoot))
+                        return McpToolResults.Recoverable(NavigationErrorCodes.AssemblyTargetUnsupported,
+                            "The assembly has no materialized decompiled source tree.", "Use inspect_assembly for metadata-only navigation.",
+                            maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                    var selectedDocument = ResolveDependencyDocument(scope.Solution, filePath!);
+                    if (selectedDocument.Document is null)
+                        return McpToolResults.InvalidArgument("The requested assembly source file could not be selected.", "$.filePath",
+                            selectedDocument.Error!, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                    if (!IsWithinDirectory(sourceRoot, selectedDocument.Document.FilePath))
+                        return McpToolResults.InvalidArgument("The requested source file is outside this assembly's decompiled source.", "$.filePath",
+                            "Choose a file emitted by this assembly's source tree.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                    var fileTypeIds = await DependencyGraphScanner.GetDocumentTypeIdsAsync(selectedDocument.Document, ct).ConfigureAwait(false);
+                    var fileScan = await DependencyGraphScanner.ScanSolutionAsync(scope.Solution, ct,
+                        new DependencyGraphScanOptions(PageSize: maxResults, TargetFilePath: filePath,
+                            TargetTypeIds: fileTypeIds, Direction: parsedDirection, Depth: depth, ScopeType: parsedScope,
+                            IncludeGenerated: includeGenerated), CreateAssemblyHandoffFormatter(scope.Solution, scope.Context)).ConfigureAwait(false);
+                    return NavigationToolSupport.Success(fileScan, fileScan.IsTruncated,
+                        "Increase maxResults, depth, or document coverage and repeat the query.");
+                }
+
+                return await WithSource(target, async solution =>
+                {
                 string? typeName = null;
                 string? typeId = null;
                 IReadOnlyCollection<string>? fileTypeIds = null;
@@ -278,12 +331,14 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         return McpToolResults.InvalidArgument("The requested source file could not be selected.", "$.filePath", selectedDocument.Error!, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                     fileTypeIds = await DependencyGraphScanner.GetDocumentTypeIdsAsync(selectedDocument.Document, ct).ConfigureAwait(false);
                 }
+                var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
                 var scan = await DependencyGraphScanner.ScanSolutionAsync(solution, ct,
                     new DependencyGraphScanOptions(PageSize: maxResults, TargetFilePath: filePath, TargetTypeName: typeName,
                         TargetTypeId: typeId, TargetTypeIds: fileTypeIds, Direction: parsedDirection, Depth: depth,
-                        ScopeType: parsedScope, IncludeGenerated: includeGenerated)).ConfigureAwait(false);
+                        ScopeType: parsedScope, IncludeGenerated: includeGenerated), CreateSourceHandoffFormatter(solution, identity)).ConfigureAwait(false);
                 return NavigationToolSupport.Success(scan, scan.IsTruncated, "Increase maxResults, depth, or document coverage and repeat the query.");
-            }, maxResponseBytes, maxResponseTokens, ct), AnalysisTargetType.Project, cancellationToken);
+                }, maxResponseBytes, maxResponseTokens, ct);
+            }, null, cancellationToken);
 
         CallToolResult Invalid(string field, string hint) => McpToolResults.InvalidArgument("The requested value is not supported.", "$." + field, hint,
             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
@@ -441,17 +496,34 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     }
 
     private static Func<ISymbol, string?> CreateAssemblyHandoffFormatter(AssemblySymbolHandoffAccess access)
+        => CreateAssemblyHandoffFormatter(access.Solution, access.Origin.CanonicalPath, access.Origin.ContentHash,
+            access.Generation, access.ReferenceSnapshotHash, access.DecompiledProjectPaths?.DecompiledSourceRoot,
+            access.Assembly, access.Compilation);
+
+    private static Func<ISymbol, string?> CreateSourceHandoffFormatter(Solution solution, AnalysisSymbolIdentity? identity)
+        => symbol =>
+        {
+            var internalId = identity?.FormatHandoff(symbol, solution);
+            return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
+        };
+
+    private static Func<ISymbol, string?> CreateAssemblyHandoffFormatter(Solution solution, AssemblyContext context)
+        => CreateAssemblyHandoffFormatter(solution, context.Origin.CanonicalPath, context.Origin.ContentHash,
+            context.Generation, context.ReferenceSnapshotHash, context.DecompiledProjectPaths?.DecompiledSourceRoot,
+            context.Assembly, context.Compilation);
+
+    private static Func<ISymbol, string?> CreateAssemblyHandoffFormatter(Solution solution, string canonicalPath,
+        string contentHash, long generation, string referenceSnapshotHash, string? sourceRoot,
+        IAssemblySymbol assembly, Compilation compilation)
     {
-        var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
-            access.Generation, access.ReferenceSnapshotHash);
-        var sourceRoot = access.DecompiledProjectPaths?.DecompiledSourceRoot;
+        var identity = AnalysisSymbolIdentity.ForAssembly(canonicalPath, contentHash, generation, referenceSnapshotHash);
         return symbol =>
         {
-            if (!HasAssemblySourceDeclaration(symbol, access.Solution, sourceRoot)) return null;
+            if (!HasAssemblySourceDeclaration(symbol, solution, sourceRoot)) return null;
             var declarationId = DocumentationCommentId.CreateDeclarationId(symbol);
             if (string.IsNullOrWhiteSpace(declarationId)) return null;
-            var owned = DocumentationCommentId.GetSymbolsForDeclarationId(declarationId, access.Compilation)
-                .Where(candidate => SymbolEqualityComparer.Default.Equals(candidate.ContainingAssembly, access.Assembly))
+            var owned = DocumentationCommentId.GetSymbolsForDeclarationId(declarationId, compilation)
+                .Where(candidate => SymbolEqualityComparer.Default.Equals(candidate.ContainingAssembly, assembly))
                 .Distinct(SymbolEqualityComparer.Default)
                 .Take(2)
                 .ToArray();
@@ -459,6 +531,25 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
             var internalId = identity.FormatHandoff(owned[0]);
             return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
         };
+    }
+
+    private static bool IsWithinDirectory(string rootDirectory, string? candidatePath)
+    {
+        if (string.IsNullOrWhiteSpace(candidatePath)) return false;
+        try
+        {
+            var root = Path.GetFullPath(rootDirectory);
+            var candidate = Path.GetFullPath(candidatePath);
+            var relative = Path.GetRelativePath(root, candidate);
+            return !Path.IsPathRooted(relative)
+                && !string.Equals(relative, "..", StringComparison.Ordinal)
+                && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                && !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
     }
 
     private static bool HasAssemblySourceDeclaration(ISymbol symbol, Solution solution, string? sourceRoot)

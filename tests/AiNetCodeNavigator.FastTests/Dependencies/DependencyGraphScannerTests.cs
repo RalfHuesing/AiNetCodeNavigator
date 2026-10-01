@@ -14,6 +14,31 @@ namespace AiNetCodeNavigator.FastTests.Dependencies;
 public sealed class DependencyGraphScannerTests
 {
     [Fact]
+    public async Task ScanSolutionAsync_FormatsHandoffsOnlyForTheVisibleTypePage()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\\VirtualRepo\\DependencyHandoffBudget.slnx",
+            new ProjectSpec("App", [
+                ("Consumers.cs", "namespace App; public class Consumer { public Contracts.First First = new(); public Contracts.Second Second = new(); }"),
+            ], ProjectReferences: ["Contracts"], VirtualProjectDirectory: "src/App"),
+            new ProjectSpec("Contracts", [
+                ("Types.cs", "namespace Contracts; public class First { } public class Second { }"),
+            ], VirtualProjectDirectory: "src/Contracts"));
+        var handoffCalls = 0;
+
+        var page = await DependencyGraphScanner.ScanSolutionAsync(fixture.Solution,
+            options: new DependencyGraphScanOptions(PageSize: 1),
+            handoffFormatter: symbol => $"handoff:{++handoffCalls}:{symbol.Name}");
+
+        var edge = Assert.Single(page.TypeDependencies!);
+        Assert.Equal(2, handoffCalls);
+        Assert.StartsWith("handoff:", edge.FromHandoffId, StringComparison.Ordinal);
+        Assert.StartsWith("handoff:", edge.ToHandoffId, StringComparison.Ordinal);
+        Assert.Equal(2, page.TotalTypeDependencyCount);
+        Assert.True(page.IsTruncated);
+    }
+
+    [Fact]
     public async Task ScanSolutionAsync_FiltersScopeAndGeneratedDocumentsBeforeDocumentLimits()
     {
         using var fixture = TestWorkspaceBuilder.CreateSolution(

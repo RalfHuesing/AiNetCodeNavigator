@@ -71,7 +71,9 @@ public sealed record DependencyTypeReference(
     string ToProject,
     string FromFile,
     string ToFile,
-    int Depth = 1);
+    int Depth = 1,
+    string? FromHandoffId = null,
+    string? ToHandoffId = null);
 
 public sealed record DependencyGraphScanError(
     string Project,

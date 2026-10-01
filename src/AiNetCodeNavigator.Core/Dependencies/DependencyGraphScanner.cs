@@ -26,7 +26,8 @@ public static class DependencyGraphScanner
     public static async Task<DependencyGraphPayload> ScanSolutionAsync(
         Solution solution,
         CancellationToken ct = default,
-        DependencyGraphScanOptions? options = null)
+        DependencyGraphScanOptions? options = null,
+        Func<ISymbol, string?>? handoffFormatter = null)
     {
         ArgumentNullException.ThrowIfNull(solution);
         options ??= new DependencyGraphScanOptions();
@@ -97,6 +98,7 @@ public static class DependencyGraphScanner
             .ToList();
 
         var rawTypeEdges = new Dictionary<(string FromTypeId, string ToTypeId), DependencyTypeReference>();
+        var symbolsByTypeId = new Dictionary<string, INamedTypeSymbol>(StringComparer.Ordinal);
         var compilations = new Dictionary<ProjectId, Compilation?>();
         foreach (var (project, document) in documents)
         {
@@ -139,6 +141,8 @@ public static class DependencyGraphScanner
                 var targetOwner = solution.GetDocument(targetLocation.SourceTree!)?.Project ?? project;
                 var source = ToTypeReferenceEnd(enclosingType, sourceOwner.Name, sourceFile, GetProjectIdentity(sourceOwner));
                 var target = ToTypeReferenceEnd(targetType, targetOwner.Name, targetFile, GetProjectIdentity(targetOwner));
+                symbolsByTypeId.TryAdd(source.TypeId, enclosingType.OriginalDefinition);
+                symbolsByTypeId.TryAdd(target.TypeId, targetType.OriginalDefinition);
                 if (source.TypeId == target.TypeId) continue;
 
                 var key = (source.TypeId, target.TypeId);
@@ -189,6 +193,16 @@ public static class DependencyGraphScanner
         var pagedNamespaces = Page(allNamespaceDeps, options.Offset, pageSize);
         var pagedFiles = Page(allFileDeps, options.Offset, pageSize);
         var pagedTypeEdges = Page(selectedEdges, options.Offset, pageSize);
+        if (handoffFormatter is not null)
+        {
+            pagedTypeEdges = pagedTypeEdges.Select(edge => edge with
+            {
+                FromHandoffId = symbolsByTypeId.TryGetValue(edge.FromTypeId, out var fromSymbol)
+                    ? handoffFormatter(fromSymbol) : null,
+                ToHandoffId = symbolsByTypeId.TryGetValue(edge.ToTypeId, out var toSymbol)
+                    ? handoffFormatter(toSymbol) : null,
+            }).ToList();
+        }
         return new DependencyGraphPayload(
             ProjectDependencies: pagedProjects,
             NamespaceDependencies: pagedNamespaces,
