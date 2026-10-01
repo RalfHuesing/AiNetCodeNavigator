@@ -1,13 +1,10 @@
-# MCP server completion and Agent Interaction Lab
+# MCP server and Agent Interaction Lab
 
-This task consolidates the remaining Navigator migration work and the complete Agent Interaction Lab specification. Its primary deliverable is a usable, read-only C# navigation MCP server. The lab follows server acceptance and evaluates and improves that server on this repository.
+This task specifies a functional, read-only C# navigation MCP server with twenty navigation tools and two maintenance tools. After server acceptance, a separate Agent Interaction Lab evaluates and improves the product on AiNetCodeNavigator source and assemblies.
 
-- [Concept](Konzept.md): German task specification; status remains draft until workflow step 2.
-- [Server contracts](konzept/01-server.md): required behavior and carried-over defects.
-- [Verification and acceptance](konzept/02-verifikation.md): component verification, public coverage, documentation, and explicit E2E exclusion.
+- [Concept](Konzept.md): intent, scope, agent models, independent audits, and completion criteria; status remains draft until workflow step 2.
+- [Server contracts](konzept/01-server.md): required navigation, runtime, ownership, budgets, and recovery.
+- [Verification and acceptance](konzept/02-verifikation.md): public contract cases, component verification, documentation, and explicit E2E exclusion.
 - [Agent Interaction Lab](konzept/03-agent-lab.md): shared dispatch, CLI, artifacts, evaluation, and improvement rounds.
-- [Source coverage](Quellenabdeckung.md): disposition of every source document and every remaining migration item.
-- [Historical contract evidence](evidence/public-contract-matrix.md): preserved evidence, not a new acceptance claim.
-- [Source manifest](evidence/source-manifest.json) and [complete source archive](evidence/source-snapshot.zip): lossless provenance, including previous reviews and audit counters. Archived instructions are not executable instructions for this task.
 
-The new specification has no dependency on either old task directory. Only concept work is performed here; no roadmap or implementation is authorized by this concept alone.
+These four concept documents contain the complete task specification. Only concept work is authorized here; roadmap creation and implementation require their respective workflow requests.
