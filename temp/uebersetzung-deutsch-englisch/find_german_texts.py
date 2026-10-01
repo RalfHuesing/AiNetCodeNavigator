@@ -97,21 +97,21 @@ DISTINCT_GERMAN_WORDS = [
     r"abrufen", r"abgerufen",
     r"speichert",
     r"implementiert(?:e[rnms]?)?", r"implementierend(?:e[rnms]?)?",
-    
+
     # --- Pronouns & Articles (distinctly German) ---
     r"dieser?", r"dieses", r"diesem", r"diesen", r"diese",
     r"welche[rsmn]?", r"jede[rsmn]?",
     r"alle[smnr]?", r"einem", r"einen", r"einer", r"eines",
     r"keine[rsmn]?", r"ihrem?", r"ihren", r"ihrer", r"unser[e]?", r"unsere[rmn]?",
     r"dessen", r"deren", r"des", r"dem",
-    
+
     # --- Conjunctions & Prepositions (distinctly German) ---
     r"oder", r"aber", r"sondern", r"sowie", r"sowohl", r"weder",
     r"fuer", r"für", r"ueber", r"über", r"unter", r"zwischen",
     r"beim?", r"ohne", r"durch", r"gegenüber", r"gegenueber",
     r"damit", r"obwohl", r"während", r"waehrend",
     r"jedoch", r"deshalb", r"daher", r"somit", r"anstatt", r"sofern", r"insofern",
-    
+
     # --- Adverbs / Particles ---
     r"auch", r"noch", r"schon", r"bereits", r"immer", r"wieder",
     r"hierbei", r"hierfür", r"hierfuer", r"dadurch", r"dazu",
@@ -121,7 +121,7 @@ DISTINCT_GERMAN_WORDS = [
     r"tatsächlich", r"tatsaechlich", r"möglicherweise", r"moeglicherweise",
     r"mindestens", r"höchstens", r"hoechstens", r"allenfalls",
     r"aktuell(?:e[rnms]?)?",
-    
+
     # --- Nouns & Domain Terms ---
     r"fehler", r"fehlermeldung(?:en)?", r"fehlercodes?",
     r"hinweis(?:e)?", r"bezeichner", r"ergebnis(?:se)?",
@@ -218,23 +218,23 @@ def is_german_line(line: str, file_path: str = "") -> tuple[bool, str]:
         line = line.replace(literal, "")
     if Path(file_path).suffix.lower() == ".md":
         line = MARKDOWN_LINK_DESTINATION.sub(r"\1", line)
-    
+
     # Check for German umlauts / eszett
     umlaut_matches = UMLAUT_PATTERN.findall(line)
     if umlaut_matches:
         return True, f"umlauts: {set(umlaut_matches)}"
-    
+
     # Check for distinct German words
     word_matches = GERMAN_WORD_PATTERN.findall(line)
     if word_matches:
         return True, f"words: {set(word_matches)}"
-    
+
     # Check for characteristic German phrases
     for pattern in PHRASE_PATTERNS:
         m = pattern.search(line)
         if m:
             return True, f"phrase: {m.group(0)}"
-    
+
     return False, ""
 
 def scan_repository(repo_root: Path):
@@ -245,7 +245,7 @@ def scan_repository(repo_root: Path):
     for root, dirs, files in os.walk(repo_root):
         # Exclude directories in-place so os.walk does not descend
         dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS and not d.startswith(".git")]
-        
+
         for file_name in sorted(files):
             file_path = Path(root) / file_name
             ext = file_path.suffix.lower()
@@ -264,7 +264,7 @@ def scan_repository(repo_root: Path):
                         is_match, reason = is_german_line(line, rel_str)
                         if is_match:
                             file_matches.append((line_no, line.rstrip("\r\n"), reason))
-                    
+
                     if file_matches:
                         matches_by_file[rel_str] = file_matches
             except Exception as e:
