@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 ---
 
 # Funktionsfähiger MCP-Server mit abschließendem Agent Interaction Lab
@@ -12,7 +12,7 @@ Die Priorität ist: nutzbare Produktfunktionen und Korrektheit, dann Vertragsnac
 
 ## Verbindliche Spezifikation und Lesereihenfolge
 
-Dieses Dokument und die drei Kapitel unter `konzept/` bilden zusammen genau ein vollständiges Konzept. Implementierer und Auditor lesen alle vier Dokumente. Das Lab-Kapitel ist verbindlicher Bestandteil. Der Planungsauftrag erstellt keine Roadmap, erteilt keine Implementierungsfreigabe und führt keine Produktprüfung aus.
+Dieses Dokument und die drei Kapitel unter `konzept/` bilden zusammen genau ein vollständiges Konzept. Implementierer und Auditor lesen alle vier Dokumente. Das Lab-Kapitel ist verbindlicher Bestandteil. Die Konzeptfreigabe startet keine Roadmap und erteilt keine Implementierungsfreigabe; sie belegt keine ausgeführte Produktprüfung.
 
 | Dokument | Verbindlicher Inhalt |
 |---|---|
@@ -65,4 +65,4 @@ Der Serverteil ist fertig, wenn alle Muss-Verträge aus Kapitel 01, die vollstä
 
 Das Gesamtvorhaben ist fertig, wenn zusätzlich die Lab-Infrastruktur, die vollständige Aufgabenuntersuchung, mindestens zwei bewertete Audit-Runden, notwendige Korrekturen und der Vergleich gemäß Kapitel 03 vorliegen. Es gibt keine unbearbeiteten oder blockierten Pflichtaufgaben und keine offenen P0/P1/P2-Defekte, die Navigation, Read-only, Bindung, Recovery oder benötigte Funktionen verletzen. Dokumentierte qualitative `not_observed`-Spezialzellen nach gültigem Aufgabenversuch sind ausschließlich unter den Bedingungen aus Kapitel 03 zulässig; sie belegen keinen autonomen Erfolg. P3-Verbesserungsbefunde dürfen nach dem Rundengrenzwert nur mit belegter Auswirkung, verbleibender Einschränkung und konkreter Abnahmebedingung offen bleiben. Die in Kapitel 01 verbindlich festgelegte Assembly-Sortierung muss erfüllt sein. Der Bericht nennt jede zulässige Restgrenze und beansprucht keine fehlerfreie Software.
 
-Dieses Konzept bleibt `draft`. Prüfung/Freigabe, Roadmap und Umsetzung werden ausschließlich durch den jeweiligen späteren Nutzerauftrag gestartet.
+Dieses Konzept ist nach unabhängiger Prüfung mit `gpt-6.1-sol/high` und Korrektur der Source-Baseline-Vorbereitung `ready` (Freigabe: 2026-10-01). Die Vorbereitung umfasst ausdrücklich Restore/Build vor dem Einfrieren, Prüfung der Source-Metadatenreferenzen sowie den unveränderlichen Restore-/Referenzbestand für den Vergleich. Die abschließende unabhängige Prüfung hat keine weiteren handlungsrelevanten Findings oder notwendigen Nutzerentscheidungen festgestellt. Intention, Scope, Nicht-Ziele und Verifikation erfüllen die Freigabekriterien. Roadmap und Umsetzung werden ausschließlich durch den jeweiligen späteren Nutzerauftrag gestartet.
