@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Common;
 using AiNetCodeNavigator.Core.Models;
+using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -20,11 +21,12 @@ public static class AssemblySearchScanner
 {
     internal readonly record struct SearchLineMatch(int LineNumber, TextSpan? DeclarationNameSpan);
     private readonly record struct DeclarationHeader(TextSpan Span, TextSpan NameSpan);
+    private readonly record struct SearchHitCandidate(AssemblySearchHit Hit, ISymbol? DeclaredSymbol);
 
     public const int DefaultMaxResults = 100;
     public const int MaxResults = 1000;
-    public const int DefaultMaxFiles = 1000;
-    public const int MaxFiles = 10000;
+    public const int DefaultMaxFiles = 0;
+    public const int MaxFiles = 2000;
     public const int MaxContextLines = 5;
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(250);
     private static readonly IReadOnlyDictionary<string, string> BuiltInPatterns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -33,11 +35,18 @@ public static class AssemblySearchScanner
         ["external_calls"] = @"\b(HttpClient|HttpRequestMessage|WebClient|RestClient|GrpcChannel|ChannelBase|Socket|TcpClient|Process\.Start|Assembly\.Load)\b",
     };
 
-    public static async Task<Result<AssemblySearchPayload>> SearchAsync(
+    public static Task<Result<AssemblySearchPayload>> SearchAsync(
         AssemblySearchRequest request,
+        CancellationToken cancellationToken = default) =>
+        SearchAsync(request, HandoffHandleRegistry.Default, cancellationToken);
+
+    internal static async Task<Result<AssemblySearchPayload>> SearchAsync(
+        AssemblySearchRequest request,
+        HandoffHandleRegistry handoffRegistry,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(handoffRegistry);
         var kind = string.IsNullOrWhiteSpace(request.SearchKind)
             ? "text"
             : request.SearchKind.Trim().ToLowerInvariant();
@@ -61,14 +70,24 @@ public static class AssemblySearchScanner
         if (request.Kind is not (null or "method" or "type" or "property"))
             return Result<AssemblySearchPayload>.Failure(NavigationErrorCodes.InvalidArgument, "kind must be method, type, or property.");
 
-        if (request.MaxFiles < 1)
-            return Result<AssemblySearchPayload>.Failure(NavigationErrorCodes.InvalidArgument, "maxFiles must be at least one.");
+        if (request.MaxFiles < 0)
+            return Result<AssemblySearchPayload>.Failure(NavigationErrorCodes.InvalidArgument, "maxFiles must be zero or greater.");
 
         var pattern = string.IsNullOrWhiteSpace(request.Query) ? BuiltInPatterns[kind] : request.Query;
+        var qualifiedTypeName = TryGetQualifiedTypeName(pattern, request) ? pattern.Trim() : null;
+        var searchPattern = qualifiedTypeName is null ? pattern : pattern[(pattern.LastIndexOf('.') + 1)..];
         var opened = await AssemblyNavigationSessionScope.OpenAsync(request.AssemblyPath, cancellationToken).ConfigureAwait(false);
         if (!opened.IsSuccess) return Result<AssemblySearchPayload>.Failure(opened.Error);
         await using var scope = opened.Value!;
         var context = scope.Context;
+        var binding = AssemblyPaging.CreateSearchBinding(context.Origin.CanonicalPath, context.Origin.ContentHash,
+            context.ReferenceSnapshotHash, request);
+        var handoffIdentity = AnalysisSymbolIdentity.ForAssembly(context.Origin.CanonicalPath, context.Origin.ContentHash,
+            context.Generation, context.ReferenceSnapshotHash);
+        if (!AssemblyPaging.TryReadBoundOffset(request.Cursor, binding, out var offset))
+            return Result<AssemblySearchPayload>.Failure(NavigationErrorCodes.InvalidArgument,
+                "continuationToken is not bound to this target snapshot and search query.",
+                "Repeat the same search against the same assembly snapshot using its most recent continuationToken.");
         Regex? fileMatcher = null;
         var negateFileMatcher = false;
         if (!RegexAutoDetector.TryCreateFilterRegex(request.FileFilter, out fileMatcher, out negateFileMatcher, out var filterError))
@@ -90,32 +109,37 @@ public static class AssemblySearchScanner
             return Result<AssemblySearchPayload>.Failure(NavigationErrorCodes.InvalidArgument,
                 "The fileFilter exceeded the evaluation time limit.", "Simplify the filter or use a glob.");
         }
-        var maxFiles = Math.Min(request.MaxFiles, MaxFiles);
+        var maxFiles = request.MaxFiles == 0 ? matchingTrees.Count : Math.Min(request.MaxFiles, MaxFiles);
         var limit = InspectAssemblyScanner.NormalizeLimit(request.MaxResults, DefaultMaxResults, MaxResults);
         var contextLineLimit = Math.Clamp(request.ContextLines, 0, MaxContextLines);
         var declarationOnly = request.DeclarationOnly || !string.IsNullOrWhiteSpace(request.Kind);
-        var initialRegex = string.IsNullOrWhiteSpace(request.Query)
-            || (request.UseRegex ?? RegexAutoDetector.IsLikelyRegex(pattern));
+        var initialRegex = qualifiedTypeName is not null
+            ? false
+            : string.IsNullOrWhiteSpace(request.Query) || (request.UseRegex ?? RegexAutoDetector.IsLikelyRegex(searchPattern));
         var scan = await ScanAsync(initialRegex).ConfigureAwait(false);
         if (scan.Error is not null) return Result<AssemblySearchPayload>.Failure(scan.Error.Value);
-        if (request.UseRegex is null && !string.IsNullOrWhiteSpace(request.Query) && !initialRegex
-            && scan.TotalCount == 0 && RegexAutoDetector.HasRegexMetaCharacters(pattern)
-            && (RegexAutoDetector.IsValidRegex(pattern, out _) || pattern.Contains('*') || pattern.Contains('?')))
+        if (qualifiedTypeName is null && request.UseRegex is null && !string.IsNullOrWhiteSpace(request.Query) && !initialRegex
+            && scan.TotalCount == 0 && RegexAutoDetector.HasRegexMetaCharacters(searchPattern)
+            && (RegexAutoDetector.IsValidRegex(searchPattern, out _) || searchPattern.Contains('*') || searchPattern.Contains('?')))
         {
-            var promotedPattern = RegexAutoDetector.IsValidRegex(pattern, out _)
-                ? pattern
-                : RegexAutoDetector.ConvertWildcardToRegex(pattern);
+            var promotedPattern = RegexAutoDetector.IsValidRegex(searchPattern, out _)
+                ? searchPattern
+                : RegexAutoDetector.ConvertWildcardToRegex(searchPattern);
             var promoted = await ScanAsync(useRegex: true, promotedPattern).ConfigureAwait(false);
             if (promoted.Error is not null) return Result<AssemblySearchPayload>.Failure(promoted.Error.Value);
             if (promoted.TotalCount > 0) scan = promoted;
         }
+        if (request.Cursor is not null && offset >= scan.TotalCount)
+            return Result<AssemblySearchPayload>.Failure(NavigationErrorCodes.InvalidArgument,
+                "continuationToken is beyond the remaining search results.",
+                "Use a continuationToken from a nonfinal result page.");
 
-        async Task<(List<AssemblySearchHit> Results, int TotalCount, int HitFileCount, ResultError? Error)> ScanAsync(bool useRegex, string? overridePattern = null)
+        async Task<(List<SearchHitCandidate> Results, int TotalCount, int HitFileCount, ResultError? Error)> ScanAsync(bool useRegex, string? overridePattern = null)
         {
-            var filesWithHits = new List<(string Path, List<AssemblySearchHit> Hits)>();
+            var filesWithHits = new List<(string Path, List<SearchHitCandidate> Hits)>();
             try
             {
-                var matcher = new Regex(useRegex ? overridePattern ?? pattern : Regex.Escape(pattern),
+                var matcher = new Regex(useRegex ? overridePattern ?? searchPattern : Regex.Escape(searchPattern),
                     RegexOptions.CultureInvariant | (request.CaseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase), RegexTimeout);
                 foreach (var tree in matchingTrees)
                 {
@@ -123,11 +147,18 @@ public static class AssemblySearchScanner
                     var filePath = tree.FilePath;
                     var sourceText = await tree.GetTextAsync(cancellationToken).ConfigureAwait(false);
                     var root = await tree.GetRootAsync(cancellationToken).ConfigureAwait(false);
+                    var semanticModel = context.Compilation.GetSemanticModel(tree);
                     var matchingLines = FindTextLines(sourceText, root, matcher, declarationOnly);
-                    var fileHits = new List<AssemblySearchHit>();
+                    var fileHits = new List<SearchHitCandidate>();
                     foreach (var match in matchingLines)
                     {
                         if (!MatchesKind(root, match.DeclarationNameSpan, request.Kind)) continue;
+                        var declaredSymbol = match.DeclarationNameSpan is { } declarationSpan
+                            ? GetDeclaredSymbol(root, semanticModel, declarationSpan, cancellationToken)
+                            : null;
+                        if (qualifiedTypeName is not null
+                            && (declaredSymbol is not INamedTypeSymbol typeSymbol
+                                || !string.Equals(typeSymbol.ToDisplayString(), qualifiedTypeName, StringComparison.Ordinal))) continue;
                         var line = sourceText.Lines[match.LineNumber];
                         var surrounding = contextLineLimit == 0
                             ? Array.Empty<string>()
@@ -136,7 +167,9 @@ public static class AssemblySearchScanner
                                 .Select(index => sourceText.Lines[index].ToString())
                                 .ToArray();
                         var symbol = GetContainingSymbolName(root, sourceText, line, match.DeclarationNameSpan);
-                        fileHits.Add(new AssemblySearchHit(filePath, match.LineNumber + 1, line.ToString(), symbol, surrounding));
+                        var hit = new AssemblySearchHit(filePath, match.LineNumber + 1, line.ToString(),
+                            symbol ?? declaredSymbol?.Name, surrounding);
+                        fileHits.Add(new SearchHitCandidate(hit, declaredSymbol));
                     }
                     if (fileHits.Count > 0) filesWithHits.Add((filePath, fileHits));
                 }
@@ -153,21 +186,39 @@ public static class AssemblySearchScanner
 
             var selected = filesWithHits.Take(maxFiles).ToList();
             var selectedCount = selected.Sum(file => file.Hits.Count);
-            return (selected.SelectMany(file => file.Hits).Take(limit).ToList(), selectedCount, filesWithHits.Count, null);
+            return (selected.SelectMany(file => file.Hits).ToList(), selectedCount, filesWithHits.Count, null);
         }
 
         var truncatedBy = new List<string>(2);
-        if (scan.HitFileCount > maxFiles) truncatedBy.Add("maxFiles");
-        if (scan.TotalCount > limit) truncatedBy.Add("maxResults");
+        if (request.MaxFiles > 0 && scan.HitFileCount > maxFiles) truncatedBy.Add("maxFiles");
+        var pageResults = scan.Results.Skip(offset).Take(limit).Select(candidate =>
+        {
+            if (request.Kind is not ("type" or "method") || candidate.DeclaredSymbol is null)
+                return candidate.Hit;
+
+            var internalHandoff = handoffIdentity.FormatHandoff(candidate.DeclaredSymbol);
+            var publicHandoff = internalHandoff is null
+                ? null
+                : handoffRegistry.GetOpaqueHandleForOutputOrThrow(internalHandoff);
+            return candidate.Hit with
+            {
+                HandoffId = publicHandoff,
+                OwnerTargetPath = publicHandoff is null ? null : context.Origin.CanonicalPath,
+            };
+        }).ToList();
+        var hasMorePages = offset + pageResults.Count < scan.TotalCount;
+        if (hasMorePages) truncatedBy.Add("maxResults");
+        var continuationToken = hasMorePages ? AssemblyPaging.CreateToken(offset + pageResults.Count, binding) : null;
         return Result<AssemblySearchPayload>.Success(new AssemblySearchPayload(
             context.Origin.CanonicalPath,
             kind,
             string.IsNullOrWhiteSpace(request.Query) ? pattern : request.Query,
-            scan.Results,
+            pageResults,
             scan.TotalCount,
             truncatedBy.Count > 0,
             context.Diagnostics,
-            truncatedBy));
+            truncatedBy,
+            continuationToken));
     }
 
     internal static IEnumerable<SearchLineMatch> FindTextLines(
@@ -342,5 +393,34 @@ public static class AssemblySearchScanner
             if (declarationKind is not null) return string.Equals(declarationKind, kind, StringComparison.Ordinal);
         }
         return false;
+    }
+
+    private static bool TryGetQualifiedTypeName(string pattern, AssemblySearchRequest request)
+    {
+        if (!string.Equals(request.Kind, "type", StringComparison.Ordinal)
+            || request.UseRegex is true
+            || string.IsNullOrWhiteSpace(request.Query)
+            || pattern.IndexOf('.') <= 0
+            || pattern.IndexOfAny(['*', '?', '[', ']', '(', ')', '{', '}', '+', '\\']) >= 0)
+            return false;
+
+        return true;
+    }
+
+    private static ISymbol? GetDeclaredSymbol(
+        SyntaxNode root,
+        SemanticModel semanticModel,
+        TextSpan declarationNameSpan,
+        CancellationToken cancellationToken)
+    {
+        var node = root.FindNode(declarationNameSpan, getInnermostNodeForTie: true);
+        foreach (var declaration in node.AncestorsAndSelf().OfType<MemberDeclarationSyntax>())
+        {
+            var nameSpan = GetDeclarationNameSpan(declaration);
+            if (nameSpan is null || nameSpan.Value != declarationNameSpan) continue;
+            return semanticModel.GetDeclaredSymbol(declaration, cancellationToken);
+        }
+
+        return null;
     }
 }

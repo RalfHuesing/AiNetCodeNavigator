@@ -49,6 +49,27 @@ public static class AssemblyPaging
             arguments.MaxMembers.ToString(),
             arguments.IncludeReferences?.ToString());
 
+    public static string CreateSearchBinding(
+        string canonicalPath,
+        string contentHash,
+        string referenceSnapshotHash,
+        AssemblySearchRequest arguments) =>
+        CreateBinding(
+            canonicalPath,
+            contentHash,
+            referenceSnapshotHash,
+            "search_assembly",
+            arguments.SearchKind,
+            arguments.Query,
+            arguments.CaseSensitive.ToString(),
+            arguments.UseRegex?.ToString(),
+            arguments.FileFilter,
+            arguments.DeclarationOnly.ToString(),
+            arguments.ContextLines.ToString(),
+            arguments.MaxResults.ToString(),
+            arguments.MaxFiles.ToString(),
+            arguments.Kind);
+
     public static bool TryReadBoundOffset(string? cursor, string binding, out int offset)
     {
         offset = 0;

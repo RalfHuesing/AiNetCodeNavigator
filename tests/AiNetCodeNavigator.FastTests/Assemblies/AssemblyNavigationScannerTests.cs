@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Assemblies;
+using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.TestKit;
 using AiNetCodeNavigator.TestKit.Fixtures;
 using Microsoft.CodeAnalysis;
@@ -115,6 +116,59 @@ public sealed class AssemblyNavigationScannerTests
         var wildcard = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, Query: "Searchable[*"));
         Assert.True(wildcard.IsSuccess, wildcard.Error?.ToString());
         Assert.Contains(wildcard.Value!.Results, match => match.Text.Contains("Searchable[", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Search_CursorExpiresWhenTransitiveReferenceSnapshotChanges()
+    {
+        using var temp = TestTempDirectory.Create("assembly-search-reference-cursor-");
+        var leaf = AssemblyTestHelper.EmitAssembly(temp, "SearchCursorLeaf", "namespace Probe.Leaf; public sealed class Leaf { public int Version => 1; }");
+        var dependency = AssemblyTestHelper.EmitAssembly(temp, "SearchCursorDependency", "namespace Probe.Reference; public sealed class Dependency { public Probe.Leaf.Leaf? Value; }", leaf);
+        var target = AssemblyTestHelper.EmitAssembly(temp, "SearchCursorTarget", """
+            public sealed class Alpha { public Probe.Reference.Dependency? Value; }
+            public sealed class Beta { }
+            """, dependency);
+
+        var first = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(
+            target, Query: "Alpha|Beta", UseRegex: true, Kind: "type", MaxResults: 1));
+        Assert.True(first.IsSuccess, first.Error?.ToString());
+        Assert.Single(first.Value!.Results);
+        Assert.NotNull(first.Value.ContinuationToken);
+
+        using var replacementTemp = TestTempDirectory.Create("assembly-search-reference-cursor-replacement-");
+        var replacement = AssemblyTestHelper.EmitAssembly(replacementTemp, "SearchCursorLeaf", "namespace Probe.Leaf; public sealed class Leaf { public int Version => 2; public int Added => 3; }");
+        File.Copy(replacement, leaf, overwrite: true);
+
+        var stale = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(
+            target, Query: "Alpha|Beta", UseRegex: true, Kind: "type", MaxResults: 1,
+            Cursor: first.Value.ContinuationToken));
+
+        Assert.False(stale.IsSuccess);
+        Assert.Equal(AiNetCodeNavigator.Core.Workspace.NavigationErrorCodes.InvalidArgument, stale.Error!.Value.Code);
+        Assert.Contains("continuationToken", stale.Error.Value.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Search_DoesNotAllocateHandlesForResultsBeyondCurrentPage()
+    {
+        using var temp = TestTempDirectory.Create("assembly-search-page-handles-");
+        var path = AssemblyTestHelper.EmitAssembly(temp, "PagedHandleProbe", """
+            namespace Probe.Search;
+            public sealed class Alpha { }
+            public sealed class Beta { }
+            public sealed class Gamma { }
+            """);
+        var isolatedRegistry = new HandoffHandleRegistry();
+
+        var first = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(
+            path, Query: "Alpha|Beta|Gamma", UseRegex: true, Kind: "type", MaxResults: 1), isolatedRegistry);
+
+        Assert.True(first.IsSuccess, first.Error?.ToString());
+        var hit = Assert.Single(first.Value!.Results);
+        Assert.Equal("Alpha", hit.Symbol);
+        Assert.StartsWith("h:", hit.HandoffId, StringComparison.Ordinal);
+        Assert.Equal(1, isolatedRegistry.Count);
+        Assert.NotNull(first.Value.ContinuationToken);
     }
 
     [Fact]

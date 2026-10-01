@@ -70,7 +70,7 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
     public Task<CallToolResult> SearchAssembly([Required] string targetPath, string searchKind = "text",
         string? pattern = null, bool? isRegex = null, bool caseSensitive = false, bool declarationOnly = false,
         string? kind = null, string? fileFilter = null, [Range(0, 5)] int contextLines = 0,
-        [Range(1, 1000)] int maxResults = 50, [Range(1, 10000)] int maxFiles = 1000,
+        [Range(0, 1000)] int maxResults = 50, [Range(0, 2000)] int maxFiles = 0,
         string detailLevel = "standard", [Range(512, 65536)] int maxResponseBytes = 24576,
         [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
         string? continuationToken = null, CancellationToken cancellationToken = default) =>
@@ -82,13 +82,16 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                 if (!TryDetail(detailLevel)) return Invalid("detailLevel", "Use compact, standard, or full.");
                 if (kind is not (null or "method" or "type" or "property")) return Invalid("kind", "Use method, type, or property.");
                 var result = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(target.CanonicalPath, pattern,
-                    searchKind, caseSensitive, isRegex, fileFilter, declarationOnly, contextLines, maxResults, maxFiles, kind), ct).ConfigureAwait(false);
+                    searchKind, caseSensitive, isRegex, fileFilter, declarationOnly, contextLines, maxResults == 0 ? 50 : maxResults, maxFiles, kind,
+                    Cursor: continuationToken), ct).ConfigureAwait(false);
                 return result.IsSuccess ? NavigationToolSupport.Success(result.Value!, result.Value!.Truncated,
-                    result.Value.TruncatedBy?.Contains("maxFiles", StringComparer.Ordinal) == true
-                        ? "Increase maxFiles and repeat the same query."
-                        : "Increase maxResults and repeat the same query.")
+                    result.Value.ContinuationToken is not null
+                        ? "Repeat the same query with the returned continuationToken; increase maxFiles to include additional matching files."
+                        : result.Value.TruncatedBy?.Contains("maxFiles", StringComparer.Ordinal) == true
+                            ? "Increase maxFiles and repeat the same query."
+                            : "Increase maxResults and repeat the same query.")
                     : NavigationToolSupport.Failure(result.Error!.Value, maxResponseBytes, maxResponseTokens, "$.pattern");
-            }, AnalysisTargetType.Assembly, cancellationToken);
+            }, AnalysisTargetType.Assembly, cancellationToken, acceptsDomainCursor: true);
 
     [McpServerTool(Name = "find_assembly_extensions", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     public Task<CallToolResult> FindAssemblyExtensions([Required] string targetPath, string? receiverType = null,

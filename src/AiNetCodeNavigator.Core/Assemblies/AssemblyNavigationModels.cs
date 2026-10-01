@@ -32,15 +32,18 @@ public sealed record AssemblySearchRequest(
     bool DeclarationOnly = false,
     int ContextLines = 0,
     int MaxResults = 100,
-    int MaxFiles = 1000,
-    string? Kind = null);
+    int MaxFiles = 0,
+    string? Kind = null,
+    string? Cursor = null);
 
 public sealed record AssemblySearchHit(
     string FilePath,
     int LineNumber,
     string Text,
     string? Symbol = null,
-    IReadOnlyList<string>? Context = null);
+    IReadOnlyList<string>? Context = null,
+    string? HandoffId = null,
+    string? OwnerTargetPath = null);
 
 public sealed record AssemblySearchPayload(
     string AssemblyPath,
@@ -50,7 +53,8 @@ public sealed record AssemblySearchPayload(
     int TotalCount,
     bool Truncated,
     IReadOnlyList<string> Diagnostics,
-    IReadOnlyList<string>? TruncatedBy = null);
+    IReadOnlyList<string>? TruncatedBy = null,
+    string? ContinuationToken = null);
 
 public sealed record FindAssemblyExtensionsRequest(
     string AssemblyPath,
