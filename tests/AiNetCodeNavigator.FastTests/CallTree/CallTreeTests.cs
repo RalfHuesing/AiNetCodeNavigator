@@ -4,6 +4,7 @@ using System.Linq;
 using System.IO;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.CallTree;
+using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.TestKit.Builders;
 using AiNetCodeNavigator.TestKit.Fixtures;
 using Microsoft.CodeAnalysis;
@@ -101,6 +102,137 @@ public sealed class CallTreeTests
 
         Assert.Contains(graph.Nodes, node => node.Name == "Callee");
         Assert.Contains(graph.Nodes, node => node.Name == "Callee.Instance");
+    }
+
+    [Fact]
+    public async Task BuildGraphAsync_IncomingCalls_PreservesDirectAndMutualRecursiveCallSites()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution("""
+            namespace Calls;
+            public sealed class Caller
+            {
+                public void First() { First(); First(); Second(); }
+                public void Second() { First(); First(); }
+            }
+            """);
+        var compilation = await fixture.Solution.Projects.Single().GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var caller = compilation.GetTypeByMetadataName("Calls.Caller")!;
+        var first = caller.GetMembers("First").OfType<IMethodSymbol>().Single();
+
+        var graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
+            fixture.Solution, first, RequestedDepth: 3, Direction: CallTreeDirection.Incoming));
+
+        var recursive = Assert.Single(graph.Edges.Where(edge =>
+            edge.FromNodeId == graph.RootNodeId && edge.ToNodeId == graph.RootNodeId));
+        Assert.Equal(2, recursive.CallSites.Count);
+        Assert.Equal(2, recursive.CallSites.Select(site => site.Column).Distinct().Count());
+        var mutual = Assert.Single(graph.Edges.Where(edge =>
+            edge.ToNodeId == graph.RootNodeId && edge.FromNodeId != graph.RootNodeId));
+        Assert.Equal(2, mutual.CallSites.Count);
+        Assert.False(graph.Truncated);
+    }
+
+    [Fact]
+    public async Task BuildGraphAsync_OutgoingCalls_DistinguishesSameLineCallSites()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution("""
+            namespace Calls;
+            public sealed class Caller { public void Invoke(Target target) { target.Run(); target.Run(); } }
+            public sealed class Target { public void Run() { } }
+            """);
+        var compilation = await fixture.Solution.Projects.Single().GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var caller = compilation.GetTypeByMetadataName("Calls.Caller")!;
+        var invoke = caller.GetMembers("Invoke").OfType<IMethodSymbol>().Single();
+
+        var graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
+            fixture.Solution, invoke, Direction: CallTreeDirection.Outgoing));
+
+        var edge = Assert.Single(graph.Edges);
+        Assert.Equal(2, edge.CallSites.Count);
+        Assert.Equal(2, edge.CallSites.Distinct().Count());
+        Assert.Equal(2, edge.CallSites.Select(site => site.Column).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task BuildGraphAsync_OutgoingCalls_DoesNotGuessAmongAmbiguousOverloads()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution("""
+            namespace Calls;
+            public sealed class Caller { public void Invoke() { Target.Run(null); } }
+            public static class Target
+            {
+                public static void Run(string? value) { }
+                public static void Run(System.Uri? value) { }
+            }
+            """);
+        var compilation = await fixture.Solution.Projects.Single().GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var caller = compilation.GetTypeByMetadataName("Calls.Caller")!;
+        var invoke = caller.GetMembers("Invoke").OfType<IMethodSymbol>().Single();
+
+        var graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
+            fixture.Solution, invoke, Direction: CallTreeDirection.Outgoing));
+
+        Assert.DoesNotContain(graph.Nodes, node => node.Name == "Target.Run");
+        var ambiguousSite = Assert.Single(graph.UnresolvedCallSites!);
+        Assert.Equal(RelationshipEvidence.PossibleTarget, ambiguousSite.EvidenceKind);
+        Assert.Equal(2, ambiguousSite.CandidateTargets.Count);
+        Assert.Contains(ambiguousSite.CandidateTargets, target => target.Contains("Target.Run(string?", System.StringComparison.Ordinal));
+        Assert.Contains(ambiguousSite.CandidateTargets, target => target.Contains("Target.Run(Uri?", System.StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task BuildGraphAsync_OutgoingCalls_ReportsCallMemberVirtualAndUnresolvedEvidence()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution("""
+            namespace Calls;
+            public interface IWorker { void Work(); }
+            public class BaseWorker { public virtual void Run() { } }
+            public sealed class Worker : BaseWorker, IWorker { public void Work() { } public int Value => 1; }
+            public sealed class Box { public Box(int value) { } }
+            public sealed class Operation { public void Execute() { } }
+            public sealed class Holder { public Operation Value => new(); }
+            public sealed class Caller
+            {
+                public void Invoke(IWorker contract, BaseWorker baseWorker, Worker worker, Holder holder)
+                {
+                    contract.Work(); baseWorker.Run(); worker.Work(); _ = worker.Value;
+                    Consume(worker.Value); Consume(worker.Work); _ = new Box(worker.Value);
+                    holder.Value.Execute(); Missing();
+                }
+                private void Consume(int value) { }
+                private void Consume(System.Action action) { }
+                private void MissingOverload() { Target.Run(null); }
+            }
+            public static class Target
+            {
+                public static void Run(string? value) { }
+                public static void Run(System.Uri? value) { }
+            }
+            """);
+        var compilation = await fixture.Solution.Projects.Single().GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var caller = compilation.GetTypeByMetadataName("Calls.Caller")!;
+        var invoke = caller.GetMembers("Invoke").OfType<IMethodSymbol>().Single();
+        var ambiguous = caller.GetMembers("MissingOverload").OfType<IMethodSymbol>().Single();
+
+        var graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
+            fixture.Solution, invoke, Direction: CallTreeDirection.Outgoing));
+        var ambiguousGraph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
+            fixture.Solution, ambiguous, Direction: CallTreeDirection.Outgoing));
+
+        Assert.Contains(graph.Edges.SelectMany(edge => edge.CallSites), site => site.EvidenceKind == RelationshipEvidence.Call);
+        Assert.Contains(graph.Edges.SelectMany(edge => edge.CallSites), site => site.EvidenceKind == RelationshipEvidence.MemberAccess);
+        Assert.Contains(graph.Edges.SelectMany(edge => edge.CallSites), site => site.EvidenceKind == RelationshipEvidence.StaticVirtualOrInterfaceTarget);
+        Assert.Contains(graph.Edges, edge => graph.Nodes.Single(node => node.NodeId == edge.ToNodeId).Name == "Worker.Work"
+            && edge.CallSites.Any(site => site.EvidenceKind == RelationshipEvidence.MemberAccess));
+        Assert.Contains(graph.Edges, edge => graph.Nodes.Single(node => node.NodeId == edge.ToNodeId).Name == "Holder.Value"
+            && edge.CallSites.Any(site => site.EvidenceKind == RelationshipEvidence.MemberAccess));
+        Assert.Contains(graph.UnresolvedCallSites!, site => site.EvidenceKind == RelationshipEvidence.Unresolved);
+        Assert.Contains(ambiguousGraph.UnresolvedCallSites!, site => site.EvidenceKind == RelationshipEvidence.PossibleTarget);
+        Assert.Contains("possible targets", CallGraphTextRenderer.RenderAscii(ambiguousGraph), System.StringComparison.Ordinal);
     }
 
     [Fact]

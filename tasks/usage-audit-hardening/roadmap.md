@@ -52,7 +52,7 @@ Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept 
 
 ### M1-T3 — Statische Beziehungen korrekt belegen
 
-- [ ] **M1-T3 abschließen**
+- [x] **M1-T3 abschließen**
 
 **Intention:** Rekursion und unklare Bindungen so ausgeben, dass Agenten daraus keine falschen Abwesenheits- oder Aufrufbeweise ableiten.
 
@@ -61,6 +61,10 @@ Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept 
 **Nicht:** Keine Zusammenführung der öffentlichen Impact-/Call-Tree-Workflows und keine Laufzeitbehauptungen über DI, Reflection oder dynamischen Dispatch. Kein zusätzliches Redesign von Graphformaten oder Traversierungsargumenten.
 
 **Abnahme:** Source- und Assembly-Fixtures für direkte/gegenseitige Rekursion und mehrere Callsites liefern übereinstimmende Fundstellen und terminierende Traversierung. Zwei Aufrufe auf derselben Zeile bleiben unterscheidbar. Eine mehrdeutige Überladung erscheint nicht als geratener exakter Call. Grenzen und Belegarten sind im öffentlichen Ergebnis sichtbar.
+
+**Umsetzung und Nachweis (2026-10-02):** Die Source- und emittierte Assembly-Fixture erhalten direkte und gegenseitige Rekursionskanten sowie getrennte Spalten für Aufrufe auf derselben Zeile. Referenzen und Impact projizieren dieselbe begrenzte Caller-Traversierung; Call-Tree-Ausgaben behalten Fundstelle und Belegart. Mehrdeutige Ziele erscheinen als `possibleTarget` mit Kandidaten, ungebundene Stellen als `unresolved`; Memberzugriffe in Aufrufreceivern und Argumenten werden nicht als Aufruf des äußeren Members ausgegeben. Die öffentliche Assembly-Fixture folgt Owner-Handoffs und prüft Call-Tree, Referenzen und Impact. Die anfänglichen Regressionen für fehlende Self-Edges, verschmolzene gleiche-Zeilen-Calls, geratene Überladungen und später den Receiver `holder.Value.Execute()` scheiterten vor der jeweiligen Korrektur und bestanden danach.
+
+Verifiziert mit `pwsh -File ./scripts/build.ps1` (0 Warnungen, 0 Fehler); `pwsh -File ./scripts/test-fast.ps1 -Filter "FullyQualifiedName~CallTreeTests|FullyQualifiedName~CrossFeatureRelationshipContractTests|FullyQualifiedName~FindReferencesResolverTests|FullyQualifiedName~ImpactAnalyzerTests"` (52/52); und `pwsh -File ./scripts/test-integration.ps1 -IncludeExtended -Filter "FullyQualifiedName~AssemblyCallTree_PreservesRecursiveAndSameLineCallSitesWithEvidence|FullyQualifiedName~AssemblyNavigationHandlersReturnOwnerResultsAcrossAllSixteenRoutes|FullyQualifiedName~AssemblyReferenceClosureHandsOffAcrossRootBridgeAndLeafOwners|FullyQualifiedName~SourceRelationshipHandlersReturnNavigableResultsErrorsAndBoundedProjections"` (4/4). Die Suite enthält keine als `ExtendedIntegration` kategorisierten Beziehungstests; die gefilterte Assembly-Closure-Prüfung lief im angegebenen `-IncludeExtended`-Aufruf mit. Die analysierten Quellen bleiben unverändert; Belegarten beschreiben statische Quellbindung und machen keine Laufzeitbehauptungen zu DI, Reflection oder dynamischem Dispatch.
 
 ### M1-T4 — Ergebnisstatus und Fortsetzungsgrundlage vereinheitlichen
 

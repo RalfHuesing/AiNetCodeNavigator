@@ -175,6 +175,42 @@ public sealed class CrossFeatureRelationshipContractTests
     }
 
     [Fact]
+    public async Task ReferencesAndImpact_KeepSelfAndMutualRecursionWithMatchingEvidenceAndColumns()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution("""
+            namespace Recursive;
+            public sealed class Worker
+            {
+                public void First() { First(); First(); Second(); }
+                public void Second() { First(); First(); }
+            }
+            """);
+        var compilation = await fixture.Solution.Projects.Single().GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var worker = compilation.GetTypeByMetadataName("Recursive.Worker")!;
+        var first = worker.GetMembers("First").OfType<IMethodSymbol>().Single();
+
+        var references = await FindReferencesResolver.FindReferencesAsync(first, fixture.Solution, maxResults: 20, depth: 3);
+        var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(first, fixture.Solution, maxDepth: 3, maxResults: 20);
+        var callerTree = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
+            fixture.Solution, first, RequestedDepth: 3, Direction: CallTreeDirection.Incoming));
+        var callTree = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
+            fixture.Solution, first, RequestedDepth: 3, Direction: CallTreeDirection.Outgoing));
+
+        Assert.Equal(references.TotalCount, impact.TransitiveImpactCount);
+        Assert.Equal(references.References.Select(site =>
+                (site.FilePath, site.Line, site.Column, site.EnclosingSymbolName, site.Depth, site.EvidenceKind)),
+            impact.CallSites.Select(site =>
+                (site.FilePath, site.Line, site.Column, site.CallingMember, site.Depth, site.EvidenceKind)));
+        Assert.Contains(callerTree.Edges, edge => edge.FromNodeId == callerTree.RootNodeId && edge.ToNodeId == callerTree.RootNodeId);
+        Assert.Contains(callTree.Edges, edge => edge.FromNodeId == callTree.RootNodeId && edge.ToNodeId == callTree.RootNodeId);
+        Assert.Equal(2, callerTree.Edges.Single(edge => edge.FromNodeId == callerTree.RootNodeId
+            && edge.ToNodeId == callerTree.RootNodeId).CallSites.Select(site => site.Column).Distinct().Count());
+        Assert.False(callerTree.Truncated);
+        Assert.False(callTree.Truncated);
+    }
+
+    [Fact]
     public async Task RelationshipScopeFiltersGeneratedAndTestDocumentsBeforeLimitsAndKeepsOriginalHandoffs()
     {
         using var fixture = TestWorkspaceBuilder.CreateSolution(

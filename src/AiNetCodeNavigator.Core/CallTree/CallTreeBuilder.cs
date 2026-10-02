@@ -44,6 +44,7 @@ public static class CallTreeBuilder
         }
 
         var rootNode = state.GetOrAddNode(request.SeedSymbol);
+        state.MarkVisited(request.SeedSymbol);
         state.Enqueue(request.SeedSymbol, 1);
 
         while (state.HasQueuedNodes && !state.IsAtNodeCap)
@@ -100,12 +101,12 @@ public static class CallTreeBuilder
                 }
                 if (caller is null) caller = enclosing;
 
-                // Skip self-declarations
-                if (SymbolEqualityComparer.Default.Equals(caller, targetSymbol)) continue;
-
                 var lineSpan = loc.Location.GetLineSpan();
                 var relPath = PathNormalizer.ToRelative(state.SolutionDir, lineSpan.Path);
                 var line = lineSpan.StartLinePosition.Line + 1;
+                var column = lineSpan.StartLinePosition.Character + 1;
+                var syntaxRoot = await doc.GetSyntaxRootAsync(ct).ConfigureAwait(false);
+                var referenceNode = syntaxRoot?.FindNode(loc.Location.SourceSpan, getInnermostNodeForTie: true);
 
                 if (!callerGroups.TryGetValue(caller, out var list))
                 {
@@ -113,7 +114,8 @@ public static class CallTreeBuilder
                     callerGroups[caller] = list;
                 }
 
-                list.Add(new CallSiteInfo(relPath, line));
+                list.Add(new CallSiteInfo(relPath, line, column,
+                    referenceNode is null ? RelationshipEvidence.Unresolved : RelationshipEvidence.Classify(referenceNode, semanticModel)));
             }
         }
 
@@ -173,9 +175,28 @@ public static class CallTreeBuilder
             var body = GetBodyNode(syntax);
             if (body is null) continue;
 
+            void AddUnresolved(SyntaxNode callSite, IEnumerable<ISymbol> candidates)
+            {
+                var lineSpan = callSite.GetLocation().GetLineSpan();
+                var relPath = PathNormalizer.ToRelative(state.SolutionDir, lineSpan.Path);
+                var sourceNode = state.GetOrAddNode(sourceSymbol);
+                state.AddUnresolvedCallSite(new UnresolvedCallSiteInfo(
+                    sourceNode.NodeId,
+                    relPath,
+                    lineSpan.StartLinePosition.Line + 1,
+                    lineSpan.StartLinePosition.Character + 1,
+                    candidates.Any() ? RelationshipEvidence.PossibleTarget : RelationshipEvidence.Unresolved,
+                    candidates.Select(candidate => candidate.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat))
+                        .Distinct(StringComparer.Ordinal).OrderBy(candidate => candidate, StringComparer.Ordinal).ToArray()));
+            }
+
             void AddTarget(ISymbol? target, SyntaxNode callSite)
             {
-                if (target is null) return;
+                if (target is null)
+                {
+                    AddUnresolved(callSite, Array.Empty<ISymbol>());
+                    return;
+                }
 
                 var isExternal = !target.Locations.Any(location => location.IsInSource);
                 if (!state.IncludeBcl && isExternal && IsBclSymbol(target)) return;
@@ -183,6 +204,7 @@ public static class CallTreeBuilder
                 var lineSpan = callSite.GetLocation().GetLineSpan();
                 var relPath = PathNormalizer.ToRelative(state.SolutionDir, lineSpan.Path);
                 var line = lineSpan.StartLinePosition.Line + 1;
+                var column = lineSpan.StartLinePosition.Character + 1;
 
                 if (!calleeGroups.TryGetValue(target, out var list))
                 {
@@ -190,44 +212,50 @@ public static class CallTreeBuilder
                     calleeGroups[target] = list;
                 }
 
-                list.Add(new CallSiteInfo(relPath, line));
+                list.Add(new CallSiteInfo(relPath, line, column,
+                    RelationshipEvidence.Classify(callSite, semanticModel)));
             }
 
             foreach (var invocation in body.DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
                 var symbolInfo = semanticModel.GetSymbolInfo(invocation, ct);
-                var target = symbolInfo.Symbol ?? symbolInfo.CandidateSymbols.FirstOrDefault();
-                if (target is null && invocation.Expression is MemberAccessExpressionSyntax memberAccess)
+                if (symbolInfo.Symbol is { } target)
                 {
-                    target = ResolveMemberAccess(memberAccess, semanticModel, ct);
+                    AddTarget(target, invocation);
                 }
-                AddTarget(target, invocation);
+                else
+                {
+                    AddUnresolved(invocation, symbolInfo.CandidateSymbols);
+                }
             }
 
             foreach (var creation in body.DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
             {
                 var symbolInfo = semanticModel.GetSymbolInfo(creation, ct);
-                AddTarget(symbolInfo.Symbol ?? symbolInfo.CandidateSymbols.FirstOrDefault()
-                    ?? semanticModel.GetTypeInfo(creation, ct).Type, creation);
+                if (symbolInfo.Symbol is { } target) AddTarget(target, creation);
+                else AddUnresolved(creation, symbolInfo.CandidateSymbols);
             }
 
             foreach (var creation in body.DescendantNodes().OfType<ImplicitObjectCreationExpressionSyntax>())
             {
                 var symbolInfo = semanticModel.GetSymbolInfo(creation, ct);
-                AddTarget(symbolInfo.Symbol ?? symbolInfo.CandidateSymbols.FirstOrDefault()
-                    ?? semanticModel.GetTypeInfo(creation, ct).Type, creation);
+                if (symbolInfo.Symbol is { } target) AddTarget(target, creation);
+                else AddUnresolved(creation, symbolInfo.CandidateSymbols);
             }
 
             foreach (var memberAccess in body.DescendantNodes().OfType<MemberAccessExpressionSyntax>())
             {
                 if (memberAccess.Parent is InvocationExpressionSyntax) continue;
-                AddTarget(ResolveMemberAccess(memberAccess, semanticModel, ct), memberAccess);
+                var symbolInfo = semanticModel.GetSymbolInfo(memberAccess, ct);
+                if (symbolInfo.Symbol is { } target) AddTarget(target, memberAccess);
+                else AddUnresolved(memberAccess, symbolInfo.CandidateSymbols.Concat(semanticModel.GetMemberGroup(memberAccess, ct)));
             }
         }
 
         var sortedCallees = calleeGroups
             .OrderBy(g => g.Value.FirstOrDefault()?.FilePath, StringComparer.OrdinalIgnoreCase)
             .ThenBy(g => g.Value.FirstOrDefault()?.Line ?? 0)
+            .ThenBy(g => g.Value.FirstOrDefault()?.Column ?? 0)
             .ToList();
 
         var shown = sortedCallees.Take(fanOutBudget).ToList();
@@ -276,14 +304,6 @@ public static class CallTreeBuilder
                 || namespaceName.StartsWith("Microsoft.Win32", StringComparison.Ordinal));
     }
 
-    private static ISymbol? ResolveMemberAccess(MemberAccessExpressionSyntax memberAccess, SemanticModel semanticModel, CancellationToken ct)
-    {
-        var symbolInfo = semanticModel.GetSymbolInfo(memberAccess, ct);
-        if (symbolInfo.Symbol is not null) return symbolInfo.Symbol;
-        if (symbolInfo.CandidateSymbols.Length > 0) return symbolInfo.CandidateSymbols[0];
-        return semanticModel.GetMemberGroup(memberAccess, ct).FirstOrDefault();
-    }
-
     private static SyntaxNode? GetBodyNode(SyntaxNode node) =>
         node switch
         {
@@ -306,6 +326,7 @@ public static class CallTreeBuilder
         private readonly Dictionary<ISymbol, CallGraphNode> _nodesBySymbol = new(SymbolEqualityComparer.Default);
         private readonly List<CallGraphNode> _nodes = [];
         private readonly List<CallGraphEdge> _edges = [];
+        private readonly List<UnresolvedCallSiteInfo> _unresolvedCallSites = [];
         private readonly Queue<(ISymbol Symbol, int Level)> _queue = new();
         private readonly HashSet<ISymbol> _visited = new(SymbolEqualityComparer.Default);
         private int _hiddenEdgeCount;
@@ -334,6 +355,15 @@ public static class CallTreeBuilder
 
         public bool MarkVisited(ISymbol symbol) => _visited.Add(symbol);
         public void AddHiddenEdges(int count) => _hiddenEdgeCount += count;
+        public void AddUnresolvedCallSite(UnresolvedCallSiteInfo site)
+        {
+            if (_unresolvedCallSites.Count >= MaxCallTreeNodes)
+            {
+                _hiddenEdgeCount++;
+                return;
+            }
+            _unresolvedCallSites.Add(site);
+        }
 
         public CallGraphNode GetOrAddNode(ISymbol symbol)
         {
@@ -377,7 +407,8 @@ public static class CallTreeBuilder
             var existing = _edges.FirstOrDefault(e => e.FromNodeId == fromNodeId && e.ToNodeId == toNodeId);
             if (existing != null)
             {
-                var combined = existing.CallSites.Concat(callSites).Distinct().ToList();
+                var combined = existing.CallSites.Concat(callSites).Distinct().OrderBy(site => site.FilePath, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(site => site.Line).ThenBy(site => site.Column).ToList();
                 _edges.Remove(existing);
                 _edges.Add(existing with { CallSites = combined });
             }
@@ -394,7 +425,8 @@ public static class CallTreeBuilder
                 Edges: _edges,
                 Truncated: _queue.Count > 0 || _hiddenEdgeCount > 0,
                 HiddenEdgeCount: _hiddenEdgeCount,
-                PendingNodeCount: _queue.Count);
+                PendingNodeCount: _queue.Count,
+                UnresolvedCallSites: _unresolvedCallSites.Count == 0 ? null : _unresolvedCallSites);
 
         public CallGraphPayload CreateTypeSeedPayload(INamedTypeSymbol namedType)
         {

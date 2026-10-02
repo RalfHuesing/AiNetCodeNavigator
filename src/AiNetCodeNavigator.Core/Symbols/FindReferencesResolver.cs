@@ -117,6 +117,8 @@ public static class FindReferencesResolver
 
                     var semanticModel = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false);
                     var enclosing = semanticModel is null ? null : ResolveEnclosingSourceSymbol(semanticModel, loc.Location);
+                    var syntaxRoot = await doc.GetSyntaxRootAsync(ct).ConfigureAwait(false);
+                    var referenceNode = syntaxRoot?.FindNode(loc.Location.SourceSpan, getInnermostNodeForTie: true);
 
                     var callerName = enclosing switch
                     {
@@ -144,7 +146,10 @@ public static class FindReferencesResolver
                             ReachedFromSymbolName: reachedFromName,
                             ReachedFromSymbolHandoffId: null,
                             OwnerTargetPath: ownerTargetPath,
-                            ReachedFromSymbolId: RelationshipSymbolIdentity.GetStableId(currentSymbol)),
+                        ReachedFromSymbolId: RelationshipSymbolIdentity.GetStableId(currentSymbol),
+                        EvidenceKind: referenceNode is null
+                            ? RelationshipEvidence.Unresolved
+                            : RelationshipEvidence.Classify(referenceNode, semanticModel)),
                         enclosing,
                         currentSymbol,
                         doc.Project.FilePath is { Length: > 0 } projectPath ? Path.GetFullPath(projectPath) : string.Empty,

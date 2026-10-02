@@ -26,7 +26,23 @@ public static class CallTreeMermaidRenderer
 
         foreach (var edge in graph.Edges)
         {
-            sb.AppendLine($"    {edge.FromNodeId} --> {edge.ToNodeId}");
+            var evidence = edge.CallSites.Select(site => site.EvidenceKind).Distinct(StringComparer.Ordinal).ToArray();
+            var label = evidence.Length == 0 ? string.Empty : $"|{EscapeLabel(string.Join(", ", evidence))} ×{edge.CallSites.Count}|";
+            sb.AppendLine($"    {edge.FromNodeId} -->{label} {edge.ToNodeId}");
+            foreach (var site in edge.CallSites)
+                sb.AppendLine($"    %% {EscapeComment($"{site.FilePath}:{site.Line}:{site.Column} [{site.EvidenceKind}]")}");
+        }
+
+        if (graph.UnresolvedCallSites is { Count: > 0 })
+        {
+            sb.AppendLine();
+            foreach (var unresolved in graph.UnresolvedCallSites)
+            {
+                var candidates = unresolved.CandidateTargets.Count == 0
+                    ? string.Empty
+                    : $"; possible targets: {string.Join(", ", unresolved.CandidateTargets)}";
+                sb.AppendLine($"    %% [{unresolved.EvidenceKind}] {unresolved.FilePath}:{unresolved.Line}:{unresolved.Column}{candidates}");
+            }
         }
 
         if (graph.HiddenEdgeCount > 0 && !string.IsNullOrEmpty(graph.RootNodeId))
@@ -61,5 +77,7 @@ public static class CallTreeMermaidRenderer
             : $"{node.Name} — {node.DisplayLine}";
 
     private static string EscapeLabel(string label) =>
-        label.Replace("\r", " ").Replace("\n", " ").Replace("\"", "'");
+        label.Replace("\r", " ").Replace("\n", " ").Replace("\"", "'").Replace("|", "/");
+
+    private static string EscapeComment(string value) => value.Replace("\r", " ").Replace("\n", " ");
 }

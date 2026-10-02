@@ -14,7 +14,8 @@ public sealed record ImpactCallSiteEntry(
     int Depth,
     string ReachedFromSymbolId = "",
     string? ReachedFromSymbolHandoffId = null,
-    string? OwnerTargetPath = null);
+    string? OwnerTargetPath = null,
+    string EvidenceKind = RelationshipEvidence.Unresolved);
 
 public sealed record SymbolImpactPayload(
     string TargetSymbol,

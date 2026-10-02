@@ -37,11 +37,10 @@ public static class CallGraphTextRenderer
             var isLast = i == graph.Edges.Count - 1 && graph.HiddenEdgeCount == 0;
             var prefix = isLast ? "└── " : "├── ";
 
-            var site = edge.CallSites.FirstOrDefault();
-            var location = site is null ? string.Empty : $" — {site.FilePath}:{site.Line}";
-            var dispatch = string.IsNullOrWhiteSpace(edge.DispatchKind) ? string.Empty : $" [{edge.DispatchKind}]";
+            var locations = edge.CallSites.Count == 0 ? string.Empty : " — " + string.Join(", ",
+                edge.CallSites.Select(site => $"{site.FilePath}:{site.Line}:{site.Column} [{site.EvidenceKind}]"));
 
-            sb.AppendLine($"{prefix}[{from.NodeId}] {from.Name} -> [{to.NodeId}] {to.Name}{location}{dispatch}");
+            sb.AppendLine($"{prefix}[{from.NodeId}] {from.Name} -> [{to.NodeId}] {to.Name}{locations}");
         }
 
         if (graph.HiddenEdgeCount > 0)
@@ -52,6 +51,18 @@ public static class CallGraphTextRenderer
         if (graph.PendingNodeCount > 0)
         {
             sb.AppendLine($"└── ... {graph.PendingNodeCount} nodes not yet explored");
+        }
+
+        if (graph.UnresolvedCallSites is { Count: > 0 })
+        {
+            sb.AppendLine("Unresolved call sites:");
+            foreach (var unresolved in graph.UnresolvedCallSites)
+            {
+                var candidates = unresolved.CandidateTargets.Count == 0
+                    ? string.Empty
+                    : $"; possible targets: {string.Join(", ", unresolved.CandidateTargets)}";
+                sb.AppendLine($"- [{unresolved.EvidenceKind}] {unresolved.FilePath}:{unresolved.Line}:{unresolved.Column}{candidates}");
+            }
         }
 
         AppendNodeHandoffs(sb, graph.Nodes);

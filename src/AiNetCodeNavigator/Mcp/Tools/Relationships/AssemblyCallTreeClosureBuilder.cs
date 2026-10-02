@@ -30,6 +30,7 @@ internal static class AssemblyCallTreeClosureBuilder
         Dictionary<string, CallGraphNode> Nodes,
         List<string> NodeOrder,
         List<(string FromKey, string ToKey, CallGraphEdge Edge)> Edges,
+        List<(string CallerKey, UnresolvedCallSiteInfo Site)> UnresolvedCallSites,
         string RootKey,
         int HiddenEdges,
         bool LocalTruncated,
@@ -195,9 +196,15 @@ internal static class AssemblyCallTreeClosureBuilder
         if (nodeMap.TryGetValue(rootKey, out var rootNode))
             nodeMap[rootKey] = rootNode with { HandoffId = internalRootHandoff, OwnerTargetPath = handoffOwnerPath };
         var mergedEdgesByKey = new List<(string FromKey, string ToKey, CallGraphEdge Edge)>();
+        var unresolvedCallSites = new List<(string CallerKey, UnresolvedCallSiteInfo Site)>();
         foreach (var (partIndex, owner) in owners.Select((owner, index) => (index, owner)))
         {
             var keys = partKeys[partIndex];
+            foreach (var site in owner.Graph.UnresolvedCallSites ?? [])
+            {
+                if (keys.TryGetValue(site.CallerNodeId, out var callerKey))
+                    unresolvedCallSites.Add((callerKey, site));
+            }
             foreach (var edge in owner.Graph.Edges)
             {
                 if (!keys.TryGetValue(edge.FromNodeId, out var fromKey) || !keys.TryGetValue(edge.ToNodeId, out var toKey))
@@ -213,13 +220,15 @@ internal static class AssemblyCallTreeClosureBuilder
                     var existing = mergedEdgesByKey[existingIndex];
                     mergedEdgesByKey[existingIndex] = (fromKey, toKey, existing.Edge with
                     {
-                        CallSites = existing.Edge.CallSites.Concat(edge.CallSites).Distinct().ToArray()
+                        CallSites = existing.Edge.CallSites.Concat(edge.CallSites).Distinct()
+                            .OrderBy(site => site.FilePath, StringComparer.OrdinalIgnoreCase)
+                            .ThenBy(site => site.Line).ThenBy(site => site.Column).ToArray()
                     });
                 }
             }
         }
 
-        return new(nodeMap, nodeOrder, mergedEdgesByKey, rootKey, hiddenEdges, localTruncated, methodHints,
+        return new(nodeMap, nodeOrder, mergedEdgesByKey, unresolvedCallSites, rootKey, hiddenEdges, localTruncated, methodHints,
             owners.Sum(owner => owner.Graph.PendingNodeCount), traversalLimited, closureIncomplete);
     }
 
@@ -230,6 +239,8 @@ internal static class AssemblyCallTreeClosureBuilder
         var rootKey = merged.RootKey;
         var mergedEdgesByKey = merged.Edges;
         var hiddenEdges = merged.HiddenEdges;
+        var unresolvedCallSitesToProject = merged.UnresolvedCallSites.Take(CallTreeBuilder.MaxCallTreeNodes).ToArray();
+        hiddenEdges += merged.UnresolvedCallSites.Count - unresolvedCallSitesToProject.Length;
         var cappedFanout = ApplyGlobalProjection(mergedEdgesByKey, rootKey, direction, depth, topN);
         mergedEdgesByKey = cappedFanout.Edges;
         hiddenEdges += cappedFanout.HiddenCount;
@@ -240,6 +251,7 @@ internal static class AssemblyCallTreeClosureBuilder
         }
 
         var visibleNodeKeys = mergedEdgesByKey.SelectMany(edge => new[] { edge.FromKey, edge.ToKey })
+            .Concat(unresolvedCallSitesToProject.Select(site => site.CallerKey))
             .Append(rootKey).ToHashSet(StringComparer.Ordinal);
         var projectedNodeKeys = nodeOrder.Where(visibleNodeKeys.Contains).ToArray();
         var selectedNodeKeys = projectedNodeKeys.Take(CallTreeBuilder.MaxCallTreeNodes).ToArray();
@@ -260,11 +272,16 @@ internal static class AssemblyCallTreeClosureBuilder
         var mergedEdges = mergedEdgesByKey.Where(edge => selectedNodeIds.ContainsKey(edge.FromKey) && selectedNodeIds.ContainsKey(edge.ToKey))
             .Select(edge => edge.Edge with { FromNodeId = selectedNodeIds[edge.FromKey], ToNodeId = selectedNodeIds[edge.ToKey] })
             .ToArray();
+        var unresolvedCallSites = unresolvedCallSitesToProject
+            .Where(item => selectedNodeIds.ContainsKey(item.CallerKey))
+            .Select(item => item.Site with { CallerNodeId = selectedNodeIds[item.CallerKey] })
+            .ToArray();
 
         var truncated = merged.LocalTruncated || merged.ClosureIncomplete || merged.TraversalLimited
             || nodeOrder.Count > selectedNodeKeys.Length || hiddenEdges > 0;
         return new CallGraphPayload(selectedNodeKeys.Length > 0 ? selectedNodeIds[selectedNodeKeys[0]] : string.Empty,
-            outputNodes, mergedEdges, merged.MethodHints, truncated, hiddenEdges, merged.PendingNodes);
+            outputNodes, mergedEdges, merged.MethodHints, truncated, hiddenEdges, merged.PendingNodes,
+            unresolvedCallSites.Length == 0 ? null : unresolvedCallSites);
     }
 
     private static (List<(string FromKey, string ToKey, CallGraphEdge Edge)> Edges, int HiddenCount) ApplyGlobalProjection(

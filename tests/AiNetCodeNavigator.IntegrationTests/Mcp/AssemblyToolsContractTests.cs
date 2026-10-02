@@ -17,6 +17,62 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class AssemblyToolsContractTests
 {
     [Fact]
+    public async Task AssemblyCallTree_PreservesRecursiveAndSameLineCallSitesWithEvidence()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var symbols = new SymbolTools(runtime);
+        var relationships = new RelationshipTools(runtime);
+        using var fixture = TestTempDirectory.Create("ainet-assembly-recursive-calltree-");
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "AssemblyRecursiveProbe", """
+            namespace AssemblyRecursiveProbe;
+            public sealed class Probe
+            {
+                public int Read() => 1;
+                public int Twice() => Read() + Read();
+                public int Self(int remaining) => remaining <= 0 ? 0 : Self(remaining - 1);
+                public int First(int remaining) => remaining <= 0 ? 0 : Second(remaining - 1);
+                public int Second(int remaining) => remaining <= 0 ? 0 : First(remaining - 1);
+            }
+            """);
+
+        var twice = await symbols.FindSymbol(assemblyPath, pattern: "Probe.Twice", kind: "method", maxResponseBytes: 32768);
+        var self = await symbols.FindSymbol(assemblyPath, pattern: "Probe.Self", kind: "method", maxResponseBytes: 32768);
+        var first = await symbols.FindSymbol(assemblyPath, pattern: "Probe.First", kind: "method", maxResponseBytes: 32768);
+        AssertOwnerResult(twice, "Twice");
+        AssertOwnerResult(self, "Self");
+        AssertOwnerResult(first, "First");
+
+        var twiceTree = await relationships.GetCallTree(assemblyPath, ReadAnyHandoff(TextOf(twice)),
+            direction: "outgoing", depth: 3, maxResponseBytes: 32768);
+        var selfTree = await relationships.GetCallTree(assemblyPath, ReadAnyHandoff(TextOf(self)),
+            direction: "outgoing", depth: 3, maxResponseBytes: 32768);
+        var mutualTree = await relationships.GetCallTree(assemblyPath, ReadAnyHandoff(TextOf(first)),
+            direction: "outgoing", depth: 3, maxResponseBytes: 32768);
+        var selfReferences = await relationships.FindReferences(assemblyPath, ReadAnyHandoff(TextOf(self)),
+            maxResponseBytes: 32768);
+        var selfImpact = await relationships.GetImpact(assemblyPath, ReadAnyHandoff(TextOf(self)),
+            maxResponseBytes: 32768);
+
+        var twiceText = TextOf(twiceTree);
+        var selfText = TextOf(selfTree);
+        var mutualText = TextOf(mutualTree);
+        Assert.Contains(":", twiceText, StringComparison.Ordinal);
+        Assert.True(twiceText.Split("[call]", StringSplitOptions.None).Length - 1 >= 2, twiceText);
+        Assert.Contains("Probe.Self ->", selfText, StringComparison.Ordinal);
+        Assert.Contains("[call]", selfText, StringComparison.Ordinal);
+        Assert.Contains("Probe.Second", mutualText, StringComparison.Ordinal);
+        Assert.Contains("Probe.First", mutualText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Diagnostics count: 1", mutualText, StringComparison.Ordinal);
+        Assert.Contains("\"evidenceKind\": \"call\"", TextOf(selfReferences), StringComparison.Ordinal);
+        Assert.Contains("\"column\":", TextOf(selfReferences), StringComparison.Ordinal);
+        Assert.Contains("Probe.Self", TextOf(selfReferences), StringComparison.Ordinal);
+        Assert.Contains("\"evidenceKind\": \"call\"", TextOf(selfImpact), StringComparison.Ordinal);
+        Assert.Contains("\"column\":", TextOf(selfImpact), StringComparison.Ordinal);
+        Assert.Contains("Probe.Self", TextOf(selfImpact), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AssemblyBodyBatch_UsesOneSnapshotAcrossItems()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();

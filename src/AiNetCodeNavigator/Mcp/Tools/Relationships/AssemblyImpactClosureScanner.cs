@@ -37,7 +37,8 @@ internal static class AssemblyImpactClosureScanner
                 Depth: reference.Depth,
                 ReachedFromSymbolId: reference.ReachedFromSymbolId,
                 ReachedFromSymbolHandoffId: reference.ReachedFromSymbolHandoffId,
-                OwnerTargetPath: reference.OwnerTargetPath))
+                OwnerTargetPath: reference.OwnerTargetPath,
+                EvidenceKind: reference.EvidenceKind))
             .OrderBy(site => site.Depth)
             .ThenBy(site => site.OwnerTargetPath, StringComparer.OrdinalIgnoreCase)
             .ThenBy(site => site.FilePath, StringComparer.OrdinalIgnoreCase)

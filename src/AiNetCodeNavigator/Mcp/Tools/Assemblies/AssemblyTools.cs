@@ -203,7 +203,7 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
         {
             var handoff = site.CallingMemberHandoffId is null ? string.Empty : $" [handoff: {site.CallingMemberHandoffId}]";
             var owner = string.IsNullOrWhiteSpace(site.OwnerTargetPath) ? string.Empty : $" (targetPath: {site.OwnerTargetPath})";
-            output.AppendLine($"- {site.FilePath}:{site.Line}: {site.CallingMember} (depth {site.Depth}){handoff}{owner}");
+            output.AppendLine($"- {site.FilePath}:{site.Line}:{site.Column} [{site.EvidenceKind}]: {site.CallingMember} (depth {site.Depth}){handoff}{owner}");
         }
         return output.ToString().TrimEnd();
     }
@@ -218,7 +218,7 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
         {
             var handoff = reference.EnclosingSymbolHandoffId is null ? string.Empty : $" [handoff: {reference.EnclosingSymbolHandoffId}]";
             var owner = string.IsNullOrWhiteSpace(reference.OwnerTargetPath) ? string.Empty : $" (targetPath: {reference.OwnerTargetPath})";
-            output.AppendLine($"- {reference.FilePath}:{reference.Line}: {reference.EnclosingSymbolName}{handoff}{owner}");
+            output.AppendLine($"- {reference.FilePath}:{reference.Line}:{reference.Column} [{reference.EvidenceKind}]: {reference.EnclosingSymbolName}{handoff}{owner}");
             if (!string.IsNullOrWhiteSpace(reference.Snippet)) output.AppendLine($"  {reference.Snippet}");
         }
         return output.ToString().TrimEnd();

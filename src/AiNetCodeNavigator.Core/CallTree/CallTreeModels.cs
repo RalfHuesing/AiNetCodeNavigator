@@ -17,7 +17,17 @@ public enum CallTreeDirection
 
 public sealed record CallSiteInfo(
     string FilePath,
-    int Line);
+    int Line,
+    int Column = 1,
+    string EvidenceKind = AiNetCodeNavigator.Core.Symbols.RelationshipEvidence.Call);
+
+public sealed record UnresolvedCallSiteInfo(
+    string CallerNodeId,
+    string FilePath,
+    int Line,
+    int Column,
+    string EvidenceKind,
+    IReadOnlyList<string> CandidateTargets);
 
 public sealed record CallGraphNode(
     string NodeId,
@@ -47,7 +57,8 @@ public sealed record CallGraphPayload(
     IReadOnlyList<CallGraphMethodHint>? MethodHints = null,
     bool Truncated = false,
     int HiddenEdgeCount = 0,
-    int PendingNodeCount = 0);
+    int PendingNodeCount = 0,
+    IReadOnlyList<UnresolvedCallSiteInfo>? UnresolvedCallSites = null);
 
 public sealed record CallTreeBuildRequest(
     Solution Solution,
