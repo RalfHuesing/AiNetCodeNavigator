@@ -214,6 +214,7 @@ public sealed class SourceRelationshipToolsContractTests
         var output = new StringBuilder();
         var pages = 0;
         var minimumRecoveryObserved = false;
+        var awaitingAdvertisedRetry = false;
         string? operation = null;
         string? continuation = null;
         var currentBytes = responseBytes;
@@ -222,12 +223,17 @@ public sealed class SourceRelationshipToolsContractTests
         for (var request = 0; request < 200; request++)
         {
             var text = TextOf(result);
+            AssertBudget(text, currentBytes, currentTokens);
             if (result.IsError == true && text.Contains("RESPONSE_BUDGET_TOO_SMALL", StringComparison.Ordinal))
             {
+                Assert.False(awaitingAdvertisedRetry,
+                    $"{label} returned another budget failure after retrying its advertised minimum pair: {text}");
                 minimumRecoveryObserved = true;
+                awaitingAdvertisedRetry = true;
                 currentBytes = ReadBudget(text, "minimumResponseBytes");
                 currentTokens = ReadBudget(text, "minimumResponseTokens");
-                Assert.True(currentBytes >= 512 && currentTokens >= 1,
+                Assert.InRange(currentBytes, 512, 65536);
+                Assert.True(currentTokens >= 1,
                     $"{label} advertised a recovery pair outside the public budget range: {text}");
                 result = await invoke(currentBytes, currentTokens, operation, continuation);
                 continue;
@@ -251,6 +257,7 @@ public sealed class SourceRelationshipToolsContractTests
             output.Append(BodyOf(text));
             pages++;
             operation = null;
+            awaitingAdvertisedRetry = false;
             if (!TryReadToken(text, "continuationToken", out continuation))
             {
                 Assert.Equal(expected, output.ToString());
