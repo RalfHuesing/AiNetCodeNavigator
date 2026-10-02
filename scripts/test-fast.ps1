@@ -12,6 +12,7 @@
 [CmdletBinding()]
 param(
     [string]$Filter = '',
+    [switch]$ReviewReportsOnly,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$AdditionalArgs
 )
@@ -57,12 +58,21 @@ $testArgs = @(
     '--logger', "trx;LogFileName=$trxFile",
     '--results-directory', $resultsDir
 )
-$effectiveFilter = 'Category!=E2EIntegration'
-if ($Filter) {
-    $effectiveFilter = "($Filter)&($effectiveFilter)"
+$reviewReportsFilter = 'FullyQualifiedName=AiNetCodeNavigator.FastTests.Reporting.RepositoryAuditReportTests.Review_PublishesRepositoryReportsWithoutBaseline'
+if ($ReviewReportsOnly) {
+    if ($Filter) {
+        throw '-ReviewReportsOnly selects one fixed report test; do not combine it with -Filter.'
+    }
+    $effectiveFilter = $reviewReportsFilter
+    Write-Host '[NOTE] Only the explicitly opted-in repository report test is selected; this does not enable other E2EIntegration tests.' -ForegroundColor Yellow
+} else {
+    $effectiveFilter = 'Category!=E2EIntegration'
+    if ($Filter) {
+        $effectiveFilter = "($Filter)&($effectiveFilter)"
+    }
+    Write-Host '[NOTE] E2EIntegration tests are excluded.' -ForegroundColor Yellow
 }
 $testArgs += @('--filter', $effectiveFilter)
-Write-Host '[NOTE] E2EIntegration tests are excluded.' -ForegroundColor Yellow
 if ($AdditionalArgs) {
     if ($AdditionalArgs | Where-Object { $_ -match '^(--filter|-filter)(=|$)' }) {
         throw 'Pass test selection through -Filter; additional --filter arguments cannot override the E2E exclusion.'
