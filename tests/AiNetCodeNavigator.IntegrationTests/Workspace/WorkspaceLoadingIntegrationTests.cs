@@ -313,6 +313,40 @@ public sealed class WorkspaceLoadingIntegrationTests
         Assert.Empty(removed.Solution!.Projects.Single(project => project.Name == "App").ProjectReferences);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ResidentSnapshot_EmptyPropertyPrefixInWildcardImport_TracksEvaluatedPattern(bool declareEmptyPrefix)
+    {
+        using var tempDir = TestTempDirectory.Create("integration-empty-prefix-wildcard-import-");
+        var prefixProperty = declareEmptyPrefix
+            ? "<PropertyGroup><TargetFramework>net10.0</TargetFramework><Prefix /></PropertyGroup>"
+            : "<PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>";
+        WriteProject(
+            tempDir,
+            "src/App/App.csproj",
+            $"<Project Sdk=\"Microsoft.NET.Sdk\">{prefixProperty}<Import Project=\"$(Prefix)../../build/*.props\" /></Project>");
+        WriteProject(tempDir, "src/Extra/Extra.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        await File.WriteAllTextAsync(tempDir.GetPath("src/App/App.cs"), "namespace App; public sealed class AppType;");
+        await File.WriteAllTextAsync(tempDir.GetPath("src/Extra/Extra.cs"), "namespace Extra; public sealed class ExtraType;");
+        var solutionPath = await WriteSolutionAsync(tempDir, "src/App/App.csproj", "src/Extra/Extra.csproj");
+
+        await using var resident = MSBuildSolutionLoader.CreateResidentSolution(solutionPath);
+        await resident.LoadTask!.WaitAsync(TimeSpan.FromSeconds(30));
+        var initial = await resident.GetCurrentSnapshotAsync();
+        Assert.True(initial.Succeeded, initial.Error?.Message);
+        Assert.Empty(initial.Solution!.Projects.Single(project => project.Name == "App").ProjectReferences);
+
+        tempDir.CreateFile(
+            "build/Optional.props",
+            "<Project><ItemGroup><ProjectReference Include=\"$(MSBuildThisFileDirectory)../src/Extra/Extra.csproj\" /></ItemGroup></Project>");
+        var refreshed = await resident.GetCurrentSnapshotAsync();
+
+        Assert.True(refreshed.Succeeded, refreshed.Error?.Message);
+        var app = refreshed.Solution!.Projects.Single(project => project.Name == "App");
+        Assert.Equal("Extra", refreshed.Solution.GetProject(app.ProjectReferences.Single().ProjectId)!.Name);
+    }
+
     [Fact]
     public async Task ResidentSnapshot_UnresolvedMetadataExpressionForcesReloadAndRecoversAfterLoadFailure()
     {

@@ -92,11 +92,6 @@ internal static class MSBuildStructureInputCollector
                 continue;
             }
 
-            if (ContainsPropertyExpandedToEmpty(evaluatedProject, importExpression))
-            {
-                continue;
-            }
-
             foreach (var importPath in expandedImports.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 if (importPath.IndexOfAny(['*', '?']) >= 0)
@@ -150,57 +145,6 @@ internal static class MSBuildStructureInputCollector
         || value.Contains("@(", StringComparison.Ordinal)
         || value.Contains("%(", StringComparison.Ordinal);
 
-    private static bool ContainsPropertyExpandedToEmpty(
-        Microsoft.Build.Evaluation.Project evaluatedProject,
-        string expression)
-    {
-        var searchFrom = 0;
-        while (searchFrom < expression.Length)
-        {
-            var start = expression.IndexOf("$(", searchFrom, StringComparison.Ordinal);
-            if (start < 0)
-            {
-                return false;
-            }
-
-            var end = expression.IndexOf(')', start + 2);
-            if (end < 0)
-            {
-                return false;
-            }
-
-            var propertyName = expression.AsSpan(start + 2, end - start - 2);
-            if (IsSimplePropertyName(propertyName)
-                && string.IsNullOrEmpty(evaluatedProject.GetPropertyValue(propertyName.ToString())))
-            {
-                return true;
-            }
-
-            searchFrom = end + 1;
-        }
-
-        return false;
-    }
-
-    private static bool IsSimplePropertyName(ReadOnlySpan<char> value)
-    {
-        if (value.IsEmpty || !(char.IsAsciiLetter(value[0]) || value[0] == '_'))
-        {
-            return false;
-        }
-
-        for (var index = 1; index < value.Length; index++)
-        {
-            var character = value[index];
-            if (!(char.IsAsciiLetterOrDigit(character) || character is '_' or '.' or '-'))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
     private static void AddCompileGlobRoots(
         Microsoft.Build.Evaluation.Project evaluatedProject,
         ProjectRootElement projectFile,
@@ -219,11 +163,6 @@ internal static class MSBuildStructureInputCollector
             if (ContainsUnexpandedExpression(expandedIncludes))
             {
                 unresolvedExpressions.Add($"{projectFile.FullPath}|Compile|{include}|{expandedIncludes}");
-                continue;
-            }
-
-            if (ContainsPropertyExpandedToEmpty(evaluatedProject, include))
-            {
                 continue;
             }
 

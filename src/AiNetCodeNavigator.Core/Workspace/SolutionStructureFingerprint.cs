@@ -145,7 +145,10 @@ internal static class SolutionStructureFingerprint
             return;
         }
 
-        var matchedFiles = Directory.EnumerateFiles(fixedDirectory, "*", SearchOption.AllDirectories)
+        var searchOption = string.IsNullOrEmpty(glob.WildcardDirectoryPart)
+            ? SearchOption.TopDirectoryOnly
+            : SearchOption.AllDirectories;
+        var matchedFiles = Directory.EnumerateFiles(fixedDirectory, "*", searchOption)
             .Where(glob.IsMatch)
             .Select(Path.GetFullPath)
             .Order(StringComparer.OrdinalIgnoreCase)
