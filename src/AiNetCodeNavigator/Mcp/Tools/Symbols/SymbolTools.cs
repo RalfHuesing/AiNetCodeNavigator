@@ -13,6 +13,8 @@ namespace AiNetCodeNavigator.Mcp.Tools.Symbols;
 [McpServerToolType]
 public sealed class SymbolTools(NavigatorHostRuntime runtime)
 {
+    internal Action<int>? BeforeAssemblyBodyBatchItemForTesting { get; set; }
+
     [McpServerTool(Name = "find_symbol", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Find C# types or members by one or more name patterns and return source locations with navigable symbol handles.")]
     public Task<CallToolResult> FindSymbol(
@@ -179,11 +181,17 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
 
                 ResultError? firstAssemblyResolutionError = null;
                 var resolvedAssemblyBodies = 0;
-                foreach (var identifier in symbolIdentifiers)
+                var openedAssemblyScope = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
+                if (!openedAssemblyScope.IsSuccess)
+                    return NavigationToolSupport.Failure(openedAssemblyScope.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
+                await using var assemblyScope = openedAssemblyScope.Value!;
+                for (var index = 0; index < symbolIdentifiers.Length; index++)
                 {
                     ct.ThrowIfCancellationRequested();
+                    BeforeAssemblyBodyBatchItemForTesting?.Invoke(index);
+                    var identifier = symbolIdentifiers[index];
                     var resolved = await AssemblySymbolBodyScanner.GetAsync(
-                        identifier, effectiveLines, startLine, ct, expectedTargetPath: target.CanonicalPath).ConfigureAwait(false);
+                        identifier, effectiveLines, startLine, ct, expectedTargetPath: target.CanonicalPath, pinnedScope: assemblyScope).ConfigureAwait(false);
                     hasDomainGaps |= resolved.Error is not null || resolved.Body?.HasMore == true;
                     if (resolved.Body?.HasMore == true)
                         suggestedStartLine = Math.Max(suggestedStartLine, resolved.Body.DisplayedEnd + 1);

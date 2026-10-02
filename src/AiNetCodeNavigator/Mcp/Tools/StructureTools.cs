@@ -17,6 +17,8 @@ namespace AiNetCodeNavigator.Mcp.Tools;
 [McpServerToolType]
 public sealed class StructureTools(NavigatorHostRuntime runtime)
 {
+    internal Action<int>? BeforeAssemblySkeletonItemForTesting { get; set; }
+
     [McpServerTool(Name = "get_index_scope", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Summarize which source projects and documents are included in the loaded solution index.")]
     public Task<CallToolResult> GetIndexScope(
@@ -73,7 +75,8 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                             "Use inspect_assembly for metadata-only navigation.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                 var identity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash,
                     scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
-                    return await BuildSkeletonsAsync(scope.Solution, target.CanonicalPath, filePaths, identity, ct, maxResponseBytes, maxResponseTokens, sourceRoot).ConfigureAwait(false);
+                    return await BuildSkeletonsAsync(scope.Solution, target.CanonicalPath, filePaths, identity, ct,
+                        maxResponseBytes, maxResponseTokens, sourceRoot, scope, BeforeAssemblySkeletonItemForTesting).ConfigureAwait(false);
             }, null, cancellationToken);
     }
 
@@ -199,19 +202,22 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     }
 
     private static async Task<CallToolResult> BuildSkeletonsAsync(Solution solution, string targetPath, string[] filePaths,
-        AnalysisSymbolIdentity? identity, CancellationToken ct, int maxResponseBytes, int? maxResponseTokens, string? selectedRoot = null)
+        AnalysisSymbolIdentity? identity, CancellationToken ct, int maxResponseBytes, int? maxResponseTokens,
+        string? selectedRoot = null, AssemblyNavigationSessionScope? assemblyScope = null, Action<int>? beforeAssemblyItem = null)
     {
         var targetDirectory = Path.GetFullPath(selectedRoot ?? Path.GetDirectoryName(targetPath)!);
         var chunks = new List<string>();
         var successfulFiles = 0;
         var hasMissing = false;
         ResultError? firstHandoffError = null;
-        foreach (var path in filePaths)
+        for (var index = 0; index < filePaths.Length; index++)
         {
             ct.ThrowIfCancellationRequested();
+            var path = filePaths[index];
             if (path.StartsWith("h:", StringComparison.Ordinal))
             {
-                var resolved = await ResolveSkeletonHandoffAsync(path, solution, targetPath, identity, ct).ConfigureAwait(false);
+                if (assemblyScope is not null) beforeAssemblyItem?.Invoke(index);
+                var resolved = await ResolveSkeletonHandoffAsync(path, solution, targetPath, identity, assemblyScope, ct).ConfigureAwait(false);
                 if (resolved.Error is { } handoffError)
                 {
                     chunks.Add($"## {path}\n{handoffError.Code}: {handoffError.Message}");
@@ -305,7 +311,8 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     }
 
     private static async Task<(Document[]? Documents, ResultError? Error)> ResolveSkeletonHandoffAsync(
-        string handoff, Solution solution, string targetPath, AnalysisSymbolIdentity? identity, CancellationToken ct)
+        string handoff, Solution solution, string targetPath, AnalysisSymbolIdentity? identity,
+        AssemblyNavigationSessionScope? assemblyScope, CancellationToken ct)
     {
         if (identity is null)
             return (null, new ResultError(NavigationErrorCodes.InvalidHandoff, "A canonical target identity could not be created."));
@@ -322,19 +329,19 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             return (documents, null);
         }
 
-        var assembly = await AssemblySymbolHandoffResolver.ResolveAsync(handoff, ct).ConfigureAwait(false);
+        if (assemblyScope is null)
+            return (null, new ResultError(NavigationErrorCodes.InvalidHandoff, "The assembly handoff has no pinned target scope."));
+        if (!string.Equals(Path.GetFullPath(assemblyScope.Context.Origin.CanonicalPath), Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
+            return (null, new ResultError(NavigationErrorCodes.TargetMismatch, "The pinned assembly scope belongs to another target."));
+        var assembly = AssemblySymbolHandoffResolver.ResolveWithinScope(handoff, assemblyScope);
         if (!assembly.IsSuccess) return (null, assembly.Error);
-        await using var access = assembly.Value!;
-        if (!string.Equals(Path.GetFullPath(access.Origin.CanonicalPath), Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
-            return (null, new ResultError(NavigationErrorCodes.TargetMismatch, "The symbol handoff belongs to another assembly.",
-                "Use a handoff produced by this targetPath."));
 
-        var rootPath = access.DecompiledProjectPaths?.DecompiledSourceRoot;
+        var rootPath = assemblyScope.Context.DecompiledProjectPaths?.DecompiledSourceRoot;
         if (string.IsNullOrWhiteSpace(rootPath))
             return (null, new ResultError(NavigationErrorCodes.AssemblyTargetUnsupported, "The assembly has no materialized decompiled source tree."));
         var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var assemblyDocuments = access.Symbol.DeclaringSyntaxReferences
-            .Select(reference => access.Solution.GetDocument(reference.SyntaxTree))
+        var assemblyDocuments = assembly.Value!.DeclaringSyntaxReferences
+            .Select(reference => assemblyScope.Solution.GetDocument(reference.SyntaxTree))
             .Where(document => document?.FilePath is { } filePath
                 && (Path.GetFullPath(filePath).StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(Path.GetFullPath(filePath), root, StringComparison.OrdinalIgnoreCase)))

@@ -17,6 +17,75 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class AssemblyToolsContractTests
 {
     [Fact]
+    public async Task AssemblyBodyBatch_UsesOneSnapshotAcrossItems()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        using var fixture = TestTempDirectory.Create("ainet-assembly-body-batch-");
+        const string original = "namespace AssemblyBodyBatchProbe; public sealed class Probe { public int First() => 101; public int Second() => 101; }";
+        const string replacement = "namespace AssemblyBodyBatchProbe; public sealed class Probe { public int First() => 202; public int Second() => 202; }";
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "AssemblyBodyBatchProbe", original);
+        var symbols = new SymbolTools(runtime)
+        {
+            BeforeAssemblyBodyBatchItemForTesting = index =>
+            {
+                if (index == 1) AssemblyTestHelper.EmitAssembly(fixture, "AssemblyBodyBatchProbe", replacement);
+            },
+        };
+
+        var result = await symbols.GetSymbolBody(assemblyPath,
+            ["AssemblyBodyBatchProbe.Probe.First", "AssemblyBodyBatchProbe.Probe.Second"],
+            maxResponseBytes: 32768, maxResponseTokens: 4096);
+
+        AssertSuccessWithinBudget(result, 32768, 4096);
+        var text = TextOf(result);
+        Assert.Equal(2, text.Split("return 101;", StringSplitOptions.None).Length - 1);
+        Assert.DoesNotContain("return 202;", text, StringComparison.Ordinal);
+
+        AssemblyTestHelper.EmitAssembly(fixture, "AssemblyBodyBatchProbe", original);
+        var first = await symbols.FindSymbol(assemblyPath, pattern: "Probe.First", kind: "method", maxResponseBytes: 16384);
+        var second = await symbols.FindSymbol(assemblyPath, pattern: "Probe.Second", kind: "method", maxResponseBytes: 16384);
+        var handoffBatch = await symbols.GetSymbolBody(assemblyPath,
+            [ReadAnyHandoff(TextOf(first)), ReadAnyHandoff(TextOf(second))],
+            maxResponseBytes: 32768, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(handoffBatch, 32768, 4096);
+        var handoffText = TextOf(handoffBatch);
+        Assert.Equal(2, handoffText.Split("return 101;", StringSplitOptions.None).Length - 1);
+        Assert.DoesNotContain("return 202;", handoffText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AssemblySkeletonBatch_UsesOneSnapshotAcrossHandoffs()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        using var fixture = TestTempDirectory.Create("ainet-assembly-skeleton-batch-");
+        const string original = "namespace AssemblySkeletonBatchProbe; public sealed class Alpha { public int First() => 101; } public sealed class Beta { public int Second() => 101; }";
+        const string replacement = "namespace AssemblySkeletonBatchProbe; public sealed class Alpha { public int First() => 202; } public sealed class Beta { public int Second() => 202; }";
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "AssemblySkeletonBatchProbe", original);
+        var symbols = new SymbolTools(runtime);
+        var structure = new StructureTools(runtime)
+        {
+            BeforeAssemblySkeletonItemForTesting = index =>
+            {
+                if (index == 1) AssemblyTestHelper.EmitAssembly(fixture, "AssemblySkeletonBatchProbe", replacement);
+            },
+        };
+        var alpha = await symbols.FindSymbol(assemblyPath, pattern: "Alpha", kind: "class", maxResponseBytes: 16384);
+        var beta = await symbols.FindSymbol(assemblyPath, pattern: "Beta", kind: "class", maxResponseBytes: 16384);
+        var alphaHandle = ReadHandoff(TextOf(alpha), "class Alpha");
+        var betaHandle = ReadHandoff(TextOf(beta), "class Beta");
+
+        var result = await structure.GetFileSkeleton(assemblyPath, [alphaHandle, betaHandle], maxResponseBytes: 32768, maxResponseTokens: 4096);
+
+        AssertSuccessWithinBudget(result, 32768, 4096);
+        var text = TextOf(result);
+        Assert.Contains("completeness=complete", text, StringComparison.Ordinal);
+        Assert.Contains("### Alpha", text, StringComparison.Ordinal);
+        Assert.Contains("### Beta", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task DisposedRuntimeAssemblyHandoffsAreUnknownAndRepeatedDisposeKeepsFreshHandles()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();

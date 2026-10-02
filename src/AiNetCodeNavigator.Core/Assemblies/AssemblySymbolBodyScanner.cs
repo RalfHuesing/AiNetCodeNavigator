@@ -19,13 +19,43 @@ public static class AssemblySymbolBodyScanner
         int maxBodyLines = 100,
         int startLine = 1,
         CancellationToken cancellationToken = default,
-        string? expectedTargetPath = null)
+        string? expectedTargetPath = null,
+        AssemblyNavigationSessionScope? pinnedScope = null)
     {
         var normalizedIdentifier = InputNormalizer.NormalizeSymbolIdentifier(handoff);
-        if (expectedTargetPath is not null
+        if (pinnedScope is not null)
+        {
+            if (expectedTargetPath is not null
+                && (!SymbolHandoffToken.TryNormalizeTargetPath(expectedTargetPath, out var pinnedExpectedPath)
+                    || !SymbolHandoffToken.TryNormalizeTargetPath(pinnedScope.Context.Origin.CanonicalPath, out var scopePath)
+                    || !string.Equals(pinnedExpectedPath, scopePath,
+                        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)))
+            {
+                return new SymbolBodyResolutionResult(null, Array.Empty<SymbolResolutionCandidate>(),
+                    new ResultError(NavigationErrorCodes.TargetMismatch, "The pinned assembly scope belongs to a different target."));
+            }
+        }
+        if ((expectedTargetPath is not null || pinnedScope is not null)
             && !InputNormalizer.HasOpaqueHandoffPrefix(normalizedIdentifier)
             && !normalizedIdentifier.StartsWith("i:", StringComparison.OrdinalIgnoreCase))
         {
+            if (pinnedScope is not null)
+            {
+                var pinnedRaw = await AssemblySymbolInputResolver.ResolveAsync(pinnedScope, normalizedIdentifier, cancellationToken).ConfigureAwait(false);
+                if (!pinnedRaw.IsSuccess)
+                {
+                    var candidates = pinnedRaw.Candidates.Select(candidate => new SymbolResolutionCandidate(
+                        candidate.Name, candidate.Kind, candidate.Signature, candidate.FilePath, candidate.Line,
+                        candidate.EndLine, candidate.ProjectName, candidate.DocCommentId, candidate.HandoffId,
+                        candidate.OwnerTargetPath)).ToArray();
+                    return new SymbolBodyResolutionResult(null, candidates, pinnedRaw.Error);
+                }
+
+                var pinnedRawBody = SourceSymbolBodyResolver.Resolve(pinnedRaw.Symbol!, maxBodyLines, startLine, handoffId: pinnedRaw.HandoffId);
+                return new SymbolBodyResolutionResult(pinnedRawBody with { ContentMode = "decompiled", HandoffId = pinnedRaw.HandoffId },
+                    Array.Empty<SymbolResolutionCandidate>(), null);
+            }
+
             var openedScope = await AssemblyNavigationSessionScope.OpenAsync(expectedTargetPath, cancellationToken).ConfigureAwait(false);
             if (!openedScope.IsSuccess)
                 return new SymbolBodyResolutionResult(null, Array.Empty<SymbolResolutionCandidate>(), openedScope.Error);
@@ -57,6 +87,16 @@ public static class AssemblySymbolBodyScanner
                 rawBody with { ContentMode = "decompiled", HandoffId = raw.HandoffId },
                 Array.Empty<SymbolResolutionCandidate>(),
                 null);
+        }
+
+        if (pinnedScope is not null)
+        {
+            var pinned = AssemblySymbolHandoffResolver.ResolveWithinScope(handoff, pinnedScope);
+            if (!pinned.IsSuccess)
+                return new SymbolBodyResolutionResult(null, Array.Empty<SymbolResolutionCandidate>(), pinned.Error);
+            var pinnedBody = SourceSymbolBodyResolver.Resolve(pinned.Value!, maxBodyLines, startLine, handoffId: handoff);
+            return new SymbolBodyResolutionResult(pinnedBody with { ContentMode = "decompiled", HandoffId = handoff },
+                Array.Empty<SymbolResolutionCandidate>(), null);
         }
 
         var resolved = await AssemblySymbolHandoffResolver.ResolveAsync(handoff, cancellationToken).ConfigureAwait(false);

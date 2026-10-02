@@ -15,6 +15,43 @@ namespace AiNetCodeNavigator.Core.Assemblies;
 /// <summary>Restores inspect_assembly handles against their resident target and current content snapshot.</summary>
 public static class AssemblySymbolHandoffResolver
 {
+    internal static Result<ISymbol> ResolveWithinScope(string handoff, AssemblyNavigationSessionScope scope)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(handoff);
+        ArgumentNullException.ThrowIfNull(scope);
+        var restored = HandoffHandleRegistry.Default.RestoreInternalHandoffForInput(handoff);
+        if (!restored.IsSuccess) return Result<ISymbol>.Failure(restored.Error);
+        if (!SymbolHandoffIdentifier.TryParse(restored.Value!, out var identifier))
+            return Result<ISymbol>.Failure(NavigationErrorCodes.InvalidHandoff, "The handoff identifier is not canonical.", "Use a handoff returned by inspect_assembly.");
+        if (identifier.Origin != SymbolHandoffOrigin.Assembly)
+            return Result<ISymbol>.Failure(NavigationErrorCodes.TargetMismatch, "The handoff belongs to a source solution, not an assembly.");
+
+        if (!SymbolHandoffToken.TryCreateTarget(scope.Context.Origin.CanonicalPath, out var targetToken)
+            || !string.Equals(targetToken, identifier.TargetToken, StringComparison.Ordinal))
+            return Result<ISymbol>.Failure(NavigationErrorCodes.TargetMismatch, "The assembly handoff belongs to another target assembly.");
+
+        var contentHash = AnalysisSymbolIdentity.CreateAssemblyHandoffContentHash(
+            scope.Context.Origin.ContentHash,
+            scope.Context.ReferenceSnapshotHash,
+            scope.Context.Generation);
+        if (!SymbolHandoffToken.TryCreateContent(contentHash, out var contentToken)
+            || !string.Equals(contentToken, identifier.ContentToken, StringComparison.Ordinal))
+            return Result<ISymbol>.Failure(NavigationErrorCodes.StaleSnapshot,
+                "The assembly handoff does not belong to the pinned batch snapshot.",
+                "Repeat get_symbol_body with handles from the current assembly snapshot.");
+
+        var symbols = DocumentationCommentId.GetSymbolsForDeclarationId(identifier.DocumentationCommentId, scope.Context.Compilation)
+            .Where(symbol => SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, scope.Context.Compilation.Assembly))
+            .Distinct(SymbolEqualityComparer.Default)
+            .ToArray();
+        return symbols.Length switch
+        {
+            1 => Result<ISymbol>.Success(symbols[0]),
+            0 => Result<ISymbol>.Failure(NavigationErrorCodes.SymbolNotFound, "The assembly symbol no longer resolves in the pinned snapshot."),
+            _ => Result<ISymbol>.Failure(NavigationErrorCodes.AmbiguousSymbol, "The assembly handoff resolves to more than one symbol in the pinned snapshot."),
+        };
+    }
+
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "A successful result transfers the session lease to the caller.")]
     public static async Task<Result<AssemblySymbolHandoffAccess>> ResolveAsync(
         string handoff,
