@@ -22,7 +22,6 @@ S = Source-Solution, A = verwaltete Assembly, R = Runtime. Jedes Tool muss mit s
 | `get_symbol_body` | S, A | Batch in Eingabereihenfolge; Bodyfenster, Partials, Owner; gemischter gültiger/ungültiger Batch meldet Teilvollständigkeit, nur ungültige Einträge Fehler |
 | `get_file_skeleton` | S, A | deklarative Typ-/Memberübersicht ohne Bodies und ausführbare Feld-/Eventinitializer; Source indexed absolute/relative/linked Pfade; Assembly nur eigene Dekompilate; separater Handoff je Variablendeklarator |
 | `get_class_structure` | S, A | deklarierte Member, Visibility, Signaturen, Partialdateien, Recordparameter, Filter und stabile Sortierung vor Cap; Member→Body |
-| `get_file_tree` | S, A | `tree`, `files`, `summary`; relative Unterwurzel, Extensions/Patterns/Tiefe/Sortierung/Metadaten; Reparse-Grenzen; Assembly keine benachbarten DLL-Verzeichnisdateien |
 | `get_namespace_tree` | S, A | Projektübersicht/Namespaceprefix/Typen/Kinds/Depth; exakter Projektpfad bei gleichen Namen; selectable Typ-Handoffs; vollständig gezählte Totals vor Darstellungscaps |
 | `get_index_scope` | S | Roslyn-Dokumentinventar einschließlich physisch mehrfach eingebundener Dateien, Sprach-/C#-/Generated-/Testzählungen; keine angebliche vollständige physische Dateiinventur |
 | `get_call_tree` | S, A | incoming/outgoing/both, ASCII/Mermaid, Depth/TopN, BCL/Sourcescope/Generated; begrenzte Assemblyowner-Closure; globale Fanout-/Node-/Edgegrenzen mit ehrlicher Vollständigkeit |

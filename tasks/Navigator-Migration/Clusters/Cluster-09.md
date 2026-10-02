@@ -1,5 +1,7 @@
 # Cluster 9: MCP Server Host & Tool-Registrierungen (Ganz oben)
 
+> Historical implementation and verification record. The physical file-tree tool and its scanner were removed on 2026-10-02. References below describe the earlier snapshot; the current catalog and replacement workflows are documented in [the tool reference](../../../docs/tools/README.md).
+
 [Zurück zum Konzept](../Konzept.md)
 
 - [x] 9.1 Host-Runner & Lifecycle (`AiNetCodeNavigator`):

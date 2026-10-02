@@ -28,7 +28,7 @@ public sealed class McpServerIntegrationTests
 
             var navigationTools = new[]
             {
-                "find_symbol", "get_symbol_body", "get_file_skeleton", "get_class_structure", "get_file_tree",
+                "find_symbol", "get_symbol_body", "get_file_skeleton", "get_class_structure",
                 "get_namespace_tree", "get_index_scope", "get_call_tree", "find_references", "get_type_hierarchy",
                 "find_implementations", "get_impact", "dependency_graph", "resolve_type_origin", "get_assembly_context",
                 "inspect_assembly", "search_assembly", "find_assembly_extensions", "get_feature_context", "get_test_context",
@@ -45,7 +45,7 @@ public sealed class McpServerIntegrationTests
             AssertPropertyDescriptionContains(registered["get_call_tree"], "includeDiagnostics", "assembly", "false", "source");
             AssertPropertyDescriptionContains(registered["find_symbol"], "namePatterns", "exactly one", "pattern");
             AssertPropertyDescriptionContains(registered["find_symbol"], "kind", "record class", "record struct", "delegate");
-            AssertPropertyDescriptionContains(registered["get_file_tree"], "view", "tree", "files", "summary", "default");
+            Assert.DoesNotContain("get_file_tree", registered.Keys);
             AssertPropertyDescriptionContains(registered["get_namespace_tree"], "kind", "all", "class", "interface", "record", "struct", "enum");
             AssertPropertyDescriptionContains(registered["inspect_assembly"], "detailLevel", "compact", "standard", "full");
             AssertPropertyDescriptionContains(registered["search_assembly"], "detailLevel", "compact", "standard", "full");
@@ -466,7 +466,8 @@ public sealed class McpServerIntegrationTests
             var tools = toolsResponse.GetProperty("result").GetProperty("tools").EnumerateArray()
                 .Select(tool => tool.GetProperty("name").GetString())
                 .ToArray();
-            Assert.Equal(new[] { "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol", "get_assembly_context", "get_call_tree", "get_class_structure", "get_feature_context", "get_file_skeleton", "get_file_tree", "get_impact", "get_index_scope", "get_namespace_tree", "get_server_health", "get_symbol_body", "get_test_context", "get_type_hierarchy", "inspect_assembly", "reload_config", "resolve_type_origin", "search_assembly" }, tools.Order(StringComparer.Ordinal).ToArray());
+            Assert.Equal(new[] { "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol", "get_assembly_context", "get_call_tree", "get_class_structure", "get_feature_context", "get_file_skeleton", "get_impact", "get_index_scope", "get_namespace_tree", "get_server_health", "get_symbol_body", "get_test_context", "get_type_hierarchy", "inspect_assembly", "reload_config", "resolve_type_origin", "search_assembly" }, tools.Order(StringComparer.Ordinal).ToArray());
+            Assert.DoesNotContain("get_file_tree", tools);
             var reloadTool = toolsResponse.GetProperty("result").GetProperty("tools").EnumerateArray()
                 .Single(tool => tool.GetProperty("name").GetString() == "reload_config");
             Assert.True(reloadTool.GetProperty("annotations").GetProperty("idempotentHint").GetBoolean());
@@ -689,7 +690,6 @@ public sealed class McpServerIntegrationTests
                 ("get_symbol_body", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifiers"] = new[] { "h:unknown" } }, "HANDOFF_UNKNOWN"),
                 ("get_file_skeleton", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["filePaths"] = new[] { "Missing.cs" } }, "INVALID_ARGUMENT"),
                 ("get_class_structure", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "HANDOFF_UNKNOWN"),
-                ("get_file_tree", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["view"] = "unsupported" }, "INVALID_ARGUMENT"),
                 ("get_namespace_tree", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["kind"] = "unsupported" }, "INVALID_ARGUMENT"),
                 ("get_index_scope", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath }, "INVALID_ARGUMENT"),
                 ("get_call_tree", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "h:unknown", ["direction"] = "sideways" }, "INVALID_ARGUMENT"),
@@ -856,7 +856,8 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                 .Select(tool => tool.GetProperty("name").GetString())
                 .Order(StringComparer.Ordinal)
                 .ToArray();
-            Assert.Equal(new[] { "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol", "get_assembly_context", "get_call_tree", "get_class_structure", "get_feature_context", "get_file_skeleton", "get_file_tree", "get_impact", "get_index_scope", "get_namespace_tree", "get_server_health", "get_symbol_body", "get_test_context", "get_type_hierarchy", "inspect_assembly", "reload_config", "resolve_type_origin", "search_assembly" }, names);
+            Assert.Equal(new[] { "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol", "get_assembly_context", "get_call_tree", "get_class_structure", "get_feature_context", "get_file_skeleton", "get_impact", "get_index_scope", "get_namespace_tree", "get_server_health", "get_symbol_body", "get_test_context", "get_type_hierarchy", "inspect_assembly", "reload_config", "resolve_type_origin", "search_assembly" }, names);
+            Assert.DoesNotContain("get_file_tree", names);
 
             var workspaceBeforeNavigation = CaptureWorkspaceSnapshot(fixtureRoot);
             await SendRequestAsync(process, 3, "tools/call", new
@@ -1104,12 +1105,12 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
 
             await SendRequestAsync(process, 9, "tools/call", new
             {
-                name = "get_file_tree",
-                arguments = new { targetPath = solutionPath, root = ".", view = "files", maxResults = 10 },
+                name = "get_file_skeleton",
+                arguments = new { targetPath = solutionPath, filePaths = new[] { "NavigationFixture.cs" } },
             }, timeout.Token);
-            var tree = await ReadResponseAsync(process, 9, timeout.Token);
-            Assert.False(tree.GetProperty("result").GetProperty("isError").GetBoolean());
-            Assert.Contains("NavigationFixture.cs", GetFirstText(tree), StringComparison.Ordinal);
+            var fixtureSkeleton = await ReadResponseAsync(process, 9, timeout.Token);
+            Assert.False(fixtureSkeleton.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(fixtureSkeleton));
+            Assert.Contains("NavigationFixture", GetFirstText(fixtureSkeleton), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 10, "tools/call", new { name = "get_index_scope", arguments = new { targetPath = solutionPath } }, timeout.Token);
             var indexScope = await ReadResponseAsync(process, 10, timeout.Token);
@@ -2572,8 +2573,6 @@ if (Directory.Exists(fixtureRoot))
             }
             """ + Environment.NewLine + budgetTypeSource);
         var replacementPath = AssemblyTestHelper.EmitAssembly(fixture, "SearchCursorReplacement", "namespace SearchCursorFixture; public class Replacement { }");
-        var neighborSentinelPath = Path.Combine(Path.GetDirectoryName(assemblyPath)!, "NeighborSentinel.cs");
-        await File.WriteAllTextAsync(neighborSentinelPath, "public sealed class NeighborSentinel { }");
         var originalBytes = await File.ReadAllBytesAsync(assemblyPath);
         var configPath = Path.Combine(Path.GetTempPath(), "ainet-search-cursor-" + Guid.NewGuid().ToString("N") + ".json");
         var logDirectory = Path.Combine(Path.GetTempPath(), "ainet-search-cursor-logs-" + Guid.NewGuid().ToString("N"));
@@ -3240,44 +3239,10 @@ if (Directory.Exists(fixtureRoot))
             Assert.True(foreignTargetStructure.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignTargetStructure));
             Assert.Contains("INVALID_ARGUMENT", GetFirstText(foreignTargetStructure), StringComparison.Ordinal);
 
-            await SendRequestAsync(process, 17, "tools/call", new
-            {
-                name = "get_file_tree",
-                arguments = new { targetPath = assemblyPath, view = "files", includeExtensions = new[] { ".cs" }, fileFilter = "*PagedBeta.cs", includeMetadata = false, maxResults = 100 },
-            }, timeout.Token);
-            var assemblyFileTree = await ReadResponseAsync(process, 17, timeout.Token);
-            var assemblyFileTreeText = GetFirstText(assemblyFileTree);
-            Assert.False(assemblyFileTree.GetProperty("result").GetProperty("isError").GetBoolean(), assemblyFileTreeText);
-            Assert.Contains("PagedBeta.cs", assemblyFileTreeText, StringComparison.Ordinal);
-            Assert.DoesNotContain("NeighborSentinel.cs", assemblyFileTreeText, StringComparison.Ordinal);
-            var betaTreePath = assemblyFileTreeText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .Select(line => line.Trim())
-                .Single(line => line.Contains("PagedBeta.cs", StringComparison.Ordinal));
-            betaTreePath = betaTreePath.StartsWith("- ", StringComparison.Ordinal) ? betaTreePath[2..] : betaTreePath;
-
-            await SendRequestAsync(process, 18, "tools/call", new
-            {
-                name = "get_file_skeleton",
-                arguments = new { targetPath = assemblyPath, filePaths = new[] { betaTreePath } },
-            }, timeout.Token);
-            var assemblySkeleton = await ReadResponseAsync(process, 18, timeout.Token);
-            var assemblySkeletonText = GetFirstText(assemblySkeleton);
-            Assert.False(assemblySkeleton.GetProperty("result").GetProperty("isError").GetBoolean(), assemblySkeletonText);
-            Assert.Contains("ReadBeta", assemblySkeletonText, StringComparison.Ordinal);
-            var skeletonMemberHandle = ExtractSkeletonHandoff(assemblySkeletonText);
-            await SendRequestAsync(process, 19, "tools/call", new
-            {
-                name = "get_symbol_body",
-                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { skeletonMemberHandle } },
-            }, timeout.Token);
-            var skeletonMemberBody = await ReadResponseAsync(process, 19, timeout.Token);
-            Assert.False(skeletonMemberBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(skeletonMemberBody));
-            Assert.Contains("ReadBeta()", GetFirstText(skeletonMemberBody), StringComparison.Ordinal);
-
             await SendRequestAsync(process, 20, "tools/call", new
             {
                 name = "get_file_skeleton",
-                arguments = new { targetPath = assemblyPath, filePaths = new[] { betaTreePath, "MissingNavigationFixture.cs" } },
+                arguments = new { targetPath = assemblyPath, filePaths = new[] { betaHandle, "MissingNavigationFixture.cs" } },
             }, timeout.Token);
             var mixedAssemblySkeleton = await ReadResponseAsync(process, 20, timeout.Token);
             var mixedAssemblySkeletonText = GetFirstText(mixedAssemblySkeleton);

@@ -1,5 +1,7 @@
 # Roadmap: Funktionsfähiger MCP-Server für C#-Navigation
 
+> Historical implementation and verification record. The physical file-tree tool and its scanner were removed on 2026-10-02. References below describe the earlier snapshot; the current catalog and replacement workflows are documented in [the tool reference](../../docs/tools/README.md).
+
 Verbindlich sind [Konzept](Konzept.md), [Serververträge](konzept/01-server.md) und [Verifikation](konzept/02-verifikation.md). Die Roadmap ordnet diese Anforderungen, ergänzt keine Produktanforderungen und verändert den Konzeptstatus nicht. Ihre Erstellung ist ausdrücklich beauftragt; Umsetzung beginnt erst mit dem entsprechenden Nutzerauftrag.
 
 ## Durchführung und Nachweise

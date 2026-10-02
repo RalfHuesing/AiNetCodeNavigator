@@ -144,7 +144,7 @@ internal sealed record DecompiledDocument(
 /// <summary>
 /// Absolute, physical paths of the materialized WholeProjectDecompiler output.
 /// The source root is the deepest common directory of all generated C# documents,
-/// so it is safe to pass directly to <c>rg</c> or <c>get_file_tree</c>.
+/// so it is safe to pass directly to external file-search tools.
 /// </summary>
 public sealed record DecompiledProjectPaths(
     string DecompiledProjectDirectory,

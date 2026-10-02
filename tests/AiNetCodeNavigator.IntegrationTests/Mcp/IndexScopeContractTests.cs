@@ -220,9 +220,10 @@ public sealed class IndexScopeContractTests
         {
             "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol",
             "get_assembly_context", "get_call_tree", "get_class_structure", "get_feature_context", "get_file_skeleton",
-            "get_file_tree", "get_impact", "get_index_scope", "get_namespace_tree", "get_server_health", "get_symbol_body",
+            "get_impact", "get_index_scope", "get_namespace_tree", "get_server_health", "get_symbol_body",
             "get_test_context", "get_type_hierarchy", "inspect_assembly", "reload_config", "resolve_type_origin", "search_assembly",
         }, names);
+        Assert.DoesNotContain("get_file_tree", names);
 
         var missingDescriptions = new List<string>();
         foreach (var (tool, method) in registered)
@@ -268,10 +269,6 @@ public sealed class IndexScopeContractTests
         Assert.Contains("reference metadata", assemblyContextReferencesDescription, StringComparison.Ordinal);
         Assert.Contains("raw symbols", assemblyContextReferencesDescription, StringComparison.Ordinal);
         Assert.Contains("caller/impact traversal", assemblyContextReferencesDescription, StringComparison.Ordinal);
-        var fileTreeRootDescription = registered.Single(item => item.Tool.ProtocolTool.Name == "get_file_tree")
-            .Tool.ProtocolTool.InputSchema.GetProperty("properties").GetProperty("root").GetProperty("description").GetString();
-        Assert.Contains("relative directory path", fileTreeRootDescription, StringComparison.Ordinal);
-        Assert.Contains("omit to use the target directory", fileTreeRootDescription, StringComparison.Ordinal);
     }
 
     private static string GetWireParameterName(ParameterInfo parameter)

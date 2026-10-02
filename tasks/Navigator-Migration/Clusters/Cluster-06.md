@@ -1,5 +1,7 @@
 # Cluster 6: Projekt-, Datei- & Scope-Struktur (Core)
 
+> Historical implementation and verification record. The physical file-tree tool and its scanner were removed on 2026-10-02. References below describe the earlier snapshot; the current catalog and replacement workflows are documented in [the tool reference](../../../docs/tools/README.md).
+
 [Zurück zum Konzept](../Konzept.md)
 
 - [x] 6.1 Dateibaum-Scanner (`get_file_tree`-Engine):

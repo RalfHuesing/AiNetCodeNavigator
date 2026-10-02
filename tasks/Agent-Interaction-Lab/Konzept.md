@@ -12,7 +12,7 @@ Ein sinngemäßer Auftrag **„schärfe das Konzept“** für diesen Task bedeut
 
 1. Den Abschluss von Navigator-Migration anhand seiner Abschlussnachweise prüfen. Solange der Vorgängertask nicht abgeschlossen ist, die Voraussetzung als ausstehend dokumentieren; ein Zwischenabgleich hebt die Sperre nicht auf.
 2. Den geprüften Produktstand mit Commit-SHA, Arbeitsbaumzustand und Datum festhalten. Konzeptannahmen gegen tatsächlichen Code, Tests und verifizierte docs/ prüfen; geplante Spezifikationen sind kein Implementierungsnachweis.
-3. Insbesondere alle 22 Toolregistrierungen samt Beschreibungen/Schemas, Argumentvalidierung und SDK-Bindung, Runtime/DI, Ergebnis- und Fehlerformate, Budgets, Handoffs/Operationen/Fortsetzungen, Assembly-Referenzauflösung sowie vorhandene Testzugänge abgleichen. Bestehende Mechanismen wiederverwenden und konkrete Integrationsstellen mit Code-/Testankern benennen. Überholte Annahmen ersetzen; Widersprüche und fehlende Entscheidungen sichtbar machen. Ziel und vereinbarte Produktgrenzen bleiben maßgeblich.
+3. Insbesondere alle 21 Toolregistrierungen samt Beschreibungen/Schemas, Argumentvalidierung und SDK-Bindung, Runtime/DI, Ergebnis- und Fehlerformate, Budgets, Handoffs/Operationen/Fortsetzungen, Assembly-Referenzauflösung sowie vorhandene Testzugänge abgleichen. Bestehende Mechanismen wiederverwenden und konkrete Integrationsstellen mit Code-/Testankern benennen. Überholte Annahmen ersetzen; Widersprüche und fehlende Entscheidungen sichtbar machen. Ziel und vereinbarte Produktgrenzen bleiben maßgeblich.
 4. Konzept und diesen Reviewnachweis aktualisieren: geprüfter Stand, geprüfte Bereiche, wesentliche Anpassungen, Code-/Testbelege und verbleibende Blocker. Gelesene Tests und vorhandene Testergebnisse von selbst ausgeführten Prüfungen unterscheiden. Keine Implementierungsbehauptung ohne Beleg.
 5. Danach einen frischen Luna-Subagenten mit Reasoning high ohne geerbte Gesprächshistorie als Verständnisprüfer einsetzen. Er erklärt den vorgesehenen Ablauf und meldet Unklarheiten, Widersprüche und Entscheidungen, die ein Implementierer erraten müsste. Belegte Lücken im Konzept schließen; ein gezielter Nachcheck prüft die Korrekturen. Dieser Verständnisreview ergänzt den technischen Abgleich.
 6. Das geschärfte Konzept zur ausdrücklichen Freigabe vorlegen und danach stoppen. Dieser Auftrag erlaubt nur Konzeptarbeit im Taskverzeichnis, keine Roadmap und keinen Produkt-/Lab-Code.
@@ -37,7 +37,7 @@ Der Zugang arbeitet lokal gegen den Entwicklungsstand ohne MCP-Transport, Deploy
 - Die reguläre Anwendung erhält keinen Lab-Modus, keine Lab-Parameter und keine Dump-/Aufgabenlogik. Die reguläre Produktverteilung benötigt das Lab nicht.
 - Definitionen, Validierung, Bindung, Handler, Zustandsverwaltung und Ergebnisformatierung stammen aus gemeinsamem produktivem Code. Keine Kopien der Tool-API und keine Lab-eigene Navigation.
 - SDK-Typen, SDK-Schemaerzeugung und SDK-Funktionsbindung sind erlaubt; MCP-Client, MCP-Server, JSON-RPC, Handshake und MCP-Transport sind in Lab-Läufen ausgeschlossen.
-- Erste Abnahme: AiNetCodeNavigator, Source und verwaltete Assemblies, alle 22 vorgesehenen Produkttools.
+- Erste Abnahme: AiNetCodeNavigator, Source und verwaltete Assemblies, alle 21 vorgesehenen Produkttools.
 - Die Lab-Exe führt keine Modelle aus und startet keine Codex-Agenten. Der aufrufende Codex-Agent koordiniert die getrennten Rollen außerhalb der Exe.
 
 ## Geprüfte Grundlage und Abhängigkeit
@@ -51,7 +51,7 @@ Gelesener und durch den Verständnisreview erneut geprüfter Stand am 2026-09-30
 - [Formatierung](../../src/AiNetCodeNavigator/Mcp/Formatting/McpResponseFormatter.cs), [Ergebnisbau](../../src/AiNetCodeNavigator/Mcp/Formatting/McpToolResults.cs) und [Operations-/Fortsetzungsspeicher](../../src/AiNetCodeNavigator/Mcp/LongRunningToolCallStore.cs) sind vorhandene Bausteine; gezählt wird mit cl100k_base.
 - [SDK-Streamtests](../../tests/AiNetCodeNavigator.FastTests/Mcp/McpArgumentValidationFilterTests.cs) bieten Vorarbeiten für separate Paritätsprüfungen. Sie sind keine transportlosen Agentenläufe.
 
-Die produktiven Registrierungen müssen für alle 22 Tools vor der vollständigen Lab-Abnahme existieren. Dieses Vorhaben implementiert deren Navigationssemantik nicht. Nach Aufhebung der Umsetzungssperre wird Lab-Infrastruktur zusätzlich mit ausdrücklich als solchen bezeichneten Fixture-Tools geprüft; ein realer Lab-Lauf mit unvollständigem Katalog startet nicht.
+Die produktiven Registrierungen müssen für alle 21 Tools vor der vollständigen Lab-Abnahme existieren. Dieses Vorhaben implementiert deren Navigationssemantik nicht. Nach Aufhebung der Umsetzungssperre wird Lab-Infrastruktur zusätzlich mit ausdrücklich als solchen bezeichneten Fixture-Tools geprüft; ein realer Lab-Lauf mit unvollständigem Katalog startet nicht.
 
 ## Gemeinsamer produktiver Aufrufpfad
 
@@ -221,14 +221,14 @@ Für die breite Untersuchung dürfen Aufgaben gezielt einen Parameterfall beschr
 
 Direkte Navigation außerhalb des Zugangs ergibt isolationStatus=violated und eine ungültige Tool-Verständlichkeitsbewertung. Der koordinierende Agent liefert eine Zugriffserklärung und verfügbare Toolspuren für die Auswertung. Ohne vollständige beobachtbare Spur ist isolationStatus=declared, nicht verified. Das Lab behauptet keine technische Sandbox und keinen Beweis, was Codex tatsächlich vollständig in den Modellkontext übernommen hat.
 
-## Abdeckung aller 22 Tools
+## Abdeckung aller 21 Tools
 
 Der Start erwartet exakt die folgende produktive Toolmenge. Fehlende, doppelte oder zusätzliche Tools verhindern einen realen Run mit LAB_CATALOG_MISMATCH. Fixture-Kataloge dürfen ausschließlich interne automatisierte Tests verwenden; keine öffentliche Fixture-Startoption.
 
 | Gruppe | Tools |
 |---|---|
 | Symbol | find_symbol, get_symbol_body |
-| Struktur | get_file_skeleton, get_class_structure, get_file_tree, get_namespace_tree, get_index_scope |
+| Struktur | get_file_skeleton, get_class_structure, get_namespace_tree, get_index_scope |
 | Beziehungen | get_call_tree, find_references, get_type_hierarchy, find_implementations, get_impact, dependency_graph, resolve_type_origin |
 | Assembly | get_assembly_context, inspect_assembly, search_assembly, find_assembly_extensions |
 | Kontext | get_feature_context, get_test_context |
@@ -273,7 +273,7 @@ Kürzer gilt nur bei erhaltener Korrektheit und Aufgabenlösung als besser. Ein 
 
 Die bestehende Testinfrastruktur wird erweitert; kein zusätzliches Testprojekt. FastTests erhalten eine Referenz auf das Lab für Renderer, Metadatenvalidierung und Protokollzustände; IntegrationTests für Prozess-/Named-Pipe-Lifecycle und gemeinsame Aufrufparität. Das Lab erhält Zugriff für diese Testassemblies. Es wird in die Solution und damit die offiziellen Build-/Testgates aufgenommen.
 
-Dieses Gate verwendet interne Fixture-Kataloge, um Infrastruktur und repräsentative gemeinsame Vertragsfälle unabhängig von der fachlichen Produktqualität zu prüfen. Es belegt nicht die Vollständigkeit oder Qualität aller Produkttools und erlaubt keinen vorgezogenen Umsetzungsbeginn: Die oben festgelegte Umsetzungssperre gilt auch für Fixture-Infrastruktur. Der reguläre Lab-Start bleibt an den vollständigen 22er-Katalog gebunden. Für Tests wird die Katalogquelle intern injiziert; kein öffentlicher Fixture-Schalter und kein alternativer Produktionskatalog.
+Dieses Gate verwendet interne Fixture-Kataloge, um Infrastruktur und repräsentative gemeinsame Vertragsfälle unabhängig von der fachlichen Produktqualität zu prüfen. Es belegt nicht die Vollständigkeit oder Qualität aller Produkttools und erlaubt keinen vorgezogenen Umsetzungsbeginn: Die oben festgelegte Umsetzungssperre gilt auch für Fixture-Infrastruktur. Der reguläre Lab-Start bleibt an den vollständigen 21er-Katalog gebunden. Für Tests wird die Katalogquelle intern injiziert; kein öffentlicher Fixture-Schalter und kein alternativer Produktionskatalog.
 
 Verbindliche Nachweise:
 
@@ -312,7 +312,7 @@ Die Umsetzung umfasst die erste Agentenuntersuchung und das belegte Findingsregi
 
 ## Arbeitsgedächtnis (nur Draft)
 
-Die Sachentscheidungen sind getroffen: separate .NET-Lab-Exe, AiNetCodeNavigator und alle 22 Tools. Technische Verträge, Grenzen und Nachweise sind in diesem Entwurf festgelegt; kein Implementierer soll aus offenen Varianten auswählen.
+Die Sachentscheidungen sind getroffen: separate .NET-Lab-Exe, AiNetCodeNavigator und alle 21 Tools. Technische Verträge, Grenzen und Nachweise sind in diesem Entwurf festgelegt; kein Implementierer soll aus offenen Varianten auswählen.
 
 Der Verständnisreview mit gpt-6-luna/high gegen 90adbfc hat sieben Vertragslücken belegt. Sie sind konkretisiert: BindingMetadata/Fixtureadapter, Abschluss-/Crashdaten, Referenzbaseline, Busy-/Zählerregeln, Raw-/Envelope-Versionierung, Protokollfehlerausgabe und zwei getrennte Abschlussgates. Im Nachcheck bestätigte Luna diese sieben Klärungen und benannte zwei verbleibende Textwidersprüche: not_observed als Lücke versus Blocker und Vorübertragungsfehler versus Call-Artefakte. Beide Stellen sind entsprechend präzisiert.
 

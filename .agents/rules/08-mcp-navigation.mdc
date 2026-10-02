@@ -39,11 +39,10 @@ For the current targets, wire arguments, defaults, limits, and paging behavior, 
 | | `get_impact` | Transitive blast radius and affected dependents of a symbol (`symbolIdentifier`). |
 | | `dependency_graph` | Architectural dependency graph between projects and namespaces. |
 | | `resolve_type_origin` | Resolve external/NuGet types to their originating assembly and DLL path. |
-| **Project & Scope Structure** | `get_file_tree` | Directory and project tree (always use `view: "summary"`; never use `view: "files"` on repository root). |
-| | `get_namespace_tree` | Hierarchical namespace tree across the target. |
-| | `get_index_scope` | Overview of indexed source files and current scope. |
+| **Project & Scope Structure** | `get_namespace_tree` | Hierarchical namespace tree across the target. |
+| | `get_index_scope` | Overview of indexed source documents and current scope; use external file search for physical file discovery. |
 | **Assembly Decompilation** | `get_assembly_context` | High-level summary of compiled binaries. |
-| | `inspect_assembly` | Public API surface and types in a compiled assembly. |
+| | `inspect_assembly` | Public API surface and types in a compiled assembly; follow its type handoffs to `get_file_skeleton`, `get_class_structure`, or `get_symbol_body`. |
 | | `search_assembly` | Search within decompiled assembly code (`data_access`, `external_calls`, `text`). |
 | | `find_assembly_extensions` | Discover extension methods in compiled assemblies. |
 | **Server Operations** | `get_server_health` | Diagnostic status, cache health, and memory stats. |

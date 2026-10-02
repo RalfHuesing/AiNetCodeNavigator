@@ -139,7 +139,7 @@ public sealed class AssemblyToolsContractTests
     }
 
     [Fact]
-    public async Task AssemblyNavigationHandlersReturnOwnerResultsAcrossAllSeventeenRoutes()
+    public async Task AssemblyNavigationHandlersReturnOwnerResultsAcrossAllSixteenRoutes()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         using var configuration = new NavigatorHostConfiguration(
@@ -186,15 +186,22 @@ public sealed class AssemblyToolsContractTests
         var readHandle = ReadHandoff(TextOf(foundRead), "Probe.Read");
 
         AssertOwnerResult(await symbols.GetSymbolBody(assemblyPath, [entryHandle], maxResponseBytes: 32768), "Entry");
-        var tree = await structure.GetFileTree(assemblyPath, view: "files", maxResults: 20, maxResponseBytes: 32768);
-        AssertOwnerResult(tree, "AssemblyRouteProbe");
-        var filePath = TextOf(tree).Split('\n')
-            .Where(line => line.StartsWith("- ", StringComparison.Ordinal))
-            .Select(line => line[2..].Trim())
-            .First(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
-        var skeleton = await structure.GetFileSkeleton(assemblyPath, [filePath], maxResponseBytes: 32768);
+        var inspectedProbe = await assemblies.InspectAssembly(assemblyPath, typeName: "AssemblyRouteProbe.Probe",
+            exactTypeName: true, maxResponseBytes: 32768);
+        AssertOwnerResult(inspectedProbe, "AssemblyRouteProbe.Probe");
+        var probeHandoff = ReadAnyHandoff(TextOf(inspectedProbe));
+        var skeleton = await structure.GetFileSkeleton(assemblyPath, [probeHandoff], maxResponseBytes: 32768);
+        var skeletonText = TextOf(skeleton);
         AssertOwnerResult(skeleton, "Probe");
+        Assert.Contains("## AssemblyRouteProbe", skeletonText, StringComparison.Ordinal);
+        Assert.Contains("### Probe ", skeletonText, StringComparison.Ordinal);
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, skeleton);
+        var readSkeletonLine = skeletonText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault(line => line.Contains("Read()", StringComparison.Ordinal));
+        Assert.True(readSkeletonLine is not null, $"The selected Probe skeleton did not contain Read(). Skeleton:\n{skeletonText}");
+        Assert.Contains("handoffId: `", readSkeletonLine!, StringComparison.Ordinal);
+        var readFromSkeleton = ReadAnyHandoff(readSkeletonLine!);
+        AssertOwnerResult(await symbols.GetSymbolBody(assemblyPath, [readFromSkeleton], maxResponseBytes: 32768), "Read");
         AssertOwnerResult(await structure.GetClassStructure(assemblyPath, typeHandle, maxResponseBytes: 32768), "Entry");
         var namespaceTree = await structure.GetNamespaceTree(assemblyPath, namespacePrefix: "AssemblyRouteProbe", maxResponseBytes: 32768);
         AssertOwnerResult(namespaceTree, "Probe");
@@ -281,9 +288,8 @@ public sealed class AssemblyToolsContractTests
         [
             (bytes, tokens) => symbols.FindSymbol(assemblyPath, pattern: "Entry", kind: "method", maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => symbols.GetSymbolBody(assemblyPath, [entryHandle], maxResponseBytes: bytes, maxResponseTokens: tokens),
-            (bytes, tokens) => structure.GetFileSkeleton(assemblyPath, [filePath], maxResponseBytes: bytes, maxResponseTokens: tokens),
+            (bytes, tokens) => structure.GetFileSkeleton(assemblyPath, [probeHandoff], maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => structure.GetClassStructure(assemblyPath, typeHandle, maxResponseBytes: bytes, maxResponseTokens: tokens),
-            (bytes, tokens) => structure.GetFileTree(assemblyPath, view: "files", maxResults: 20, maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => structure.GetNamespaceTree(assemblyPath, namespacePrefix: "AssemblyRouteProbe", maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => relationships.GetCallTree(assemblyPath, entryHandle, direction: "outgoing", maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => relationships.FindReferences(assemblyPath, "M:AssemblyRouteProbe.Probe.Read", maxResponseBytes: bytes, maxResponseTokens: tokens),

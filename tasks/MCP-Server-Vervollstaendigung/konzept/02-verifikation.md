@@ -12,7 +12,7 @@ Vor Gates werden existierende Fälle nach ihrem Ablauf inventarisiert. Ausgeschl
 
 Jeder Testlauf verwendet offizielle Skripte mit `Category!=E2EIntegration`; engere Filter werden per AND kombiniert. Die Auswahl wird gegen das Inventar geprüft. Build läuft ohne Testfilter. `ExtendedIntegration` bleibt standardmäßig ausgeschlossen; `-IncludeExtended` ist nur für betroffene nachweisliche Nicht-E2E-Fälle mit E2E-Ausschluss erlaubt. Kein unselektierter Suite- oder Release-E2E-Lauf.
 
-## Nachweismatrix für alle 22 Tools
+## Nachweismatrix für alle 21 Tools
 
 `Abnahmematrix.md` im Task hat genau eine Zeile je Tool: unterstützte Targets, konkrete fachliche Testnamen und Ergebnis. Gemeinsam werden Mechanismusnachweise, Gates, geprüfter Commit und Passed/Failed/Skipped genannt. Keine kopierten Requests/Logs je Tool. `docs/` enthält nur implementierte Fakten.
 
@@ -38,7 +38,6 @@ Pflichtfälle am produktiven Handler ohne MCP-Transport: andere Pflichtfelder g�
 | `get_symbol_body` | Unbekanntes Assembly-`h:` als Symbolauswahl | `HANDOFF_UNKNOWN` |
 | `get_file_skeleton` | Source-Dateiauswahl `Missing.cs`, die nicht im Target existiert | `INVALID_ARGUMENT` |
 | `get_class_structure` | Unbekanntes Assembly-`h:` als Typauswahl | `HANDOFF_UNKNOWN` |
-| `get_file_tree` | Nicht unterstütztes `view` | `INVALID_ARGUMENT` |
 | `get_namespace_tree` | Nicht unterstütztes `kind` | `INVALID_ARGUMENT` |
 | `get_index_scope` | Existierende verwaltete Assembly als Target | `INVALID_ARGUMENT` |
 | `get_call_tree` | Nicht unterstützte `direction` und unbekanntes `h:` | `INVALID_ARGUMENT`; Richtungsprüfung vor Symbolauflösung |
@@ -73,7 +72,7 @@ Recovery wiederholt beide angebotenen Minima unverändert bis zu einer ausführb
 | `get_symbol_body` | line-safe mehrseitiger Body und Batch-/Fenstergrenzen |
 | `get_file_skeleton` | Skeletonprojektion mit tatsächlicher äußerer Fortsetzung |
 | `get_class_structure` | direkte Structureprojektion unabhängig vom Context; Sortierung vor Cap |
-| `get_file_tree`, `get_namespace_tree`, `get_index_scope` | je eigene begrenzte Textprojektion; fachliche Tiefe/Caps bleiben truncation; ausführbare Fortsetzung des Indexscopeberichts |
+| `get_namespace_tree`, `get_index_scope` | je eigene begrenzte Textprojektion; fachliche Tiefe/Caps bleiben truncation; ausführbare Fortsetzung des Indexscopeberichts |
 | `get_call_tree` | begrenzte Graphprojektion in ASCII und Mermaid; ausführbare Token-Recovery statt ausschließlich one-token fallback |
 | `find_references`, `get_type_hierarchy`, `find_implementations` | je eigene begrenzte Projektion mit unveränderten fachlichen Grenzen |
 | `get_impact` | Source-/Assembly-Symbolresultat; gemeinsame Operation-/Budget-/Fortsetzungsmechanismen |
@@ -96,7 +95,7 @@ Allgemeine Testkategorisierung und offizielle Filter werden an den tatsächliche
 
 ## Host-, Lifecycle-, Read-only- und Assemblynachweise
 
-Registrierung: exakt 22 Tools, korrekte ReadOnly/Destructive/Idempotent/OpenWorld-Metadaten und vollständige Purpose-/Parameter-/Schemas aus originalen annotierten Methoden. Read-only Audit des realen Hostaufbaus bestätigt Registrierung, Runtime und Filter, ohne Handshake.
+Registrierung: exakt 21 Tools, korrekte ReadOnly/Destructive/Idempotent/OpenWorld-Metadaten und vollständige Purpose-/Parameter-/Schemas aus originalen annotierten Methoden. Read-only Audit des realen Hostaufbaus bestätigt Registrierung, Runtime und Filter, ohne Handshake.
 
 Validierung einmal: Required, unbekannte Felder einschließlich `$ref`-/composed Roots, Null, Arrays, Typen, fractional/out-of-range int, Enums, Bindbarkeit. Wire-Namen nach `AIParameterNameAttribute`/CLR, nicht Serializer-Policy. Externe Schemareferenzen ohne Netzwerk abweisen; sichere `fieldPath`, unsafe-key-Fallback `$`. Abweisung führt keinen Handler aus; gültiger Folgeaufruf bleibt möglich. Interne Extraktion ändert SDK-Binder/Regeln nicht.
 
@@ -127,7 +126,7 @@ Gates, Restores und Reviews seriell. Commit, Exitcodes, Auswahl und Ergebniszahl
 
 ## Kompakte englische Toolreferenz und Setupdokumentation
 
-`docs/tools/README.md`: alle 22 Tools auf einer englischen Seite mit Zweck, Targets, Wire-Parametern/Verwendung, Defaults/Caps und Besonderheiten. Gemeinsame Budget-/Recovery-/Handoff-/Pagingregeln einmal beschreiben oder verlinken. Beispiele für gemeinsame Muster und abweichende Verträge, kein Parameterkreuzprodukt. Gegen originale SDK-Definitionen/Handler abgleichen; kein JSON-Export, keine Exportpipeline oder 22 Einzeltoolseiten.
+`docs/tools/README.md`: alle 21 Tools auf einer englischen Seite mit Zweck, Targets, Wire-Parametern/Verwendung, Defaults/Caps und Besonderheiten. Gemeinsame Budget-/Recovery-/Handoff-/Pagingregeln einmal beschreiben oder verlinken. Beispiele für gemeinsame Muster und abweichende Verträge, kein Parameterkreuzprodukt. Gegen originale SDK-Definitionen/Handler abgleichen; kein JSON-Export, keine Exportpipeline oder 21 Einzeltoolseiten.
 
 `docs/setup/README.md`: gemeinsame Voraussetzungen, Windows-Exe, lokales Stdio, absoluter Pfad, Argumente/Config, Loggingtrennung; kurze Abschnitte für Claude Desktop, Cursor und Antigravity. Clientconfigname/-Ort/-Syntax gegen aktuelle offizielle Dokumentation mit Quelle/Prüfdatum prüfen. Keine Einzelsetupseiten, Installation, Deployment, Benutzerconfigänderung oder Clientstarttests. Ungestartete Clients nicht als praktisch verifiziert bezeichnen.
 

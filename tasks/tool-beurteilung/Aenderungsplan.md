@@ -73,3 +73,24 @@ Die wesentlichen Befunde sind lokal nachvollziehbar:
 - [Herkunftsvertrag](../../docs/navigation/resolve-type-origin.md), [vorhandene Typstruktur](../../docs/navigation/get-class-structure.md), [Paging-Vertrag](../../docs/mcp-long-running-calls.md), [öffentliche Vertragsmatrix samt offenen Zellen](../Navigator-Migration/Reviews/public-contract-matrix.md).
 
 Jeden Umsetzungsschritt mit den offiziellen Build-/Testskripten und der engsten betroffenen Auswahl prüfen; relevante Extended-Beziehungstests gezielt auswählen. Abschließend Routine-Solution-Gate und Vertragsprüfung durchführen. Die sechs Aufgaben aus dem ursprünglichen Prompt als Ablaufchecks verwenden: Fehlerverfolgung, Feature-Erweiterung, Signaturänderung, Testauswahl, NuGet-/Extension-Erkundung und Weiterarbeit nach Edits. Dabei Korrektheit, Nachladbarkeit, zusätzliche Abrufe und erhaltenen Kontext festhalten; hier werden keine Laufzeit- oder Tokengewinne behauptet. `docs/` jeweils erst mit der tatsächlich implementierten Änderung aktualisieren.
+
+## Implemented scope: physical file-tree removal (2026-10-02)
+
+The user's implementation request selects only the removal of the physical file-tree tool from this broader proposal. It retires the public route, SDK schema, handler, Core scanner, exclusive models/filter, scanner tests, current contract rows, documentation, and agent guidance. The remaining catalog has 19 navigation tools and two maintenance tools. Other proposed changes above remain proposals.
+
+Assembly discovery continues through `inspect_assembly` type handoffs to `get_file_skeleton`, followed by member handoffs to `get_symbol_body`. Decompiled document identities and the shared materialized source-root infrastructure remain in use. Source inventory uses `get_index_scope`; physical file discovery uses external file-search tools. Historical migration/review records and the original decision rationale retain explicitly historical references rather than rewriting earlier evidence.
+
+Verification and the independent `gpt-6.1-sol/medium` audit are recorded here after completion. Starting HEAD: `80ddeddf44e03e94d5958a68b82d3ec76958154c`; the initial working tree and index were clean.
+
+Verification completed before the final routine gate:
+
+- `pwsh -File ./scripts/build.ps1`: passed, exit 0, 0 warnings/errors after test corrections.
+- `pwsh -File ./scripts/test-fast.ps1 -Filter 'FullyQualifiedName~IndexScopeScannerTests|FullyQualifiedName~NamespaceTreeScannerTests|FullyQualifiedName~FileSkeletonTests|FullyQualifiedName~SkeletonMapTests|FullyQualifiedName~AssemblyInspectScannerTests'`: 42 passed, 0 failed/skipped, exit 0.
+- The targeted Source/Assembly/IndexScope selection passed 10 of 11 cases initially; the new assembly workflow case exposed test-only selector/format assumptions. The corrected `pwsh -File ./scripts/test-integration.ps1 -Filter 'FullyQualifiedName~AssemblyNavigationHandlersReturnOwnerResultsAcrossAllSixteenRoutes'` passed 1/1, 0 skipped, exit 0. The initial build also exposed two incomplete test edits, which were corrected before the successful build.
+- No ExtendedIntegration case exercises the removed physical scanner or changed registration; the only extended tests cover unchanged MSBuild loader guards/isolation. E2E remains excluded by the official scripts. Retained E2E tests were updated and compiled, but were not executed.
+
+Final routine gate: `pwsh -File ./scripts/test.ps1` passed on the working-tree implementation based on `80ddeddf44e03e94d5958a68b82d3ec76958154c`: FastTests 541/541 and IntegrationTests 29/29, 0 failed/skipped, exit 0. This includes the original SDK 21-name catalog assertion and the corrected inspection-type-handoff → skeleton-member-handoff → body workflow. `git diff --check` passed.
+
+Independent final audit (`gpt-6.1-sol`, reasoning `medium`): one P3 finding, an unchanged active intention sentence in `tasks/MCP-Server-Vervollstaendigung/Konzept.md` still demanding 20 navigation tools. The documentation fix round changed it to 19 navigation plus two maintenance tools. The auditor then rechecked the corrected sentence against the exact catalog and reported no open findings. No production or test changes were needed after the green routine gate; the final documentation diff and local links were checked instead of repeating unchanged tests.
+
+Audit coverage: production registrations and original SDK schemas/catalog; exclusive scanner/model/filter removal and orphan callers; retained decompiled document/source-root infrastructure; the exact Inspect→Skeleton→member-body test; source index boundaries; active tool counts, current contract rows, documentation, agent rules, and historical-record labeling. Historical rationale and negative catalog assertions are the only retained mentions of the retired tool. Final `git diff --check` passed; no push or history rewrite is part of this task.

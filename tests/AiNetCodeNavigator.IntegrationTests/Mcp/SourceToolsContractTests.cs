@@ -137,6 +137,11 @@ public sealed class SourceToolsContractTests
         Assert.Equal(pagedSkeleton.Text, tokenPagedSkeleton.Text);
         var missingSkeleton = await structure.GetFileSkeleton(target, ["Missing.cs"], maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(missingSkeleton, "INVALID_ARGUMENT", 16384, 1024);
+        using var outsideFileRoot = TestTempDirectory.Create("ainet-outside-skeleton-");
+        var outsideFile = Path.Combine(outsideFileRoot.DirectoryPath, "Outside.cs");
+        await File.WriteAllTextAsync(outsideFile, "public sealed class Outside { }");
+        var outsideSkeleton = await structure.GetFileSkeleton(target, [outsideFile], maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertErrorWithinBudget(outsideSkeleton, "INVALID_ARGUMENT", 16384, 1024);
 
         var classStructure = await structure.GetClassStructure(target, "ScopeProbe.Target", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(classStructure, 16384, 1024);
@@ -158,18 +163,6 @@ public sealed class SourceToolsContractTests
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(generatedMember, 16384, 1024);
         Assert.Contains("GeneratedMember", TextOf(generatedMember), StringComparison.Ordinal);
-
-        var tree = await structure.GetFileTree(target, view: "files", includeExtensions: [".cs"], maxResponseBytes: 16384, maxResponseTokens: 1024);
-        AssertSuccessWithinBudget(tree, 16384, 1024);
-        Assert.Contains("Target.cs", TextOf(tree), StringComparison.Ordinal);
-        var treeBytes = await structure.GetFileTree(target, view: "files", includeExtensions: [".cs"], maxDepth: 1,
-            maxResults: 1, maxResponseBytes: 512, maxResponseTokens: 4096);
-        AssertSuccessWithinBudget(treeBytes, 512, 4096);
-        var treeTokens = await structure.GetFileTree(target, view: "files", includeExtensions: [".cs"], maxDepth: 1,
-            maxResults: 1, maxResponseBytes: 65536, maxResponseTokens: 512);
-        AssertSuccessWithinBudget(treeTokens, 65536, 512);
-        var invalidTree = await structure.GetFileTree(target, view: "unsupported", maxResponseBytes: 16384, maxResponseTokens: 1024);
-        AssertErrorWithinBudget(invalidTree, "INVALID_ARGUMENT", 16384, 1024);
 
         var namespaceTree = await structure.GetNamespaceTree(target, project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"), namespacePrefix: "ScopeProbe",
             maxResponseBytes: 16384, maxResponseTokens: 1024);

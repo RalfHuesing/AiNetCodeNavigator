@@ -1,5 +1,7 @@
 # Cluster 6 Review Log
 
+> Historical implementation and verification record. The physical file-tree tool and its scanner were removed on 2026-10-02. References below describe the earlier snapshot; the current catalog and replacement workflows are documented in [the tool reference](../../../docs/tools/README.md).
+
 Reference policy: external comparison material has been removed from this historical record. Local documentation, the public contract matrix, and Navigator code and tests are authoritative. Commit IDs, findings, and reported historical gate results below retain their original provenance; this cleanup does not rerun or reaccept them.
 
 ## Point 6.3 implementation record

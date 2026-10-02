@@ -6,7 +6,7 @@ status: ready
 
 ## Intention
 
-AiNetCodeNavigator ermöglicht AI-Agenten zuverlässige, ausschließlich lesende C#-Navigation durch Source-Solutions und verwaltete Assemblies. Das Ergebnis ist ein funktionsfähiger MCP-Stdio-Server mit genau 20 Navigations- und zwei Wartungstools, korrekten Folgeaufrufen, verständlichen öffentlichen Verträgen und begrenzten Antwortgrößen.
+AiNetCodeNavigator ermöglicht AI-Agenten zuverlässige, ausschließlich lesende C#-Navigation durch Source-Solutions und verwaltete Assemblies. Das Ergebnis ist ein funktionsfähiger MCP-Stdio-Server mit genau 19 Navigations- und zwei Wartungstools, korrekten Folgeaufrufen, verständlichen öffentlichen Verträgen und begrenzten Antwortgrößen.
 
 Oberstes Ziel ist, den funktionsfähigen Server fertigzustellen. Dieses Vorhaben vervollständigt benötigte Funktionen und behebt belegte Fehler. Korrekte Komponenten werden wiederverwendet; Verbesserungen ohne erforderlichen Beitrag zur Abnahme erweitern den Auftrag nicht.
 
@@ -34,7 +34,7 @@ Die Anforderungen stehen vollständig in diesen drei Dokumenten. Code, Tests und
 
 ### Muss
 
-- Genau die 22 Tools mit sämtlichen in Kapitel 01 festgelegten Source-, Assembly- und Wartungsfunktionen liefern. `get_impact` navigiert Symbole in Source- und Assembly-Targets; Git-Änderungsermittlung gehört nicht zum Produktumfang.
+- Genau die 21 Tools mit sämtlichen in Kapitel 01 festgelegten Source-, Assembly- und Wartungsfunktionen liefern. `get_impact` navigiert Symbole in Source- und Assembly-Targets; Git-Änderungsermittlung gehört nicht zum Produktumfang.
 - MSBuild-Strukturinvalidierung, Symbol-/Ownerauflösung, Handoffs, öffentliche Parameter/Defaults/Filter/Caps und Assembly-Membersortierung korrekt umsetzen.
 - Loading, Operationen, Fortsetzungen, Cancellation, Disposal, Konfigurationsreload und Read-only-Grenzen zuverlässig erfüllen.
 - Harte Byte-/Tokengrenzen und automatisch passende Antwortseiten anwenden. Explizite Budgets niemals automatisch anheben. Mindestwerte und Recovery müssen ausführbar sein; vermeidbare Fehlerwiederholungen und erneute Analyse gespeicherter Ergebnisse entfallen.
