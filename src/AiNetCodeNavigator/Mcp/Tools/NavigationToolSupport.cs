@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Linq;
+using AiNetCodeNavigator.Core.Common;
 using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Core.Workspace;
@@ -32,6 +33,28 @@ internal static class NavigationToolSupport
         domainTruncated
             ? McpToolResults.DomainTruncated(text, nextAction ?? "Increase a supported result or traversal limit and repeat the query.")
             : McpToolResults.TextResult(text, isError: false);
+
+    internal static (T[] Items, string? NextCursor, CallToolResult? Error) PageResults<T>(
+        IReadOnlyList<T> entries, int pageSize, string? cursor, string binding,
+        int maxResponseBytes, int? maxResponseTokens, string fieldPath = "$.resultCursor")
+    {
+        var status = BoundResultCursor.ReadOffset(cursor, binding, out var offset);
+        if (status == BoundResultCursor.CursorStatus.InvalidFormat)
+            return ([], null, McpToolResults.InvalidArgument("resultCursor is malformed.", fieldPath,
+                "Use the opaque resultCursor returned for this exact target, snapshot, query, and result section.",
+                maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
+        if (status == BoundResultCursor.CursorStatus.StaleBinding)
+            return ([], null, McpToolResults.Recoverable("STALE_SNAPSHOT",
+                "resultCursor belongs to a different target, snapshot, query, or result section.",
+                "Repeat the query against the current snapshot to obtain a fresh cursor.", fieldPath: fieldPath,
+                maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
+        if (offset > entries.Count)
+            return ([], null, McpToolResults.InvalidArgument("resultCursor points beyond the end of the result list.", fieldPath,
+                "Use a cursor returned by an earlier page for this result section.",
+                maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
+        var page = BoundResultCursor.Page(entries, offset, pageSize, binding);
+        return (page.Items, page.NextCursor, null);
+    }
 
     internal static CallToolResult WithAssemblyMetadata(CallToolResult response, AnalysisSymbolIdentity identity,
         string analyzedScope, IReadOnlyList<string>? omissionReasons = null, bool resultContinuationAvailable = false)
@@ -238,12 +261,14 @@ internal static class NavigationToolSupport
     {
         internal AnalysisSymbolIdentity Identity { get; } = identity;
 
-        internal CallToolResult WithMetadata(CallToolResult response, string analyzedScope, params string[] omissionReasons)
+        internal CallToolResult WithMetadata(CallToolResult response, string analyzedScope, string[]? omissionReasons = null,
+            bool resultContinuationAvailable = false)
         {
             if (response.IsError == true) return response;
+            var reasons = omissionReasons ?? Array.Empty<string>();
             var metadata = new NavigationAnalysisMetadata(NavigationAnalysisMetadata.CreateSnapshotId("source", Identity.ContentHash), analyzedScope,
-                omissionReasons.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(),
-                omissionReasons.Length == 0 ? "complete" : "partial");
+                reasons.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(),
+                reasons.Length == 0 ? "complete" : "partial", resultContinuationAvailable);
             response.Meta ??= new JsonObject();
             if (response.Meta["navigationAnalysis"] is JsonNode existing)
             {

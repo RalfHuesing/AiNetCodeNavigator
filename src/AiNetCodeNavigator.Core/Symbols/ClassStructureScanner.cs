@@ -77,7 +77,7 @@ public static class ClassStructureScanner
         var filteredMembers = FilterMembers(extractedMembers, request.KindFilter, request.NameFilter);
         var sortedMembers = SortMembers(filteredMembers, request.SortBy);
 
-        var maxMembers = Math.Clamp(request.MaxMembers, 1, MaxMembersCap);
+        var maxMembers = request.CollectAllMembers ? int.MaxValue : Math.Clamp(request.MaxMembers, 1, MaxMembersCap);
         var shownMembers = sortedMembers.Take(maxMembers).ToList();
         var isTruncated = sortedMembers.Count > shownMembers.Count;
         var truncatedBy = isTruncated ? new List<string> { "maxMembers" } : new List<string>();

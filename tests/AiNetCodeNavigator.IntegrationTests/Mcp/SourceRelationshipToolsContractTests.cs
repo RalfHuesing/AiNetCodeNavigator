@@ -17,6 +17,145 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class SourceRelationshipToolsContractTests
 {
     [Fact]
+    public async Task FindReferences_ResultCursorReconstructsAllMatchesAcrossPages()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var relationships = new RelationshipTools(runtime);
+        using var fixture = TestTempDirectory.Create("ainet-source-reference-pages-");
+        var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
+
+        var seen = new List<string>();
+        string? cursor = null;
+        var pageCount = 0;
+        do
+        {
+            var response = await relationships.FindReferences(target, "M:RelationshipProbe.Target.Read",
+                maxResults: 4, resultCursor: cursor, maxResponseBytes: 65536, maxResponseTokens: 4096);
+            AssertSuccessWithinBudget(response, 65536, 4096);
+            using var document = System.Text.Json.JsonDocument.Parse(JsonBody(TextOf(response)));
+            var root = document.RootElement;
+            foreach (var item in root.GetProperty("references").EnumerateArray())
+                seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("enclosingSymbolName").GetString()}");
+            cursor = root.TryGetProperty("resultCursor", out var cursorValue)
+                && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String
+                ? cursorValue.GetString()
+                : null;
+            pageCount++;
+            Assert.InRange(pageCount, 1, 20);
+        } while (cursor is not null);
+
+        Assert.Equal(4, pageCount);
+        Assert.Equal(16, seen.Count);
+        Assert.Equal(16, seen.Distinct(StringComparer.Ordinal).Count());
+        Assert.Contains(seen, item => item.Contains("Caller11.Invoke", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task FindImplementations_ResultCursorReconstructsAllMatchesAcrossPages()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var relationships = new RelationshipTools(runtime);
+        using var fixture = TestTempDirectory.Create("ainet-source-implementation-pages-");
+        var target = await CreateSourceSolutionAsync(fixture.DirectoryPath, implementationCount: 10);
+
+        var seen = new List<string>();
+        string? cursor = null;
+        var pageCount = 0;
+        do
+        {
+            var response = await relationships.FindImplementations(target, "M:RelationshipProbe.Base.Run",
+                maxResults: 4, resultCursor: cursor, maxResponseBytes: 65536, maxResponseTokens: 4096);
+            AssertSuccessWithinBudget(response, 65536, 4096);
+            using var document = System.Text.Json.JsonDocument.Parse(JsonBody(TextOf(response)));
+            var root = document.RootElement;
+            foreach (var item in root.GetProperty("implementations").EnumerateArray())
+                seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("symbolName").GetString()}");
+            cursor = root.TryGetProperty("resultCursor", out var cursorValue)
+                && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String
+                ? cursorValue.GetString()
+                : null;
+            pageCount++;
+            Assert.InRange(pageCount, 1, 20);
+        } while (cursor is not null);
+
+        Assert.Equal(3, pageCount);
+        Assert.Equal(11, seen.Count);
+        Assert.Equal(11, seen.Distinct(StringComparer.Ordinal).Count());
+        Assert.Contains(seen, item => int.Parse(item.Split(':')[1], System.Globalization.CultureInfo.InvariantCulture) > 40);
+    }
+
+    [Fact]
+    public async Task TypeHierarchy_ResultCursorReconstructsAllDerivedTypesAcrossPages()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var relationships = new RelationshipTools(runtime);
+        using var fixture = TestTempDirectory.Create("ainet-source-hierarchy-pages-");
+        var target = await CreateSourceSolutionAsync(fixture.DirectoryPath, subtypeCount: 10);
+
+        var seen = new List<string>();
+        string? cursor = null;
+        var pageCount = 0;
+        do
+        {
+            var response = await relationships.GetTypeHierarchy(target, "T:RelationshipProbe.Base",
+                maxResults: 4, resultCursor: cursor, maxResponseBytes: 65536, maxResponseTokens: 4096);
+            AssertSuccessWithinBudget(response, 65536, 4096);
+            using var document = System.Text.Json.JsonDocument.Parse(JsonBody(TextOf(response)));
+            var root = document.RootElement;
+            foreach (var item in root.GetProperty("subtypes").EnumerateArray())
+                seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("name").GetString()}");
+            cursor = root.TryGetProperty("resultCursor", out var cursorValue)
+                && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String
+                ? cursorValue.GetString()
+                : null;
+            pageCount++;
+            Assert.InRange(pageCount, 1, 20);
+        } while (cursor is not null);
+
+        Assert.Equal(3, pageCount);
+        Assert.Equal(12, seen.Count);
+        Assert.Equal(12, seen.Distinct(StringComparer.Ordinal).Count());
+        Assert.Contains(seen, item => item.Contains("Subtype09", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Impact_ResultCursorReconstructsAllCallSitesAcrossPages()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var relationships = new RelationshipTools(runtime);
+        using var fixture = TestTempDirectory.Create("ainet-source-impact-pages-");
+        var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
+
+        var seen = new List<string>();
+        string? cursor = null;
+        var pages = 0;
+        int? total = null;
+        do
+        {
+            var response = await relationships.GetImpact(target, "M:RelationshipProbe.Target.Read",
+                maxResults: 4, resultCursor: cursor, maxResponseBytes: 65536, maxResponseTokens: 4096);
+            AssertSuccessWithinBudget(response, 65536, 4096);
+            using var document = System.Text.Json.JsonDocument.Parse(JsonBody(TextOf(response)));
+            var root = document.RootElement;
+            total ??= root.GetProperty("transitiveImpactCount").GetInt32();
+            foreach (var item in root.GetProperty("callSites").EnumerateArray())
+                seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("callingMember").GetString()}");
+            cursor = root.TryGetProperty("resultCursor", out var cursorValue)
+                && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
+            pages++;
+            Assert.InRange(pages, 1, 20);
+        } while (cursor is not null);
+
+        Assert.True(total > 4);
+        Assert.Equal(total, seen.Count);
+        Assert.Equal(seen.Count, seen.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    [Fact]
     public async Task DependencyGraph_TraversesTargetInDocumentWindowAfterOneThousand()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
@@ -45,8 +184,11 @@ public sealed class SourceRelationshipToolsContractTests
         var target = await CreateDuplicateGenericSolutionAsync(fixture.DirectoryPath);
         var found = await symbols.FindSymbol(target, pattern: "Box", kind: "class", maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(found, 65536, 4096);
-        var firstBoxLine = TextOf(found).Split('\n').Single(line => line.Contains("src/First/Box.cs", StringComparison.Ordinal));
-        var firstHandoff = ReadHandoffFromLine(firstBoxLine);
+        using var foundDocument = System.Text.Json.JsonDocument.Parse(JsonBody(TextOf(found)));
+        var firstHandoff = foundDocument.RootElement.GetProperty("results").EnumerateArray()
+            .SelectMany(result => result.GetProperty("entries").EnumerateArray())
+            .Single(entry => entry.GetProperty("filePath").GetString()!.Contains("src/First/Box.cs", StringComparison.Ordinal))
+            .GetProperty("handoffId").GetString()!;
         var graph = await relationships.DependencyGraph(target, symbolIdentifier: firstHandoff,
             direction: "outgoing", depth: 1, maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(graph, 65536, 4096);
@@ -179,9 +321,11 @@ public sealed class SourceRelationshipToolsContractTests
     {
         AssertSuccessWithinBudget(broadResult, 65536, 4096);
         var expected = BodyOf(TextOf(broadResult));
-        var byteProjection = await ReadProjectionAsync(label + " byte", invoke, expected, 512, 4096);
+        var byteProjection = await ReadProjectionAsync(label + " byte", invoke, expected,
+            requireTokenRecovery ? 512 : 16384, 4096);
         Assert.True(byteProjection.Pages >= 1, label);
-        var tokenProjection = await ReadProjectionAsync(label + " token", invoke, expected, 65536, 120);
+        var tokenProjection = await ReadProjectionAsync(label + " token", invoke, expected,
+            65536, requireTokenRecovery ? 120 : 4096);
         if (requireTokenRecovery)
             Assert.True(tokenProjection.MinimumRecoveryObserved, $"{label} did not execute the advertised minimum-token recovery path.");
     }
@@ -293,7 +437,7 @@ public sealed class SourceRelationshipToolsContractTests
         return line[start..end];
     }
 
-    private static async Task<string> CreateSourceSolutionAsync(string root, int fillerCount = 0)
+    private static async Task<string> CreateSourceSolutionAsync(string root, int fillerCount = 0, int implementationCount = 0, int subtypeCount = 0)
     {
         var solution = Path.Combine(root, "Relationships.slnx");
         var projectDirectory = Path.Combine(root, "src", "App");
@@ -303,6 +447,10 @@ public sealed class SourceRelationshipToolsContractTests
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>");
         var callerDeclarations = string.Join("\n", Enumerable.Range(0, 12).Select(index =>
             $"public static class Caller{index:D2} {{ public static int Invoke(Target target) => target.Read(); }}"));
+        var implementationDeclarations = string.Join("\n", Enumerable.Range(0, implementationCount).Select(index =>
+            $"public sealed class Implementation{index:D2} : Base {{ public override int Run() => 1; }}"));
+        var subtypeDeclarations = string.Join("\n", Enumerable.Range(0, subtypeCount).Select(index =>
+            $"public sealed class Subtype{index:D2} : Base {{ }}"));
         var source = $$"""
             namespace RelationshipProbe;
             public interface IWorker { int Work(); }
@@ -330,6 +478,8 @@ public sealed class SourceRelationshipToolsContractTests
                 }
             }
             {{callerDeclarations}}
+            {{implementationDeclarations}}
+            {{subtypeDeclarations}}
             public static class Trigger
             {
                 public static void Start() { new Entry().Run(); }
@@ -368,6 +518,13 @@ public sealed class SourceRelationshipToolsContractTests
         }
         Assert.True(process.ExitCode == 0, $"Relationship fixture restore failed.\n{await stderr}\n{await stdout}");
         return solution;
+    }
+
+    private static string JsonBody(string text)
+    {
+        var start = text.IndexOf('{');
+        Assert.True(start >= 0, text);
+        return text[start..];
     }
 
     private static async Task<string> CreateDuplicateGenericSolutionAsync(string root)

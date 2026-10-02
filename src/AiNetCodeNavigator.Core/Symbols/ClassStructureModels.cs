@@ -42,4 +42,5 @@ public sealed record ClassStructureScanRequest(
     string? NameFilter = null,
     AnalysisSymbolIdentity? HandoffIdentity = null,
     SymbolScopeType ScopeType = SymbolScopeType.All,
-    bool IncludeGenerated = false);
+    bool IncludeGenerated = false,
+    bool CollectAllMembers = false);

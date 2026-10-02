@@ -24,7 +24,6 @@ internal sealed record AssemblyReferencesClosureScanResult(
 internal static class AssemblyReferencesClosureScanner
 {
     private const int MaxVisitedSymbols = 200;
-    private const int LocalResultLimit = 1_000;
 
     internal static async Task<AssemblyReferencesClosureScanResult> ScanAsync(
         string targetPath,
@@ -77,7 +76,7 @@ internal static class AssemblyReferencesClosureScanner
                 try
                 {
                     scan = await FindReferencesResolver.FindReferencesAsync(targetSymbol, owner.Scope.Solution,
-                        LocalResultLimit, 1, ct, scope: scopeType, includeGenerated: includeGenerated,
+                        int.MaxValue, 1, ct, scope: scopeType, includeGenerated: includeGenerated,
                         handoffFormatter: session.CreateInternalFormatter(owner), ownerTargetPath: owner.TargetPath).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException or ArgumentException)

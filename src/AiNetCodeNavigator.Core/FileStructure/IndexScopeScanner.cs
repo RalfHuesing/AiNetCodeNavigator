@@ -30,8 +30,8 @@ public static class IndexScopeScanner
 
         var requested = options ?? new IndexScopeScanOptions();
         var requestedProjectName = string.IsNullOrWhiteSpace(requested.ProjectName) ? null : requested.ProjectName.Trim();
-        var effectiveMaxProjects = ClampBound(requested.MaxProjects, MaxProjectsCap);
-        var effectiveMaxFileTypes = ClampBound(requested.MaxFileTypes, MaxFileTypesCap);
+        var effectiveMaxProjects = requested.CollectAllInventory ? int.MaxValue : ClampBound(requested.MaxProjects, MaxProjectsCap);
+        var effectiveMaxFileTypes = requested.CollectAllInventory ? int.MaxValue : ClampBound(requested.MaxFileTypes, MaxFileTypesCap);
         var boundsWereClamped = effectiveMaxProjects != requested.MaxProjects || effectiveMaxFileTypes != requested.MaxFileTypes;
         var solutionPath = solution.FilePath ?? "in-memory-solution";
         var allProjects = solution.Projects.ToList();
@@ -68,6 +68,7 @@ public static class IndexScopeScanner
                 var documents = project.Documents.ToList();
                 totalDocuments += documents.Count;
                 var projectCSharpDocumentCount = 0;
+                var projectGeneratedDocumentCount = 0;
 
                 foreach (var document in documents)
                 {
@@ -88,6 +89,7 @@ public static class IndexScopeScanner
                         if (await GeneratedDocumentDetector.IsGeneratedDocumentAsync(document, ct).ConfigureAwait(false))
                         {
                             generatedDocumentCount++;
+                            projectGeneratedDocumentCount++;
                         }
                     }
                 }
@@ -97,7 +99,10 @@ public static class IndexScopeScanner
                     DocumentCount: documents.Count,
                     IsTestProject: isTestProject,
                     CSharpDocumentCount: projectCSharpDocumentCount,
-                    IsCSharpProject: isCSharpProject));
+                    IsCSharpProject: isCSharpProject,
+                    ProjectPath: GetStableProjectPath(project),
+                    LoadedFrameworkContext: GetLoadedFrameworkContext(project),
+                    Exclusions: BuildExclusions(projectGeneratedDocumentCount)));
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -168,6 +173,28 @@ public static class IndexScopeScanner
     }
 
     private static int ClampBound(int requested, int cap) => requested < 1 ? 1 : Math.Min(requested, cap);
+
+    private static string? GetStableProjectPath(Project project)
+    {
+        if (string.IsNullOrWhiteSpace(project.FilePath)) return null;
+        try { return Path.GetFullPath(project.FilePath).Replace('\\', '/'); }
+        catch (Exception exception) when (exception is ArgumentException or IOException or NotSupportedException) { return null; }
+    }
+
+    private static string? GetLoadedFrameworkContext(Project project)
+    {
+        var options = project.AnalyzerOptions.AnalyzerConfigOptionsProvider.GlobalOptions;
+        if (options.TryGetValue("build_property.TargetFramework", out var framework) && !string.IsNullOrWhiteSpace(framework))
+            return framework.Trim();
+        return null;
+    }
+
+    private static IReadOnlyList<string> BuildExclusions(int generatedDocumentCount)
+    {
+        var exclusions = new List<string>(2);
+        if (generatedDocumentCount > 0) exclusions.Add("generatedSourceExcludedFromDefaultSymbolSearch");
+        return exclusions;
+    }
 
     private static string NormalizeExtension(string? path)
     {

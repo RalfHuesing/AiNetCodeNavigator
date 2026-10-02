@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using AiNetCodeNavigator.Mcp;
 using AiNetCodeNavigator.Mcp.Tools;
 using AiNetCodeNavigator.Mcp.Tools.Relationships;
@@ -18,13 +19,61 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class SourceToolsContractTests
 {
     [Fact]
+    public async Task StructureInventoriesReachEntriesBeyondThePreviousTwoHundredEntryCaps()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        using var fixture = TestTempDirectory.Create("ainet-structure-over-cap-");
+        var solutionPath = fixture.CreateFile("Workspace.slnx", string.Empty);
+        var sourcePath = fixture.CreateFile("ManyTypes.cs", string.Empty);
+        var members = string.Join(Environment.NewLine, Enumerable.Range(0, 205).Select(index => $"    public void Member{index:D3}() {{ }}"));
+        var types = string.Join(Environment.NewLine, Enumerable.Range(0, 205).Select(index => $"public sealed class Type{index:D3} {{ }}"));
+        var source = $"namespace CapProbe;{Environment.NewLine}public sealed class ManyMembers{Environment.NewLine}{{{Environment.NewLine}{members}{Environment.NewLine}}}{Environment.NewLine}{types}";
+        await File.WriteAllTextAsync(sourcePath, source);
+        var workspace = TestWorkspaceBuilder.Create().WithVirtualSolutionPath(solutionPath)
+            .WithProject("CapProbe", (sourcePath, source)).Build();
+        await using var registry = new ProjectRegistry(new ProjectRegistryOptions(_ => ResidentSolutionCreation.Resident(new ResidentSolution(workspace.Solution)), TimeProvider.System));
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>(), projectRegistry: registry);
+        var tools = new StructureTools(runtime);
+        using var emitted = TestTempDirectory.Create("ainet-structure-over-cap-assembly-");
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(emitted, "CapProbe", source);
+
+        var sourceMembers = await ReadClassMemberPagesAsync(tools, solutionPath, "CapProbe.ManyMembers");
+        var assemblyMembers = await ReadClassMemberPagesAsync(tools, assemblyPath, "CapProbe.ManyMembers");
+        Assert.Equal(2, sourceMembers.Pages);
+        Assert.Equal(2, assemblyMembers.Pages);
+        Assert.Equal(205, sourceMembers.Items.Count);
+        Assert.Equal(205, assemblyMembers.Items.Count);
+        Assert.Equal(205, sourceMembers.Items.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(205, assemblyMembers.Items.Distinct(StringComparer.Ordinal).Count());
+        foreach (var (target, cursor) in new[] { (solutionPath, sourceMembers.FirstCursor), (assemblyPath, assemblyMembers.FirstCursor) })
+        {
+            AssertErrorWithinBudget(await tools.GetClassStructure(target, "CapProbe.ManyMembers", resultCursor: "malformed-cursor"), "RESULT_CURSOR_EXPIRED", 16384, 4096);
+            AssertErrorWithinBudget(await tools.GetClassStructure(target, "CapProbe.ManyMembers", sortBy: "name", resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+        }
+
+        var sourceInventory = await ReadNamespaceItemPagesAsync(tools, solutionPath);
+        var assemblyInventory = await ReadNamespaceItemPagesAsync(tools, assemblyPath);
+        Assert.Equal(2, sourceInventory.Pages);
+        Assert.Equal(2, assemblyInventory.Pages);
+        Assert.Equal(207, sourceInventory.Items.Count);
+        Assert.Equal(207, assemblyInventory.Items.Count);
+        Assert.Equal(207, sourceInventory.Items.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(207, assemblyInventory.Items.Distinct(StringComparer.Ordinal).Count());
+        foreach (var (target, cursor) in new[] { (solutionPath, sourceInventory.FirstCursor), (assemblyPath, assemblyInventory.FirstCursor) })
+        {
+            AssertErrorWithinBudget(await tools.GetNamespaceTree(target, namespacePrefix: "CapProbe", resultCursor: "malformed-cursor"), "RESULT_CURSOR_EXPIRED", 16384, 4096);
+            AssertErrorWithinBudget(await tools.GetNamespaceTree(target, namespacePrefix: "OtherNamespace", resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+        }
+    }
+
+    [Fact]
     public async Task FindSymbolPatternBatch_UsesOneSnapshotAcrossPatternParts()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         using var fixture = TestTempDirectory.Create("ainet-source-pattern-batch-snapshot-");
         var solutionPath = fixture.CreateFile("Workspace.slnx", string.Empty);
         var sourcePath = fixture.CreateFile("Target.cs", "public sealed class BeforeVersion { }");
-        var workspace = TestWorkspaceBuilder.Create()
+        var workspace = TestWorkspaceBuilder.Create().WithVirtualSolutionPath(solutionPath)
             .WithProject("App", (sourcePath, "public sealed class BeforeVersion { }"))
             .Build();
         using (workspace)
@@ -49,10 +98,42 @@ public sealed class SourceToolsContractTests
                 namePatterns: ["BeforeVersion", "AfterVersion"], kind: "class", maxResponseBytes: 16384);
 
             AssertSuccessWithinBudget(result, 16384, 1024);
-            Assert.Contains("class BeforeVersion", TextOf(result), StringComparison.Ordinal);
-            Assert.DoesNotContain("class AfterVersion", TextOf(result), StringComparison.Ordinal);
+            Assert.Contains("\"name\": \"BeforeVersion\"", TextOf(result), StringComparison.Ordinal);
+            Assert.DoesNotContain("\"name\": \"AfterVersion\"", TextOf(result), StringComparison.Ordinal);
             Assert.Equal(1, editCount);
         }
+    }
+
+    [Fact]
+    public async Task FindSymbolResultCursor_ReconstructsEveryKnownMatchExactlyOnce()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var tools = new SymbolTools(runtime);
+        using var fixture = TestTempDirectory.Create("ainet-source-result-cursor-");
+        var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
+        var names = new List<(string Pattern, string Name)>();
+        string? cursor = null;
+
+        for (var request = 0; request < 20; request++)
+        {
+            var result = await tools.FindSymbol(target, namePatterns: ["PageEntry", "Run"], kind: "method", maxResults: 3,
+                resultCursor: cursor, maxResponseBytes: 65536, maxResponseTokens: 8192);
+            AssertSuccessWithinBudget(result, 65536, 8192);
+            using var document = JsonDocument.Parse(BodyOf(TextOf(result)));
+            var response = document.RootElement;
+            foreach (var patternResult in response.GetProperty("results").EnumerateArray())
+            foreach (var entry in patternResult.GetProperty("entries").EnumerateArray())
+                names.Add((patternResult.GetProperty("pattern").GetString()!, entry.GetProperty("name").GetString()!));
+            cursor = response.TryGetProperty("resultCursor", out var cursorProperty)
+                && cursorProperty.ValueKind != JsonValueKind.Null ? cursorProperty.GetString() : null;
+            if (cursor is null) break;
+        }
+
+        Assert.Equal(18, names.Count);
+        Assert.Equal(18, names.Distinct().Count());
+        Assert.Contains(names, item => item == ("PageEntry", "PageEntry15"));
+        Assert.Contains(names, item => item == ("Run", "RunTest"));
     }
 
     [Fact]
@@ -99,7 +180,7 @@ public sealed class SourceToolsContractTests
 
         var found = await symbols.FindSymbol(target, pattern: "Run", kind: "method", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(found, 16384, 1024);
-        Assert.Contains("method Run in", TextOf(found), StringComparison.Ordinal);
+        Assert.Contains("\"name\": \"Run\"", TextOf(found), StringComparison.Ordinal);
         Assert.Contains("snapshotId=source:", TextOf(found), StringComparison.Ordinal);
         Assert.Contains("analyzedScope=findSymbol(pattern=Run", TextOf(found), StringComparison.Ordinal);
         Assert.Contains("analysisCompleteness=complete", TextOf(found), StringComparison.Ordinal);
@@ -107,15 +188,15 @@ public sealed class SourceToolsContractTests
         var methodHandoff = ReadHandoff(TextOf(found), "method Run in");
         var generatedExcluded = await symbols.FindSymbol(target, pattern: "GeneratedProbe", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(generatedExcluded, 16384, 1024);
-        Assert.DoesNotContain("class GeneratedProbe", TextOf(generatedExcluded), StringComparison.Ordinal);
+        Assert.DoesNotContain("\"name\": \"GeneratedProbe\"", TextOf(generatedExcluded), StringComparison.Ordinal);
         var generatedIncluded = await symbols.FindSymbol(target, pattern: "GeneratedProbe", includeGenerated: true,
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(generatedIncluded, 16384, 1024);
-        Assert.Contains("GeneratedProbe", TextOf(generatedIncluded), StringComparison.Ordinal);
+        Assert.Contains("\"name\": \"GeneratedProbe\"", TextOf(generatedIncluded), StringComparison.Ordinal);
 
         var pagedFind = await ReadAllFindSymbolPagesAsync(symbols, target, "PageEntry", 1024, 4096);
         Assert.True(pagedFind.Pages > 1);
-        Assert.Equal(16, pagedFind.Text.Split("method PageEntry", StringSplitOptions.None).Length - 1);
+        Assert.Equal(16, pagedFind.Text.Split("\"name\": \"PageEntry", StringSplitOptions.None).Length - 1);
         Assert.Contains("PageEntry15", pagedFind.Text, StringComparison.Ordinal);
         var tokenPagedFind = await ReadAllFindSymbolPagesAsync(symbols, target, "PageEntry", 65536, 512);
         Assert.Equal(pagedFind.Text, tokenPagedFind.Text);
@@ -185,11 +266,8 @@ public sealed class SourceToolsContractTests
         Assert.DoesNotContain("Alpha", TextOf(declarationOrder), StringComparison.Ordinal);
         var classStructureBytes = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", maxMembers: 1,
             sortBy: "lines", maxResponseBytes: 512, maxResponseTokens: 4096);
-        AssertErrorWithinBudget(classStructureBytes, "RESPONSE_BUDGET_TOO_SMALL", 512, 4096);
-        var classStructureMinimumBytes = ReadBudget(TextOf(classStructureBytes), "minimumResponseBytes");
-        var classStructureBytesRetry = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", maxMembers: 1,
-            sortBy: "lines", maxResponseBytes: classStructureMinimumBytes, maxResponseTokens: 4096);
-        AssertSuccessWithinBudget(classStructureBytesRetry, classStructureMinimumBytes, 4096);
+        AssertSuccessWithinBudget(classStructureBytes, 512, 4096);
+        Assert.True(TryReadToken(TextOf(classStructureBytes), "continuationToken", out _), TextOf(classStructureBytes));
         var classStructureTokens = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", maxMembers: 1,
             sortBy: "lines", maxResponseBytes: 65536, maxResponseTokens: 512);
         if (classStructureTokens.IsError == true)
@@ -209,11 +287,38 @@ public sealed class SourceToolsContractTests
         var namespaceTree = await structure.GetNamespaceTree(target, project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"), namespacePrefix: "ScopeProbe",
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(namespaceTree, 16384, 1024);
-        var namespaceLines = TextOf(namespaceTree).Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
-        var scopeNamespaceIndex = Array.FindIndex(namespaceLines, line => line.StartsWith("- ScopeProbe ", StringComparison.Ordinal));
-        var targetTypeIndex = Array.FindIndex(namespaceLines, line => line.StartsWith("  - class Target (", StringComparison.Ordinal));
-        Assert.True(scopeNamespaceIndex >= 0, string.Join('\n', namespaceLines));
-        Assert.True(targetTypeIndex > scopeNamespaceIndex, string.Join('\n', namespaceLines));
+        using (var namespaceDocument = System.Text.Json.JsonDocument.Parse(JsonBody(TextOf(namespaceTree))))
+        {
+            var items = namespaceDocument.RootElement.GetProperty("items").EnumerateArray().ToArray();
+            Assert.Contains(items, item => item.GetProperty("kind").GetString() == "namespace"
+                && item.GetProperty("fullName").GetString() == "ScopeProbe");
+            Assert.Contains(items, item => item.GetProperty("kind").GetString() == "type"
+                && item.GetProperty("name").GetString() == "Target");
+        }
+        var pagedNamespaceItems = new List<string>();
+        string? namespaceCursor = null;
+        var namespacePages = 0;
+        do
+        {
+            var page = await structure.GetNamespaceTree(target, project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
+                namespacePrefix: "ScopeProbe", depth: 1, maxResults: 2, resultCursor: namespaceCursor,
+                maxResponseBytes: 16384, maxResponseTokens: 1024);
+            AssertSuccessWithinBudget(page, 16384, 1024);
+            using var document = System.Text.Json.JsonDocument.Parse(JsonBody(TextOf(page)));
+            var root = document.RootElement;
+            foreach (var item in root.GetProperty("items").EnumerateArray())
+            {
+                var name = item.TryGetProperty("fullName", out var fullName) ? fullName.GetString() : item.GetProperty("name").GetString();
+                pagedNamespaceItems.Add($"{item.GetProperty("kind").GetString()}:{name}");
+            }
+            namespaceCursor = root.TryGetProperty("resultCursor", out var cursorValue)
+                && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
+            namespacePages++;
+            Assert.InRange(namespacePages, 1, 10);
+        } while (namespaceCursor is not null);
+        Assert.Equal(3, namespacePages);
+        Assert.Equal(5, pagedNamespaceItems.Count);
+        Assert.Equal(5, pagedNamespaceItems.Distinct(StringComparer.Ordinal).Count());
         var namespaceBytes = await structure.GetNamespaceTree(target,
             project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
             namespacePrefix: "ScopeProbe", depth: 1, includeTypes: false, maxResults: 1,
@@ -421,6 +526,20 @@ public sealed class SourceToolsContractTests
 
     private static string ReadHandoff(string text, string declaration)
     {
+        var body = BodyOf(text);
+        if (body.TrimStart().StartsWith("{", StringComparison.Ordinal))
+        {
+            using var document = JsonDocument.Parse(body);
+            var parts = declaration.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var namePart = parts.Length > 2 && parts[^1] == "in" ? parts[1] : parts[^1];
+            var name = namePart.Split('.')[^1];
+            var handoff = document.RootElement.GetProperty("results").EnumerateArray()
+                .SelectMany(result => result.GetProperty("entries").EnumerateArray())
+                .FirstOrDefault(entry => string.Equals(entry.GetProperty("name").GetString(), name, StringComparison.Ordinal))
+                .GetProperty("handoffId").GetString();
+            Assert.StartsWith("h:", handoff);
+            return handoff!;
+        }
         var declarationIndex = text.IndexOf(declaration, StringComparison.Ordinal);
         Assert.True(declarationIndex >= 0, text);
         var marker = "[handoff: ";
@@ -434,6 +553,15 @@ public sealed class SourceToolsContractTests
 
     private static string[] ReadHandoffs(string text)
     {
+        var body = BodyOf(text);
+        if (body.TrimStart().StartsWith("{", StringComparison.Ordinal))
+        {
+            using var document = JsonDocument.Parse(body);
+            return document.RootElement.GetProperty("results").EnumerateArray()
+                .SelectMany(result => result.GetProperty("entries").EnumerateArray())
+                .Select(entry => entry.TryGetProperty("handoffId", out var value) ? value.GetString() : null)
+                .Where(static value => !string.IsNullOrWhiteSpace(value)).Select(static value => value!).ToArray();
+        }
         var handoffs = new List<string>();
         foreach (var (marker, suffix) in new[] { ("[handoff: ", "]"), ("handoffId: `", "`") })
         {
@@ -556,5 +684,84 @@ public sealed class SourceToolsContractTests
         var standardOutputText = await standardOutput;
         Assert.True(process.ExitCode == 0, $"Source-tool fixture restore failed: {errorOutput}\n{standardOutputText}");
         return solutionPath;
+    }
+
+    private static async Task<(List<string> Items, int Pages, string FirstCursor)> ReadClassMemberPagesAsync(StructureTools tools, string target, string typeName)
+    {
+        var items = new List<string>();
+        string? cursor = null;
+        string? firstCursor = null;
+        var pageSize = 200;
+        var pages = 0;
+        do
+        {
+            var result = await tools.GetClassStructure(target, typeName, maxMembers: pageSize, resultCursor: cursor,
+                maxResponseBytes: 65536, maxResponseTokens: 8192);
+            var payload = await ReconstructOuterPagesAsync(result, async continuation =>
+                await tools.GetClassStructure(target, typeName, maxMembers: pageSize, continuationToken: continuation,
+                    maxResponseBytes: 65536, maxResponseTokens: 8192));
+            using var document = JsonDocument.Parse(payload);
+            var root = document.RootElement;
+            items.AddRange(root.GetProperty("members").EnumerateArray().Select(member => member.GetProperty("name").GetString()!));
+            cursor = root.TryGetProperty("resultCursor", out var next) && next.ValueKind == JsonValueKind.String ? next.GetString() : null;
+            firstCursor ??= cursor;
+            if (cursor is not null) pageSize = 17;
+            pages++;
+            Assert.InRange(pages, 1, 4);
+        } while (cursor is not null);
+        return (items, pages, firstCursor ?? throw new Xunit.Sdk.XunitException("The member inventory did not expose a continuation cursor."));
+    }
+
+    private static async Task<(List<string> Items, int Pages, string FirstCursor)> ReadNamespaceItemPagesAsync(StructureTools tools, string target)
+    {
+        var items = new List<string>();
+        string? cursor = null;
+        string? firstCursor = null;
+        var pageSize = 200;
+        var pages = 0;
+        do
+        {
+            var result = await tools.GetNamespaceTree(target, namespacePrefix: "CapProbe", maxResults: pageSize, resultCursor: cursor,
+                maxResponseBytes: 65536, maxResponseTokens: 8192);
+            var payload = await ReconstructOuterPagesAsync(result, async continuation =>
+                await tools.GetNamespaceTree(target, namespacePrefix: "CapProbe", maxResults: pageSize, continuationToken: continuation,
+                    maxResponseBytes: 65536, maxResponseTokens: 8192));
+            using var document = JsonDocument.Parse(payload);
+            var root = document.RootElement;
+            foreach (var item in root.GetProperty("items").EnumerateArray())
+            {
+                var name = item.TryGetProperty("fullName", out var fullName) ? fullName.GetString() : item.GetProperty("name").GetString();
+                items.Add($"{item.GetProperty("kind").GetString()}:{name}");
+            }
+            cursor = root.TryGetProperty("resultCursor", out var next) && next.ValueKind == JsonValueKind.String ? next.GetString() : null;
+            firstCursor ??= cursor;
+            if (cursor is not null) pageSize = 17;
+            pages++;
+            Assert.InRange(pages, 1, 4);
+        } while (cursor is not null);
+        return (items, pages, firstCursor ?? throw new Xunit.Sdk.XunitException("The namespace inventory did not expose a continuation cursor."));
+    }
+
+    private static async Task<string> ReconstructOuterPagesAsync(CallToolResult first,
+        Func<string, Task<CallToolResult>> continuePage)
+    {
+        var output = new StringBuilder();
+        var result = first;
+        for (var index = 0; index < 100; index++)
+        {
+            var text = TextOf(result);
+            AssertSuccessWithinBudget(result, 65536, 8192);
+            output.Append(BodyOf(text));
+            if (!TryReadToken(text, "continuationToken", out var continuation)) return output.ToString();
+            result = await continuePage(continuation);
+        }
+        throw new Xunit.Sdk.XunitException("The outer response did not finish within 100 pages.");
+    }
+
+    private static string JsonBody(string text)
+    {
+        var start = text.IndexOf('{');
+        Assert.True(start >= 0, text);
+        return text[start..];
     }
 }

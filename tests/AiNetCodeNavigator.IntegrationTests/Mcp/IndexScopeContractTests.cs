@@ -30,7 +30,7 @@ public sealed class IndexScopeContractTests
             operationResponseWindow: TimeSpan.FromMilliseconds(1));
         var tools = new StructureTools(runtime);
         AssertNavigationSdkToolCatalog(runtime);
-        Func<string, int, int?, string?, string?, CancellationToken, Task<ModelContextProtocol.Protocol.CallToolResult>> handler = tools.GetIndexScope;
+        Func<string, int, int, int?, string?, string?, string?, CancellationToken, Task<ModelContextProtocol.Protocol.CallToolResult>> handler = tools.GetIndexScope;
         var sdkTool = McpServerTool.Create(handler, new McpServerToolCreateOptions { Name = "get_index_scope" });
 
         var schema = sdkTool.ProtocolTool.InputSchema;
@@ -109,6 +109,74 @@ public sealed class IndexScopeContractTests
         Assert.False(expected.IsError ?? false, TextOf(expected));
         await AssertIndexScopePagesReconstructAsync(tools, solutionPath, BodyOf(TextOf(expected)), firstPage);
 
+        var inventory = new List<string>();
+        var projectIdentities = new List<string>();
+        string? inventoryCursor = null;
+        var inventoryPages = 0;
+        do
+        {
+            string? operation = null;
+            ModelContextProtocol.Protocol.CallToolResult page = new();
+            for (var poll = 0; poll < 100; poll++)
+            {
+                page = await tools.GetIndexScope(solutionPath, maxResults: 2,
+                    maxResponseBytes: 16384, maxResponseTokens: 2048,
+                    operationToken: operation, resultCursor: inventoryCursor);
+                if (!TextOf(page).StartsWith(McpToolResults.RunningStatusPrefix, StringComparison.Ordinal)) break;
+                operation = ReadOperationToken(TextOf(page));
+                await Task.Delay(50);
+            }
+            Assert.False(page.IsError ?? false, TextOf(page));
+            using var inventoryDocument = JsonDocument.Parse(JsonPayload(TextOf(page)));
+            var rootElement = inventoryDocument.RootElement;
+            foreach (var item in rootElement.GetProperty("items").EnumerateArray())
+            {
+                var itemKind = item.GetProperty("kind").GetString();
+                if (itemKind == "project")
+                {
+                    var projectIdentity = item.GetProperty("projectIdentity").GetString();
+                    Assert.False(string.IsNullOrWhiteSpace(projectIdentity));
+                    Assert.StartsWith(Path.GetFullPath(solutionPath[..solutionPath.LastIndexOf(Path.DirectorySeparatorChar)]).Replace('\\', '/'),
+                        projectIdentity, StringComparison.OrdinalIgnoreCase);
+                    Assert.Equal("net10.0", item.GetProperty("loadedFrameworkContext").GetString());
+                    Assert.True(item.TryGetProperty("exclusions", out _));
+                    inventory.Add($"project:{projectIdentity}");
+                    projectIdentities.Add(projectIdentity!);
+                }
+                else inventory.Add($"fileType:{item.GetProperty("extension").GetString()}");
+            }
+            inventoryCursor = rootElement.TryGetProperty("resultCursor", out var cursorValue)
+                && cursorValue.ValueKind == JsonValueKind.String ? cursorValue.GetString() : null;
+            inventoryPages++;
+            Assert.InRange(inventoryPages, 1, 10);
+        } while (inventoryCursor is not null);
+        Assert.Equal(3, inventoryPages);
+        Assert.Equal(5, inventory.Count);
+        Assert.Equal(5, inventory.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+
+        await using (var reloadedRuntime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>()))
+        {
+            var reloadedTools = new StructureTools(reloadedRuntime);
+            var reloaded = await reloadedTools.GetIndexScope(solutionPath, maxResponseBytes: 65536, maxResponseTokens: 4096);
+            for (var poll = 0; poll < 100 && TextOf(reloaded).StartsWith(McpToolResults.RunningStatusPrefix, StringComparison.Ordinal); poll++)
+            {
+                var operation = ReadOperationToken(TextOf(reloaded));
+                await Task.Delay(50);
+                reloaded = await reloadedTools.GetIndexScope(solutionPath, maxResponseBytes: 65536, maxResponseTokens: 4096,
+                    operationToken: operation);
+            }
+            Assert.False(reloaded.IsError ?? false, TextOf(reloaded));
+            using var reloadedDocument = JsonDocument.Parse(JsonPayload(TextOf(reloaded)));
+            var reloadedProjectItems = reloadedDocument.RootElement.GetProperty("items").EnumerateArray()
+                .Where(item => item.GetProperty("kind").GetString() == "project")
+                .Select(item =>
+                {
+                    Assert.Equal("net10.0", item.GetProperty("loadedFrameworkContext").GetString());
+                    return item.GetProperty("projectIdentity").GetString()!;
+                }).ToArray();
+            Assert.Equal(projectIdentities.Order(StringComparer.Ordinal), reloadedProjectItems.Order(StringComparer.Ordinal));
+        }
+
         var assemblyTools = new AssemblyTools(runtime);
         var assemblyPath = typeof(TestTempDirectory).Assembly.Location;
         var assemblyPendingTask = assemblyTools.GetAssemblyContext(assemblyPath, maxResponseBytes: 65536, maxResponseTokens: 4096);
@@ -144,23 +212,31 @@ public sealed class IndexScopeContractTests
         await AssertSourceAndAssemblyCancellationUsesOwnerRoutesAsync(host.Services.GetRequiredService<IHostApplicationLifetime>(),
             solutionPath, typeof(IndexScopeContractTests).Assembly.Location);
 
-        var expiredOperation = await tools.GetIndexScope(solutionPath, 512, 512, "unknown-operation");
+        var expiredOperation = await tools.GetIndexScope(solutionPath, maxResponseBytes: 512, maxResponseTokens: 512, operationToken: "unknown-operation");
         Assert.True(expiredOperation.IsError);
         Assert.Contains("OPERATION_EXPIRED", TextOf(expiredOperation), StringComparison.Ordinal);
         AssertBudget(TextOf(expiredOperation), 512, 512);
 
-        var expiredContinuation = await tools.GetIndexScope(solutionPath, 512, 512, continuationToken: "unknown-continuation");
+        var expiredContinuation = await tools.GetIndexScope(solutionPath, maxResponseBytes: 512, maxResponseTokens: 512, continuationToken: "unknown-continuation");
         Assert.True(expiredContinuation.IsError);
         Assert.Contains("CONTINUATION_EXPIRED", TextOf(expiredContinuation), StringComparison.Ordinal);
         AssertBudget(TextOf(expiredContinuation), 512, 512);
 
-        var mixedTokens = await tools.GetIndexScope(solutionPath, 512, 512, "unknown-operation", "unknown-continuation");
+        var mixedTokens = await tools.GetIndexScope(solutionPath, maxResponseBytes: 512, maxResponseTokens: 512,
+            operationToken: "unknown-operation", continuationToken: "unknown-continuation");
         Assert.True(mixedTokens.IsError);
         Assert.Contains("INVALID_ARGUMENT", TextOf(mixedTokens), StringComparison.Ordinal);
     }
 
     private static string TextOf(ModelContextProtocol.Protocol.CallToolResult result) =>
         Assert.IsType<ModelContextProtocol.Protocol.TextContentBlock>(Assert.Single(result.Content)).Text;
+
+    private static string JsonPayload(string text)
+    {
+        var start = text.IndexOf('{');
+        Assert.True(start >= 0, text);
+        return text[start..];
+    }
 
     private static async Task<ModelContextProtocol.Protocol.CallToolResult?> ValidateJsonArgumentsAsync(
         ModelContextProtocol.Server.McpServerTool sdkTool,
@@ -279,8 +355,8 @@ public sealed class IndexScopeContractTests
         string expectedBody,
         ModelContextProtocol.Protocol.CallToolResult firstPage)
     {
-        const int responseBytes = 512;
-        const int responseTokens = 120;
+        var responseBytes = 512;
+        var responseTokens = 120;
         var reconstructed = new StringBuilder();
         var pageCount = 0;
         var complete = false;
@@ -294,7 +370,10 @@ public sealed class IndexScopeContractTests
             {
                 var minimumBytes = ReadBudget(text, "minimumResponseBytes");
                 var minimumTokens = ReadBudget(text, "minimumResponseTokens");
-                result = await tools.GetIndexScope(solutionPath, minimumBytes, minimumTokens, operationToken, continuationToken);
+                responseBytes = minimumBytes;
+                responseTokens = minimumTokens;
+                result = await tools.GetIndexScope(solutionPath, maxResponseBytes: minimumBytes, maxResponseTokens: minimumTokens,
+                    operationToken: operationToken, continuationToken: continuationToken);
                 continue;
             }
 
@@ -302,14 +381,16 @@ public sealed class IndexScopeContractTests
             {
                 operationToken = pendingOperation;
                 await Task.Delay(50);
-                result = await tools.GetIndexScope(solutionPath, responseBytes, responseTokens, operationToken, continuationToken);
+                result = await tools.GetIndexScope(solutionPath, maxResponseBytes: responseBytes, maxResponseTokens: responseTokens,
+                    operationToken: operationToken, continuationToken: continuationToken);
                 continue;
             }
 
             if (text.Contains("operation=retry", StringComparison.Ordinal))
             {
                 await Task.Delay(50);
-                result = await tools.GetIndexScope(solutionPath, responseBytes, responseTokens, operationToken, continuationToken);
+                result = await tools.GetIndexScope(solutionPath, maxResponseBytes: responseBytes, maxResponseTokens: responseTokens,
+                    operationToken: operationToken, continuationToken: continuationToken);
                 continue;
             }
 
@@ -324,11 +405,11 @@ public sealed class IndexScopeContractTests
             }
 
             continuationToken = nextContinuation;
-            result = await tools.GetIndexScope(solutionPath, responseBytes, responseTokens,
+            result = await tools.GetIndexScope(solutionPath, maxResponseBytes: responseBytes, maxResponseTokens: responseTokens,
                 operationToken: operationToken, continuationToken: continuationToken);
         }
 
-        Assert.True(complete, "The index scope response should reach its final continuation page.");
+        Assert.True(complete, $"The index scope response should reach its final continuation page. Last page: {TextOf(result)}");
         Assert.True(pageCount > 1, "The index scope report should use the shared continuation store.");
         Assert.Equal(expectedBody, reconstructed.ToString());
     }

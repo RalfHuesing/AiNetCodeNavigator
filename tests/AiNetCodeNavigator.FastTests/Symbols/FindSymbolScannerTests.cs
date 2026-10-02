@@ -541,6 +541,29 @@ public sealed class FindSymbolScannerTests
     }
 
     [Fact]
+    public async Task FindMatchesWithDetailsAsync_RetainsKnownMatchesBeyondPageSize()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\PagedSymbols.slnx",
+            new ProjectSpec("Sample", [
+                ("One.cs", "public class MarkerOne { }"),
+                ("Two.cs", "public class MarkerTwo { }"),
+                ("Three.cs", "public class MarkerThree { }"),
+            ], VirtualProjectDirectory: "src/Sample"));
+
+        var first = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(fixture.Solution, "Marker*", MaxResults: 2));
+        Assert.Equal(2, first.Entries.Count);
+        Assert.NotNull(first.ResultCursor);
+        var second = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(fixture.Solution, "Marker*", MaxResults: 2, ResultCursor: first.ResultCursor));
+
+        Assert.Null(second.Error);
+        Assert.Null(second.ResultCursor);
+        Assert.Equal(3, first.Entries.Concat(second.Entries).Select(entry => entry.Name).Distinct(StringComparer.Ordinal).Count());
+    }
+
+    [Fact]
     public async Task FindMatchesWithDetailsAsync_SuggestsSimilarNamesOnMiss()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();

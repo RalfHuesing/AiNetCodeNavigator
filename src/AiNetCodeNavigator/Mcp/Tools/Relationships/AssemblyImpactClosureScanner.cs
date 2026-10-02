@@ -16,15 +16,13 @@ internal sealed record AssemblyImpactClosureScanResult(
 
 internal static class AssemblyImpactClosureScanner
 {
-    private const int ClosureProjectionLimit = 1_000;
-
     internal static async Task<AssemblyImpactClosureScanResult> ScanAsync(
         string targetPath, string identifier, int depth, int maxResults, CancellationToken ct)
     {
         // Impact and references describe the same caller graph. Reuse the bounded owner traversal so
         // depth, owner paths, and handoffs have identical cross-assembly semantics.
         var closure = await AssemblyReferencesClosureScanner.ScanAsync(targetPath, identifier,
-            ClosureProjectionLimit, depth, SymbolScopeType.All, includeGenerated: false, ct,
+            int.MaxValue, depth, SymbolScopeType.All, includeGenerated: false, ct,
             externalizeHandoffs: false).ConfigureAwait(false);
         if (closure.Error is { } error)
             return new(null, error, closure.ErrorField, false, null, closure.AnalysisIdentity, closure.OmissionReasons);

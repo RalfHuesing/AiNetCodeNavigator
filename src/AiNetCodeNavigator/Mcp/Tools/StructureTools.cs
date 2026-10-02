@@ -24,25 +24,50 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     [System.ComponentModel.Description("Summarize which source projects and documents are included in the loaded solution index.")]
     public Task<CallToolResult> GetIndexScope(
         [Required, System.ComponentModel.Description("Absolute path to a source .sln or .slnx solution.")] string targetPath,
+        [Range(1, IndexScopeScanner.MaxFileTypesCap), System.ComponentModel.Description("Page size for the combined project and file-type inventory (maximum 128 entries per page). All discovered entries remain reachable across resultCursor pages.")] int maxResults = 100,
         [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).")] int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
         [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
         [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
         [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
+        [System.ComponentModel.Description("Opaque cursor for the next page of the complete loaded-solution inventory.")] string? resultCursor = null,
         CancellationToken cancellationToken = default)
     {
         return NavigationToolSupport.RouteAsync(runtime, "get_index_scope", targetPath, new { }, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens,
-            async (target, ct) => await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, source, token) =>
+            async (target, coreCursor, ct) => await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, source, token) =>
             {
-                var result = await IndexScopeScanner.ScanAsync(solution, token).ConfigureAwait(false);
+                var result = await IndexScopeScanner.ScanAsync(solution, token,
+                    new IndexScopeScanOptions(MaxProjects: IndexScopeScanner.MaxProjectsCap,
+                        MaxFileTypes: IndexScopeScanner.MaxFileTypesCap, CollectAllInventory: true)).ConfigureAwait(false);
                 if (!result.ScanCompleted)
                     return McpToolResults.Recoverable("INDEX_SCOPE_FAILED", result.Error ?? "The source index scope could not be scanned.",
                         "Check the loaded solution and repeat the query.");
-                var response = NavigationToolSupport.SuccessText(result.FormattedText, result.IsTruncated, result.NextAction);
+                var items = new List<object>(result.Projects.Count + result.FileTypes.Count);
+                foreach (var entry in result.Projects)
+                    items.Add(new { Kind = "project", entry.Name,
+                        ProjectIdentity = $"{entry.ProjectPath ?? entry.Name}::{entry.LoadedFrameworkContext ?? "unknown"}",
+                        entry.DocumentCount, entry.CSharpDocumentCount, entry.IsTestProject, entry.IsCSharpProject,
+                        LoadedFrameworkContext = entry.LoadedFrameworkContext ?? "unknown",
+                        Exclusions = entry.Exclusions ?? Array.Empty<string>() });
+                foreach (var entry in result.FileTypes)
+                    items.Add(new { Kind = "fileType", entry.Extension, entry.Count, entry.SymbolGraphCovered });
+                var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
+                    "get_index_scope.inventory", "allProjectsAndFileTypes");
+                var page = NavigationToolSupport.PageResults(items, maxResults, coreCursor, binding,
+                    maxResponseBytes, maxResponseTokens);
+                if (page.Error is not null) return page.Error;
+                var response = NavigationToolSupport.Success(new
+                {
+                    result.SolutionPath, result.ProjectCount, result.TotalDocumentCount, result.CSharpFileCount,
+                    result.TestProjectCount, result.GeneratedDocumentCount, result.TestDocumentCount, result.TotalFileTypeCount,
+                    Summary = $"Roslyn documents: {result.TotalDocumentCount}; .cs: {result.CSharpFileCount}; generated C#: {result.GeneratedDocumentCount}; tests: {result.TestDocumentCount}.",
+                    Items = page.Items, TotalItems = items.Count, ReturnedItems = page.Items.Length, ResultCursor = page.NextCursor,
+                });
                 return source.WithMetadata(response,
-                    $"indexScope(project=*, maxProjects={result.EffectiveMaxProjects}, maxFileTypes={result.EffectiveMaxFileTypes})");
+                    $"indexScope(project=*, pageSize={maxResults}, loadedProjects={result.ProjectCount}, loadedFileTypes={result.TotalFileTypeCount})",
+                    resultContinuationAvailable: page.NextCursor is not null);
             }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false),
-            AnalysisTargetType.Project, cancellationToken);
+            AnalysisTargetType.Project, cancellationToken, resultCursor, "get_index_scope.inventory");
     }
 
     [McpServerTool(Name = "get_file_skeleton", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -60,7 +85,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             return Task.FromResult(McpToolResults.InvalidArgument("filePaths must contain one or more non-empty paths or symbol handoffs.", "$.filePaths",
                 "Provide an indexed source path or a source/assembly symbol handoff.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
         return NavigationToolSupport.RouteAsync(runtime, "get_file_skeleton", targetPath, new { filePaths }, operationToken, continuationToken,
-            maxResponseBytes, maxResponseTokens, async (target, ct) =>
+            maxResponseBytes, maxResponseTokens, async (target, coreCursor, ct) =>
             {
                 if (target.TargetType == AnalysisTargetType.Project)
                     return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target,
@@ -98,7 +123,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         [Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
         [Required, System.ComponentModel.Description("Type name, documentation ID, or current symbol handoff identifying the type.")] string symbolIdentifier,
         [System.ComponentModel.Description("Member ordering: lines (default), kind, or name.")] string sortBy = "lines",
-        [Range(1, 200), System.ComponentModel.Description("Maximum members to include in the structure.")] int maxMembers = 50,
+        [Range(1, 200), System.ComponentModel.Description("Page size for type members (maximum 200 entries per page). All filtered members remain reachable across resultCursor pages.")] int maxMembers = 50,
         [System.ComponentModel.Description("Optional member-kind filter, such as method, property, field, event, or constructor.")] string? kindFilter = null,
         [System.ComponentModel.Description("Optional substring filter applied to member names.")] string? nameFilter = null,
         [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all",
@@ -107,6 +132,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
         [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16 * 1024,
         [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
+        [System.ComponentModel.Description("Opaque cursor for the next page of the filtered type member list.")] string? resultCursor = null,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(symbolIdentifier))
@@ -121,23 +147,27 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             "tests" => SymbolScopeType.Tests,
             _ => SymbolScopeType.All,
         };
-        var args = new { symbolIdentifier, sortBy, maxMembers, kindFilter, nameFilter, scopeType, includeGenerated };
+        var args = new { symbolIdentifier, sortBy, kindFilter, nameFilter, scopeType, includeGenerated };
         return NavigationToolSupport.RouteAsync(runtime, "get_class_structure", targetPath, args, operationToken, continuationToken,
-            maxResponseBytes, maxResponseTokens, async (target, ct) =>
+            maxResponseBytes, maxResponseTokens, async (target, coreCursor, ct) =>
             {
                 if (target.TargetType == AnalysisTargetType.Project)
                     return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, source, token) =>
                     {
                         var result = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(
-                            solution, symbolIdentifier, sortBy, maxMembers, kindFilter, nameFilter, source.Identity, parsedScope, includeGenerated), token).ConfigureAwait(false);
+                            solution, symbolIdentifier, sortBy, maxMembers, kindFilter, nameFilter, source.Identity, parsedScope, includeGenerated,
+                            CollectAllMembers: true), token).ConfigureAwait(false);
                         if (result is null) return McpToolResults.InvalidArgument("The identifier did not resolve to a type.", "$.symbolIdentifier", "Use a type name or type handoff.",
                             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                         if (result.Error is { } error) return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
-                        var response = NavigationToolSupport.SuccessText(FormatClassStructure(result), result.Truncated,
-                            result.Truncated ? "Increase maxMembers up to 200 and repeat the query." : null);
+                        var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
+                            "get_class_structure.members", symbolIdentifier.Trim(), scopeType, includeGenerated.ToString(), kindFilter?.Trim(), nameFilter?.Trim(), sortBy.Trim().ToLowerInvariant());
+                        var response = CreateClassStructurePage(result, target.CanonicalPath, maxMembers, coreCursor, binding,
+                            maxResponseBytes, maxResponseTokens);
+                        if (response.IsError == true) return response;
                         return source.WithMetadata(response,
-                            $"classStructure(symbol={symbolIdentifier.Trim()}, scope={scopeType}, includeGenerated={includeGenerated}, kind={kindFilter?.Trim() ?? "*"}, name={nameFilter?.Trim() ?? "*"}, sortBy={sortBy.Trim().ToLowerInvariant()}, maxMembers={maxMembers})",
-                            result.TruncatedBy.ToArray());
+                            $"classStructure(symbol={symbolIdentifier.Trim()}, scope={scopeType}, includeGenerated={includeGenerated}, kind={kindFilter?.Trim() ?? "*"}, name={nameFilter?.Trim() ?? "*"}, sortBy={sortBy.Trim().ToLowerInvariant()}, pageSize={maxMembers})",
+                            [], HasResultCursor(response));
                     }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
 
                 var normalizedIdentifier = InputNormalizer.NormalizeSymbolIdentifier(symbolIdentifier);
@@ -153,12 +183,15 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                     if (rawType is null) return McpToolResults.InvalidArgument("The assembly identifier did not resolve to a type.", "$.symbolIdentifier", "Use a type or member declared in a type.",
                         maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                     var rawIdentity = AssemblySymbolInputResolver.CreateIdentity(rawScope);
-                    var rawStructure = BuildAssemblyClassStructure(rawType, target.CanonicalPath, rawIdentity, sortBy, maxMembers, kindFilter, nameFilter);
-                    var rawResponse = NavigationToolSupport.SuccessText(FormatClassStructure(rawStructure), rawStructure.Truncated,
-                        rawStructure.Truncated ? "Increase maxMembers up to 200 and repeat the query." : null);
+                    var rawStructure = BuildAssemblyClassStructure(rawType, target.CanonicalPath, rawIdentity, sortBy, maxMembers, kindFilter, nameFilter, collectAll: true);
+                    var rawBinding = BoundResultCursor.CreateBinding(target.CanonicalPath, rawIdentity.ContentHash + "|" + rawScope.Context.ReferenceSnapshotHash,
+                        "get_class_structure.members", normalizedIdentifier, scopeType, includeGenerated.ToString(), kindFilter?.Trim(), nameFilter?.Trim(), sortBy.Trim().ToLowerInvariant());
+                    var rawResponse = CreateClassStructurePage(rawStructure, target.CanonicalPath, maxMembers, coreCursor, rawBinding,
+                        maxResponseBytes, maxResponseTokens);
+                    if (rawResponse.IsError == true) return rawResponse;
                     return NavigationToolSupport.WithAssemblyMetadata(rawResponse, rawIdentity,
-                        $"classStructure(symbol={normalizedIdentifier}, maxMembers={maxMembers}, kind={kindFilter?.Trim() ?? "*"}, name={nameFilter?.Trim() ?? "*"}, sortBy={sortBy.Trim().ToLowerInvariant()})",
-                        rawStructure.Truncated ? ["maxMembers"] : []);
+                        $"classStructure(symbol={normalizedIdentifier}, pageSize={maxMembers}, kind={kindFilter?.Trim() ?? "*"}, name={nameFilter?.Trim() ?? "*"}, sortBy={sortBy.Trim().ToLowerInvariant()})",
+                        [], HasResultCursor(rawResponse));
                 }
 
                 var assembly = await AssemblySymbolHandoffResolver.ResolveAsync(symbolIdentifier, ct).ConfigureAwait(false);
@@ -172,13 +205,16 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                     maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                 var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
                     access.Generation, access.ReferenceSnapshotHash);
-                var result = BuildAssemblyClassStructure(type, access.Origin.CanonicalPath, identity, sortBy, maxMembers, kindFilter, nameFilter);
-                var response = NavigationToolSupport.SuccessText(FormatClassStructure(result), result.Truncated,
-                    result.Truncated ? "Increase maxMembers up to 200 and repeat the query." : null);
+                var result = BuildAssemblyClassStructure(type, access.Origin.CanonicalPath, identity, sortBy, maxMembers, kindFilter, nameFilter, collectAll: true);
+                var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, identity.ContentHash + "|" + access.ReferenceSnapshotHash,
+                    "get_class_structure.members", symbolIdentifier.Trim(), scopeType, includeGenerated.ToString(), kindFilter?.Trim(), nameFilter?.Trim(), sortBy.Trim().ToLowerInvariant());
+                var response = CreateClassStructurePage(result, target.CanonicalPath, maxMembers, coreCursor, binding,
+                    maxResponseBytes, maxResponseTokens);
+                if (response.IsError == true) return response;
                 return NavigationToolSupport.WithAssemblyMetadata(response, identity,
-                    $"classStructure(symbol={symbolIdentifier.Trim()}, maxMembers={maxMembers}, kind={kindFilter?.Trim() ?? "*"}, name={nameFilter?.Trim() ?? "*"}, sortBy={sortBy.Trim().ToLowerInvariant()})",
-                    result.Truncated ? ["maxMembers"] : []);
-            }, null, cancellationToken);
+                    $"classStructure(symbol={symbolIdentifier.Trim()}, pageSize={maxMembers}, kind={kindFilter?.Trim() ?? "*"}, name={nameFilter?.Trim() ?? "*"}, sortBy={sortBy.Trim().ToLowerInvariant()})",
+                    [], HasResultCursor(response));
+            }, null, cancellationToken, resultCursor, "get_class_structure.members");
     }
 
     [McpServerTool(Name = "get_namespace_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -190,28 +226,29 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         [System.ComponentModel.Description("Namespace depth from 1 through 3; defaults to 1.")] [Range(1, 3)] int depth = 1,
         [System.ComponentModel.Description("Include type declarations beneath each namespace.")] bool includeTypes = true,
         [System.ComponentModel.Description("Type kind: all (default), class, interface, record, struct, or enum.")] string kind = "all",
-        [Range(1, 200), System.ComponentModel.Description("Maximum namespaces and types to return.")] int maxResults = 50,
+        [Range(1, NamespaceTreeScanner.MaxResultsCap), System.ComponentModel.Description("Page size for the combined project, namespace, and type inventory (maximum 200 entries per page). All discovered entries remain reachable across resultCursor pages.")] int maxResults = 50,
         [System.ComponentModel.Description("Include declarations from generated source files.")] bool includeGenerated = false,
         [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
         [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
         [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16 * 1024,
         [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
+        [System.ComponentModel.Description("Opaque cursor for the next page of the complete filtered inventory.")] string? resultCursor = null,
         CancellationToken cancellationToken = default)
     {
-        var args = new { project, namespacePrefix, depth, includeTypes, kind, maxResults, includeGenerated };
+        var args = new { project, namespacePrefix, depth, includeTypes, kind, includeGenerated };
         return NavigationToolSupport.RouteAsync(runtime, "get_namespace_tree", targetPath, args, operationToken, continuationToken,
-            maxResponseBytes, maxResponseTokens, async (target, ct) =>
+            maxResponseBytes, maxResponseTokens, async (target, coreCursor, ct) =>
             {
                 if (target.TargetType == AnalysisTargetType.Project)
                     return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target,
                         async (solution, source, token) =>
                         {
-                            var response = await ScanNamespaceTreeAsync(solution, project, namespacePrefix, depth, includeTypes, kind, maxResults,
-                                includeGenerated, source.Identity, token, maxResponseBytes, maxResponseTokens, includeProjectOverview: true).ConfigureAwait(false);
+                            var response = await ScanNamespaceTreeAsync(solution, target.CanonicalPath, project, namespacePrefix, depth, includeTypes, kind, maxResults,
+                                includeGenerated, source.Identity, source.Identity.ContentHash, coreCursor, token, maxResponseBytes, maxResponseTokens, includeProjectOverview: true).ConfigureAwait(false);
                             var omissions = ReadStringArrayFromResult(response, "truncatedBy");
                             return source.WithMetadata(response,
-                                $"namespaceTree(project={project?.Trim() ?? "*"}, prefix={namespacePrefix?.Trim() ?? "*"}, depth={depth}, includeTypes={includeTypes}, kind={kind.Trim().ToLowerInvariant()}, maxResults={maxResults}, includeGenerated={includeGenerated})",
-                                omissions.ToArray());
+                                $"namespaceTree(project={project?.Trim() ?? "*"}, prefix={namespacePrefix?.Trim() ?? "*"}, depth={depth}, includeTypes={includeTypes}, kind={kind.Trim().ToLowerInvariant()}, pageSize={maxResults}, includeGenerated={includeGenerated})",
+                                omissions.Where(reason => reason != "maxResults").ToArray(), HasResultCursor(response));
                         }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
 
                 var opened = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
@@ -219,13 +256,14 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 await using var scope = opened.Value!;
                 var identity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash,
                     scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
-                var response = await ScanNamespaceTreeAsync(scope.Solution, project, namespacePrefix, depth, includeTypes, kind, maxResults, includeGenerated, identity, ct,
+                var response = await ScanNamespaceTreeAsync(scope.Solution, target.CanonicalPath, project, namespacePrefix, depth, includeTypes, kind, maxResults, includeGenerated, identity,
+                    identity.ContentHash + "|" + scope.Context.ReferenceSnapshotHash, coreCursor, ct,
                     maxResponseBytes, maxResponseTokens, includeProjectOverview: false).ConfigureAwait(false);
                 var omissions = ReadStringArrayFromResult(response, "truncatedBy");
                 return NavigationToolSupport.WithAssemblyMetadata(response, identity,
-                    $"namespaceTree(project={project?.Trim() ?? "*"}, prefix={namespacePrefix?.Trim() ?? "*"}, depth={depth}, includeTypes={includeTypes}, kind={kind.Trim().ToLowerInvariant()}, maxResults={maxResults}, includeGenerated={includeGenerated})",
-                    omissions);
-            }, null, cancellationToken);
+                    $"namespaceTree(project={project?.Trim() ?? "*"}, prefix={namespacePrefix?.Trim() ?? "*"}, depth={depth}, includeTypes={includeTypes}, kind={kind.Trim().ToLowerInvariant()}, pageSize={maxResults}, includeGenerated={includeGenerated})",
+                    omissions.Where(reason => reason != "maxResults").ToArray(), HasResultCursor(response));
+            }, null, cancellationToken, resultCursor, "get_namespace_tree.inventory");
     }
 
     private static async Task<CallToolResult> BuildSkeletonsAsync(Solution solution, string targetPath, string[] filePaths,
@@ -352,6 +390,17 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         catch (JsonException) { return Array.Empty<string>(); }
     }
 
+    private static bool HasResultCursor(CallToolResult response)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(response.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text ?? "{}");
+            return document.RootElement.TryGetProperty("resultCursor", out var value)
+                && value.ValueKind == JsonValueKind.String;
+        }
+        catch (JsonException) { return false; }
+    }
+
     private static async Task<(Document[]? Documents, ResultError? Error)> ResolveSkeletonHandoffAsync(
         string handoff, Solution solution, string targetPath, AnalysisSymbolIdentity? identity,
         AssemblyNavigationSessionScope? assemblyScope, CancellationToken ct)
@@ -393,26 +442,57 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         return (assemblyDocuments, null);
     }
 
-    private static async Task<CallToolResult> ScanNamespaceTreeAsync(Solution solution, string? project, string? prefix, int depth,
-        bool includeTypes, string kind, int maxResults, bool includeGenerated, AnalysisSymbolIdentity? identity, CancellationToken ct, int bytes, int? tokens,
-        bool includeProjectOverview)
+    private static async Task<CallToolResult> ScanNamespaceTreeAsync(Solution solution, string targetPath, string? project, string? prefix, int depth,
+        bool includeTypes, string kind, int pageSize, bool includeGenerated, AnalysisSymbolIdentity? identity, string snapshotBinding,
+        string? coreCursor, CancellationToken ct, int bytes, int? tokens, bool includeProjectOverview)
     {
         if (kind is not ("all" or "class" or "record" or "struct" or "interface" or "enum" or "delegate"))
             return McpToolResults.InvalidArgument("kind is not supported.", "$.kind", "Choose all, class, record, struct, interface, enum, or delegate.", maxResponseBytes: bytes, maxResponseTokens: tokens);
         var payload = await NamespaceTreeScanner.ScanSolutionAsync(solution, project, ct,
-            new NamespaceTreeScanOptions(Math.Clamp(depth, 1, 3), maxResults, includeGenerated, prefix, kind, includeTypes,
+            new NamespaceTreeScanOptions(Math.Clamp(depth, 1, 3), NamespaceTreeScanner.MaxResultsCap, includeGenerated, prefix, kind, includeTypes,
                 IncludeProjectOverview: includeProjectOverview,
                 FormatTypeHandoff: identity is null ? null : symbol =>
                 {
                     var internalId = identity.FormatHandoff(symbol, solution);
                     return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
-                })).ConfigureAwait(false);
+                }, CollectAllInventory: true)).ConfigureAwait(false);
         if (payload.Error is not null)
             return payload.ErrorCode == NavigationErrorCodes.AmbiguousSymbol
                 ? McpToolResults.Recoverable(NavigationErrorCodes.AmbiguousSymbol, payload.Error,
                     "Pass an exact project name or canonical project path.", maxResponseBytes: bytes, maxResponseTokens: tokens)
                 : McpToolResults.InvalidArgument(payload.Error, "$.project", "Correct the project or namespace query.", maxResponseBytes: bytes, maxResponseTokens: tokens);
-        return NavigationToolSupport.SuccessText(payload.FormattedText, payload.Truncated, payload.NextAction);
+        var items = new List<object>();
+        if (payload.Projects is { } projects)
+        {
+            foreach (var entry in projects)
+                items.Add(new { Kind = "project", entry.ProjectName, entry.ProjectType, entry.ProjectPath, entry.NamespaceCount, entry.TypeCount });
+        }
+        else
+        {
+            void AddNamespace(NamespaceNode node)
+            {
+                items.Add(new { Kind = "namespace", node.Name, node.FullName, node.TypeCount });
+                foreach (var type in node.Types)
+                    items.Add(new { Kind = "type", type.Name, TypeKind = type.Kind, type.FilePath, type.Line, type.HandoffId, Namespace = node.FullName });
+                foreach (var child in node.Children) AddNamespace(child);
+            }
+            foreach (var node in payload.RootNamespaces) AddNamespace(node);
+        }
+        var binding = BoundResultCursor.CreateBinding(targetPath, snapshotBinding, "get_namespace_tree.inventory",
+            project, prefix, depth.ToString(System.Globalization.CultureInfo.InvariantCulture), includeTypes.ToString(), kind, includeGenerated.ToString());
+        var page = NavigationToolSupport.PageResults(items, pageSize, coreCursor, binding, bytes, tokens);
+        if (page.Error is not null) return page.Error;
+        var response = new
+        {
+            payload.SolutionName, payload.ProjectName, payload.TotalNamespaces, payload.TotalTypes,
+            payload.TotalProjects, payload.RequestedMaxDepth, payload.EffectiveMaxDepth,
+            payload.IncludeGenerated, Items = page.Items, TotalItems = items.Count, ReturnedItems = page.Items.Length,
+            TruncatedBy = (payload.TruncatedBy ?? Array.Empty<string>()).Where(reason => reason != "maxResults").ToArray(),
+            ResultCursor = page.NextCursor,
+        };
+        return NavigationToolSupport.Success(response, payload.TruncatedBy?.Contains("maxDepth", StringComparer.Ordinal) == true,
+            payload.TruncatedBy?.Contains("maxDepth", StringComparer.Ordinal) == true
+                ? "Reduce namespacePrefix or depth to include more namespace levels." : null);
     }
 
     internal static string FormatClassStructure(ClassStructurePayload result)
@@ -429,8 +509,28 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         return output.ToString().TrimEnd();
     }
 
+    private static CallToolResult CreateClassStructurePage(ClassStructurePayload result, string targetPath, int pageSize,
+        string? cursor, string binding, int maxResponseBytes, int? maxResponseTokens)
+    {
+        var page = NavigationToolSupport.PageResults(result.Members, pageSize, cursor, binding,
+            maxResponseBytes, maxResponseTokens);
+        if (page.Error is not null) return page.Error;
+        return NavigationToolSupport.Success(new
+        {
+            result.TypeName,
+            result.Kind,
+            TargetPath = targetPath,
+            result.Files,
+            result.TotalLines,
+            result.TotalMemberCount,
+            ReturnedMemberCount = page.Items.Length,
+            Members = page.Items,
+            ResultCursor = page.NextCursor,
+        });
+    }
+
     internal static ClassStructurePayload BuildAssemblyClassStructure(INamedTypeSymbol type, string assemblyPath, AnalysisSymbolIdentity identity,
-        string sortBy, int maxMembers, string? kindFilter, string? nameFilter)
+        string sortBy, int maxMembers, string? kindFilter, string? nameFilter, bool collectAll = false)
     {
         var directory = Path.GetDirectoryName(assemblyPath)!;
         var members = type.GetMembers().Where(member => !member.IsImplicitlyDeclared)
@@ -469,7 +569,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 .ThenBy(member => member.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
         };
-        var shown = members.Take(Math.Clamp(maxMembers, 1, 200)).ToArray();
+        var shown = members.Take(collectAll ? int.MaxValue : Math.Clamp(maxMembers, 1, 200)).ToArray();
         var typeKind = type.IsRecord ? type.TypeKind == TypeKind.Struct ? "Record Struct" : "Record Class" : type.TypeKind.ToString();
         return new ClassStructurePayload(type.ToDisplayString(), typeKind, [], shown.Sum(item => item.LineCount), members.Count, shown.Length,
             members.Count > shown.Length, shown, members.Count > shown.Length ? ["maxMembers"] : []);

@@ -31,7 +31,7 @@ public static class NamespaceTreeScanner
 
         var requestedOptions = options ?? new NamespaceTreeScanOptions();
         var effectiveDepth = ClampBound(requestedOptions.MaxDepth, MaxDepthCap);
-        var effectiveResults = ClampBound(requestedOptions.MaxResults, MaxResultsCap);
+        var effectiveResults = requestedOptions.CollectAllInventory ? int.MaxValue : ClampBound(requestedOptions.MaxResults, MaxResultsCap);
         var prefix = string.IsNullOrWhiteSpace(requestedOptions.NamespacePrefix) ? null : requestedOptions.NamespacePrefix.Trim().Trim('.');
         var kind = requestedOptions.Kind.Trim().ToLowerInvariant();
         var validKinds = new[] { "all", "class", "record", "struct", "interface", "enum", "delegate" };
@@ -249,7 +249,7 @@ public static class NamespaceTreeScanner
             projectCounts.Add((project, CountNodes(BuildTree(namespaces)), typeCount));
         }
 
-        var effectiveResults = ClampBound(requestedOptions.MaxResults, MaxResultsCap);
+        var effectiveResults = requestedOptions.CollectAllInventory ? int.MaxValue : ClampBound(requestedOptions.MaxResults, MaxResultsCap);
         var shown = projectCounts.Take(effectiveResults).ToList();
         var duplicateNames = projectCounts.GroupBy(entry => entry.Project.Name, StringComparer.OrdinalIgnoreCase)
             .Where(group => group.Count() > 1).Select(group => group.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);

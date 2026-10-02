@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Common;
+using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
@@ -93,18 +94,51 @@ public static class FindSymbolScanner
                 kindAlternatives);
         }
 
-        var collectedEntries = allEntries.Take(Math.Max(request.MaxResults, 1)).ToList();
-        var isTruncated = allEntries.Count > collectedEntries.Count;
-        var text = FormatEntriesText(collectedEntries, allEntries.Count, request.MaxResults);
+        var identity = currentSourceIdentity ?? request.SourceIdentity;
+        if (identity is null && (request.ResultCursor is not null || allEntries.Count > request.MaxResults))
+        {
+            var error = new ResultError(NavigationErrorCodes.TargetMismatch,
+                "A stable source target identity is required to continue a bounded symbol result list.",
+                "Load the source solution through a canonical .sln or .slnx target and repeat the query.");
+            return new FindSymbolScanResult(error.Message, [], allEntries.Count, 0, false, [], kindAlternatives, error);
+        }
+        var binding = identity is null ? string.Empty : BoundResultCursor.CreateBinding(
+            identity.CanonicalPath,
+            identity.ContentHash,
+            "find_symbol",
+            request.NamePattern,
+            request.Kind.ToString(),
+            request.ScopeType.ToString(),
+            request.IncludeGenerated.ToString(),
+            request.MaxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var cursorStatus = BoundResultCursor.ReadOffset(request.ResultCursor, binding, out var offset);
+        if (cursorStatus != BoundResultCursor.CursorStatus.Valid)
+        {
+            var code = cursorStatus == BoundResultCursor.CursorStatus.InvalidFormat
+                ? NavigationErrorCodes.InvalidArgument
+                : NavigationErrorCodes.StaleSnapshot;
+            var error = new ResultError(code,
+                cursorStatus == BoundResultCursor.CursorStatus.InvalidFormat
+                    ? "resultCursor is invalid."
+                    : "resultCursor is not bound to this source snapshot and search query.",
+                "Repeat the same search against the same source snapshot using its most recent resultCursor.");
+            return new FindSymbolScanResult(error.Message, [], allEntries.Count, 0, false, [], kindAlternatives, error);
+        }
+
+        var page = BoundResultCursor.Page(allEntries, offset, request.MaxResults, binding);
+        var collectedEntries = page.Items;
+        var isTruncated = page.NextCursor is not null;
+        var text = FormatEntriesText(collectedEntries, page.TotalCount, request.MaxResults);
 
         return new FindSymbolScanResult(
             text,
             collectedEntries,
-            allEntries.Count,
-            collectedEntries.Count,
+            page.TotalCount,
+            collectedEntries.Length,
             isTruncated,
             isTruncated ? ["maxResults"] : Array.Empty<string>(),
-            kindAlternatives);
+            kindAlternatives,
+            ResultCursor: page.NextCursor);
     }
 
     private static async Task<IReadOnlyList<SymbolLocationEntry>> BuildVisibleEntriesAsync(

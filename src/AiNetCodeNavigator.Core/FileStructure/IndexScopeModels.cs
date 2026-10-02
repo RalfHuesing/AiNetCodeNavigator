@@ -9,7 +9,10 @@ public sealed record ProjectScopeEntry(
     int DocumentCount,
     bool IsTestProject,
     int CSharpDocumentCount = 0,
-    bool IsCSharpProject = true);
+    bool IsCSharpProject = true,
+    string? ProjectPath = null,
+    string? LoadedFrameworkContext = null,
+    IReadOnlyList<string>? Exclusions = null);
 
 public sealed record FileTypeScopeEntry(
     string Extension,
@@ -45,4 +48,5 @@ public sealed record IndexScopePayload(
 public sealed record IndexScopeScanOptions(
     string? ProjectName = null,
     int MaxProjects = IndexScopeScanner.DefaultMaxProjects,
-    int MaxFileTypes = IndexScopeScanner.DefaultMaxFileTypes);
+    int MaxFileTypes = IndexScopeScanner.DefaultMaxFileTypes,
+    bool CollectAllInventory = false);

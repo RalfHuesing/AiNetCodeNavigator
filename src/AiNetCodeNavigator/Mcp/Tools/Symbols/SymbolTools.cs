@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using AiNetCodeNavigator.Core.Assemblies;
+using AiNetCodeNavigator.Core.Common;
 using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Core.Workspace;
@@ -16,7 +17,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
     internal Action<int>? BeforeAssemblyBodyBatchItemForTesting { get; set; }
 
     [McpServerTool(Name = "find_symbol", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [System.ComponentModel.Description("Find C# types or members by one or more name patterns and return source locations with navigable symbol handles.")]
+    [System.ComponentModel.Description("Find C# types or members by one or more name patterns; maxResults pages the combined match list with navigable symbol handles.")]
     public Task<CallToolResult> FindSymbol(
         [Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
         [System.ComponentModel.Description("Specify exactly one of this field or pattern. This field accepts one to ten non-empty name patterns.")] string[]? namePatterns = null,
@@ -27,10 +28,11 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
         [System.ComponentModel.Description("Source scope: all (default), production, or tests.")]
         string scopeType = "all",
         [System.ComponentModel.Description("Include declarations from generated source files.")] bool includeGenerated = false,
-        [Range(1, 1000), System.ComponentModel.Description("Maximum matching symbols to return per pattern.")] int maxResults = 50,
+        [Range(1, 1000), System.ComponentModel.Description("Maximum matching symbols to return in this result page across all selected patterns.")] int maxResults = 50,
         [System.ComponentModel.Description("For assembly targets, include matches from resolved referenced assemblies; source searches ignore this option.")] bool includeReferences = false,
         [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
         [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
+        [System.ComponentModel.Description("Opaque cursor returned for the next page of known symbol matches; use after reading all outer response pages.")] string? resultCursor = null,
         [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16 * 1024,
         [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
         CancellationToken cancellationToken = default)
@@ -63,10 +65,10 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
         }
 
         var effectivePatterns = patterns.Distinct(StringComparer.Ordinal).ToArray();
-        var arguments = new { patterns = effectivePatterns, kind = symbolKind, scope, includeGenerated, maxResults, includeReferences };
+        var arguments = new { patterns = effectivePatterns, kind = symbolKind, scope, includeGenerated, includeReferences };
         return NavigationToolSupport.RouteAsync(runtime, "find_symbol", targetPath, arguments,
             operationToken, continuationToken, maxResponseBytes, maxResponseTokens,
-            async (target, ct) =>
+            async (target, coreCursor, ct) =>
             {
                 var results = new List<FindSymbolScanResult>();
                 if (target.TargetType == AnalysisTargetType.Project)
@@ -77,16 +79,26 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                         {
                             token.ThrowIfCancellationRequested();
                             results.Add(await FindSymbolScanner.FindMatchesWithDetailsAsync(
-                                new FindSymbolScanRequest(solution, searchPattern, symbolKind, scope, maxResults,
+                                new FindSymbolScanRequest(solution, searchPattern, symbolKind, scope, int.MaxValue,
                                     SourceIdentity: source.Identity, IncludeGenerated: includeGenerated), token).ConfigureAwait(false));
                         }
 
-                        var response = FormatFindResults(results, effectivePatterns, target.TargetType, maxResponseBytes, maxResponseTokens);
-                        var omissions = results.SelectMany(static result => result.TruncatedBy).Distinct(StringComparer.Ordinal).ToArray();
+                        var queryParts = effectivePatterns.Cast<string?>()
+                            .Prepend(effectivePatterns.Length.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                            .Concat([symbolKind.ToString(), scope.ToString(), includeGenerated.ToString(),
+                                maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture)]).ToArray();
+                        var binding = BoundResultCursor.CreateBinding(target.CanonicalPath,
+                            source.Identity.ContentHash, "find_symbol", queryParts);
+                        var paged = PageFindResults(results, effectivePatterns, maxResults, coreCursor, binding,
+                            maxResponseBytes, maxResponseTokens);
+                        if (paged.Error is { } pageError) return NavigationToolSupport.Failure(pageError, maxResponseBytes, maxResponseTokens, "$.resultCursor");
+                        var response = FormatFindResults(paged.Results, effectivePatterns, paged.ResultCursor,
+                            maxResponseBytes, maxResponseTokens);
+                        var omissions = results.SelectMany(static result => result.TruncatedBy).Where(reason => reason != "maxResults").Distinct(StringComparer.Ordinal).ToArray();
                         var scopes = string.Join(";", effectivePatterns.Select(patternValue => $"pattern={patternValue}"));
                         return source.WithMetadata(response,
-                            $"findSymbol({scopes}, kind={symbolKind}, scope={scope}, includeGenerated={includeGenerated}, maxResultsPerPattern={maxResults})",
-                            omissions);
+                            $"findSymbol({scopes}, kind={symbolKind}, scope={scope}, includeGenerated={includeGenerated}, maxResults={maxResults})",
+                            omissions, paged.ResultCursor is not null);
                     }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
                 }
 
@@ -102,17 +114,30 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                 {
                     ct.ThrowIfCancellationRequested();
                     var result = await AssemblyFindSymbolScanner.FindAsync(target.CanonicalPath, searchPattern,
-                        symbolKind, scope, maxResults, includeReferences, ct, assemblyScope).ConfigureAwait(false);
+                        symbolKind, scope, int.MaxValue, includeReferences, ct, assemblyScope).ConfigureAwait(false);
                     if (result.Error is { } error)
                         return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.targetPath");
                     results.Add(result);
                 }
 
-                var response = FormatFindResults(results, effectivePatterns, target.TargetType, maxResponseBytes, maxResponseTokens);
-                var omissions = results.SelectMany(static result => result.TruncatedBy).Distinct(StringComparer.Ordinal).ToArray();
-                var analyzedScope = $"findSymbol(patterns={string.Join('|', effectivePatterns)}, kind={symbolKind}, scope={scope}, includeGenerated={includeGenerated}, includeReferences={includeReferences}, maxResultsPerPattern={maxResults})";
-                return NavigationToolSupport.WithAssemblyMetadata(response, AssemblySymbolInputResolver.CreateIdentity(assemblyScope), analyzedScope, omissions);
-            }, null, cancellationToken);
+                var assemblyIdentity = AssemblySymbolInputResolver.CreateIdentity(assemblyScope);
+                var assemblyQueryParts = effectivePatterns.Cast<string?>()
+                    .Prepend(effectivePatterns.Length.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                    .Concat([assemblyScope.Context.ReferenceSnapshotHash, assemblyIdentity.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        symbolKind.ToString(), scope.ToString(), includeGenerated.ToString(), includeReferences.ToString(),
+                        maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture)]).ToArray();
+                var binding = BoundResultCursor.CreateBinding(target.CanonicalPath,
+                    assemblyIdentity.ContentHash, "find_symbol", assemblyQueryParts);
+                var paged = PageFindResults(results, effectivePatterns, maxResults, coreCursor, binding,
+                    maxResponseBytes, maxResponseTokens);
+                if (paged.Error is { } pageError) return NavigationToolSupport.Failure(pageError, maxResponseBytes, maxResponseTokens, "$.resultCursor");
+                var response = FormatFindResults(paged.Results, effectivePatterns, paged.ResultCursor,
+                    maxResponseBytes, maxResponseTokens);
+                var omissions = results.SelectMany(static result => result.TruncatedBy).Where(reason => reason != "maxResults").Distinct(StringComparer.Ordinal).ToArray();
+                var analyzedScope = $"findSymbol(patterns={string.Join('|', effectivePatterns)}, kind={symbolKind}, scope={scope}, includeGenerated={includeGenerated}, includeReferences={includeReferences}, maxResults={maxResults})";
+                return NavigationToolSupport.WithAssemblyMetadata(response, assemblyIdentity, analyzedScope, omissions,
+                    resultContinuationAvailable: paged.ResultCursor is not null);
+            }, null, cancellationToken, resultCursor, "find_symbol.matches");
     }
 
     [McpServerTool(Name = "get_symbol_body", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -247,7 +272,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
     private static CallToolResult FormatFindResults(
         IReadOnlyList<FindSymbolScanResult> results,
         IReadOnlyList<string> patterns,
-        AnalysisTargetType targetType,
+        string? resultCursor,
         int maxResponseBytes,
         int? maxResponseTokens)
     {
@@ -256,15 +281,53 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
             return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.targetPath");
         }
 
-        var truncated = results.Any(result => result.IsTruncated);
-        var text = string.Join("\n\n", results.Select((result, index) =>
-        {
-            var resultText = targetType == AnalysisTargetType.Assembly ? FormatAssemblyFindResult(result) : result.Text;
-            return results.Count == 1 ? resultText : $"Pattern: {patterns[index]}\n{resultText}";
-        }));
-        return NavigationToolSupport.SuccessText(text, truncated,
-            truncated ? "Increase maxResults up to 1000 and repeat the same pattern query." : null);
+        var truncated = resultCursor is not null || results.Any(result => result.IsTruncated);
+        var payload = new FindSymbolBatchResponse(patterns.Select((pattern, index) => new FindSymbolPatternResponse(pattern,
+            results[index].Entries, results[index].TotalMatches, results[index].ReturnedMatches,
+            results[index].TruncatedBy, results[index].KindAlternatives)).ToArray(), resultCursor);
+        return NavigationToolSupport.Success(payload, truncated,
+            truncated ? resultCursor is not null ? "Use resultCursor after reading all outer response pages." : "Increase maxResults up to 1000 and repeat the same pattern query." : null);
     }
+
+    private static (IReadOnlyList<FindSymbolScanResult> Results, string? ResultCursor, ResultError? Error) PageFindResults(
+        IReadOnlyList<FindSymbolScanResult> results, IReadOnlyList<string> patterns, int pageSize, string? cursor,
+        string binding, int maxResponseBytes, int? maxResponseTokens)
+    {
+        var status = BoundResultCursor.ReadOffset(cursor, binding, out var offset);
+        if (status != BoundResultCursor.CursorStatus.Valid)
+        {
+            var code = status == BoundResultCursor.CursorStatus.InvalidFormat ? NavigationErrorCodes.InvalidArgument : NavigationErrorCodes.StaleSnapshot;
+            return (results, null, new ResultError(code,
+                status == BoundResultCursor.CursorStatus.InvalidFormat ? "resultCursor is invalid." : "resultCursor is not bound to this target snapshot and symbol query.",
+                "Repeat the same symbol query against the same target snapshot using its most recent resultCursor."));
+        }
+
+        var flattened = results.SelectMany((result, patternIndex) => result.Entries.Select(entry => (PatternIndex: patternIndex, Entry: entry))).ToArray();
+        if (offset > flattened.Length)
+            return (results, null, new ResultError(NavigationErrorCodes.InvalidArgument, "resultCursor is beyond the remaining symbol matches.", "Use a resultCursor from a nonfinal result page."));
+        var page = BoundResultCursor.Page(flattened, offset, pageSize, binding);
+        var nextResults = results.Select((result, index) =>
+        {
+            var entries = page.Items.Where(item => item.PatternIndex == index).Select(item => item.Entry).ToArray();
+            var truncated = page.NextCursor is not null;
+            return result with
+            {
+                Entries = entries,
+                ReturnedMatches = entries.Length,
+                IsTruncated = truncated || result.TruncatedBy.Any(reason => reason != "maxResults"),
+                TruncatedBy = (truncated ? new[] { "maxResults" } : Array.Empty<string>())
+                    .Concat(result.TruncatedBy.Where(reason => reason != "maxResults")).Distinct(StringComparer.Ordinal).ToArray(),
+                ResultCursor = null,
+                Text = string.Join(Environment.NewLine, entries.Select(entry => $"- {entry.Kind} {entry.Name} in {entry.FilePath}:{entry.Line} ({entry.ProjectName})"
+                    + (entry.HandoffId is null ? string.Empty : $" [handoff: {entry.HandoffId}]"))),
+            };
+        }).ToArray();
+        return (nextResults, page.NextCursor, null);
+    }
+
+    private sealed record FindSymbolBatchResponse(IReadOnlyList<FindSymbolPatternResponse> Results, string? ResultCursor);
+    private sealed record FindSymbolPatternResponse(string Pattern, IReadOnlyList<SymbolLocationEntry> Entries, int TotalMatches,
+        int ReturnedMatches, IReadOnlyList<string> TruncatedBy, IReadOnlyList<string> KindAlternatives);
 
     private static bool TryScope(string value, out SymbolScopeType scope)
     {
@@ -288,23 +351,6 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
         var status = body.HasMore ? ", more lines available" : ", complete";
         var handoff = body.HandoffId is null ? string.Empty : $"\nHandoff: {body.HandoffId}\nOwner targetPath: {targetPath}";
         return $"Symbol: {identifier}\nContent mode: {body.ContentMode}{handoff}\nLines: {body.DisplayedStart}-{body.DisplayedEnd} of {body.TotalLines}{status}\n{body.Body}";
-    }
-
-    private static string FormatAssemblyFindResult(FindSymbolScanResult result)
-    {
-        if (result.Entries.Count == 0)
-            return result.IsTruncated
-                ? $"{result.Text}\nSearch incomplete: {string.Join(", ", result.TruncatedBy)}."
-                : result.Text;
-        var lines = result.Entries.Select(entry =>
-        {
-            var handoff = entry.HandoffId is null ? string.Empty : $" [handoff: {entry.HandoffId}]";
-            var owner = string.IsNullOrWhiteSpace(entry.OwnerTargetPath) ? string.Empty : $" [targetPath: {entry.OwnerTargetPath}]";
-            return $"- {entry.Kind} {entry.Name} in {entry.FilePath}:{entry.Line} ({entry.ProjectName}) {entry.Signature}{owner}{handoff}";
-        });
-        var summary = $"Found {result.TotalMatches} matching assembly symbol(s); returned {result.ReturnedMatches}.";
-        var incomplete = result.IsTruncated ? $"\nSearch incomplete: {string.Join(", ", result.TruncatedBy)}." : string.Empty;
-        return summary + "\n" + string.Join("\n", lines) + incomplete;
     }
 
     private static bool TryKind(string? value, out SymbolKindFilter kind)

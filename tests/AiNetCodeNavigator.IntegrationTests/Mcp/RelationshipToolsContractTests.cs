@@ -22,7 +22,7 @@ public sealed class RelationshipToolsContractTests
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var tools = new RelationshipTools(runtime);
-        Func<string, string, int, int, bool, int, int?, string?, string?, CancellationToken, Task<ModelContextProtocol.Protocol.CallToolResult>> handler = tools.GetImpact;
+        Func<string, string, int, int, bool, int, int?, string?, string?, string?, CancellationToken, Task<ModelContextProtocol.Protocol.CallToolResult>> handler = tools.GetImpact;
         var sdkTool = McpServerTool.Create(handler, new McpServerToolCreateOptions { Name = "get_impact" });
         var schema = sdkTool.ProtocolTool.InputSchema;
         var properties = schema.GetProperty("properties");

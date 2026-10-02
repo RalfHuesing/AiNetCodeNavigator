@@ -17,6 +17,131 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class AssemblyToolsContractTests
 {
     [Fact]
+    public async Task AssemblyImpact_ResultCursorReconstructsAllCallSitesAcrossPages()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var relationships = new RelationshipTools(runtime);
+        using var fixture = TestTempDirectory.Create("ainet-assembly-impact-pages-");
+        var callers = string.Join("\n", Enumerable.Range(0, 8).Select(index =>
+            $"public sealed class Caller{index:D2} {{ public int Invoke(Target target) => target.Read(); }}"));
+        var subtypes = string.Join("\n", Enumerable.Range(0, 8).Select(index =>
+            $"public sealed class Subtype{index:D2} : Target {{ }}"));
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "AssemblyImpactPages", $$"""
+            namespace AssemblyImpactPages;
+            public class Target { public int Read() => 1; }
+            {{callers}}
+            {{subtypes}}
+            """);
+
+        var seen = new List<string>();
+        string? cursor = null;
+        var pages = 0;
+        int? total = null;
+        do
+        {
+            var response = await relationships.GetImpact(assemblyPath, "M:AssemblyImpactPages.Target.Read",
+                maxResults: 2, resultCursor: cursor, maxResponseBytes: 32768, maxResponseTokens: 4096);
+            Assert.False(response.IsError ?? false, TextOf(response));
+            using var document = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(response)));
+            var root = document.RootElement;
+            total ??= root.GetProperty("transitiveImpactCount").GetInt32();
+            foreach (var item in root.GetProperty("callSites").EnumerateArray())
+                seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("callingMember").GetString()}");
+            cursor = root.TryGetProperty("resultCursor", out var cursorValue)
+                && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
+            pages++;
+            Assert.InRange(pages, 1, 10);
+        } while (cursor is not null);
+
+        Assert.Equal(4, pages);
+        Assert.Equal(8, total);
+        Assert.Equal(8, seen.Count);
+        Assert.Equal(8, seen.Distinct(StringComparer.Ordinal).Count());
+
+        seen.Clear();
+        cursor = null;
+        pages = 0;
+        do
+        {
+            var response = await relationships.FindReferences(assemblyPath, "M:AssemblyImpactPages.Target.Read",
+                maxResults: 2, resultCursor: cursor, maxResponseBytes: 32768, maxResponseTokens: 4096);
+            Assert.False(response.IsError ?? false, TextOf(response));
+            using var document = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(response)));
+            var root = document.RootElement;
+            foreach (var item in root.GetProperty("references").EnumerateArray())
+                seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("enclosingSymbolName").GetString()}");
+            cursor = root.TryGetProperty("resultCursor", out var cursorValue)
+                && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
+            pages++;
+            Assert.InRange(pages, 1, 10);
+        } while (cursor is not null);
+        Assert.Equal(4, pages);
+        Assert.Equal(8, seen.Count);
+        Assert.Equal(8, seen.Distinct(StringComparer.Ordinal).Count());
+
+        seen.Clear();
+        cursor = null;
+        pages = 0;
+        do
+        {
+            var response = await relationships.GetTypeHierarchy(assemblyPath, "T:AssemblyImpactPages.Target",
+                maxResults: 2, resultCursor: cursor, maxResponseBytes: 32768, maxResponseTokens: 4096);
+            Assert.False(response.IsError ?? false, TextOf(response));
+            using var document = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(response)));
+            var root = document.RootElement;
+            foreach (var item in root.GetProperty("subtypes").EnumerateArray())
+                seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("name").GetString()}");
+            cursor = root.TryGetProperty("resultCursor", out var cursorValue)
+                && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
+            pages++;
+            Assert.InRange(pages, 1, 10);
+        } while (cursor is not null);
+        Assert.Equal(4, pages);
+        Assert.Equal(8, seen.Count);
+        Assert.Equal(8, seen.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    [Fact]
+    public async Task AssemblyFindImplementations_ResultCursorReconstructsAllMatchesAcrossPages()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var relationships = new RelationshipTools(runtime);
+        using var fixture = TestTempDirectory.Create("ainet-assembly-implementation-pages-");
+        var readers = string.Join("\n", Enumerable.Range(0, 5).Select(index =>
+            $"public sealed class Reader{index:D2} : IReadable {{ public int Read() => {index}; public string Label => \"reader\"; }}"));
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "AssemblyImplementationPages", $$"""
+            namespace AssemblyImplementationPages;
+            public interface IReadable { int Read(); string Label { get; } }
+            public sealed class Probe : IReadable { public int Read() => 1; public string Label => "probe"; }
+            {{readers}}
+            """);
+
+        var seen = new List<string>();
+        string? cursor = null;
+        var pages = 0;
+        do
+        {
+            var response = await relationships.FindImplementations(assemblyPath, "T:AssemblyImplementationPages.IReadable",
+                maxResults: 2, resultCursor: cursor, maxResponseBytes: 32768, maxResponseTokens: 4096);
+            Assert.False(response.IsError ?? false, TextOf(response));
+            using var document = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(response)));
+            var root = document.RootElement;
+            foreach (var item in root.GetProperty("implementations").EnumerateArray())
+                seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("symbolName").GetString()}");
+            cursor = root.TryGetProperty("resultCursor", out var cursorValue)
+                && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
+            pages++;
+            Assert.InRange(pages, 1, 10);
+        } while (cursor is not null);
+
+        Assert.Equal(3, pages);
+        Assert.Equal(6, seen.Count);
+        Assert.Equal(6, seen.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    [Fact]
     public async Task AssemblyCallTree_PreservesRecursiveAndSameLineCallSitesWithEvidence()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
@@ -326,12 +451,27 @@ public sealed class AssemblyToolsContractTests
 
         var limited = await structureTools.GetClassStructure(assemblyPath, "StructureOrderProbe.OrderProbe", maxMembers: 1);
         AssertSuccessWithinBudget(limited, 16 * 1024, 4096);
-        Assert.Contains("Zulu()", TextOf(limited), StringComparison.Ordinal);
-        Assert.DoesNotContain("Alpha()", TextOf(limited), StringComparison.Ordinal);
+        Assert.Contains("Zulu", TextOf(limited), StringComparison.Ordinal);
+        Assert.DoesNotContain("Alpha", TextOf(limited), StringComparison.Ordinal);
         var zuluHandoff = ReadHandoff(TextOf(limited), "Zulu");
         var zuluBody = await symbolTools.GetSymbolBody(assemblyPath, [zuluHandoff]);
         AssertSuccessWithinBudget(zuluBody, 16 * 1024, 4096);
         Assert.Contains("Zulu", TextOf(zuluBody), StringComparison.Ordinal);
+
+        var reconstructedNames = new List<string>();
+        string? memberCursor = null;
+        do
+        {
+            var page = await structureTools.GetClassStructure(assemblyPath, "StructureOrderProbe.OrderProbe", maxMembers: 1,
+                resultCursor: memberCursor);
+            AssertSuccessWithinBudget(page, 16 * 1024, 4096);
+            using var pageDocument = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(page)));
+            var root = pageDocument.RootElement;
+            reconstructedNames.AddRange(root.GetProperty("members").EnumerateArray().Select(member => member.GetProperty("name").GetString()!));
+            memberCursor = root.TryGetProperty("resultCursor", out var cursor) && cursor.ValueKind == System.Text.Json.JsonValueKind.String
+                ? cursor.GetString() : null;
+        } while (memberCursor is not null);
+        Assert.Equal(new[] { "Zulu", "Alpha" }, reconstructedNames);
 
         var complete = await structureTools.GetClassStructure(assemblyPath, "StructureOrderProbe.OrderProbe", maxMembers: 50);
         AssertSuccessWithinBudget(complete, 16 * 1024, 4096);
@@ -436,6 +576,28 @@ public sealed class AssemblyToolsContractTests
         var namespaceTree = await structure.GetNamespaceTree(assemblyPath, namespacePrefix: "AssemblyRouteProbe", maxResponseBytes: 32768);
         AssertOwnerResult(namespaceTree, "Probe");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, namespaceTree);
+        var assemblyInventory = new List<string>();
+        string? assemblyInventoryCursor = null;
+        var assemblyInventoryPages = 0;
+        do
+        {
+            var page = await structure.GetNamespaceTree(assemblyPath, namespacePrefix: "AssemblyRouteProbe", maxResults: 2,
+                resultCursor: assemblyInventoryCursor, maxResponseBytes: 16384, maxResponseTokens: 2048);
+            AssertSuccessWithinBudget(page, 16384, 2048);
+            using var document = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(page)));
+            var root = document.RootElement;
+            foreach (var item in root.GetProperty("items").EnumerateArray())
+            {
+                var value = item.TryGetProperty("fullName", out var fullName) ? fullName.GetString() : item.GetProperty("name").GetString();
+                assemblyInventory.Add($"{item.GetProperty("kind").GetString()}:{value}");
+            }
+            assemblyInventoryCursor = root.TryGetProperty("resultCursor", out var resultCursor)
+                && resultCursor.ValueKind == System.Text.Json.JsonValueKind.String ? resultCursor.GetString() : null;
+            assemblyInventoryPages++;
+        } while (assemblyInventoryCursor is not null);
+        Assert.Equal(3, assemblyInventoryPages);
+        Assert.Equal(5, assemblyInventory.Count);
+        Assert.Equal(5, assemblyInventory.Distinct(StringComparer.Ordinal).Count());
 
         var callTree = await relationships.GetCallTree(assemblyPath, entryHandle, direction: "outgoing", maxResponseBytes: 32768);
         AssertOwnerResult(callTree, "Entry");
@@ -881,6 +1043,48 @@ public sealed class AssemblyToolsContractTests
         var referencesText = TextOf(references);
         Assert.Contains("ClosureBridge", referencesText, StringComparison.Ordinal);
         Assert.Contains("ClosureRoot", referencesText, StringComparison.Ordinal);
+
+        var pagedReferences = new List<string>();
+        string? referenceCursor = null;
+        var referencePages = 0;
+        do
+        {
+            var page = await PollAssemblyOwnerAsync(operation => relationships.FindReferences(root, leafHandle,
+                includeReferences: true, depth: 3, maxResults: 1, resultCursor: referenceCursor,
+                maxResponseBytes: 65536, maxResponseTokens: 4096, operationToken: operation));
+            using var document = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(page)));
+            var pageRoot = document.RootElement;
+            foreach (var item in pageRoot.GetProperty("references").EnumerateArray())
+                pagedReferences.Add($"{item.GetProperty("ownerTargetPath").GetString()}:{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}");
+            referenceCursor = pageRoot.TryGetProperty("resultCursor", out var cursorValue)
+                && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
+            referencePages++;
+            Assert.InRange(referencePages, 1, 10);
+        } while (referenceCursor is not null);
+        Assert.Equal(2, referencePages);
+        Assert.Equal(2, pagedReferences.Count);
+        Assert.Equal(2, pagedReferences.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+
+        var pagedImpact = new List<string>();
+        string? impactCursor = null;
+        var impactPages = 0;
+        do
+        {
+            var page = await PollAssemblyOwnerAsync(operation => relationships.GetImpact(root, leafHandle,
+                includeReferences: true, depth: 3, maxResults: 1, resultCursor: impactCursor,
+                maxResponseBytes: 65536, maxResponseTokens: 4096, operationToken: operation));
+            using var document = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(page)));
+            var pageRoot = document.RootElement;
+            foreach (var item in pageRoot.GetProperty("callSites").EnumerateArray())
+                pagedImpact.Add($"{item.GetProperty("ownerTargetPath").GetString()}:{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}");
+            impactCursor = pageRoot.TryGetProperty("resultCursor", out var cursorValue)
+                && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
+            impactPages++;
+            Assert.InRange(impactPages, 1, 10);
+        } while (impactCursor is not null);
+        Assert.Equal(2, impactPages);
+        Assert.Equal(2, pagedImpact.Count);
+        Assert.Equal(2, pagedImpact.Distinct(StringComparer.OrdinalIgnoreCase).Count());
         Assert.Contains("Forward", referencesText, StringComparison.Ordinal);
 
         var context = await PollAssemblyOwnerAsync(operation => assemblies.GetAssemblyContext(root, leafHandle, includeReferences: true,
@@ -912,18 +1116,54 @@ public sealed class AssemblyToolsContractTests
 
     private static void AssertDeclarationOrder(string text)
     {
+        var body = BodyOf(text);
+        if (body.TrimStart().StartsWith("{", StringComparison.Ordinal))
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(body);
+            var names = document.RootElement.GetProperty("members").EnumerateArray()
+                .Select(member => member.GetProperty("name").GetString()).ToArray();
+            Assert.True(Array.IndexOf(names, "Zulu") >= 0 && Array.IndexOf(names, "Alpha") > Array.IndexOf(names, "Zulu"), text);
+            return;
+        }
         var zulu = text.IndexOf("Zulu()", StringComparison.Ordinal);
         var alpha = text.IndexOf("Alpha()", StringComparison.Ordinal);
         Assert.True(zulu >= 0 && alpha > zulu, text);
     }
 
-    private static string[] ReadMemberNames(string text) => text.Split('\n')
+    private static string[] ReadMemberNames(string text)
+    {
+        var body = BodyOf(text);
+        if (body.TrimStart().StartsWith("{", StringComparison.Ordinal))
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(body);
+            return document.RootElement.GetProperty("members").EnumerateArray()
+                .Select(member => member.GetProperty("name").GetString()!).ToArray();
+        }
+        return text.Split('\n')
         .Where(line => line.StartsWith("- Method ", StringComparison.Ordinal))
         .Select(line => line[(line.IndexOf("int ", StringComparison.Ordinal) + 4)..line.IndexOf('(', StringComparison.Ordinal)])
         .ToArray();
+    }
 
     private static string ReadHandoff(string text, string memberName)
     {
+        var body = IntegrationMcpAssertions.BodyOf(text);
+        if (body.TrimStart().StartsWith("{", StringComparison.Ordinal))
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(body);
+            var name = memberName.Split(' ', StringSplitOptions.RemoveEmptyEntries).Last().Split('.')[^1];
+            var entries = document.RootElement.TryGetProperty("members", out var members)
+                ? members.EnumerateArray().ToArray()
+                : document.RootElement.GetProperty("results").EnumerateArray()
+                    .SelectMany(result => result.GetProperty("entries").EnumerateArray()).ToArray();
+            var selected = entries.Where(entry => string.Equals(entry.GetProperty("name").GetString(), name, StringComparison.Ordinal))
+                .FirstOrDefault();
+            var handoff = selected.ValueKind == System.Text.Json.JsonValueKind.Object
+                ? selected.GetProperty("handoffId").GetString()
+                : null;
+            Assert.True(handoff?.StartsWith("h:", StringComparison.Ordinal) == true, body);
+            return handoff!;
+        }
         var line = text.Split('\n').First(line => line.Contains(memberName, StringComparison.Ordinal)
             && line.Contains("[handoff: ", StringComparison.Ordinal));
         var start = line.IndexOf("[handoff: ", StringComparison.Ordinal);
@@ -949,6 +1189,13 @@ public sealed class AssemblyToolsContractTests
 
     private static string ReadAnyHandoff(string text)
     {
+        var body = IntegrationMcpAssertions.BodyOf(text);
+        if (body.TrimStart().StartsWith("{", StringComparison.Ordinal))
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(body);
+            var handoff = FindFirstHandoff(document.RootElement);
+            if (handoff?.StartsWith("h:", StringComparison.Ordinal) == true) return handoff;
+        }
         for (var start = text.IndexOf("h:", StringComparison.Ordinal); start >= 0;
              start = text.IndexOf("h:", start + 2, StringComparison.Ordinal))
         {
@@ -960,8 +1207,42 @@ public sealed class AssemblyToolsContractTests
         return string.Empty;
     }
 
+    private static string? FindFirstHandoff(System.Text.Json.JsonElement element)
+    {
+        if (element.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.NameEquals("handoffId") && property.Value.ValueKind == System.Text.Json.JsonValueKind.String)
+                {
+                    var value = property.Value.GetString();
+                    if (!string.IsNullOrWhiteSpace(value)) return value;
+                }
+                var nested = FindFirstHandoff(property.Value);
+                if (!string.IsNullOrWhiteSpace(nested)) return nested;
+            }
+        }
+        else if (element.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                var nested = FindFirstHandoff(item);
+                if (!string.IsNullOrWhiteSpace(nested)) return nested;
+            }
+        }
+        return null;
+    }
+
     private static int ReadPosition(string text)
     {
+        try
+        {
+            var jsonStart = text.IndexOf('{');
+            using var document = System.Text.Json.JsonDocument.Parse(jsonStart >= 0 ? text[jsonStart..] : text);
+            var jsonLine = FindLine(document.RootElement);
+            if (jsonLine is not null) return jsonLine.Value;
+        }
+        catch (System.Text.Json.JsonException) { }
         var start = text.IndexOf("Probe.cs:", StringComparison.Ordinal);
         Assert.True(start >= 0, text);
         start += "Probe.cs:".Length;
@@ -969,6 +1250,29 @@ public sealed class AssemblyToolsContractTests
         while (end < text.Length && char.IsAsciiDigit(text[end])) end++;
         Assert.True(int.TryParse(text[start..end], out var line), text);
         return line;
+    }
+
+    private static int? FindLine(System.Text.Json.JsonElement element)
+    {
+        if (element.ValueKind == System.Text.Json.JsonValueKind.Object)
+        {
+            if (element.TryGetProperty("filePath", out var path) && path.GetString() == "Probe.cs"
+                && element.TryGetProperty("line", out var line) && line.TryGetInt32(out var value)) return value;
+            foreach (var property in element.EnumerateObject())
+            {
+                var nested = FindLine(property.Value);
+                if (nested is not null) return nested;
+            }
+        }
+        else if (element.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                var nested = FindLine(item);
+                if (nested is not null) return nested;
+            }
+        }
+        return null;
     }
 
     private static async Task FollowAssemblyHandoffAsync(SymbolTools symbols, string targetPath, CallToolResult producer)
@@ -991,7 +1295,15 @@ public sealed class AssemblyToolsContractTests
         Assert.False(result.IsError ?? false, text);
         Assert.DoesNotContain("operation=running", text, StringComparison.Ordinal);
         Assert.DoesNotContain("operation=retry", text, StringComparison.Ordinal);
-        Assert.Contains(expectedText, text, StringComparison.Ordinal);
+        if (text.Contains("\"results\": [", StringComparison.Ordinal) && expectedText.StartsWith("class ", StringComparison.Ordinal))
+        {
+            Assert.Contains("\"kind\": \"class\"", text, StringComparison.Ordinal);
+            Assert.Contains($"\"name\": \"{expectedText[6..]}\"", text, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Contains(expectedText, text, StringComparison.Ordinal);
+        }
         Assert.InRange(Encoding.UTF8.GetByteCount(text), 0, bytes);
         Assert.InRange(TokenCount(text), 0, tokens);
     }

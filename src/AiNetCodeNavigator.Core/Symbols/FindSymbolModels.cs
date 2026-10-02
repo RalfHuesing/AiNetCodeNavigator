@@ -58,7 +58,8 @@ public sealed record FindSymbolScanRequest(
     int MaxResults = 50,
     AnalysisSymbolIdentity? AssemblyIdentity = null,
     AnalysisSymbolIdentity? SourceIdentity = null,
-    bool IncludeGenerated = false);
+    bool IncludeGenerated = false,
+    string? ResultCursor = null);
 
 public sealed record FindSymbolScanResult(
     string Text,
@@ -68,4 +69,5 @@ public sealed record FindSymbolScanResult(
     bool IsTruncated,
     IReadOnlyList<string> TruncatedBy,
     IReadOnlyList<string> KindAlternatives,
-    ResultError? Error = null);
+    ResultError? Error = null,
+    string? ResultCursor = null);
