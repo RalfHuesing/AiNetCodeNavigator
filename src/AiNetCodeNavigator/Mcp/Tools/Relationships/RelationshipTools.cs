@@ -24,13 +24,13 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 {
     [McpServerTool(Name = "get_call_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Trace incoming, outgoing, or combined call relationships from a source or assembly symbol.")]
-    public async Task<CallToolResult> GetCallTree([Required] string targetPath, [Required] string symbolIdentifier,
-        [System.ComponentModel.Description("Traversal direction: incoming (default), outgoing, or both.")] string direction = "incoming", [Range(1, 5)] int depth = 2, [Range(1, 250)] int topN = 10,
-        [System.ComponentModel.Description("Rendering: ascii (default) or mermaid.")] string format = "ascii", bool includeBcl = false, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", bool includeGenerated = false,
-        bool includeReferences = false, [System.ComponentModel.Description("For assembly targets, include navigation/decompilation and graph-expansion diagnostics. Default false; source targets do not add this section.")] bool includeDiagnostics = false,
-        [Range(512, 65536)] int maxResponseBytes = 32768,
-        [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
-        string? continuationToken = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> GetCallTree([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type, member, documentation ID, or current symbol handoff to trace.")] string symbolIdentifier,
+        [System.ComponentModel.Description("Traversal direction: incoming (default), outgoing, or both.")] string direction = "incoming", [Range(1, 5), System.ComponentModel.Description("Maximum call-graph traversal depth.")] int depth = 2, [Range(1, 250), System.ComponentModel.Description("Maximum neighboring call nodes to include.")] int topN = 10,
+        [System.ComponentModel.Description("Rendering: ascii (default) or mermaid.")] string format = "ascii", [System.ComponentModel.Description("Include calls to or from base class library symbols.")] bool includeBcl = false, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", [System.ComponentModel.Description("Include symbols from generated source files.")] bool includeGenerated = false,
+        [System.ComponentModel.Description("Traverse references across owned assemblies when supported.")] bool includeReferences = false, [System.ComponentModel.Description("For assembly targets, include navigation/decompilation and graph-expansion diagnostics. Default false; source targets do not add this section.")] bool includeDiagnostics = false,
+        [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 32768).") ] int maxResponseBytes = 32768,
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null, [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
     {
         if (!TryDirection(direction, out var parsedDirection)) return Invalid("direction", "Use incoming, outgoing, or both.");
         if (format is not ("ascii" or "mermaid")) return Invalid("format", "Use ascii or mermaid.");
@@ -86,11 +86,11 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "find_references", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Find source locations that reference a symbol, optionally traversing bounded assembly references.")]
-    public async Task<CallToolResult> FindReferences([Required] string targetPath, [Required] string symbolIdentifier,
-        [Range(1, 3)] int depth = 1, [Range(1, 50)] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all",
-        bool includeGenerated = false, bool includeReferences = false, [Range(512, 65536)] int maxResponseBytes = 16384,
-        [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
-        string? continuationToken = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> FindReferences([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type, member, documentation ID, or current symbol handoff whose references should be found.")] string symbolIdentifier,
+        [Range(1, 3), System.ComponentModel.Description("Maximum reference traversal depth.")] int depth = 1, [Range(1, 50), System.ComponentModel.Description("Maximum references to return.")] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all",
+        [System.ComponentModel.Description("Include matches from generated source files.")] bool includeGenerated = false, [System.ComponentModel.Description("Traverse into referenced assemblies when supported.")] bool includeReferences = false, [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384,
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null, [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
     {
         if (!TryScope(scopeType, out var scope)) return Invalid("scopeType", "Use all, production, or tests.");
         return await NavigationToolSupport.RouteAsync(runtime, "find_references", targetPath,
@@ -136,10 +136,10 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "get_type_hierarchy", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Show base types, interfaces, and derived types for a selected type.")]
-    public async Task<CallToolResult> GetTypeHierarchy([Required] string targetPath, [Required] string symbolIdentifier,
-        [Range(1, 1000)] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", bool includeGenerated = false,
-        [Range(512, 65536)] int maxResponseBytes = 16384, [Range(1, int.MaxValue)] int? maxResponseTokens = null,
-        string? operationToken = null, string? continuationToken = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> GetTypeHierarchy([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type name, documentation ID, or current type handoff whose hierarchy should be shown.")] string symbolIdentifier,
+        [Range(1, 1000), System.ComponentModel.Description("Maximum hierarchy entries to return.")] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", [System.ComponentModel.Description("Include derived types declared in generated source.")] bool includeGenerated = false,
+        [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
     {
         if (!TryScope(scopeType, out var scope)) return Invalid("scopeType", "Use all, production, or tests.");
         return await NavigationToolSupport.RouteAsync(runtime, "get_type_hierarchy", targetPath,
@@ -181,10 +181,10 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "find_implementations", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Find concrete type or member implementations of a selected contract or virtual member.")]
-    public async Task<CallToolResult> FindImplementations([Required] string targetPath, [Required] string symbolIdentifier,
-        [Range(1, 1000)] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", bool includeGenerated = false,
-        [Range(512, 65536)] int maxResponseBytes = 16384, [Range(1, int.MaxValue)] int? maxResponseTokens = null,
-        string? operationToken = null, string? continuationToken = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> FindImplementations([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type, member, documentation ID, or current symbol handoff whose implementations should be found.")] string symbolIdentifier,
+        [Range(1, 1000), System.ComponentModel.Description("Maximum implementations to return.")] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", [System.ComponentModel.Description("Include implementations declared in generated source.")] bool includeGenerated = false,
+        [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
     {
         if (!TryScope(scopeType, out var scope)) return Invalid("scopeType", "Use all, production, or tests.");
         return await NavigationToolSupport.RouteAsync(runtime, "find_implementations", targetPath,
@@ -224,10 +224,10 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "get_impact", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Summarize callers affected by a source or assembly symbol.")]
-    public async Task<CallToolResult> GetImpact([Required] string targetPath, [Required] string symbolIdentifier,
-        [Range(1, 3)] int depth = 1, [Range(1, 1000)] int maxResults = 50, bool includeReferences = false,
-        [Range(512, 65536)] int maxResponseBytes = 16384, [Range(1, int.MaxValue)] int? maxResponseTokens = null,
-        string? operationToken = null, string? continuationToken = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> GetImpact([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type, member, documentation ID, or current symbol handoff whose callers and effects should be summarized.")] string symbolIdentifier,
+        [Range(1, 3), System.ComponentModel.Description("Maximum impact traversal depth.")] int depth = 1, [Range(1, 1000), System.ComponentModel.Description("Maximum impact entries to return.")] int maxResults = 50, [System.ComponentModel.Description("Traverse into referenced assemblies when supported.")] bool includeReferences = false,
+        [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(symbolIdentifier)) return Invalid("symbolIdentifier", "Provide a non-empty source or assembly symbol identifier.");
         return await NavigationToolSupport.RouteAsync(runtime, "get_impact", targetPath,
@@ -270,12 +270,12 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "dependency_graph", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Trace dependencies from exactly one file path or symbol identifier in the selected target.")]
-    public async Task<CallToolResult> DependencyGraph([Required] string targetPath,
-        string? filePath = null,
-        string? symbolIdentifier = null, [System.ComponentModel.Description("Traversal direction: both (default), incoming, or outgoing.")] string direction = "both", [Range(1, 3)] int depth = 1,
-        [Range(1, 500)] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", bool includeGenerated = false,
-        [Range(512, 65536)] int maxResponseBytes = 24576, [Range(1, int.MaxValue)] int? maxResponseTokens = null,
-        string? operationToken = null, string? continuationToken = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> DependencyGraph([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
+        [System.ComponentModel.Description("Indexed source file path used as the dependency graph root; specify this or symbolIdentifier.")] string? filePath = null,
+        [System.ComponentModel.Description("Type or member identifier used as the dependency graph root; specify this or filePath.")] string? symbolIdentifier = null, [System.ComponentModel.Description("Traversal direction: both (default), incoming, or outgoing.")] string direction = "both", [Range(1, 3), System.ComponentModel.Description("Maximum dependency traversal depth.")] int depth = 1,
+        [Range(1, 500), System.ComponentModel.Description("Maximum dependency entries to return.")] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", [System.ComponentModel.Description("Include dependencies from generated source files.")] bool includeGenerated = false,
+        [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 24576).") ] int maxResponseBytes = 24576, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
     {
         if ((filePath is null) == (symbolIdentifier is null)) return Invalid("filePath", "Specify exactly one of filePath or symbolIdentifier.");
         if (!TryDependencyDirection(direction, out var parsedDirection)) return Invalid("direction", "Use incoming, outgoing, or both.");
@@ -411,10 +411,10 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "resolve_type_origin", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Resolve a type name or symbol identifier to its source or metadata assembly origin.")]
-    public async Task<CallToolResult> ResolveTypeOrigin([Required] string targetPath, string? symbolIdentifier = null,
-        [System.ComponentModel.Description("Exactly one of this type name or symbolIdentifier is required.")] string? typeName = null, [Range(512, 65536)] int maxResponseBytes = 16384,
-        [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
-        string? continuationToken = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> ResolveTypeOrigin([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [System.ComponentModel.Description("Symbol identifier for the type; specify this or typeName.")] string? symbolIdentifier = null,
+        [System.ComponentModel.Description("Exactly one of this type name or symbolIdentifier is required.")] string? typeName = null, [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384,
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null, [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(symbolIdentifier) == string.IsNullOrWhiteSpace(typeName))
             return Invalid("symbolIdentifier", "Specify exactly one non-empty symbolIdentifier or typeName.");
@@ -459,11 +459,11 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "get_feature_context", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Summarize source callers and tests associated with a feature symbol.")]
-    public async Task<CallToolResult> GetFeatureContext([Required] string targetPath, [Required] string symbolIdentifier,
-        [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", bool includeGenerated = false, [Range(1, 50)] int maxCallers = 10,
-        [Range(1, 50)] int maxTests = 10, [Range(512, 65536)] int maxResponseBytes = 24576,
-        [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
-        string? continuationToken = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> GetFeatureContext([Required, System.ComponentModel.Description("Absolute path to an existing source solution.")] string targetPath, [Required, System.ComponentModel.Description("Source type or member identifier whose callers and related tests should be summarized.")] string symbolIdentifier,
+        [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", [System.ComponentModel.Description("Include declarations from generated source files.")] bool includeGenerated = false, [Range(1, 50), System.ComponentModel.Description("Maximum callers to return.")] int maxCallers = 10,
+        [Range(1, 50), System.ComponentModel.Description("Maximum related tests to return.")] int maxTests = 10, [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 24576).") ] int maxResponseBytes = 24576,
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null, [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(symbolIdentifier))
             return McpToolResults.InvalidArgument("symbolIdentifier must be a non-empty symbol identifier.", "$.symbolIdentifier",
@@ -485,10 +485,10 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "get_test_context", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Find source tests and related context for a selected symbol.")]
-    public async Task<CallToolResult> GetTestContext([Required] string targetPath, [Required] string symbolIdentifier,
-        [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", bool includeGenerated = false, [Range(1, 100)] int maxResults = 30,
-        [Range(512, 65536)] int maxResponseBytes = 16384, [Range(1, int.MaxValue)] int? maxResponseTokens = null,
-        string? operationToken = null, string? continuationToken = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> GetTestContext([Required, System.ComponentModel.Description("Absolute path to an existing source solution.")] string targetPath, [Required, System.ComponentModel.Description("Source type or member identifier used to locate related tests.")] string symbolIdentifier,
+        [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", [System.ComponentModel.Description("Include declarations from generated source files.")] bool includeGenerated = false, [Range(1, 100), System.ComponentModel.Description("Maximum related test entries to return.")] int maxResults = 30,
+        [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(symbolIdentifier))
             return McpToolResults.InvalidArgument("symbolIdentifier must be a non-empty symbol identifier.", "$.symbolIdentifier",

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using AiNetCodeNavigator.Configuration;
 using AiNetCodeNavigator.Core.Workspace;
@@ -13,10 +14,11 @@ namespace AiNetCodeNavigator.Mcp.Tools.Maintenance;
 public sealed class MaintenanceTools(NavigatorHostRuntime runtime)
 {
     [McpServerTool(Name = "get_server_health", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("Report host health, configuration, cache, resident workspaces, and optional target residency without loading the target.")]
     public CallToolResult GetServerHealth(
-        string? targetPath = null,
-        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes)] int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
-        [Range(1, int.MaxValue)] int? maxResponseTokens = null)
+        [Description("Optional absolute solution or assembly path whose current resident status should be reported without loading it.")] string? targetPath = null,
+        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).")] int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
+        [Range(1, int.MaxValue), Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null)
     {
         var projectSnapshots = runtime.ProjectRegistry.Snapshots();
         var assemblySnapshots = runtime.AssemblyRegistry.GetHealthSnapshot();
@@ -100,10 +102,11 @@ public sealed class MaintenanceTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "reload_config", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("Reload the host settings file and atomically publish the validated settings and effective log level.")]
     public async Task<CallToolResult> ReloadConfig(
         CancellationToken cancellationToken,
-        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes)] int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
-        [Range(1, int.MaxValue)] int? maxResponseTokens = null)
+        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).")] int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
+        [Range(1, int.MaxValue), Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null)
     {
         CallToolResult? preparedConfirmation = null;
         ConfigurationReloadResult result;

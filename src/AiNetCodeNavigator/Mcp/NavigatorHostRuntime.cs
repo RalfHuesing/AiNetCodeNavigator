@@ -11,7 +11,11 @@ public sealed class NavigatorHostRuntime : IAsyncDisposable, IDisposable
 {
     internal static readonly TimeSpan ResponseWindow = TimeSpan.FromSeconds(15);
 
-    internal NavigatorHostRuntime(Configuration.NavigatorHostConfiguration configuration, IHostApplicationLifetime lifetime)
+    // Internal override keeps routing and polling tests deterministic; hosts retain the production default.
+    internal NavigatorHostRuntime(
+        Configuration.NavigatorHostConfiguration configuration,
+        IHostApplicationLifetime lifetime,
+        TimeSpan? operationResponseWindow = null)
     {
         ArgumentNullException.ThrowIfNull(lifetime);
         Configuration = configuration;
@@ -19,7 +23,7 @@ public sealed class NavigatorHostRuntime : IAsyncDisposable, IDisposable
         AssemblyRegistry = AssemblyAnalysisSessionRegistry.Default;
         CompilationCache = new CompilationCacheManager();
         HandoffHandles = HandoffHandleRegistry.Default;
-        Operations = new LongRunningToolCallStore(ResponseWindow, lifetime.ApplicationStopping);
+        Operations = new LongRunningToolCallStore(operationResponseWindow ?? ResponseWindow, lifetime.ApplicationStopping);
         StartedUtc = DateTimeOffset.UtcNow;
     }
 

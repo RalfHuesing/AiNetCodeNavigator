@@ -20,13 +20,13 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
 {
     [McpServerTool(Name = "get_assembly_context", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Combine assembly metadata, body, structure, callers, and impact sections for a selected target or symbol.")]
-    public Task<CallToolResult> GetAssemblyContext([Required] string targetPath, string? symbolIdentifier = null,
-        bool includeReferences = false, bool includeCallers = false, bool includeImpact = false, bool includeBody = false,
-        bool includeClassStructure = false, [System.ComponentModel.Description("Maximum overview entries; zero uses the default of 100.")] [Range(0, 1000)] int maxResults = 100, [Range(1, 1000)] int maxBodyLines = 80,
-        [Range(1, 200)] int maxCallers = 10, [Range(1, 3)] int depth = 1, [Range(1, 200)] int topN = 10,
-        [System.ComponentModel.Description("Default response detail: compact, standard (default), or full. An explicit positive maxResponseBytes takes precedence.")] string detailLevel = "standard", [Range(0, 65536)] int? maxResponseBytes = null,
-        [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
-        string? continuationToken = null, CancellationToken cancellationToken = default)
+    public Task<CallToolResult> GetAssemblyContext([Required, System.ComponentModel.Description("Absolute path to an existing managed .dll or .exe target.")] string targetPath, [System.ComponentModel.Description("Optional type or member identifier; omit to return only the assembly overview.")] string? symbolIdentifier = null,
+        [System.ComponentModel.Description("Include metadata from resolved referenced assemblies.")] bool includeReferences = false, [System.ComponentModel.Description("Include callers for the selected symbol.")] bool includeCallers = false, [System.ComponentModel.Description("Include impact analysis for the selected symbol.")] bool includeImpact = false, [System.ComponentModel.Description("Include the selected symbol's source or decompiled body.")] bool includeBody = false,
+        [System.ComponentModel.Description("Include the selected symbol's containing type structure.")] bool includeClassStructure = false, [System.ComponentModel.Description("Maximum overview entries; zero uses the default of 100.")] [Range(0, 1000)] int maxResults = 100, [Range(1, 1000), System.ComponentModel.Description("Maximum body lines to include when includeBody is true.")] int maxBodyLines = 80,
+        [Range(1, 200), System.ComponentModel.Description("Maximum callers to include when caller or impact sections are requested.")] int maxCallers = 10, [Range(1, 3), System.ComponentModel.Description("Maximum caller or impact traversal depth.")] int depth = 1, [Range(1, 200), System.ComponentModel.Description("Maximum neighboring call nodes when call details are requested.")] int topN = 10,
+        [System.ComponentModel.Description("Default response detail: compact, standard (default), or full. An explicit positive maxResponseBytes takes precedence.")] string detailLevel = "standard", [Range(0, 65536), System.ComponentModel.Description("Optional response byte cap; zero uses the detail-level default, and a positive value overrides it.")] int? maxResponseBytes = null,
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null, [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
     {
         maxResults = maxResults == 0 ? 100 : maxResults;
         if (maxResponseBytes is > 0 and < McpResponseBudgetLimits.MinimumBytes)
@@ -223,16 +223,16 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "inspect_assembly", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Inspect types and members in a managed assembly, optionally including referenced assemblies.")]
-    public Task<CallToolResult> InspectAssembly([Required] string targetPath, string? @namespace = null,
-        string? typeName = null, string? memberName = null, bool publicOnly = true, bool exactTypeName = false,
-        string[]? memberNames = null,
+    public Task<CallToolResult> InspectAssembly([Required, System.ComponentModel.Description("Absolute path to an existing managed .dll or .exe target.")] string targetPath, [System.ComponentModel.Description("Optional namespace name used to limit inspected types.")] string? @namespace = null,
+        [System.ComponentModel.Description("Optional type name used to limit inspected types.")] string? typeName = null, [System.ComponentModel.Description("Optional member name used to limit inspected members.")] string? memberName = null, [System.ComponentModel.Description("Return public API members only.")] bool publicOnly = true, [System.ComponentModel.Description("Match typeName exactly instead of as a name filter.")] bool exactTypeName = false,
+        [System.ComponentModel.Description("Optional member names to inspect within the selected type.")] string[]? memberNames = null,
         [System.ComponentModel.Description("Maximum types to return; zero uses the default of 100.")] [Range(0, 1000)] int maxResults = 100,
         [System.ComponentModel.Description("Maximum members per type; zero uses the default of 100.")] [Range(0, 1000)] int maxMembers = 100,
         [System.ComponentModel.Description("When omitted, include references unless typeName, memberName, or memberNames narrows the inspection.")] bool? includeReferences = null,
         [System.ComponentModel.Description("Response detail: compact, standard (default), or full.")] string detailLevel = "standard",
         [System.ComponentModel.Description("Optional byte cap; zero uses this tool's 24,576-byte default.")] [Range(0, 65536)] int maxResponseBytes = 24576,
-        [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
-        string? continuationToken = null, CancellationToken cancellationToken = default)
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null, [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
     {
         var effectiveResponseBytes = maxResponseBytes == 0 ? 24_576 : maxResponseBytes;
         var effectiveMaxResults = maxResults == 0 ? 100 : maxResults;
@@ -254,14 +254,14 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "search_assembly", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Search decompiled assembly declarations or text with optional regex, kind, file, and result filters.")]
-    public Task<CallToolResult> SearchAssembly([Required] string targetPath, [System.ComponentModel.Description("Search mode: text (default), external_calls, or data_access. Use declarationOnly and kind to filter declarations.")] string searchKind = "text",
-        string? pattern = null, [System.ComponentModel.Description("Regex mode: null auto-detects regex, true requires regex, and false searches literally.")] bool? isRegex = null, bool caseSensitive = false, bool declarationOnly = false,
-        [System.ComponentModel.Description("Declaration kind filter: method, type, or property.")] string? kind = null, string? fileFilter = null, [Range(0, 5)] int contextLines = 0,
+    public Task<CallToolResult> SearchAssembly([Required, System.ComponentModel.Description("Absolute path to an existing managed .dll or .exe target.")] string targetPath, [System.ComponentModel.Description("Search mode: text (default), external_calls, or data_access. Use declarationOnly and kind to filter declarations.")] string searchKind = "text",
+        [System.ComponentModel.Description("Text or regular-expression pattern to find; omit for search modes that do not require a pattern.")] string? pattern = null, [System.ComponentModel.Description("Regex mode: null auto-detects regex, true requires regex, and false searches literally.")] bool? isRegex = null, [System.ComponentModel.Description("Match text with case sensitivity.")] bool caseSensitive = false, [System.ComponentModel.Description("Restrict text results to declarations.")] bool declarationOnly = false,
+        [System.ComponentModel.Description("Declaration kind filter: method, type, or property.")] string? kind = null, [System.ComponentModel.Description("Optional decompiled source file path filter.")] string? fileFilter = null, [Range(0, 5), System.ComponentModel.Description("Number of surrounding source lines to include around each match.")] int contextLines = 0,
         [System.ComponentModel.Description("Maximum matches to return; zero uses the default limit of 50.")] [Range(0, 1000)] int maxResults = 50,
         [System.ComponentModel.Description("Maximum matching files to search; zero (default) means no matching-file limit. Positive values are capped at 2000.")] [Range(0, 2000)] int maxFiles = 0,
         [System.ComponentModel.Description("Response detail: compact, standard (default), or full.")] string detailLevel = "standard", [System.ComponentModel.Description("Optional byte cap; zero uses this tool's 24,576-byte default.")] [Range(0, 65536)] int maxResponseBytes = 24576,
-        [Range(1, int.MaxValue)] int? maxResponseTokens = null, string? operationToken = null,
-        string? continuationToken = null, CancellationToken cancellationToken = default)
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null, [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
     {
         var effectiveResponseBytes = maxResponseBytes == 0 ? 24_576 : maxResponseBytes;
         return NavigationToolSupport.RouteAsync(runtime, "search_assembly", targetPath,
@@ -286,11 +286,11 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "find_assembly_extensions", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Find extension methods in a managed assembly by receiver type, extension name, or namespace.")]
-    public Task<CallToolResult> FindAssemblyExtensions([Required] string targetPath, string? receiverType = null,
-        string? extensionName = null, string? @namespace = null, bool includeReferences = false,
+    public Task<CallToolResult> FindAssemblyExtensions([Required, System.ComponentModel.Description("Absolute path to an existing managed .dll or .exe target.")] string targetPath, [System.ComponentModel.Description("Optional extension receiver type name.")] string? receiverType = null,
+        [System.ComponentModel.Description("Optional extension method name filter.")] string? extensionName = null, [System.ComponentModel.Description("Optional namespace filter for extension methods.")] string? @namespace = null, [System.ComponentModel.Description("Search resolved referenced assemblies in addition to the target.")] bool includeReferences = false,
         [System.ComponentModel.Description("Maximum extensions to return; zero uses the default of 100.")] [Range(0, 1000)] int maxResults = 100, [System.ComponentModel.Description("Response detail: compact, standard (default), or full.")] string detailLevel = "standard",
-        [System.ComponentModel.Description("Optional byte cap; zero uses this tool's 16,384-byte default.")] [Range(0, 65536)] int maxResponseBytes = 16384, [Range(1, int.MaxValue)] int? maxResponseTokens = null,
-        string? operationToken = null, string? continuationToken = null, CancellationToken cancellationToken = default)
+        [System.ComponentModel.Description("Optional byte cap; zero uses this tool's 16,384-byte default.")] [Range(0, 65536)] int maxResponseBytes = 16384, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
     {
         var effectiveResponseBytes = maxResponseBytes == 0 ? 16_384 : maxResponseBytes;
         return NavigationToolSupport.RouteAsync(runtime, "find_assembly_extensions", targetPath,

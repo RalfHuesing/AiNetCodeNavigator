@@ -16,7 +16,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
     [McpServerTool(Name = "find_symbol", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Find C# types or members by one or more name patterns and return source locations with navigable symbol handles.")]
     public Task<CallToolResult> FindSymbol(
-        [Required] string targetPath,
+        [Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
         [System.ComponentModel.Description("Specify exactly one of this field or pattern. This field accepts one to ten non-empty name patterns.")] string[]? namePatterns = null,
         [System.ComponentModel.Description("A single non-empty name pattern. Specify this or namePatterns, but not both.")]
         string? pattern = null,
@@ -24,13 +24,13 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
         string? kind = null,
         [System.ComponentModel.Description("Source scope: all (default), production, or tests.")]
         string scopeType = "all",
-        bool includeGenerated = false,
-        [Range(1, 1000)] int maxResults = 50,
-        bool includeReferences = false,
-        string? operationToken = null,
-        string? continuationToken = null,
-        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes)] int maxResponseBytes = 16 * 1024,
-        [Range(1, int.MaxValue)] int? maxResponseTokens = null,
+        [System.ComponentModel.Description("Include declarations from generated source files.")] bool includeGenerated = false,
+        [Range(1, 1000), System.ComponentModel.Description("Maximum matching symbols to return per pattern.")] int maxResults = 50,
+        [System.ComponentModel.Description("Include references found within each selected symbol.")] bool includeReferences = false,
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
+        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16 * 1024,
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
         CancellationToken cancellationToken = default)
     {
         if ((namePatterns is null) == string.IsNullOrWhiteSpace(pattern))
@@ -104,15 +104,15 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
     [McpServerTool(Name = "get_symbol_body", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Read source or decompiled text for one or more current symbol handoffs, with line-bounded output.")]
     public Task<CallToolResult> GetSymbolBody(
-        [Required] string targetPath,
-        [Required] string[] symbolIdentifiers,
-        [Range(1, 1000)] int maxBodyLines = 80,
-        [Range(1, int.MaxValue)] int startLine = 1,
-        [Range(1, int.MaxValue)] int? endLine = null,
-        string? operationToken = null,
-        string? continuationToken = null,
-        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes)] int maxResponseBytes = 32 * 1024,
-        [Range(1, int.MaxValue)] int? maxResponseTokens = null,
+        [Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
+        [Required, System.ComponentModel.Description("One or more symbol names, documentation IDs, source locations, or current h: handoff identifiers.")] string[] symbolIdentifiers,
+        [Range(1, 1000), System.ComponentModel.Description("Maximum source or decompiled lines to return for each symbol.")] int maxBodyLines = 80,
+        [Range(1, int.MaxValue), System.ComponentModel.Description("First line to include, using one-based numbering.")] int startLine = 1,
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional inclusive final line to include.")] int? endLine = null,
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
+        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 32768).") ] int maxResponseBytes = 32 * 1024,
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
         CancellationToken cancellationToken = default)
     {
         if (symbolIdentifiers.Length == 0 || symbolIdentifiers.Any(string.IsNullOrWhiteSpace))

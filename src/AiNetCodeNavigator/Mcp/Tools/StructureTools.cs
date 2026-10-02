@@ -19,10 +19,16 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
 {
     [McpServerTool(Name = "get_index_scope", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Summarize which source projects and documents are included in the loaded solution index.")]
-    public Task<CallToolResult> GetIndexScope([Required] string targetPath, CancellationToken cancellationToken = default)
+    public Task<CallToolResult> GetIndexScope(
+        [Required, System.ComponentModel.Description("Absolute path to a source .sln or .slnx solution.")] string targetPath,
+        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).")] int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
+        CancellationToken cancellationToken = default)
     {
-        return NavigationToolSupport.RouteAsync(runtime, "get_index_scope", targetPath, new { targetPath }, null, null,
-            McpResponseBudgetLimits.DefaultBytes, null,
+        return NavigationToolSupport.RouteAsync(runtime, "get_index_scope", targetPath, new { }, operationToken, continuationToken,
+            maxResponseBytes, maxResponseTokens,
             async (target, ct) => await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, token) =>
             {
                 var result = await IndexScopeScanner.ScanAsync(solution, token).ConfigureAwait(false);
@@ -30,29 +36,29 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                     return McpToolResults.Recoverable("INDEX_SCOPE_FAILED", result.Error ?? "The source index scope could not be scanned.",
                         "Check the loaded solution and repeat the query.");
                 return NavigationToolSupport.SuccessText(result.FormattedText, result.IsTruncated, result.NextAction);
-            }, McpResponseBudgetLimits.DefaultBytes, null, ct).ConfigureAwait(false),
+            }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false),
             AnalysisTargetType.Project, cancellationToken);
     }
 
     [McpServerTool(Name = "get_file_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("List indexed source files as a tree or flat file list, with optional path filters and metadata.")]
     public Task<CallToolResult> GetFileTree(
-        [Required] string targetPath,
-        string? root = null,
+        [Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
+        [System.ComponentModel.Description("Directory within the selected target whose contents form the tree root; defaults to the target directory.")] string? root = null,
         [System.ComponentModel.Description("Output view: tree (default), files, or summary.")] string view = "tree",
-        string[]? includeExtensions = null,
-        string? fileFilter = null,
-        string[]? excludePatterns = null,
-        [Range(0, 32)] int? maxDepth = null,
-        [Range(0, 32)] int? treeDepth = null,
-        [Range(1, 2000)] int maxResults = 20,
+        [System.ComponentModel.Description("Optional file extensions to include, such as .cs or .json.")] string[]? includeExtensions = null,
+        [System.ComponentModel.Description("Optional file-name or relative-path filter.")] string? fileFilter = null,
+        [System.ComponentModel.Description("Optional glob patterns for paths to exclude.")] string[]? excludePatterns = null,
+        [Range(0, 32), System.ComponentModel.Description("Maximum directory traversal depth; omit for the default depth.")] int? maxDepth = null,
+        [Range(0, 32), System.ComponentModel.Description("Maximum depth displayed in tree view; omit for the default depth.")] int? treeDepth = null,
+        [Range(1, 2000), System.ComponentModel.Description("Maximum files or tree entries to return.")] int maxResults = 20,
         [System.ComponentModel.Description("Ordering: path (default), size_desc, or extension.")] string sortBy = "path",
-        bool includeMetadata = true,
-        bool includeLineCount = false,
-        string? operationToken = null,
-        string? continuationToken = null,
-        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes)] int maxResponseBytes = 8 * 1024,
-        [Range(1, int.MaxValue)] int? maxResponseTokens = null,
+        [System.ComponentModel.Description("Include file size and extension metadata in the result.")] bool includeMetadata = true,
+        [System.ComponentModel.Description("Include indexed source line counts in file entries.")] bool includeLineCount = false,
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
+        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 8192).") ] int maxResponseBytes = 8 * 1024,
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
         CancellationToken cancellationToken = default)
     {
         var arguments = new { root, view, includeExtensions, fileFilter, excludePatterns, maxDepth, treeDepth, maxResults, sortBy, includeMetadata, includeLineCount };
@@ -112,12 +118,12 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     [McpServerTool(Name = "get_file_skeleton", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Show declarations in selected source files and provide navigable handles for their symbols.")]
     public Task<CallToolResult> GetFileSkeleton(
-        [Required] string targetPath,
-        [Required] string[] filePaths,
-        string? operationToken = null,
-        string? continuationToken = null,
-        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes)] int maxResponseBytes = 24 * 1024,
-        [Range(1, int.MaxValue)] int? maxResponseTokens = null,
+        [Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
+        [Required, System.ComponentModel.Description("One or more indexed relative or absolute source paths, or current symbol handoffs that identify a declaration file.")] string[] filePaths,
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
+        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 24576).") ] int maxResponseBytes = 24 * 1024,
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
         CancellationToken cancellationToken = default)
     {
         if (filePaths.Length == 0 || filePaths.Any(string.IsNullOrWhiteSpace))
@@ -149,18 +155,18 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     [McpServerTool(Name = "get_class_structure", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Inspect the members and declaration structure of a source or decompiled type.")]
     public Task<CallToolResult> GetClassStructure(
-        [Required] string targetPath,
-        [Required] string symbolIdentifier,
+        [Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
+        [Required, System.ComponentModel.Description("Type name, documentation ID, or current symbol handoff identifying the type.")] string symbolIdentifier,
         [System.ComponentModel.Description("Member ordering: lines (default), kind, or name.")] string sortBy = "lines",
-        [Range(1, 200)] int maxMembers = 50,
-        string? kindFilter = null,
-        string? nameFilter = null,
+        [Range(1, 200), System.ComponentModel.Description("Maximum members to include in the structure.")] int maxMembers = 50,
+        [System.ComponentModel.Description("Optional member-kind filter, such as method, property, field, event, or constructor.")] string? kindFilter = null,
+        [System.ComponentModel.Description("Optional substring filter applied to member names.")] string? nameFilter = null,
         [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all",
         [System.ComponentModel.Description("Include generated source files; defaults to false.")] bool includeGenerated = false,
-        string? operationToken = null,
-        string? continuationToken = null,
-        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes)] int maxResponseBytes = 16 * 1024,
-        [Range(1, int.MaxValue)] int? maxResponseTokens = null,
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
+        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16 * 1024,
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(symbolIdentifier))
@@ -230,18 +236,18 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     [McpServerTool(Name = "get_namespace_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Browse namespaces and their types in a source project or owned assembly target.")]
     public Task<CallToolResult> GetNamespaceTree(
-        [Required] string targetPath,
+        [Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
         [System.ComponentModel.Description("Optional exact project name or canonical project path used to disambiguate duplicate names.")] string? project = null,
         [System.ComponentModel.Description("Optional namespace prefix to select a project or namespace subtree.")] string? namespacePrefix = null,
         [System.ComponentModel.Description("Namespace depth from 1 through 3; defaults to 1.")] [Range(1, 3)] int depth = 1,
-        bool includeTypes = true,
+        [System.ComponentModel.Description("Include type declarations beneath each namespace.")] bool includeTypes = true,
         [System.ComponentModel.Description("Type kind: all (default), class, interface, record, struct, or enum.")] string kind = "all",
-        [Range(1, 200)] int maxResults = 50,
-        bool includeGenerated = false,
-        string? operationToken = null,
-        string? continuationToken = null,
-        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes)] int maxResponseBytes = 16 * 1024,
-        [Range(1, int.MaxValue)] int? maxResponseTokens = null,
+        [Range(1, 200), System.ComponentModel.Description("Maximum namespaces and types to return.")] int maxResults = 50,
+        [System.ComponentModel.Description("Include declarations from generated source files.")] bool includeGenerated = false,
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
+        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16 * 1024,
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
         CancellationToken cancellationToken = default)
     {
         var args = new { project, namespacePrefix, depth, includeTypes, kind, maxResults, includeGenerated };
