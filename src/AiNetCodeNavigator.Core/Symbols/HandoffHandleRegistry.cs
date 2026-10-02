@@ -44,6 +44,16 @@ public sealed class HandoffHandleRegistry
         }
     }
 
+    /// <summary>Removes all process-local handles when the owning host runtime is disposed.</summary>
+    public void Clear()
+    {
+        lock (syncLock)
+        {
+            internalToExternal.Clear();
+            externalToInternal.Clear();
+        }
+    }
+
     /// <summary>
     /// Creates or returns a compact, opaque handle for an internal handoff ID.
     /// </summary>

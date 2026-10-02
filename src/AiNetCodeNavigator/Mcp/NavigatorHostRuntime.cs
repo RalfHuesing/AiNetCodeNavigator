@@ -10,6 +10,7 @@ namespace AiNetCodeNavigator.Mcp;
 public sealed class NavigatorHostRuntime : IAsyncDisposable, IDisposable
 {
     internal static readonly TimeSpan ResponseWindow = TimeSpan.FromSeconds(15);
+    private int _disposeStarted;
 
     // Internal override keeps routing and polling tests deterministic; hosts retain the production default.
     internal NavigatorHostRuntime(
@@ -37,10 +38,14 @@ public sealed class NavigatorHostRuntime : IAsyncDisposable, IDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
+            return;
+
         await Operations.DisposeAsync().ConfigureAwait(false);
         await ProjectRegistry.DisposeAsync().ConfigureAwait(false);
         await AssemblyRegistry.DisposeAsync().ConfigureAwait(false);
         MSBuildSolutionLoader.CleanupDesignTimeScratch();
+        HandoffHandles.Clear();
     }
 
     public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();

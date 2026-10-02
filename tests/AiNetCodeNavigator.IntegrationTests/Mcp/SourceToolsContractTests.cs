@@ -19,6 +19,41 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class SourceToolsContractTests
 {
     [Fact]
+    public async Task DisposedRuntimeHandoffsAreUnknownToFreshRuntimeConsumers()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        using var configuration = new NavigatorHostConfiguration(
+            Path.Combine(Path.GetTempPath(), "ainet-source-runtime-lifecycle-" + Guid.NewGuid().ToString("N") + ".json"),
+            isDefaultPath: true,
+            new LoggingLevelSwitch(LogEventLevel.Warning));
+        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
+
+        using var fixture = TestTempDirectory.Create("ainet-source-runtime-lifecycle-");
+        var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
+        var oldRuntime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var producer = new SymbolTools(oldRuntime);
+        var found = await producer.FindSymbol(target, pattern: "Run", kind: "method", maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(found, 16384, 1024);
+        var oldHandoff = ReadHandoff(TextOf(found), "method Run in");
+
+        await oldRuntime.DisposeAsync();
+
+        await using var freshRuntime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var consumer = new SymbolTools(freshRuntime);
+        var body = await consumer.GetSymbolBody(target, [oldHandoff], maxResponseBytes: 16384, maxResponseTokens: 1024);
+
+        AssertErrorWithinBudget(body, "HANDOFF_UNKNOWN", 16384, 1024);
+
+        var freshResult = await consumer.FindSymbol(target, pattern: "Run", kind: "method", maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(freshResult, 16384, 1024);
+        var freshHandoff = ReadHandoff(TextOf(freshResult), "method Run in");
+        await oldRuntime.DisposeAsync();
+        var freshBody = await consumer.GetSymbolBody(target, [freshHandoff], maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(freshBody, 16384, 1024);
+        Assert.Contains("Run", TextOf(freshBody), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SourceHandlersReturnNavigableResultsAndTypedDomainErrorsWithoutTransport()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
