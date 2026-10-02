@@ -1,6 +1,6 @@
 # Setup
 
-AiNetCodeNavigator is a local MCP server that uses standard input/output (stdio). Use a Windows `AiNetCodeNavigator.exe` built or published from this repository. Building requires the .NET 10 SDK version in [`global.json`](../../global.json) (10.0.203 with latest-feature roll-forward); a framework-dependent executable also needs the .NET 10 runtime on the host. The source build command is `pwsh -File ./scripts/build.ps1`; this is a build command, not a published self-contained distribution.
+AiNetCodeNavigator is a local MCP server that uses standard input/output (stdio). Use a Windows `AiNetCodeNavigator.exe` built or published from this repository. Building requires the .NET 10 SDK version in [`global.json`](../../global.json) (10.0.203 with latest-feature roll-forward); a framework-dependent executable also needs the .NET 10 runtime on the host. The source build command is `pwsh -File ./scripts/build.ps1`; deploy the executable and its dependencies to a testable directory with `pwsh -File ./scripts/deploy.ps1`.
 
 ## Local process configuration
 

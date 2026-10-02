@@ -61,3 +61,6 @@ temp/
 
 # AiNetReview reports retained for manual review and cleanup
 /audit-reporting/
+
+# Local MCP server deployment directory
+deploy/
