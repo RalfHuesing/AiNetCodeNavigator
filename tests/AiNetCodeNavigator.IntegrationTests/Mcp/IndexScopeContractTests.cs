@@ -19,6 +19,7 @@ using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Server;
 using Serilog.Core;
 using Serilog.Events;
+using static AiNetCodeNavigator.IntegrationTests.Mcp.IntegrationMcpAssertions;
 
 namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 
@@ -155,12 +156,12 @@ public sealed class IndexScopeContractTests
         var expiredOperation = await tools.GetIndexScope(solutionPath, 512, 512, "unknown-operation");
         Assert.True(expiredOperation.IsError);
         Assert.Contains("OPERATION_EXPIRED", TextOf(expiredOperation), StringComparison.Ordinal);
-        AssertWithinBudget(TextOf(expiredOperation), 512, 512);
+        AssertBudget(TextOf(expiredOperation), 512, 512);
 
         var expiredContinuation = await tools.GetIndexScope(solutionPath, 512, 512, continuationToken: "unknown-continuation");
         Assert.True(expiredContinuation.IsError);
         Assert.Contains("CONTINUATION_EXPIRED", TextOf(expiredContinuation), StringComparison.Ordinal);
-        AssertWithinBudget(TextOf(expiredContinuation), 512, 512);
+        AssertBudget(TextOf(expiredContinuation), 512, 512);
 
         var mixedTokens = await tools.GetIndexScope(solutionPath, 512, 512, "unknown-operation", "unknown-continuation");
         Assert.True(mixedTokens.IsError);
@@ -279,12 +280,6 @@ public sealed class IndexScopeContractTests
         return string.IsNullOrWhiteSpace(explicitName) ? parameter.Name! : explicitName;
     }
 
-    private static void AssertWithinBudget(string text, int bytes, int tokens)
-    {
-        Assert.True(System.Text.Encoding.UTF8.GetByteCount(text) <= bytes);
-        Assert.True(McpResponseFormatter.CountTokens(text) <= tokens);
-    }
-
     private static async Task AssertIndexScopePagesReconstructAsync(
         StructureTools tools,
         string solutionPath,
@@ -345,21 +340,6 @@ public sealed class IndexScopeContractTests
         Assert.Equal(expectedBody, reconstructed.ToString());
     }
 
-    private static string BodyOf(string text)
-    {
-        var lines = text.Split('\n');
-        var firstContentLine = lines.Length > 1 && lines[1].StartsWith("continuationToken=", StringComparison.Ordinal) ? 2 : 1;
-        return string.Join("\n", lines.Skip(firstContentLine));
-    }
-
-    private static bool TryReadToken(string text, string name, out string token)
-    {
-        var prefix = name + "=";
-        var value = text.Split('\n').FirstOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal));
-        token = value is null ? string.Empty : value[prefix.Length..];
-        return value is not null;
-    }
-
     private static string ReadOperationToken(string text)
     {
         Assert.True(TryReadToken(text, "operationToken", out var token), text);
@@ -401,14 +381,6 @@ public sealed class IndexScopeContractTests
             Assert.True(deadline.Elapsed < timeout, "The owner state did not reach the expected state before timeout.");
             await Task.Delay(10);
         }
-    }
-
-    private static int ReadBudget(string text, string name)
-    {
-        var prefix = name + ": ";
-        var value = text.Split('\n').FirstOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal));
-        Assert.True(value is not null, $"Missing {name} in response: {text}");
-        return int.Parse(value![prefix.Length..], System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static async Task<string> CreateSourceFixtureAsync(string root)

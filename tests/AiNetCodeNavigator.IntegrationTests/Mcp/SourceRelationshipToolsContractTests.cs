@@ -4,7 +4,6 @@ using System.Text;
 using System.Text.Json;
 using AiNetCodeNavigator.Configuration;
 using AiNetCodeNavigator.Mcp;
-using AiNetCodeNavigator.Mcp.Formatting;
 using AiNetCodeNavigator.Mcp.Tools.Relationships;
 using AiNetCodeNavigator.Mcp.Tools.Symbols;
 using AiNetCodeNavigator.TestKit;
@@ -13,6 +12,7 @@ using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Protocol;
 using Serilog.Core;
 using Serilog.Events;
+using static AiNetCodeNavigator.IntegrationTests.Mcp.IntegrationMcpAssertions;
 
 namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 
@@ -300,35 +300,6 @@ public sealed class SourceRelationshipToolsContractTests
         return handoffs.Distinct(StringComparer.Ordinal).ToArray();
     }
 
-    private static void AssertSuccessWithinBudget(CallToolResult result, int bytes, int tokens)
-    {
-        Assert.False(result.IsError ?? false, TextOf(result));
-        AssertBudget(TextOf(result), bytes, tokens);
-    }
-
-    private static void AssertErrorWithinBudget(CallToolResult result, string code, int bytes, int tokens)
-    {
-        Assert.True(result.IsError ?? false, TextOf(result));
-        Assert.Contains(code, TextOf(result), StringComparison.Ordinal);
-        AssertBudget(TextOf(result), bytes, tokens);
-    }
-
-    private static void AssertBudget(string text, int bytes, int tokens)
-    {
-        Assert.InRange(Encoding.UTF8.GetByteCount(text), 0, bytes);
-        Assert.InRange(McpResponseFormatter.CountTokens(text), 0, tokens);
-    }
-
-    private static string TextOf(CallToolResult result) =>
-        Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
-
-    private static string BodyOf(string text)
-    {
-        var lines = text.Split('\n');
-        var firstContentLine = lines.Length > 1 && lines[1].StartsWith("continuationToken=", StringComparison.Ordinal) ? 2 : 1;
-        return string.Join("\n", lines.Skip(firstContentLine));
-    }
-
     private static string ReadHandoffFromLine(string line)
     {
         const string marker = "[handoff: ";
@@ -338,22 +309,6 @@ public sealed class SourceRelationshipToolsContractTests
         var end = line.IndexOf(']', start);
         Assert.True(end > start, line);
         return line[start..end];
-    }
-
-    private static bool TryReadToken(string text, string name, out string token)
-    {
-        var prefix = name + "=";
-        var value = text.Split('\n').FirstOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal));
-        token = value is null ? string.Empty : value[prefix.Length..];
-        return value is not null;
-    }
-
-    private static int ReadBudget(string text, string name)
-    {
-        var prefix = name + ": ";
-        var value = text.Split('\n').FirstOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal));
-        Assert.True(value is not null, $"Missing {name}: {text}");
-        return int.Parse(value![prefix.Length..], System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static async Task<string> CreateSourceSolutionAsync(string root, int fillerCount = 0)

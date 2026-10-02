@@ -105,9 +105,27 @@ public sealed class FindReferencesResolverTests
             var compilation = await solution.GetProject(contractsId)!.GetCompilationAsync();
             var target = compilation!.GetTypeByMetadataName("Contracts.Target")!.GetMembers("Run").OfType<IMethodSymbol>().Single();
             var result = await FindReferencesResolver.FindReferencesAsync(target, solution, maxResults: 10);
+            var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, solution, maxResults: 10);
+            var referencesWithoutHandoffs = await FindReferencesResolver.FindReferencesAsync(
+                target, solution, maxResults: 10, depth: 1, handoffFormatter: _ => null);
+            var impactWithoutHandoffs = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(
+                target, solution, maxResults: 10, handoffFormatter: _ => null);
 
             Assert.Equal(2, result.TotalCount);
             Assert.Equal(2, result.References.Count);
+            Assert.Equal(2, impact.TransitiveImpactCount);
+            Assert.Equal(2, impact.CallSites.Count);
+            Assert.Equal(2, impact.CallSites.Select(site => site.CallingMemberHandoffId).Distinct().Count());
+            foreach (var site in impact.CallSites)
+            {
+                var resolved = await SourceSymbolResolver.ResolveAsync(solution, site.CallingMemberHandoffId!);
+                Assert.True(resolved.IsSuccess);
+                var sourceTree = Assert.Single(resolved.Symbol!.Locations.Where(location => location.IsInSource)).SourceTree;
+                Assert.Equal(linkedPath, solution.GetDocument(sourceTree!)!.FilePath);
+            }
+            Assert.Equal(2, referencesWithoutHandoffs.TotalCount);
+            Assert.Equal(2, impactWithoutHandoffs.TransitiveImpactCount);
+            Assert.Equal(2, impactWithoutHandoffs.DirectCallersCount);
             Assert.All(result.References, reference => Assert.Equal("Shared", reference.ProjectName));
             var ownerPaths = new List<string?>();
             foreach (var reference in result.References)

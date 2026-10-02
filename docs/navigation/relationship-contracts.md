@@ -4,6 +4,8 @@ The Core relationship engines operate on Roslyn symbols from the same solution s
 
 `FindReferencesResolver` and `ImpactAnalyzer` use breadth-first caller traversal with the same depth convention: direct call sites are depth 1, and each caller expansion advances one level. Both retain reached-from symbol provenance and the source column in site identity. Two calls on one line remain distinct, as do multiple virtual call paths reaching the same caller location. Both APIs use stable project, path, caller, reached-from, and column ordering, so their matching results remain aligned. Impact additionally reports direct and transitive counts and affected project/file summaries.
 
+Relationship site identity also retains the owning project internally. Linked source documents shared by same-named projects remain distinct even when a caller cannot receive a handoff identifier.
+
 `CallTreeBuilder` can follow the same source chain in either direction. Outgoing traversal reads block-bodied and expression-bodied members; incoming traversal groups source references by caller. Graph nodes carry resolvable handoffs, and call sites between the same pair of nodes are combined.
 
 `FindReferencesResolver.FindImplementationsAsync` reports interface member implementations and virtual or abstract overrides. `TypeHierarchyScanner` reports source base/interface entries and transitive derived or implementing types across project references. Their source entries carry the same project-bound handoff contract.

@@ -46,7 +46,7 @@ public static class ImpactAnalyzer
         var queue = new Queue<(ISymbol Symbol, int Level)>();
         queue.Enqueue((symbol, 1));
 
-        var allSites = new List<ImpactCallSiteEntry>();
+        var allSites = new List<(ImpactCallSiteEntry Entry, string CallerProjectPath, string CallerProjectId, string CallerSymbolId)>();
         var maxDepthReached = 0;
         var totalNodesExplored = 0;
 
@@ -102,7 +102,7 @@ public static class ImpactAnalyzer
                         ? SourceHandoffFormatter.Format(caller, solution, handoffIdentity)
                         : handoffFormatter(caller);
 
-                    allSites.Add(new ImpactCallSiteEntry(
+                    var entry = new ImpactCallSiteEntry(
                         FilePath: relPath,
                         Line: line,
                         Column: column,
@@ -111,7 +111,12 @@ public static class ImpactAnalyzer
                         ProjectName: doc.Project.Name,
                         Depth: currentLevel,
                         ReachedFromSymbolId: reachedFromSymbolId,
-                        ReachedFromSymbolHandoffId: reachedFromSymbolHandoffId));
+                        ReachedFromSymbolHandoffId: reachedFromSymbolHandoffId);
+                    var callerProjectPath = doc.Project.FilePath is { Length: > 0 } projectPath
+                        ? Path.GetFullPath(projectPath)
+                        : string.Empty;
+                    var callerSymbolId = RelationshipSymbolIdentity.GetStableId(caller);
+                    allSites.Add((entry, callerProjectPath, doc.Project.Id.Id.ToString("N"), callerSymbolId));
 
                     if (currentLevel < depth && visited.Add(caller))
                     {
@@ -122,41 +127,35 @@ public static class ImpactAnalyzer
         }
 
         var distinctSites = allSites
-            .GroupBy(s => (
-                s.ProjectName,
-                s.FilePath,
-                s.Line,
-                s.Column,
-                s.CallingMember,
-                s.CallingMemberHandoffId,
-                s.Depth,
-                s.ReachedFromSymbolId,
-                s.ReachedFromSymbolHandoffId))
-            .Select(g => g.OrderBy(s => s.Depth).First())
-            .OrderBy(s => s.Depth)
-            .ThenBy(s => s.ProjectName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(s => s.FilePath, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(s => s.FilePath, StringComparer.Ordinal)
-            .ThenBy(s => s.Line)
-            .ThenBy(s => s.CallingMember, StringComparer.Ordinal)
-            .ThenBy(s => s.CallingMemberHandoffId, StringComparer.Ordinal)
-            .ThenBy(s => s.ReachedFromSymbolId, StringComparer.Ordinal)
-            .ThenBy(s => s.ReachedFromSymbolHandoffId, StringComparer.Ordinal)
-            .ThenBy(s => s.Column)
+            .GroupBy(site => (site.Entry, site.CallerProjectId, site.CallerSymbolId))
+            .Select(group => group.First())
+            .OrderBy(site => site.Entry.Depth)
+            .ThenBy(site => site.CallerProjectPath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(site => site.CallerProjectPath, StringComparer.Ordinal)
+            .ThenBy(site => site.Entry.FilePath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(site => site.Entry.FilePath, StringComparer.Ordinal)
+            .ThenBy(site => site.Entry.Line)
+            .ThenBy(site => site.Entry.ProjectName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(site => site.Entry.CallingMember, StringComparer.Ordinal)
+            .ThenBy(site => site.CallerProjectId, StringComparer.Ordinal)
+            .ThenBy(site => site.CallerSymbolId, StringComparer.Ordinal)
+            .ThenBy(site => site.Entry.ReachedFromSymbolId, StringComparer.Ordinal)
+            .ThenBy(site => site.Entry.ReachedFromSymbolHandoffId, StringComparer.Ordinal)
+            .ThenBy(site => site.Entry.Column)
             .ToList();
 
         var isTruncated = distinctSites.Count > effectiveResultLimit;
         var truncatedByNodeLimit = queue.Count > 0 && totalNodesExplored >= effectiveNodeLimit;
-        var shownSites = distinctSites.Take(effectiveResultLimit).ToList();
+        var shownSites = distinctSites.Take(effectiveResultLimit).Select(site => site.Entry).ToList();
 
         var affectedProjects = distinctSites
-            .Select(s => s.ProjectName)
+            .Select(s => s.Entry.ProjectName)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         var affectedFiles = distinctSites
-            .Select(s => s.FilePath)
+            .Select(s => s.Entry.FilePath)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -164,7 +163,7 @@ public static class ImpactAnalyzer
         return new SymbolImpactPayload(
             TargetSymbol: symbol.Name,
             TargetKind: symbol.Kind.ToString().ToLowerInvariant(),
-            DirectCallersCount: distinctSites.Count(site => site.Depth == 1),
+            DirectCallersCount: distinctSites.Count(site => site.Entry.Depth == 1),
             TransitiveImpactCount: distinctSites.Count,
             MaxDepthReached: maxDepthReached,
             CallSites: shownSites,
@@ -177,7 +176,7 @@ public static class ImpactAnalyzer
             IsTruncatedByNodeLimit: truncatedByNodeLimit,
             IsDepthClamped: maxDepth != depth,
             EffectiveNodeLimit: effectiveNodeLimit,
-            TransitiveCallSitesCount: distinctSites.Count(site => site.Depth > 1));
+            TransitiveCallSitesCount: distinctSites.Count(site => site.Entry.Depth > 1));
     }
 
 }

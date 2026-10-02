@@ -3865,27 +3865,6 @@ if (Directory.Exists(fixtureRoot))
         Assert.True(process.ExitCode == 0, $"Temporary fixture command failed ({executable} {string.Join(' ', arguments)}):\n{error}\n{output}");
     }
 
-    private static async Task<(string StandardOutput, string StandardError)> RunCommandCaptureAsync(string executable, string workingDirectory, params string[] arguments)
-    {
-        var startInfo = new ProcessStartInfo(executable)
-        {
-            WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException($"Could not start {executable} for the temporary fixture.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromMinutes(2));
-        var output = await stdout;
-        var error = await stderr;
-        Assert.True(process.ExitCode == 0, $"Temporary fixture command failed ({executable} {string.Join(' ', arguments)}):\n{error}\n{output}");
-        return (output, error);
-    }
-
     private static void ClearReadOnlyAttributesWithinOwnedFixture(string fixtureRoot)
     {
         var fullRoot = Path.GetFullPath(fixtureRoot);
@@ -3972,53 +3951,11 @@ if (Directory.Exists(fixtureRoot))
         return response;
     }
 
-    private static async Task<Dictionary<int, JsonElement>> ReadResponsesAsync(Process process, IReadOnlyCollection<int> expectedIds, CancellationToken cancellationToken)
-    {
-        var responses = new Dictionary<int, JsonElement>();
-        var expected = expectedIds.ToHashSet();
-        while (responses.Count < expected.Count && await process.StandardOutput.ReadLineAsync(cancellationToken) is { } line)
-        {
-            using var document = JsonDocument.Parse(line);
-            var root = document.RootElement;
-            if (root.TryGetProperty("id", out var responseId) && responseId.TryGetInt32(out var id) && expected.Contains(id))
-                responses[id] = root.Clone();
-        }
-        Assert.Equal(expected.Count, responses.Count);
-        return responses;
-    }
-
-    private static async Task<JsonElement> PollRunningImpactAsync(
-        Process process,
-        int initialRequestId,
-        JsonElement response,
-        IReadOnlyDictionary<string, object?> originalArguments,
-        CancellationToken cancellationToken)
-    {
-        for (var poll = 0; poll < 240 && GetFirstText(response).Contains("operation=running", StringComparison.Ordinal); poll++)
-        {
-            var operationToken = ReadStringLine(GetFirstText(response), "operationToken");
-            var arguments = new Dictionary<string, object?>(originalArguments, StringComparer.Ordinal)
-            {
-                ["operationToken"] = operationToken,
-            };
-            var requestId = initialRequestId + 1000 + poll;
-            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
-            await SendRequestAsync(process, requestId, "tools/call", new { name = "get_impact", arguments }, cancellationToken);
-            response = await ReadResponseAsync(process, requestId, cancellationToken);
-        }
-
-        Assert.DoesNotContain("operation=running", GetFirstText(response), StringComparison.Ordinal);
-        return response;
-    }
-
     private static Task SendRequestAsync(Process process, int id, string method, object parameters, CancellationToken cancellationToken) =>
         WriteLineAsync(process, JsonSerializer.Serialize(new { jsonrpc = "2.0", id, method, @params = parameters }), cancellationToken);
 
     private static Task SendNotificationAsync(Process process, string method, CancellationToken cancellationToken) =>
         WriteLineAsync(process, JsonSerializer.Serialize(new { jsonrpc = "2.0", method }), cancellationToken);
-
-    private static Task SendNotificationAsync(Process process, string method, object parameters, CancellationToken cancellationToken) =>
-        WriteLineAsync(process, JsonSerializer.Serialize(new { jsonrpc = "2.0", method, @params = parameters }), cancellationToken);
 
     private static async Task WriteLineAsync(Process process, string line, CancellationToken cancellationToken)
     {

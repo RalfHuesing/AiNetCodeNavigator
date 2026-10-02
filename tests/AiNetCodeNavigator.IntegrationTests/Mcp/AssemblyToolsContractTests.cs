@@ -2,7 +2,6 @@ using System.Text;
 using System.Reflection;
 using AiNetCodeNavigator.Configuration;
 using AiNetCodeNavigator.Mcp;
-using AiNetCodeNavigator.Mcp.Formatting;
 using AiNetCodeNavigator.Mcp.Tools;
 using AiNetCodeNavigator.Mcp.Tools.Assemblies;
 using AiNetCodeNavigator.Mcp.Tools.Relationships;
@@ -13,6 +12,7 @@ using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Protocol;
 using Serilog.Core;
 using Serilog.Events;
+using static AiNetCodeNavigator.IntegrationTests.Mcp.IntegrationMcpAssertions;
 
 namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 
@@ -463,7 +463,7 @@ public sealed class AssemblyToolsContractTests
         Assert.Contains("Run inspect_assembly again", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Status: operation=ok", text, StringComparison.Ordinal);
         Assert.InRange(Encoding.UTF8.GetByteCount(text), 0, 32768);
-        Assert.InRange(McpResponseFormatter.CountTokens(text), 0, 4096);
+        Assert.InRange(TokenCount(text), 0, 4096);
 
         var added = await symbols.FindSymbol(assemblyPath, pattern: "Added", kind: "method", maxResponseBytes: 32768);
         AssertOwnerResult(added, "Added");
@@ -749,7 +749,7 @@ public sealed class AssemblyToolsContractTests
         Assert.DoesNotContain("operation=retry", text, StringComparison.Ordinal);
         Assert.Contains(expectedText, text, StringComparison.Ordinal);
         Assert.InRange(Encoding.UTF8.GetByteCount(text), 0, bytes);
-        Assert.InRange(McpResponseFormatter.CountTokens(text), 0, tokens);
+        Assert.InRange(TokenCount(text), 0, tokens);
     }
 
     private static void AssertError(CallToolResult result, string code)
@@ -767,7 +767,7 @@ public sealed class AssemblyToolsContractTests
         var first = await invoke(requestedBytes, requestedTokens);
         var firstText = TextOf(first);
         Assert.InRange(Encoding.UTF8.GetByteCount(firstText), 0, requestedBytes);
-        Assert.InRange(McpResponseFormatter.CountTokens(firstText), 0, requestedTokens);
+        Assert.InRange(TokenCount(firstText), 0, requestedTokens);
         if (!firstText.Contains("RESPONSE_BUDGET_TOO_SMALL", StringComparison.Ordinal))
         {
             Assert.False(first.IsError ?? false, firstText);
@@ -782,14 +782,14 @@ public sealed class AssemblyToolsContractTests
         Assert.False(recovered.IsError ?? false, recoveredText);
         Assert.DoesNotContain("RESPONSE_BUDGET_TOO_SMALL", recoveredText, StringComparison.Ordinal);
         Assert.InRange(Encoding.UTF8.GetByteCount(recoveredText), 0, minBytes);
-        Assert.InRange(McpResponseFormatter.CountTokens(recoveredText), 0, minTokens);
+        Assert.InRange(TokenCount(recoveredText), 0, minTokens);
         AssertOwnerPage(recoveredText);
 
         var repeated = await invoke(minBytes, minTokens);
         var repeatedText = TextOf(repeated);
         Assert.Equal(recoveredText, repeatedText);
         Assert.InRange(Encoding.UTF8.GetByteCount(repeatedText), 0, minBytes);
-        Assert.InRange(McpResponseFormatter.CountTokens(repeatedText), 0, minTokens);
+        Assert.InRange(TokenCount(repeatedText), 0, minTokens);
     }
 
     private static void AssertOwnerPage(string text)
@@ -798,26 +798,6 @@ public sealed class AssemblyToolsContractTests
         Assert.DoesNotContain("operation=running", text, StringComparison.Ordinal);
         Assert.DoesNotContain("operation=retry", text, StringComparison.Ordinal);
         Assert.DoesNotContain("operation=loading", text, StringComparison.Ordinal);
-    }
-
-    private static int ReadBudget(string text, string key)
-    {
-        var marker = key + ": ";
-        var start = text.IndexOf(marker, StringComparison.Ordinal);
-        Assert.True(start >= 0, text);
-        start += marker.Length;
-        var end = start;
-        while (end < text.Length && char.IsAsciiDigit(text[end])) end++;
-        Assert.True(int.TryParse(text[start..end], out var value), text);
-        return value;
-    }
-
-    private static void AssertSuccessWithinBudget(CallToolResult result, int bytes, int tokens)
-    {
-        Assert.False(result.IsError ?? false, TextOf(result));
-        var text = TextOf(result);
-        Assert.InRange(Encoding.UTF8.GetByteCount(text), 0, bytes);
-        Assert.InRange(McpResponseFormatter.CountTokens(text), 0, tokens);
     }
 
     private static string ReadDomainCursor(string text)
@@ -850,7 +830,7 @@ public sealed class AssemblyToolsContractTests
             firstPage ??= text;
             Assert.False(result.IsError ?? false, text);
             Assert.InRange(Encoding.UTF8.GetByteCount(text), 0, bytes);
-            Assert.InRange(McpResponseFormatter.CountTokens(text), 0, tokens);
+            Assert.InRange(TokenCount(text), 0, tokens);
             Assert.DoesNotContain("operation=running", text, StringComparison.Ordinal);
             Assert.DoesNotContain("operation=retry", text, StringComparison.Ordinal);
             accumulated.Append(BodyOf(text));
@@ -875,7 +855,7 @@ public sealed class AssemblyToolsContractTests
             var result = await invoke(bytes, tokens, continuation);
             var page = TextOf(result);
             Assert.InRange(Encoding.UTF8.GetByteCount(page), 0, bytes);
-            Assert.InRange(McpResponseFormatter.CountTokens(page), 0, tokens.Value);
+            Assert.InRange(TokenCount(page), 0, tokens.Value);
             if (page.Contains("RESPONSE_BUDGET_TOO_SMALL", StringComparison.Ordinal))
             {
                 Assert.True(result.IsError ?? false, page);
@@ -888,7 +868,7 @@ public sealed class AssemblyToolsContractTests
                 Assert.False(recovered.IsError ?? false, recoveredText);
                 Assert.DoesNotContain("RESPONSE_BUDGET_TOO_SMALL", recoveredText, StringComparison.Ordinal);
                 Assert.InRange(Encoding.UTF8.GetByteCount(recoveredText), 0, minBytes);
-                Assert.InRange(McpResponseFormatter.CountTokens(recoveredText), 0, minTokens);
+                Assert.InRange(TokenCount(recoveredText), 0, minTokens);
                 Assert.Equal(recoveredText, TextOf(await invoke(minBytes, minTokens, continuation)));
                 result = recovered;
                 page = recoveredText;

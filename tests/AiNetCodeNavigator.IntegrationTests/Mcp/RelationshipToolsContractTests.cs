@@ -12,6 +12,7 @@ using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Server;
 using Serilog.Core;
 using Serilog.Events;
+using static AiNetCodeNavigator.IntegrationTests.Mcp.IntegrationMcpAssertions;
 
 namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 
@@ -123,13 +124,6 @@ public sealed class RelationshipToolsContractTests
         Assert.False(body.IsError ?? false, TextOf(body));
         Assert.Contains(expectedCaller, TextOf(body), StringComparison.Ordinal);
         Assert.Contains("CompactTarget.Read", TextOf(body), StringComparison.Ordinal);
-    }
-
-    private static string BodyOf(string text)
-    {
-        var lines = text.Split('\n');
-        var firstContentLine = lines.Length > 1 && lines[1].StartsWith("continuationToken=", StringComparison.Ordinal) ? 2 : 1;
-        return string.Join("\n", lines.Skip(firstContentLine));
     }
 
     private static async Task AssertImpactPagesReconstructAsync(RelationshipTools tools, string targetPath, string symbolIdentifier)
@@ -286,22 +280,6 @@ public sealed class RelationshipToolsContractTests
         Assert.Equal(expectedBody, reconstructed.ToString());
         var longCallerNameInBody = "LongCaller" + new string('X', 700);
         Assert.Equal(1, CountOccurrences(reconstructed.ToString(), longCallerNameInBody));
-    }
-
-    private static int ReadBudget(string text, string name)
-    {
-        var prefix = name + ": ";
-        var value = text.Split('\n').FirstOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal));
-        Assert.True(value is not null, $"Missing {name} in response: {text}");
-        return int.Parse(value![prefix.Length..], System.Globalization.CultureInfo.InvariantCulture);
-    }
-
-    private static bool TryReadToken(string text, string name, out string token)
-    {
-        var prefix = name + "=";
-        var value = text.Split('\n').FirstOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal));
-        token = value is null ? string.Empty : value[prefix.Length..];
-        return value is not null;
     }
 
     private static async Task<string> CreateSourceFixtureAsync(string root)

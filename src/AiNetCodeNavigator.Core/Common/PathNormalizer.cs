@@ -25,12 +25,15 @@ public static class PathNormalizer
         var normalizedRoot = Path.GetFullPath(outputRoot);
         var normalizedFile = Path.GetFullPath(absoluteFilePath);
 
-        if (!normalizedFile.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
+        var relative = Path.GetRelativePath(normalizedRoot, normalizedFile);
+        if (Path.IsPathRooted(relative)
+            || relative.Equals("..", StringComparison.Ordinal)
+            || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal))
         {
             return Path.GetFileName(normalizedFile).Replace('\\', '/');
         }
 
-        var relative = Path.GetRelativePath(normalizedRoot, normalizedFile);
         return relative.Replace('\\', '/');
     }
 
