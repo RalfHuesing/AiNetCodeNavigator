@@ -59,6 +59,26 @@ pwsh -File ./scripts/build.ps1
 - `TreatWarningsAsErrors` and `Nullable` reference types are enabled across all projects in `Directory.Build.props`.
 - Roslyn analyzers (`Meziantou.Analyzer` and `Microsoft.CodeAnalysis.NetAnalyzers`) are enforced with `.editorconfig` severity mappings.
 
+## Deployment
+
+Deploy the MCP server executable and dependencies to a testable output directory using the PowerShell deployment script:
+
+```powershell
+# Default: builds solution (Release), runs routine tests, and deploys to <RepoRoot>/deploy
+pwsh -File ./scripts/deploy.ps1
+
+# Rapid test deployment using only fast tests
+pwsh -File ./scripts/deploy.ps1 -FastTestsOnly
+
+# Custom output directory
+pwsh -File ./scripts/deploy.ps1 -OutputDir C:\Tools\AiNetCodeNavigator
+```
+
+- Builds the solution (`AiNetCodeNavigator.slnx`), runs tests, and publishes `src/AiNetCodeNavigator/` via `dotnet publish`.
+- The default destination directory `<RepoRoot>/deploy` is ignored in `.gitignore`.
+- Generates a default `hostsettings.json` if missing and outputs ready-to-copy JSON configuration snippets for MCP clients (Cursor, Claude Desktop, Antigravity IDE).
+- Console output is streamed directly to `temp/deploy.log`.
+
 ## Running Tests
 
 Run the test suites using the dedicated test scripts:
@@ -77,7 +97,7 @@ pwsh -File ./scripts/test.ps1
 pwsh -File ./scripts/test.ps1 -IncludeExtended
 ```
 
-All standard test-script invocations exclude `Category=E2EIntegration` and combine that exclusion with any supplied `-Filter`. This category marks complete product flows over the child stdio host, MCP client/server stream handshakes, and repository-wide report publication. Those cases remain in the test projects but are outside the MCP server acceptance gates.
+All standard test-script invocations exclude `Category=E2EIntegration` and combine that exclusion with any supplied `-Filter`. This category marks complete product flows over the child stdio host and MCP client/server stream handshakes. Those cases remain in the test projects but are outside the MCP server acceptance gates.
 
 Agents and automation tools should inspect the static log files under `temp/*.log` whenever diagnosing build or test outcomes.
 
@@ -85,16 +105,16 @@ The full solution script runs test projects sequentially (`-m:1`) so Integration
 
 ### E2E and extended integration tests
 
-`scripts/test-integration.ps1` and `scripts/test.ps1` exclude `Category=ExtendedIntegration` by default; `-IncludeExtended` removes only that exclusion. All ordinary script invocations exclude `Category=E2EIntegration`. The only exception is `scripts/test-fast.ps1 -ReviewReportsOnly`, which selects the one fixed report-publication test `AiNetCodeNavigator.FastTests.Reporting.RepositoryAuditReportTests.Review_PublishesRepositoryReportsWithoutBaseline`; it does not enable other E2E cases. Supplied filters are parenthesized and AND-combined with exclusions, so an OR filter cannot bypass them. `-ReviewReportsOnly` cannot be combined with `-Filter`. Use the scripts' `-Filter` parameter rather than passing `--filter` through additional arguments. Direct `dotnet test` calls do not apply the scripts' exclusions.
+`scripts/test-integration.ps1` and `scripts/test.ps1` exclude `Category=ExtendedIntegration` by default; `-IncludeExtended` removes only that exclusion. All ordinary script invocations exclude `Category=E2EIntegration`. `scripts/test-fast.ps1 -ReviewReportsOnly` remains available to select `AiNetCodeNavigator.FastTests.Reporting.RepositoryAuditReportTests.Review_PublishesRepositoryReportsWithoutBaseline` directly. Supplied filters are parenthesized and AND-combined with exclusions, so an OR filter cannot bypass them. `-ReviewReportsOnly` cannot be combined with `-Filter`. Use the scripts' `-Filter` parameter rather than passing `--filter` through additional arguments. Direct `dotnet test` calls do not apply the scripts' exclusions.
 
-`McpServerIntegrationTests`, `McpArgumentValidationFilterTests`, and `RepositoryAuditReportTests` carry the E2E category because they run a child stdio host, a client/server stream handshake, or repository-wide report publication. `McpInputSchemaTests` and the transport-free contract tests exercise original definitions, validators, and handlers without MCP transport and remain eligible. Select affected `ExtendedIntegration` tests for shared host, workspace, symbol-analysis, or response-processing changes only when they are not `E2EIntegration`. Include eligible extended tests only for release verification or an explicitly requested complete gate.
+`McpServerIntegrationTests` and `McpArgumentValidationFilterTests` carry the E2E category because they run a child stdio host or a client/server stream handshake. `RepositoryAuditReportTests` runs unconditionally in the fast test suite without an E2E category trait. `McpInputSchemaTests` and the transport-free contract tests exercise original definitions, validators, and handlers without MCP transport and remain eligible. Select affected `ExtendedIntegration` tests for shared host, workspace, symbol-analysis, or response-processing changes only when they are not `E2EIntegration`. Include eligible extended tests only for release verification or an explicitly requested complete gate.
 
 ### Automatic audit reports
 
-`RepositoryAuditReportTests.Review_PublishesRepositoryReportsWithoutBaseline` is the single report case available through the narrow `-ReviewReportsOnly` opt-in. It launches `C:\Daten\Tools\AiNetReview-win-x64\AiNetReview.exe review <repository-root>` without a window and captures both process streams. The executable must exist at that path. Missing tools, process errors, missing report indexes, cancellation, or a ten-minute timeout fail the test; findings never fail it. This report-publication exception does not count as MCP host, client, stdio, handshake, or JSON-RPC acceptance evidence.
+`RepositoryAuditReportTests.Review_PublishesRepositoryReportsWithoutBaseline` runs unconditionally as part of routine FastTests. It launches `C:\Daten\Tools\AiNetReview-win-x64\AiNetReview.exe review <repository-root>` asynchronously in the background without a window, without waiting for completion, and without verifying generated output. The executable must exist at that path; the test fails only when the executable is missing.
 
-The versioned [`ainetreview.json`](../../ainetreview.json) selects `AiNetCodeNavigator.slnx`, enables all eight current analyses with their defaults, and publishes to the Git-ignored `audit-reporting/` directory. Each review creates its own timestamped run directory with a root `index.md` and `production/`, `tests/`, and `mixed/` area directories. Each area publishes separate `changed-files/` and `all-findings/` indexes. No baseline is created or updated. Because AiNetReview automatically reads an existing baseline, the test rejects `audit-reporting/baseline.json` if one has been added manually. Without a baseline, both views include all current findings in their applicable areas.
+The versioned [`ainetreview.json`](../../ainetreview.json) selects `AiNetCodeNavigator.slnx`, enables all eight current analyses with their defaults, and publishes to the Git-ignored `audit-reporting/` directory. Each review creates its own timestamped run directory with a root `index.md` and `production/`, `tests/`, and `mixed/` area directories. Each area publishes separate `changed-files/` and `all-findings/` indexes. No baseline is created or updated. Without a baseline, both views include all current findings in their applicable areas.
 
 Published reports remain available across test runs and are deleted only manually. For a later agent review, select a run and explicitly request an audit/review using its `index.md`; report generation itself does not start an agent review or modify code. AiNetReview may include baseline instructions in its generated index, but this test only invokes `review`. AiNetReview's own executable logs are stored beside that external tool under `logs/`.
 
-E2EIntegration cases remain excluded from routine gates, including when `-IncludeExtended` is supplied. The report-only opt-in runs exactly the fixed external report case described above. MCP completion verification uses transport-free SDK definitions, validators, handlers, formatters, stores, runtimes, and bounded component integrations. See [MCP Argument Validation](../mcp-argument-validation.md), [MCP Host](../mcp-host.md), [MCP Tools](../tools/README.md), and [MCP navigation registration status](../navigation/mcp-registration-status.md).
+E2EIntegration cases remain excluded from routine gates, including when `-IncludeExtended` is supplied. MCP completion verification uses transport-free SDK definitions, validators, handlers, formatters, stores, runtimes, and bounded component integrations. See [MCP Argument Validation](../mcp-argument-validation.md), [MCP Host](../mcp-host.md), [MCP Tools](../tools/README.md), and [MCP navigation registration status](../navigation/mcp-registration-status.md).
