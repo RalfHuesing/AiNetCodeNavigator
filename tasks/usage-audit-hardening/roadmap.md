@@ -4,7 +4,7 @@ Verbindliche Spezifikation: [freigegebenes Konzept](Konzept.md), `status: ready`
 
 ## Ausführung und Nachweise
 
-Diese Datei ist der Index mit Reihenfolge, verbindlichen Status-Checkboxen und Scopeabdeckung. Jeder Aufgaben- und Auditpunkt steht vollständig in einer eigenen Datei unter `roadmap/`; dort werden auch seine Nachweise gepflegt. Gemeinsame Ausführungsregeln stehen hier und gelten für alle Punkt-Dateien. In Schritt 4 werden die Punkte in der angegebenen Reihenfolge bearbeitet. Resume ist der erste offene ausführbare Aufgabenpunkt im Index; eine offene Milestone-Checkbox ist ein Aggregat und kein eigener Arbeitsauftrag. Status-Checkboxen werden ausschließlich in diesem Index gepflegt. Die Milestone-Checkbox wird erst geschlossen, wenn ihre Aufgaben einschließlich Audit abgeschlossen sind.
+Diese Datei ist der Index mit Reihenfolge, verbindlichen Status-Checkboxen und Scopeabdeckung. Jeder Aufgaben- und Auditpunkt steht vollständig in einer eigenen Datei unter `roadmap/`; dort werden auch seine Nachweise gepflegt. Gemeinsame Ausführungsregeln stehen hier und gelten für alle Punkt-Dateien. In Schritt 4 werden die Punkte in der angegebenen Reihenfolge bearbeitet. Resume ist der erste offene ausführbare Aufgabenpunkt im Index; offene Milestone- oder Aufgaben-Checkboxen mit Unterpunkten sind Aggregate und keine eigenen Arbeitsaufträge. Bei M2-T1 wird jeweils der erste offene Unterpunkt bearbeitet. Status-Checkboxen werden ausschließlich in diesem Index gepflegt. Die Milestone-Checkbox wird erst geschlossen, wenn ihre Aufgaben einschließlich Audit abgeschlossen sind.
 
 Für jeden Codepunkt gelten dieselben Anforderungen: betroffenen Ist-Stand und Verbraucher lesen, bei einem reproduzierbaren Defekt zuerst einen fehlgeschlagenen Nachweis herstellen, den vollständigen betroffenen Vertrag implementieren, gezielt verifizieren, aktuelle Dokumentation im selben Slice aktualisieren und ausschließlich die eigenen Änderungen committen. Anforderungen und Grenzwerte werden nicht zugunsten grüner Checks abgeschwächt. Der Abschlussnachweis wird direkt beim jeweiligen Punkt ergänzt: Commit, ausgeführte Checks/Ergebnisse, belegte Analysegrenzen und tatsächlich unerfüllte Nachweise. Keine separate Fortschritts-, Audit- oder Schuldenverwaltung.
 
@@ -31,6 +31,13 @@ Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept 
 ## M2 — Nachladbare, kompakte Navigation und gemeinsamer Kontext
 
 - [ ] **[M2-T1 — Source- und gemeinsame Trefferlisten vollständig nachladen](roadmap/M2-T1.md)**
+  - [ ] **[M2-T1.1 — Hängenden Integrationslauf untersuchen und stabilisieren](roadmap/M2-T1.1.md)**
+  - [ ] **[M2-T1.2 — Symbolsuche vollständig nachladen](roadmap/M2-T1.2.md)**
+  - [ ] **[M2-T1.3 — Referenzen und Implementierungen vollständig nachladen](roadmap/M2-T1.3.md)**
+  - [ ] **[M2-T1.4 — Typ-, Datei- und Namespaceinventare vollständig nachladen](roadmap/M2-T1.4.md)**
+  - [ ] **[M2-T1.5 — Hierarchie- und Impactlisten samt Budgetregression abschließen](roadmap/M2-T1.5.md)**
+  - [ ] **[M2-T1.6 — Indexscope und Projektidentität belegen](roadmap/M2-T1.6.md)**
+  - [ ] **[M2-T1.7 — Unterpunkte und gemeinsamen Abschlussnachweis abgleichen](roadmap/M2-T1.7.md)**
 - [ ] **[M2-T2 — Assembly-Ausgaben und Suchvertrag vereinfachen](roadmap/M2-T2.md)**
 - [ ] **[M2-T3 — Body- und Namespace-Recovery präzisieren](roadmap/M2-T3.md)**
 - [ ] **[M2-T4 — Testkandidaten semantisch ergänzen](roadmap/M2-T4.md)**
@@ -50,15 +57,17 @@ Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept 
 |---|---|
 | 1 — Beziehungen | [M1-T3](roadmap/M1-T3.md); Gesamtabnahme [M3-T1](roadmap/M3-T1.md) |
 | 2 — Kompakte Darstellung | [M2-T2](roadmap/M2-T2.md), [M2-T5](roadmap/M2-T5.md) |
-| 3 — Unvollständigkeit/Scope | [M1-T4](roadmap/M1-T4.md), [M2-T1](roadmap/M2-T1.md), [M2-T2](roadmap/M2-T2.md), [M2-T5](roadmap/M2-T5.md) |
+| 3 — Unvollständigkeit/Scope | [M1-T4](roadmap/M1-T4.md), [M2-T1](roadmap/M2-T1.md) ([M2-T1.2](roadmap/M2-T1.2.md), [M2-T1.3](roadmap/M2-T1.3.md), [M2-T1.4](roadmap/M2-T1.4.md), [M2-T1.5](roadmap/M2-T1.5.md), [M2-T1.6](roadmap/M2-T1.6.md), [M2-T1.7](roadmap/M2-T1.7.md)), [M2-T2](roadmap/M2-T2.md), [M2-T5](roadmap/M2-T5.md) |
 | 4 — Diagnosen | [M2-T2](roadmap/M2-T2.md); Kontextverbrauch [M2-T5](roadmap/M2-T5.md) |
-| 5 — Fortsetzungen | [M1-T4](roadmap/M1-T4.md), [M2-T1](roadmap/M2-T1.md), [M2-T2](roadmap/M2-T2.md), [M2-T5](roadmap/M2-T5.md) |
+| 5 — Fortsetzungen | [M1-T4](roadmap/M1-T4.md), [M2-T1](roadmap/M2-T1.md) ([M2-T1.2](roadmap/M2-T1.2.md), [M2-T1.3](roadmap/M2-T1.3.md), [M2-T1.4](roadmap/M2-T1.4.md), [M2-T1.5](roadmap/M2-T1.5.md), [M2-T1.6](roadmap/M2-T1.6.md), [M2-T1.7](roadmap/M2-T1.7.md)), [M2-T2](roadmap/M2-T2.md), [M2-T5](roadmap/M2-T5.md) |
 | 6 — Recovery/Leases | [M1-T2](roadmap/M1-T2.md), [M2-T3](roadmap/M2-T3.md), [M2-T5](roadmap/M2-T5.md) |
 | 7 — Testkandidaten | [M2-T4](roadmap/M2-T4.md); Kontextverbrauch [M2-T5](roadmap/M2-T5.md) |
 | 8 — Resolver/Residency | [M1-T2](roadmap/M1-T2.md) |
 | 9 — Release/Katalog | [M2-T5](roadmap/M2-T5.md), [M2-T6](roadmap/M2-T6.md) |
 | 10 — Effizienz/Anleitung | [M1-T1](roadmap/M1-T1.md), [M2-T6](roadmap/M2-T6.md), [M3-T2](roadmap/M3-T2.md) |
 | 11 — Gemeinsamer Kontext | [M2-T5](roadmap/M2-T5.md) |
-| 12 — Snapshot/Batch | [M1-T2](roadmap/M1-T2.md); Verbraucher [M1-T3](roadmap/M1-T3.md), [M2-T1](roadmap/M2-T1.md), [M2-T5](roadmap/M2-T5.md) |
+| 12 — Snapshot/Batch | [M1-T2](roadmap/M1-T2.md); Verbraucher [M1-T3](roadmap/M1-T3.md), [M2-T1](roadmap/M2-T1.md) ([M2-T1.2](roadmap/M2-T1.2.md), [M2-T1.3](roadmap/M2-T1.3.md), [M2-T1.4](roadmap/M2-T1.4.md), [M2-T1.5](roadmap/M2-T1.5.md), [M2-T1.6](roadmap/M2-T1.6.md)), [M2-T5](roadmap/M2-T5.md) |
+
+Der Prüfweg für den ursprünglichen M2-T1-Klassenumfang wird in [M2-T1.1](roadmap/M2-T1.1.md) stabilisiert und in [M2-T1.7](roadmap/M2-T1.7.md) abschließend vollständig nachgewiesen.
 
 Alle Aufgaben bleiben bis zur tatsächlich ausgeführten Umsetzung und Verifikation offen. Konzept und Messgrenzen werden durch diese Roadmap nicht geändert.
