@@ -1,6 +1,6 @@
 # Documentation Index
 
-The binding product references are these current-state pages, the [public host and tool contract matrix](../tasks/Navigator-Migration/Reviews/public-contract-matrix.md), and the local Navigator code and tests. Task specifications describe planned acceptance work and historical evidence.
+The binding product references are these current-state pages, the [public host and tool contract matrix](../tasks/Navigator-Migration/Reviews/public-contract-matrix.md), and local Navigator code and tests. The contract matrix remains authoritative for the public host and tool contracts; its earlier stdio evidence and recorded test gaps are historical. The [completion acceptance matrix](../tasks/MCP-Server-Vervollstaendigung/Abnahmematrix.md) supplements those references with current item-7 verification outcomes. Task specifications describe acceptance requirements.
 
 ## Development
 
@@ -10,7 +10,9 @@ The binding product references are these current-state pages, the [public host a
 - [MCP Argument Validation](mcp-argument-validation.md): SDK input-schema validation, binder compatibility checks, safe field paths, and error-budget behavior.
 - [MCP Long-Running Calls and Continuations](mcp-long-running-calls.md): Operation token lifecycle, polling, immutable text snapshots, continuation tokens, and their limits.
 - [MCP Host](mcp-host.md): Stdio lifecycle, twenty navigation and two maintenance registrations, health scope, and reloadable host settings.
-- [MCP Navigation Registration Status](navigation/mcp-registration-status.md): Exercised handler paths and the still-open source/assembly, cursor, filter, and response-budget contracts.
+- [MCP Tools](tools/README.md): All 22 tools, targets, wire arguments, defaults, paging, recovery, and usage examples.
+- [Setup](setup/README.md): Windows executable, stdio process configuration, host settings, and current Claude Desktop, Cursor, and Antigravity setup references.
+- [MCP Navigation Registration Status](navigation/mcp-registration-status.md): Current transport-free handler contracts and the boundary around retained end-to-end tests.
 
 ## Navigation
 

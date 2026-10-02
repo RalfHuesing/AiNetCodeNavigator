@@ -16,11 +16,13 @@ The binding references are this repository's `docs/`, local public contract matr
   - **Source solution**: Absolute path to this repository's `AiNetCodeNavigator.slnx`.
   - **Assembly / Decompilation**: Absolute path to a `.dll` or `.exe` file.
 - **Handoff IDs**: Reuse canonical `handoffId` values (`h:...`) from prior MCP responses unchanged as `symbolIdentifier` or in `symbolIdentifiers`.
-- **Loading & Retries**: If a response indicates `Status: operation=retry, completeness=not_applicable`, wait briefly and retry the call; the server is indexing in the background.
-- **Budget Adjustments**: On `RESPONSE_BUDGET_TOO_SMALL`, repeat the call setting `maxResponseBytes = minimumResponseBytes`.
+- **Loading & Retries**: On `operation=running`, repeat the same tool and query with the returned `operationToken` to poll; do not treat the running control as a navigation result. On `operation=retry` with `completeness=not_applicable`, wait briefly and repeat the same call and query.
+- **Budget Adjustments**: On `RESPONSE_BUDGET_TOO_SMALL`, repeat the identical request with both offered minimums unchanged: `maxResponseBytes = minimumResponseBytes` and, when present, `maxResponseTokens = minimumResponseTokens`.
 - **Text Search Fallback**: `rg` or `search_pattern` is only a fallback for unindexed files, string literals, comments, or non-C# files.
 
 ## Navigation Tools Inventory
+
+For the current targets, wire arguments, defaults, limits, and paging behavior, use the canonical [MCP tool reference](../../docs/tools/README.md); SDK definitions and handlers remain authoritative for exact wire behavior.
 
 | Category | Tool | Purpose |
 |---|---|---|

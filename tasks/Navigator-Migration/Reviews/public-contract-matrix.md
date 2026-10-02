@@ -1,9 +1,9 @@
 # Public Host and Tool Contract Matrix
 
-The binding product references are this matrix, the [current-state documentation](../../../docs/README.md), and Navigator code and tests. External implementations are not part of the acceptance contract.
-This matrix records prior real MCP stdio host evidence and explicitly identified transport-free component evidence. It is not an independent audit or a claim that every parameter combination has been tested. A shared fixture or host behavior is credited only where a concrete request and outcome are asserted. `NavigationToolsReturnTypedErrorsForConcreteToolSpecificInvalidInputs` contains one concrete invalid case for each of the twenty navigation handlers; its current E2E categorization excludes it from routine gates. The tool-specific case is listed in each row below.
+This matrix remains the binding public host and tool contract reference. Its earlier stdio findings, dates, test gaps, and E2E claims describe historical evidence only; they are not current acceptance status. For current 22-tool outcomes and allowed routine gates, use the [MCP completion acceptance matrix](../../MCP-Server-Vervollstaendigung/Abnahmematrix.md), alongside the [current-state documentation](../../../docs/README.md), code, and tests. External implementations are not part of the acceptance contract.
+The rows below preserve the earlier evidence record and do not claim every parameter combination was tested then or now. A shared fixture or host behavior was credited only where a concrete request and outcome were asserted. Old stdio and E2E results remain historical evidence and are not fresh MCP acceptance results; this historical evidence labeling does not change the contracts defined here.
 
-## Registered navigation tools
+## Historical registered navigation tools
 
 | Tool | Real-host success evidence | Concrete failure, bounds, or continuation evidence | Scope and current limit |
 |---|---|---|---|
@@ -28,7 +28,7 @@ This matrix records prior real MCP stdio host evidence and explicitly identified
 | `get_feature_context` | Source symbol context in `SourceAndAssemblySymbolHandlesRoundTripThroughPublicStdioTools`. | The 20-tool matrix sends an empty symbol and expects `INVALID_ARGUMENT`. Production now rejects it before scan; the former path failed as generic `OPERATION_FAILED`. | Test-candidate evidence is explicitly heuristic (`static-test-candidates-only`); no cursor is advertised.
 | `get_test_context` | Source test-candidate call in `SourceAndAssemblySymbolHandlesRoundTripThroughPublicStdioTools`. | The 20-tool matrix sends an empty symbol and expects `INVALID_ARGUMENT`; input is rejected before source scanning. | Assembly test-project recommendations are inapplicable to the source test-candidate scanner; no cursor is advertised.
 
-## Shared host, result, and lifecycle evidence
+## Historical shared host, result, and lifecycle evidence
 
 | Contract | Evidence | Result |
 |---|---|---|
@@ -40,7 +40,7 @@ This matrix records prior real MCP stdio host evidence and explicitly identified
 | Protocol cleanliness | Prior `StdioHostCompletesHandshakeListsMaintenanceToolsServesCallsAndExitsOnEof` and `CommandLineErrorsGoToStderrAndNeverProtocolStdout` evidence checks clean EOF/exit and protocol-only stdout; logging component tests inspect stderr/rolling files. | These E2E host cases were not rerun for Git removal. Parallel host dispatch is not credited to the removed Git lifecycle fixture. |
 | Read-only source workspaces | `ColdSourceSolutionNavigationDoesNotAddOrChangeWorkspaceFiles` and `ColdSolutionsWithSameProjectNameRemainIsolatedAndWriteNothingToEitherWorkspace` snapshot files and directories including `obj`/`bin` before load and after host termination. | Both cold source tests passed in prior full gates. Arbitrary MSBuild custom-target redirection remains unverified.
 
-## Explicit remaining limits
+## Limits recorded in the historical snapshot
 
 - Existing focused fixtures provide at least one actual result path per registered navigation tool, but they do not form a Cartesian test of every parameter, target, enum, default, or error code.
 - Exact byte/token minima are not verified for every public tool. The following are the concrete missing recovery and paging cells; each byte/token cell means: force that result into `RESPONSE_BUDGET_TOO_SMALL`, parse its exact advertised recovery pair, retry the same request at that pair, and assert a complete result (or an executable continuation). A shared filter-level `InvalidParams` case does not stand in for a tool-specific result projection.
