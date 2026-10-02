@@ -1,5 +1,5 @@
 ---
-status: draft
+status: ready
 ---
 
 # Verlässliche und tokeneffiziente MCP-Navigation
@@ -21,7 +21,7 @@ Das Ergebnis ist eine kleinere, eindeutigere Agentenoberfläche mit nachvollzieh
 - `inspect_assembly.includeReferences` ist standardmäßig **`false`**, unabhängig davon, ob ein Typ-/Memberfilter gesetzt ist. Referenzinventar und unterstützte Owner-Erkundung sind eine bewusste Abfrage.
 - Aus dem älteren Änderungsplan werden außerdem ein konsistenter Snapshot pro Analyse/Batch und vollständig nachladbare ermittelte Listeneinträge übernommen. Die übrigen Toolnamen und ihre fachlichen Zuständigkeiten bleiben bestehen. Impact beantwortet aggregierte/transitive Änderungsfragen, Call-Tree verfolgt begrenzte Aufrufpfade; Herkunftsauflösung und Namenssuche haben ebenfalls verschiedene Aufgaben. Diese Paare sowie Datei- und Typstruktur bleiben eigenständige Einstiege. Eine Extension-Umbenennung/-Erweiterung und eine zusätzliche Source-zu-Metadaten-Handoff-Brücke gehören nicht zu diesem Task.
 
-Diese Entscheidungen betreffen das geplante Ergebnis, nicht den heutigen implementierten Stand. Schritt 1 erstellt ausschließlich dieses Konzept. Prüfung/Freigabe, Roadmap und Umsetzung werden vom Nutzer jeweils separat gestartet.
+Diese Entscheidungen betreffen das geplante Ergebnis, nicht den heutigen implementierten Stand. Die Konzeptphase ändert ausschließlich diese Spezifikation. Prüfung/Freigabe, Roadmap und Umsetzung werden vom Nutzer jeweils separat gestartet.
 
 ## Grundlage und Evidenz
 
@@ -160,10 +160,12 @@ Relevante Quellen für die spätere Detailplanung:
 - `McpServerHost`, [Ergebnisvertrag](../../docs/mcp-tool-results.md), [Budgets](../../docs/mcp-response-budgets.md), [Fortsetzungen](../../docs/mcp-long-running-calls.md) und [Toolreferenz](../../docs/tools/README.md).
 - Vorhandene `AssemblyToolsContractTests`, `SourceToolsContractTests`, `SourceRelationshipToolsContractTests`, `NamespaceTreeScannerTests` und Assembly-/Snapshot-Tests sind Anknüpfungspunkte, kein bereits ausgeführter Abnahmenachweis.
 
-## Planungsstand
+## Freigabestatus
 
 Die Greenfield-Entscheidung und die ausdrückliche Offenheit für weitergehende Toolzusammenführungen sind eingearbeitet. Gewählte Empfehlung: ein expliziter Kontextvertrag für drei bisherige Tools sowie konsistente Snapshots und nachladbare ermittelte Ergebnisse. Gegenüber der bisherigen 18-Tool-Variante kostet dies einen neuen Abschnittsvertrag und die Umstellung der Kontextaufrufe; es ermöglicht gemeinsame Auflösung und vermeidet die bisherige Verteilung derselben Kontextfrage auf unterschiedliche Target-/Testtools. Der Effizienzvorteil bleibt eine zu prüfende Hypothese, keine Auditmessung.
 
 Der Nutzer hat eine offene/langwierige Messphase ausdrücklich ausgeschlossen. Messungen sind deshalb auf sechs bestehende Szenarien, feste Wiederholungen und höchstens 60 Minuten je Vorher-/Nachher-Aufnahme plus eine gezielte 30-Minuten-Nachmessrunde begrenzt. Weitere Targets und weitere Auditkampagnen sind keine Voraussetzung für die nächste Planungs-/Umsetzungsentscheidung.
 
-Für die beschriebene Intention, den binären Scope und die Abnahme ist keine weitere Nutzerentscheidung offen. Konkrete DTO-Aufteilung und Codeorganisation sind Implementierungsdetails, keine nachträglich zu treffenden Produktentscheidungen. Das Konzept bleibt `status: draft`; unabhängige Prüfung und Freigabe erfolgen ausschließlich durch den separat vom Nutzer gestarteten Schritt 2.
+Schritt 2 wurde am 02.10.2026 auf Nutzeraufruf durchgeführt. Ein unabhängiger Read-only-Prüfer mit frischem Kontext prüfte Konzept, Repository-Regeln, aktuelle Verträge/Quellen und lokale Auditbelege. Ergebnis: keine handlungsrelevanten Findings, keine zu verwerfenden Findings und keine notwendigen Nutzerentscheidungen. Der abschließende Abgleich des Hauptagenten bestätigt Intention, binären Scope, Nicht-Ziele, umsetzbare Verträge und prüfbare Abnahme einschließlich des begrenzten Messumfangs. Es war keine fachliche Korrektur und keine zweite Auditrunde erforderlich.
+
+Für die beschriebene Intention, den binären Scope und die Abnahme ist keine weitere Nutzerentscheidung offen. Konkrete DTO-Aufteilung und Codeorganisation sind Implementierungsdetails, keine nachträglich zu treffenden Produktentscheidungen. Das Konzept ist mit `status: ready` freigegeben. Diese Freigabe bestätigt die Spezifikation; die spätere Implementierung und ihre Abnahme wurden hier weder ausgeführt noch als bestanden behauptet. Roadmap und Umsetzung werden erst durch gesonderten Nutzeraufruf gestartet. In Schritt 2 wurden kein Code geändert, kein Build und keine Tests ausgeführt.
