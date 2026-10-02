@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using AiNetCodeNavigator.Mcp;
@@ -294,35 +293,7 @@ public sealed class RelationshipToolsContractTests
         await File.WriteAllTextAsync(Path.Combine(root, "ImpactContractProbe.cs"),
             "namespace ImpactContractProbe; public static class Target { public static int Read() => 1; } public static class LongCaller { public static int LongCaller"
             + new string('X', 700) + "() => Target.Read(); } public static class CompactTarget { public static int Read() => 2; } public static class Callers { " + callers + " }");
-        var startInfo = new ProcessStartInfo("dotnet")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        startInfo.ArgumentList.Add("restore");
-        startInfo.ArgumentList.Add(projectPath);
-        startInfo.ArgumentList.Add("--configfile");
-        startInfo.ArgumentList.Add(nugetConfigPath);
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start source fixture restore.");
-        var standardOutput = process.StandardOutput.ReadToEndAsync();
-        var standardError = process.StandardError.ReadToEndAsync();
-        var processExit = process.WaitForExitAsync();
-        try
-        {
-            await processExit.WaitAsync(TimeSpan.FromMinutes(2));
-        }
-        catch (TimeoutException)
-        {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-            await processExit;
-            _ = await standardOutput;
-            _ = await standardError;
-            throw new TimeoutException("Source fixture restore exceeded its two-minute limit and was terminated.");
-        }
-        Assert.True(process.ExitCode == 0, $"Source fixture restore failed: {await standardError}\n{await standardOutput}");
+        await FixtureRestore.RunAsync(projectPath, root, nugetConfigPath, "Source fixture restore");
         return solutionPath;
     }
 }

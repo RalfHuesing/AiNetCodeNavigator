@@ -25,6 +25,8 @@ Core, Host, and TestKit expose internal members to the test assemblies via `Inte
 
 `IntegrationMcpAssertions` belongs to the IntegrationTests project. It extracts MCP text responses, removes continuation headers while reconstructing response bodies, reads continuation and budget fields, and checks UTF-8 and `cl100k_base` limits using SharpToken directly. These assertions measure returned text independently of the production formatter's token counter.
 
+The source, source-relationship, relationship, and index-scope contract fixtures share a restore helper that disables persistent build servers, limits each restore process to two minutes, and bounds redirected output-stream completion to ten seconds. A timed-out restore process tree is terminated before the test reports failure.
+
 ## Analysis Target Resolution
 
 `AnalysisTargetResolver` accepts one absolute path to an existing file. `.sln` and `.slnx` files select source mode; `.dll` and `.exe` files select assembly mode. The resolver normalizes the path with `Path.GetFullPath`, rejects directories, missing files, unsupported extensions, and wildcard paths, and reports invalid paths as `INVALID_ARGUMENT` on `$.targetPath`. The target fingerprint is the SHA-256 hash of the target file contents. If the target becomes unavailable or cannot be read while hashing, resolution returns `TARGET_UNREADABLE` on `$.targetPath` so the caller can fix access or retry.

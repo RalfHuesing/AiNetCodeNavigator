@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using AiNetCodeNavigator.Mcp;
@@ -651,38 +650,7 @@ public sealed class SourceToolsContractTests
 
         var nugetConfigPath = Path.Combine(root, "NuGet.Config");
         await File.WriteAllTextAsync(nugetConfigPath, "<configuration><packageSources><clear /></packageSources></configuration>");
-        var startInfo = new ProcessStartInfo("dotnet")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        startInfo.ArgumentList.Add("restore");
-        startInfo.ArgumentList.Add(solutionPath);
-        startInfo.ArgumentList.Add("--configfile");
-        startInfo.ArgumentList.Add(nugetConfigPath);
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start source-tool fixture restore.");
-        var standardOutput = process.StandardOutput.ReadToEndAsync();
-        var standardError = process.StandardError.ReadToEndAsync();
-        var processExit = process.WaitForExitAsync();
-        try
-        {
-            await processExit.WaitAsync(TimeSpan.FromMinutes(2));
-        }
-        catch (TimeoutException)
-        {
-            if (!process.HasExited)
-                process.Kill(entireProcessTree: true);
-            await processExit;
-            var timedOutError = await standardError;
-            var timedOutOutput = await standardOutput;
-            throw new Xunit.Sdk.XunitException($"Source-tool fixture restore timed out after two minutes.\n{timedOutError}\n{timedOutOutput}");
-        }
-        var errorOutput = await standardError;
-        var standardOutputText = await standardOutput;
-        Assert.True(process.ExitCode == 0, $"Source-tool fixture restore failed: {errorOutput}\n{standardOutputText}");
+        await FixtureRestore.RunAsync(solutionPath, root, nugetConfigPath, "Source-tool fixture restore");
         return solutionPath;
     }
 

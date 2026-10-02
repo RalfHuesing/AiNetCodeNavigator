@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -493,30 +492,7 @@ public sealed class SourceRelationshipToolsContractTests
                 "namespace RelationshipProbe; public sealed class LaterDependency { } public sealed class LateRoot { public LaterDependency Value { get; set; } = new(); }");
         var nugetConfig = Path.Combine(root, "NuGet.Config");
         await File.WriteAllTextAsync(nugetConfig, "<configuration><packageSources><clear /></packageSources></configuration>");
-        var start = new ProcessStartInfo("dotnet")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        start.ArgumentList.Add("restore");
-        start.ArgumentList.Add(solution);
-        start.ArgumentList.Add("--configfile");
-        start.ArgumentList.Add(nugetConfig);
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start relationship fixture restore.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        var exited = process.WaitForExitAsync();
-        try { await exited.WaitAsync(TimeSpan.FromMinutes(2)); }
-        catch (TimeoutException)
-        {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-            await exited;
-            throw new TimeoutException($"Relationship fixture restore timed out.\n{await stderr}\n{await stdout}");
-        }
-        Assert.True(process.ExitCode == 0, $"Relationship fixture restore failed.\n{await stderr}\n{await stdout}");
+        await FixtureRestore.RunAsync(solution, root, nugetConfig, "Relationship fixture restore");
         return solution;
     }
 
@@ -543,30 +519,7 @@ public sealed class SourceRelationshipToolsContractTests
             "namespace Duplicate; public sealed class Box<T> { public SecondDependency Value { get; set; } = new(); } public sealed class SecondDependency { }");
         var nugetConfig = Path.Combine(root, "NuGet.Config");
         await File.WriteAllTextAsync(nugetConfig, "<configuration><packageSources><clear /></packageSources></configuration>");
-        var start = new ProcessStartInfo("dotnet")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        start.ArgumentList.Add("restore");
-        start.ArgumentList.Add(solution);
-        start.ArgumentList.Add("--configfile");
-        start.ArgumentList.Add(nugetConfig);
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start duplicate-type fixture restore.");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        var exited = process.WaitForExitAsync();
-        try { await exited.WaitAsync(TimeSpan.FromMinutes(2)); }
-        catch (TimeoutException)
-        {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-            await exited;
-            throw new TimeoutException($"Duplicate-type fixture restore timed out.\n{await stderr}\n{await stdout}");
-        }
-        Assert.True(process.ExitCode == 0, $"Duplicate-type fixture restore failed.\n{await stderr}\n{await stdout}");
+        await FixtureRestore.RunAsync(solution, root, nugetConfig, "Duplicate-type fixture restore");
         return solution;
     }
 }

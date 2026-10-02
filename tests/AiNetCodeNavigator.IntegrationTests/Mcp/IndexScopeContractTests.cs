@@ -477,35 +477,7 @@ public sealed class IndexScopeContractTests
 
         var nugetConfigPath = Path.Combine(root, "NuGet.Config");
         await File.WriteAllTextAsync(nugetConfigPath, "<configuration><packageSources><clear /></packageSources></configuration>");
-        var startInfo = new ProcessStartInfo("dotnet")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        startInfo.ArgumentList.Add("restore");
-        startInfo.ArgumentList.Add(solutionPath);
-        startInfo.ArgumentList.Add("--configfile");
-        startInfo.ArgumentList.Add(nugetConfigPath);
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start index scope fixture restore.");
-        var standardOutput = process.StandardOutput.ReadToEndAsync();
-        var standardError = process.StandardError.ReadToEndAsync();
-        var processExit = process.WaitForExitAsync();
-        try
-        {
-            await processExit.WaitAsync(TimeSpan.FromMinutes(2));
-        }
-        catch (TimeoutException)
-        {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-            await processExit;
-            _ = await standardOutput;
-            _ = await standardError;
-            throw new TimeoutException("Index scope fixture restore exceeded its two-minute limit and was terminated.");
-        }
-        Assert.True(process.ExitCode == 0, $"Index scope fixture restore failed: {await standardError}\n{await standardOutput}");
+        await FixtureRestore.RunAsync(solutionPath, root, nugetConfigPath, "Index scope fixture restore");
         return solutionPath;
     }
 }

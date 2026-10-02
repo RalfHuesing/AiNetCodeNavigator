@@ -33,7 +33,7 @@ Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept 
 ## M2 — Nachladbare, kompakte Navigation und gemeinsamer Kontext
 
 - [ ] **[M2-T1 — Source- und gemeinsame Trefferlisten vollständig nachladen](roadmap/M2-T1.md)**
-  - [ ] **[M2-T1.1 — Hängenden Integrationslauf untersuchen und stabilisieren](roadmap/M2-T1.1.md)**
+  - [x] **[M2-T1.1 — Hängenden Integrationslauf untersuchen und stabilisieren](roadmap/M2-T1.1.md)**
   - [ ] **[M2-T1.2 — Symbolsuche vollständig nachladen](roadmap/M2-T1.2.md)**
   - [ ] **[M2-T1.3 — Referenzen und Implementierungen vollständig nachladen](roadmap/M2-T1.3.md)**
   - [ ] **[M2-T1.4 — Typ-, Datei- und Namespaceinventare vollständig nachladen](roadmap/M2-T1.4.md)**
