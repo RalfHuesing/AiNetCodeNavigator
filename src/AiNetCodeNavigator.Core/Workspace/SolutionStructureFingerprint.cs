@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Build.Globbing;
 using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.Workspace;
@@ -48,6 +49,7 @@ internal static class SolutionStructureFingerprint
 
         if (structureInputs is not null)
         {
+            inputs["unresolved-msbuild-expressions"] = string.Join("\0", structureInputs.UnresolvedExpressions.Order(StringComparer.Ordinal));
             foreach (var importPath in structureInputs.ImportedFiles)
             {
                 AddHashedFile(inputs, importPath);
@@ -61,6 +63,11 @@ internal static class SolutionStructureFingerprint
             foreach (var globRoot in structureInputs.CompileGlobRoots)
             {
                 AddSourceFilesUnderRoot(inputs, globRoot);
+            }
+
+            foreach (var wildcardImportPattern in structureInputs.WildcardImportPatterns)
+            {
+                AddWildcardImportMatches(inputs, wildcardImportPattern);
             }
         }
 
@@ -125,6 +132,28 @@ internal static class SolutionStructureFingerprint
             .Where(filePath => !IsGeneratedOrBuildPath(canonicalRoot, filePath)))
         {
             inputs[Path.GetFullPath(sourcePath)] = "source";
+        }
+    }
+
+    private static void AddWildcardImportMatches(IDictionary<string, string> inputs, string pattern)
+    {
+        var glob = MSBuildGlob.Parse(pattern);
+        var fixedDirectory = glob.FixedDirectoryPart;
+        if (string.IsNullOrEmpty(fixedDirectory) || !Directory.Exists(fixedDirectory))
+        {
+            inputs[$"glob:{pattern}"] = string.Empty;
+            return;
+        }
+
+        var matchedFiles = Directory.EnumerateFiles(fixedDirectory, "*", SearchOption.AllDirectories)
+            .Where(glob.IsMatch)
+            .Select(Path.GetFullPath)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        inputs[$"glob:{pattern}"] = string.Join("\0", matchedFiles);
+        foreach (var matchedFile in matchedFiles)
+        {
+            AddHashedFile(inputs, matchedFile);
         }
     }
 

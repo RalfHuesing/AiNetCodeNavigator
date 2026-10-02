@@ -2,6 +2,7 @@
 
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Workspace;
 using AiNetCodeNavigator.TestKit;
@@ -267,7 +268,209 @@ public sealed class WorkspaceLoadingIntegrationTests
         Assert.Equal("Extra", refreshed.Solution.GetProject(refreshedApp.ProjectReferences.Single().ProjectId)!.Name);
     }
 
+    [Fact]
+    public async Task ResidentSnapshot_CreatingFileMatchedByWildcardImport_RefreshesProjectReferences()
+    {
+        using var tempDir = TestTempDirectory.Create("integration-wildcard-import-");
+        WriteProject(
+            tempDir,
+            "src/App/App.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><Import Project=\"../../build/*.props\" /></Project>");
+        WriteProject(tempDir, "src/Library/Library.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        WriteProject(tempDir, "src/Extra/Extra.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        await File.WriteAllTextAsync(tempDir.GetPath("src/App/App.cs"), "namespace App; public sealed class AppType;");
+        await File.WriteAllTextAsync(tempDir.GetPath("src/Library/Library.cs"), "namespace Library; public sealed class LibraryType;");
+        await File.WriteAllTextAsync(tempDir.GetPath("src/Extra/Extra.cs"), "namespace Extra; public sealed class ExtraType;");
+        var solutionPath = await WriteSolutionAsync(tempDir, "src/App/App.csproj", "src/Library/Library.csproj", "src/Extra/Extra.csproj");
+
+        await using var resident = MSBuildSolutionLoader.CreateResidentSolution(solutionPath);
+        await resident.LoadTask!.WaitAsync(TimeSpan.FromSeconds(30));
+        var initial = await resident.GetCurrentSnapshotAsync();
+        Assert.True(initial.Succeeded, initial.Error?.Message);
+        Assert.Empty(initial.Solution!.Projects.Single(project => project.Name == "App").ProjectReferences);
+
+        var importPath = tempDir.CreateFile(
+            "build/Optional.props",
+            "<Project><ItemGroup><ProjectReference Include=\"$(MSBuildThisFileDirectory)../src/Extra/Extra.csproj\" /></ItemGroup></Project>");
+
+        var refreshed = await resident.GetCurrentSnapshotAsync();
+
+        Assert.True(refreshed.Succeeded, refreshed.Error?.Message);
+        var refreshedApp = refreshed.Solution!.Projects.Single(project => project.Name == "App");
+        Assert.Equal("Extra", refreshed.Solution.GetProject(refreshedApp.ProjectReferences.Single().ProjectId)!.Name);
+
+        await File.WriteAllTextAsync(
+            importPath,
+            "<Project><ItemGroup><ProjectReference Include=\"$(MSBuildThisFileDirectory)../src/Library/Library.csproj\" /></ItemGroup></Project>");
+        var changed = await resident.GetCurrentSnapshotAsync();
+        Assert.True(changed.Succeeded, changed.Error?.Message);
+        var changedApp = changed.Solution!.Projects.Single(project => project.Name == "App");
+        Assert.Equal("Library", changed.Solution.GetProject(changedApp.ProjectReferences.Single().ProjectId)!.Name);
+
+        File.Delete(importPath);
+        var removed = await resident.GetCurrentSnapshotAsync();
+        Assert.True(removed.Succeeded, removed.Error?.Message);
+        Assert.Empty(removed.Solution!.Projects.Single(project => project.Name == "App").ProjectReferences);
+    }
+
+    [Fact]
+    public async Task ResidentSnapshot_UnresolvedMetadataExpressionForcesReloadAndRecoversAfterLoadFailure()
+    {
+        using var tempDir = TestTempDirectory.Create("integration-unresolved-msbuild-expression-");
+        var projectPath = tempDir.CreateFile(
+            "src/App/App.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup><ItemGroup><Compile Include=\"App.cs\" /><Compile Include=\"%(Compile.Identity).generated.cs\" /></ItemGroup></Project>");
+        await File.WriteAllTextAsync(tempDir.GetPath("src/App/App.cs"), "namespace App; public sealed class AppType;");
+        var solutionPath = await WriteSolutionAsync(tempDir, "src/App/App.csproj");
+
+        await using var resident = MSBuildSolutionLoader.CreateResidentSolution(solutionPath);
+        await resident.LoadTask!.WaitAsync(TimeSpan.FromSeconds(30));
+        var initial = resident.GetCurrentSolution();
+        Assert.NotNull(initial);
+        var unresolvedInputs = MSBuildStructureInputCollector.Collect(initial);
+        Assert.Contains(unresolvedInputs.UnresolvedExpressions, expression =>
+            expression.Contains("%(Compile.Identity)", StringComparison.Ordinal));
+        Assert.NotEqual(
+            SolutionStructureFingerprint.Create(initial, solutionPath, unresolvedInputs),
+            SolutionStructureFingerprint.Create(initial, solutionPath, unresolvedInputs with { UnresolvedExpressions = [] }));
+
+        // The metadata reference remains literal in the successfully evaluated Compile item.
+        // Requesting the same snapshot must re-evaluate it even though the old fingerprint is otherwise unchanged.
+        var refreshed = await resident.GetCurrentSnapshotAsync();
+        Assert.True(refreshed.Succeeded, refreshed.Error?.Message);
+        Assert.NotSame(initial, refreshed.Solution);
+
+        await File.WriteAllTextAsync(projectPath, "<Project");
+        var failed = await resident.GetCurrentSnapshotAsync();
+        Assert.False(failed.Succeeded);
+        Assert.Null(failed.Solution);
+        Assert.NotNull(failed.Error);
+
+        await File.WriteAllTextAsync(
+            projectPath,
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup><ItemGroup><Compile Include=\"App.cs\" /></ItemGroup></Project>");
+        var recovered = await resident.GetCurrentSnapshotAsync();
+        Assert.True(recovered.Succeeded, recovered.Error?.Message);
+        Assert.Single(recovered.Solution!.Projects.Single(project => project.Name == "App").Documents.Where(document => Path.GetFileName(document.FilePath) == "App.cs"));
+    }
+
+    [Fact]
+    [Trait("Category", "ExtendedIntegration")]
+    public async Task MSBuildSolutionLoader_CustomTargetsAndScratchCleanupPreserveWorkspaceSnapshot()
+    {
+        using var tempDir = TestTempDirectory.Create("integration-readonly-targets-");
+        var projectDirectory = tempDir.GetPath("src/App");
+        var foreignOutputRoot = Path.Combine(
+            Path.GetDirectoryName(tempDir.DirectoryPath)!,
+            $"{Path.GetFileName(tempDir.DirectoryPath)}-foreign-output");
+        var markerName = $"navigator-target-invoked-{Guid.NewGuid():N}.marker";
+        var foreignOutputRelativePath = Path.GetRelativePath(projectDirectory, foreignOutputRoot)
+            .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        var foreignOutputMsBuildPath = foreignOutputRelativePath.Replace(Path.DirectorySeparatorChar, '\\');
+        WriteProject(
+            tempDir,
+            "src/App/App.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        tempDir.CreateFile(
+            "build/ReadOnlyProbe.targets",
+            $"<Project><PropertyGroup><IntermediateOutputPath>$(MSBuildProjectDirectory)\\{foreignOutputMsBuildPath}\\intermediate\\</IntermediateOutputPath><OutputPath>$(MSBuildProjectDirectory)\\{foreignOutputMsBuildPath}\\output\\</OutputPath></PropertyGroup><Target Name=\"NavigatorReadOnlyProbe\" BeforeTargets=\"ResolveReferences\"><WriteLinesToFile File=\"$(NavigatorAnalysisScratchRoot)\\{markerName}\" Lines=\"$(IntermediateOutputPath)|$(OutputPath)\" Overwrite=\"true\" /><WriteLinesToFile File=\"$(IntermediateOutputPath)probe.txt\" Lines=\"intermediate\" Overwrite=\"true\" /><WriteLinesToFile File=\"$(OutputPath)probe.txt\" Lines=\"output\" Overwrite=\"true\" /></Target></Project>");
+        tempDir.CreateFile("Directory.Build.targets", "<Project><Import Project=\"build/ReadOnlyProbe.targets\" /></Project>");
+        await File.WriteAllTextAsync(tempDir.GetPath("src/App/App.cs"), "namespace App; public sealed class AppType;");
+        var solutionPath = await WriteSolutionAsync(tempDir, "src/App/App.csproj");
+        var before = SnapshotFilesAndDirectories(tempDir.DirectoryPath);
+        string[] afterRepair;
+        var processScratchRoot = Path.Combine(Path.GetTempPath(), "AiNetCodeNavigator", "msbuild-analysis", Environment.ProcessId.ToString());
+        var scratchEntriesBefore = Directory.Exists(processScratchRoot)
+            ? Directory.EnumerateDirectories(processScratchRoot).Order(StringComparer.OrdinalIgnoreCase).ToArray()
+            : [];
+
+        await using (var resident = MSBuildSolutionLoader.CreateResidentSolution(solutionPath))
+        {
+            await resident.LoadTask!.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.False(resident.IsLoaded);
+            Assert.Contains("OutputPath", resident.LoadFailure?.Message, StringComparison.Ordinal);
+            Assert.Contains(foreignOutputRoot, resident.LoadFailure?.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.False(Directory.Exists(foreignOutputRoot));
+            Assert.False(Directory.Exists(processScratchRoot)
+                && Directory.EnumerateFiles(processScratchRoot, markerName, SearchOption.AllDirectories).Any());
+            var scratchEntriesAfterFailure = Directory.Exists(processScratchRoot)
+                ? Directory.EnumerateDirectories(processScratchRoot).Order(StringComparer.OrdinalIgnoreCase).ToArray()
+                : [];
+            Assert.Equal(scratchEntriesBefore, scratchEntriesAfterFailure);
+            Assert.Equal(before, SnapshotFilesAndDirectories(tempDir.DirectoryPath));
+
+            // Removing the unsupported redirection proves that the same resident can recover after preflight failure.
+            await File.WriteAllTextAsync(tempDir.GetPath("Directory.Build.targets"), "<Project />");
+            afterRepair = SnapshotFilesAndDirectories(tempDir.DirectoryPath);
+            var loaded = await resident.GetCurrentSnapshotAsync();
+            Assert.True(loaded.Succeeded, loaded.Error?.Message);
+            Assert.Single(loaded.Solution!.Projects);
+        }
+
+        MSBuildSolutionLoader.CleanupDesignTimeScratch();
+
+        Assert.Equal(afterRepair, SnapshotFilesAndDirectories(tempDir.DirectoryPath));
+        Assert.False(Directory.Exists(foreignOutputRoot));
+        Assert.False(Directory.Exists(processScratchRoot));
+    }
+
+    [Fact]
+    [Trait("Category", "ExtendedIntegration")]
+    public async Task MSBuildSolutionLoader_ColdSolutionsWithSameNamedProjectsHaveIsolatedSnapshots()
+    {
+        using var firstDirectory = TestTempDirectory.Create("integration-cold-same-name-a-");
+        using var secondDirectory = TestTempDirectory.Create("integration-cold-same-name-b-");
+        var firstSolutionPath = await CreateColdSameNamedSolution(firstDirectory, "FirstMarker");
+        var secondSolutionPath = await CreateColdSameNamedSolution(secondDirectory, "SecondMarker");
+        var firstBefore = SnapshotFilesAndDirectories(firstDirectory.DirectoryPath);
+        var secondBefore = SnapshotFilesAndDirectories(secondDirectory.DirectoryPath);
+        var processScratchRoot = Path.Combine(Path.GetTempPath(), "AiNetCodeNavigator", "msbuild-analysis", Environment.ProcessId.ToString());
+
+        await using (var first = MSBuildSolutionLoader.CreateResidentSolution(firstSolutionPath))
+        await using (var second = MSBuildSolutionLoader.CreateResidentSolution(secondSolutionPath))
+        {
+            await Task.WhenAll(first.LoadTask!, second.LoadTask!).WaitAsync(TimeSpan.FromSeconds(30));
+            var firstSnapshot = await first.GetCurrentSnapshotAsync();
+            var secondSnapshot = await second.GetCurrentSnapshotAsync();
+            Assert.True(firstSnapshot.Succeeded, firstSnapshot.Error?.Message);
+            Assert.True(secondSnapshot.Succeeded, secondSnapshot.Error?.Message);
+            var firstProject = Assert.Single(firstSnapshot.Solution!.Projects);
+            var secondProject = Assert.Single(secondSnapshot.Solution!.Projects);
+            Assert.Equal("App", firstProject.Name);
+            Assert.Equal("App", secondProject.Name);
+            Assert.NotEqual(firstProject.Id, secondProject.Id);
+            var firstSourcePath = firstProject.Documents.Single(document => Path.GetFileName(document.FilePath) == "App.cs").FilePath!;
+            var secondSourcePath = secondProject.Documents.Single(document => Path.GetFileName(document.FilePath) == "App.cs").FilePath!;
+            Assert.Contains("FirstMarker", (await File.ReadAllTextAsync(firstSourcePath)), StringComparison.Ordinal);
+            Assert.Contains("SecondMarker", (await File.ReadAllTextAsync(secondSourcePath)), StringComparison.Ordinal);
+        }
+
+        MSBuildSolutionLoader.CleanupDesignTimeScratch();
+        Assert.Equal(firstBefore, SnapshotFilesAndDirectories(firstDirectory.DirectoryPath));
+        Assert.Equal(secondBefore, SnapshotFilesAndDirectories(secondDirectory.DirectoryPath));
+        Assert.False(Directory.Exists(processScratchRoot));
+    }
+
     private static string WriteProject(TestTempDirectory tempDir, string relativePath, string content) => tempDir.CreateFile(relativePath, content);
+
+    private static async Task<string> CreateColdSameNamedSolution(TestTempDirectory tempDir, string marker)
+    {
+        WriteProject(
+            tempDir,
+            "src/App/App.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        await File.WriteAllTextAsync(tempDir.GetPath("src/App/App.cs"), $"namespace App; public sealed class {marker};");
+        return await WriteSolutionAsync(tempDir, "src/App/App.csproj");
+    }
+
+    private static string[] SnapshotFilesAndDirectories(string root)
+    {
+        var directories = Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories)
+            .Select(path => $"D:{Path.GetRelativePath(root, path)}");
+        var files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .Select(path => $"F:{Path.GetRelativePath(root, path)}:{Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)))}");
+        return directories.Concat(files).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
 
     private static async Task<string> WriteSolutionAsync(TestTempDirectory tempDir, params string[] projectPaths)
     {

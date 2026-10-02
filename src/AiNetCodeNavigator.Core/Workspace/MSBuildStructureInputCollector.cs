@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using Microsoft.Build.Construction;
 using Microsoft.Build.Evaluation;
+using Microsoft.Build.Globbing;
 using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.Workspace;
@@ -13,7 +14,12 @@ namespace AiNetCodeNavigator.Core.Workspace;
 internal sealed record SolutionStructureInputs(
     IReadOnlyCollection<string> ImportedFiles,
     IReadOnlyCollection<string> PotentialImportPaths,
-    IReadOnlyCollection<string> CompileGlobRoots);
+    IReadOnlyCollection<string> CompileGlobRoots,
+    IReadOnlyCollection<string> WildcardImportPatterns,
+    IReadOnlyCollection<string> UnresolvedExpressions)
+{
+    internal bool HasUnexpandedExpressions => UnresolvedExpressions.Count > 0;
+}
 
 /// <summary>
 /// Collects the effective MSBuild imports and wildcard roots used by loaded projects.
@@ -26,6 +32,8 @@ internal static class MSBuildStructureInputCollector
         var importedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var potentialImportPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var compileGlobRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var wildcardImportPatterns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var unresolvedExpressions = new HashSet<string>(StringComparer.Ordinal);
         var projectPaths = solution.Projects
             .Select(project => project.FilePath)
             .Where(path => !string.IsNullOrWhiteSpace(path))
@@ -50,8 +58,8 @@ internal static class MSBuildStructureInputCollector
             var projectFiles = importedProjectFiles.Append(project.Xml).Distinct();
             foreach (var projectFile in projectFiles)
             {
-                AddPotentialImportPaths(project, projectFile, potentialImportPaths);
-                AddCompileGlobRoots(project, projectFile, compileGlobRoots);
+                AddPotentialImportPaths(project, projectFile, potentialImportPaths, wildcardImportPatterns, unresolvedExpressions);
+                AddCompileGlobRoots(project, projectFile, compileGlobRoots, unresolvedExpressions);
             }
         }
 
@@ -59,13 +67,17 @@ internal static class MSBuildStructureInputCollector
         return new SolutionStructureInputs(
             importedFiles.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
             potentialImportPaths.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
-            compileGlobRoots.Order(StringComparer.OrdinalIgnoreCase).ToArray());
+            compileGlobRoots.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+            wildcardImportPatterns.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+            unresolvedExpressions.Order(StringComparer.Ordinal).ToArray());
     }
 
     private static void AddPotentialImportPaths(
         Microsoft.Build.Evaluation.Project evaluatedProject,
         ProjectRootElement projectFile,
-        ISet<string> paths)
+        ISet<string> paths,
+        ISet<string> wildcardPatterns,
+        ISet<string> unresolvedExpressions)
     {
         foreach (var import in EnumerateImportElements(projectFile))
         {
@@ -76,15 +88,28 @@ internal static class MSBuildStructureInputCollector
             var expandedImports = evaluatedProject.ExpandString(importExpression);
             if (ContainsUnexpandedExpression(expandedImports))
             {
+                unresolvedExpressions.Add($"{projectFile.FullPath}|Import|{importExpression}|{expandedImports}");
+                continue;
+            }
+
+            if (ContainsPropertyExpandedToEmpty(evaluatedProject, importExpression))
+            {
                 continue;
             }
 
             foreach (var importPath in expandedImports.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
-                // Track exact declared paths. Wildcard imports need a separate bounded pattern strategy;
-                // treating them as a directory scan here could watch unrelated files.
                 if (importPath.IndexOfAny(['*', '?']) >= 0)
                 {
+                    try
+                    {
+                        wildcardPatterns.Add(Path.GetFullPath(importPath, containingDirectory));
+                    }
+                    catch (ArgumentException)
+                    {
+                        unresolvedExpressions.Add($"{projectFile.FullPath}|Import|{importExpression}|{expandedImports}");
+                    }
+
                     continue;
                 }
 
@@ -95,9 +120,11 @@ internal static class MSBuildStructureInputCollector
                 catch (ArgumentException)
                 {
                     // An unresolved or invalid optional import must not make an otherwise loaded solution fail.
+                    unresolvedExpressions.Add($"{projectFile.FullPath}|Import|{importExpression}|{expandedImports}");
                 }
             }
         }
+
     }
 
     private static IEnumerable<ProjectImportElement> EnumerateImportElements(ProjectElementContainer container)
@@ -123,10 +150,62 @@ internal static class MSBuildStructureInputCollector
         || value.Contains("@(", StringComparison.Ordinal)
         || value.Contains("%(", StringComparison.Ordinal);
 
+    private static bool ContainsPropertyExpandedToEmpty(
+        Microsoft.Build.Evaluation.Project evaluatedProject,
+        string expression)
+    {
+        var searchFrom = 0;
+        while (searchFrom < expression.Length)
+        {
+            var start = expression.IndexOf("$(", searchFrom, StringComparison.Ordinal);
+            if (start < 0)
+            {
+                return false;
+            }
+
+            var end = expression.IndexOf(')', start + 2);
+            if (end < 0)
+            {
+                return false;
+            }
+
+            var propertyName = expression.AsSpan(start + 2, end - start - 2);
+            if (IsSimplePropertyName(propertyName)
+                && string.IsNullOrEmpty(evaluatedProject.GetPropertyValue(propertyName.ToString())))
+            {
+                return true;
+            }
+
+            searchFrom = end + 1;
+        }
+
+        return false;
+    }
+
+    private static bool IsSimplePropertyName(ReadOnlySpan<char> value)
+    {
+        if (value.IsEmpty || !(char.IsAsciiLetter(value[0]) || value[0] == '_'))
+        {
+            return false;
+        }
+
+        for (var index = 1; index < value.Length; index++)
+        {
+            var character = value[index];
+            if (!(char.IsAsciiLetterOrDigit(character) || character is '_' or '.' or '-'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static void AddCompileGlobRoots(
         Microsoft.Build.Evaluation.Project evaluatedProject,
         ProjectRootElement projectFile,
-        ISet<string> roots)
+        ISet<string> roots,
+        ISet<string> unresolvedExpressions)
     {
         foreach (var item in projectFile.Items.Where(item =>
             item.ItemType.Equals("Compile", StringComparison.OrdinalIgnoreCase)
@@ -137,6 +216,17 @@ internal static class MSBuildStructureInputCollector
                 Path.TrimEndingDirectorySeparator(item.ContainingProject.DirectoryPath) + Path.DirectorySeparatorChar,
                 StringComparison.OrdinalIgnoreCase);
             var expandedIncludes = evaluatedProject.ExpandString(include);
+            if (ContainsUnexpandedExpression(expandedIncludes))
+            {
+                unresolvedExpressions.Add($"{projectFile.FullPath}|Compile|{include}|{expandedIncludes}");
+                continue;
+            }
+
+            if (ContainsPropertyExpandedToEmpty(evaluatedProject, include))
+            {
+                continue;
+            }
+
             foreach (var expandedInclude in expandedIncludes.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 var wildcardIndex = expandedInclude.IndexOfAny(['*', '?']);
@@ -154,5 +244,6 @@ internal static class MSBuildStructureInputCollector
                 roots.Add(Path.GetFullPath(rootPath));
             }
         }
+
     }
 }

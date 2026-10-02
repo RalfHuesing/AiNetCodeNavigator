@@ -238,7 +238,9 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
                 {
                     var observedFingerprint = SolutionStructureFingerprint.Create(current, solutionPath, inputs);
                     var retryFailedLoad = LoadFailure is not null;
-                    if ((retryFailedLoad || !StringComparer.Ordinal.Equals(expectedFingerprint, observedFingerprint))
+                    if ((retryFailedLoad
+                            || inputs?.HasUnexpandedExpressions == true
+                            || !StringComparer.Ordinal.Equals(expectedFingerprint, observedFingerprint))
                         && !await TryReloadAsync(solutionPath, refreshToken).ConfigureAwait(false))
                     {
                         return new ResidentSolutionSnapshot(null, LoadFailure);

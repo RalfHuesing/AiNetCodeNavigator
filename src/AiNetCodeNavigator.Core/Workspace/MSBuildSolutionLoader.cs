@@ -7,6 +7,8 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Build.Construction;
+using Microsoft.Build.Evaluation;
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
@@ -98,10 +100,12 @@ public static class MSBuildSolutionLoader
         }
     }
 
-    public static MSBuildWorkspace CreateWorkspace()
+    public static MSBuildWorkspace CreateWorkspace() => CreateWorkspace(CreateWorkspaceProperties());
+
+    private static MSBuildWorkspace CreateWorkspace(IDictionary<string, string> properties)
     {
         EnsureMSBuildRegistered();
-        return MSBuildWorkspace.Create(CreateWorkspaceProperties());
+        return MSBuildWorkspace.Create(properties);
     }
 
     public static async Task<(Solution Solution, Microsoft.CodeAnalysis.Workspace Workspace)> LoadSolutionAsync(
@@ -114,7 +118,29 @@ public static class MSBuildSolutionLoader
             throw new FileNotFoundException($"Solution file not found: {solutionPath}", solutionPath);
         }
 
-        var workspace = CreateWorkspace();
+        EnsureMSBuildRegistered();
+        var properties = CreateWorkspaceProperties();
+        var scratchRoot = properties["NavigatorAnalysisScratchRoot"];
+        try
+        {
+            ValidateDesignTimeOutputPaths(solutionPath, properties, scratchRoot);
+        }
+        catch
+        {
+            TryDeleteDirectory(scratchRoot);
+            throw;
+        }
+
+        MSBuildWorkspace workspace;
+        try
+        {
+            workspace = CreateWorkspace(properties);
+        }
+        catch
+        {
+            TryDeleteDirectory(scratchRoot);
+            throw;
+        }
         var failures = new ConcurrentQueue<string>();
         workspace.RegisterWorkspaceFailedHandler(args =>
         {
@@ -138,7 +164,89 @@ public static class MSBuildSolutionLoader
         catch
         {
             workspace.Dispose();
+            TryDeleteDirectory(scratchRoot);
             throw;
+        }
+    }
+
+    private static void ValidateDesignTimeOutputPaths(
+        string solutionPath,
+        IDictionary<string, string> properties,
+        string scratchRoot)
+    {
+        var solution = SolutionFile.Parse(solutionPath);
+        using var collection = new ProjectCollection(properties);
+        foreach (var projectInSolution in solution.ProjectsInOrder.Where(project =>
+                     project.ProjectType != SolutionProjectType.SolutionFolder
+                     && !string.IsNullOrWhiteSpace(project.AbsolutePath)))
+        {
+            var project = collection.LoadProject(projectInSolution.AbsolutePath);
+            foreach (var propertyName in new[] { "IntermediateOutputPath", "OutputPath" })
+            {
+                var outputPath = project.GetPropertyValue(propertyName);
+                if (string.IsNullOrWhiteSpace(outputPath))
+                {
+                    continue;
+                }
+
+                if (outputPath.Contains("$(", StringComparison.Ordinal)
+                    || outputPath.Contains("@(", StringComparison.Ordinal)
+                    || outputPath.Contains("%(", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"MSBuild output property '{propertyName}' in '{project.FullPath}' could not be evaluated safely.");
+                }
+
+                var fullOutputPath = Path.GetFullPath(outputPath, project.DirectoryPath);
+                if (!IsWithinDirectory(fullOutputPath, scratchRoot))
+                {
+                    throw new InvalidOperationException(
+                        $"MSBuild output property '{propertyName}' in '{project.FullPath}' resolves outside the design-time scratch directory: '{fullOutputPath}'.");
+                }
+            }
+
+            // The default extensions path is an input location for restored assets, not an output used by this design-time load.
+            // If a project explicitly redirects it away from BaseIntermediateOutputPath, reject an external override as unsupported.
+            var extensionsPath = project.GetPropertyValue("MSBuildProjectExtensionsPath");
+            var baseIntermediatePath = project.GetPropertyValue("BaseIntermediateOutputPath");
+            if (!string.IsNullOrWhiteSpace(extensionsPath) && !string.IsNullOrWhiteSpace(baseIntermediatePath))
+            {
+                var fullExtensionsPath = Path.GetFullPath(extensionsPath, project.DirectoryPath);
+                var fullBaseIntermediatePath = Path.GetFullPath(baseIntermediatePath, project.DirectoryPath);
+                if (!string.Equals(fullExtensionsPath, fullBaseIntermediatePath, StringComparison.OrdinalIgnoreCase)
+                    && !IsWithinDirectory(fullExtensionsPath, scratchRoot))
+                {
+                    throw new InvalidOperationException(
+                        $"MSBuild property 'MSBuildProjectExtensionsPath' in '{project.FullPath}' has an unsupported external override: '{fullExtensionsPath}'.");
+                }
+            }
+        }
+
+        collection.UnloadAllProjects();
+    }
+
+    private static bool IsWithinDirectory(string path, string root)
+    {
+        var relativePath = Path.GetRelativePath(Path.GetFullPath(root), Path.GetFullPath(path));
+        return relativePath == "."
+            || (!Path.IsPathRooted(relativePath)
+                && relativePath != ".."
+                && !relativePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+        }
+        catch (IOException)
+        {
+            // Process-level scratch cleanup handles files that are still held by MSBuild.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Process-level scratch cleanup handles files that are still held by MSBuild.
         }
     }
 
