@@ -52,6 +52,8 @@ public sealed class SourceToolsContractTests
         Assert.True(pagedFind.Pages > 1);
         Assert.Equal(16, pagedFind.Text.Split("method PageEntry", StringSplitOptions.None).Length - 1);
         Assert.Contains("PageEntry15", pagedFind.Text, StringComparison.Ordinal);
+        var tokenPagedFind = await ReadAllFindSymbolPagesAsync(symbols, target, "PageEntry", 65536, 512);
+        Assert.Equal(pagedFind.Text, tokenPagedFind.Text);
 
         var body = await symbols.GetSymbolBody(target, [methodHandoff], maxBodyLines: 2, maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(body, 16384, 1024);
@@ -72,6 +74,8 @@ public sealed class SourceToolsContractTests
         Assert.Contains("body-end", pagedBody.Text, StringComparison.Ordinal);
         Assert.Equal(20, pagedBody.Text.Split("body-line-", StringSplitOptions.None).Length - 1);
         Assert.Equal(20, pagedBody.Text.Split("😀", StringSplitOptions.None).Length - 1);
+        var tokenPagedBody = await ReadAllBodyPagesAsync(symbols, target, longBodyHandoff, 65536, 512);
+        Assert.Equal(pagedBody.Text, tokenPagedBody.Text);
 
         var mixedBody = await symbols.GetSymbolBody(target, [methodHandoff, "h:zzzz"], maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(mixedBody, 16384, 1024);
@@ -94,6 +98,8 @@ public sealed class SourceToolsContractTests
         var pagedSkeleton = await ReadAllSkeletonPagesAsync(structure, target, appFile, 1024, 4096);
         Assert.True(pagedSkeleton.Pages > 1);
         Assert.Contains("PageEntry15", pagedSkeleton.Text, StringComparison.Ordinal);
+        var tokenPagedSkeleton = await ReadAllSkeletonPagesAsync(structure, target, appFile, 65536, 512);
+        Assert.Equal(pagedSkeleton.Text, tokenPagedSkeleton.Text);
         var missingSkeleton = await structure.GetFileSkeleton(target, ["Missing.cs"], maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(missingSkeleton, "INVALID_ARGUMENT", 16384, 1024);
 
@@ -107,6 +113,12 @@ public sealed class SourceToolsContractTests
         AssertSuccessWithinBudget(declarationOrder, 16384, 1024);
         Assert.Contains("Zebra", TextOf(declarationOrder), StringComparison.Ordinal);
         Assert.DoesNotContain("Alpha", TextOf(declarationOrder), StringComparison.Ordinal);
+        var classStructureBytes = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", maxMembers: 1,
+            sortBy: "lines", maxResponseBytes: 512, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(classStructureBytes, 512, 4096);
+        var classStructureTokens = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", maxMembers: 1,
+            sortBy: "lines", maxResponseBytes: 65536, maxResponseTokens: 512);
+        AssertSuccessWithinBudget(classStructureTokens, 65536, 512);
         var generatedMember = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", includeGenerated: true,
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(generatedMember, 16384, 1024);
@@ -115,6 +127,12 @@ public sealed class SourceToolsContractTests
         var tree = await structure.GetFileTree(target, view: "files", includeExtensions: [".cs"], maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(tree, 16384, 1024);
         Assert.Contains("Target.cs", TextOf(tree), StringComparison.Ordinal);
+        var treeBytes = await structure.GetFileTree(target, view: "files", includeExtensions: [".cs"], maxDepth: 1,
+            maxResults: 1, maxResponseBytes: 512, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(treeBytes, 512, 4096);
+        var treeTokens = await structure.GetFileTree(target, view: "files", includeExtensions: [".cs"], maxDepth: 1,
+            maxResults: 1, maxResponseBytes: 65536, maxResponseTokens: 512);
+        AssertSuccessWithinBudget(treeTokens, 65536, 512);
         var invalidTree = await structure.GetFileTree(target, view: "unsupported", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(invalidTree, "INVALID_ARGUMENT", 16384, 1024);
 
@@ -122,6 +140,16 @@ public sealed class SourceToolsContractTests
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(namespaceTree, 16384, 1024);
         Assert.Contains("ScopeProbe.Target", TextOf(namespaceTree), StringComparison.Ordinal);
+        var namespaceBytes = await structure.GetNamespaceTree(target,
+            project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
+            namespacePrefix: "ScopeProbe", depth: 1, includeTypes: false, maxResults: 1,
+            maxResponseBytes: 512, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(namespaceBytes, 512, 4096);
+        var namespaceTokens = await structure.GetNamespaceTree(target,
+            project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
+            namespacePrefix: "ScopeProbe", depth: 1, includeTypes: false, maxResults: 1,
+            maxResponseBytes: 65536, maxResponseTokens: 512);
+        AssertSuccessWithinBudget(namespaceTokens, 65536, 512);
         var generatedNamespaceExcluded = await structure.GetNamespaceTree(target, namespacePrefix: "ScopeProbe.GeneratedOnly",
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(generatedNamespaceExcluded, "INVALID_ARGUMENT", 16384, 1024);
@@ -142,6 +170,12 @@ public sealed class SourceToolsContractTests
         var feature = await relationships.GetFeatureContext(target, methodHandoff, maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(feature, 16384, 1024);
         Assert.Contains("static-test-candidates-only", TextOf(feature), StringComparison.Ordinal);
+        var featureBytes = await relationships.GetFeatureContext(target, methodHandoff, maxCallers: 1, maxTests: 1,
+            maxResponseBytes: 512, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(featureBytes, 512, 4096);
+        var featureTokens = await relationships.GetFeatureContext(target, methodHandoff, maxCallers: 1, maxTests: 1,
+            maxResponseBytes: 65536, maxResponseTokens: 512);
+        AssertSuccessWithinBudget(featureTokens, 65536, 512);
         var featureProduction = await relationships.GetFeatureContext(target, methodHandoff, scopeType: "production",
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(featureProduction, 16384, 1024);
@@ -157,6 +191,12 @@ public sealed class SourceToolsContractTests
         AssertSuccessWithinBudget(testContext, 16384, 1024);
         Assert.Contains("RunTest", TextOf(testContext), StringComparison.Ordinal);
         Assert.Contains("static-test-candidates-only", TextOf(testContext), StringComparison.Ordinal);
+        var testContextBytes = await relationships.GetTestContext(target, methodHandoff, maxResults: 1,
+            maxResponseBytes: 512, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(testContextBytes, 512, 4096);
+        var testContextTokens = await relationships.GetTestContext(target, methodHandoff, maxResults: 1,
+            maxResponseBytes: 65536, maxResponseTokens: 512);
+        AssertSuccessWithinBudget(testContextTokens, 65536, 512);
         var testContextProduction = await relationships.GetTestContext(target, methodHandoff, scopeType: "production",
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(testContextProduction, 16384, 1024);
@@ -201,6 +241,10 @@ public sealed class SourceToolsContractTests
         SymbolTools tools, string target, string pattern, int bytes, int tokens)
     {
         var text = new StringBuilder();
+        var broadResult = await tools.FindSymbol(target, pattern: pattern, maxResults: 100,
+            maxResponseBytes: 65536, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(broadResult, 65536, 4096);
+        var expected = BodyOf(TextOf(broadResult));
         var result = await tools.FindSymbol(target, pattern: pattern, maxResults: 100, maxResponseBytes: bytes, maxResponseTokens: tokens);
         var pages = 0;
         for (var request = 0; request < 100; request++)
@@ -211,7 +255,10 @@ public sealed class SourceToolsContractTests
             text.Append(BodyOf(page));
             pages++;
             if (!TryReadToken(page, "continuationToken", out var continuation))
+            {
+                Assert.Equal(expected, text.ToString());
                 return (text.ToString(), pages);
+            }
             result = await tools.FindSymbol(target, pattern: pattern, maxResults: 100, maxResponseBytes: bytes,
                 maxResponseTokens: tokens, continuationToken: continuation);
         }
@@ -222,6 +269,9 @@ public sealed class SourceToolsContractTests
         StructureTools tools, string target, string filePath, int bytes, int tokens)
     {
         var text = new StringBuilder();
+        var broadResult = await tools.GetFileSkeleton(target, [filePath], maxResponseBytes: 65536, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(broadResult, 65536, 4096);
+        var expected = BodyOf(TextOf(broadResult));
         var result = await tools.GetFileSkeleton(target, [filePath], maxResponseBytes: bytes, maxResponseTokens: tokens);
         var pages = 0;
         for (var request = 0; request < 100; request++)
@@ -232,7 +282,10 @@ public sealed class SourceToolsContractTests
             text.Append(BodyOf(page));
             pages++;
             if (!TryReadToken(page, "continuationToken", out var continuation))
+            {
+                Assert.Equal(expected, text.ToString());
                 return (text.ToString(), pages);
+            }
             result = await tools.GetFileSkeleton(target, [filePath], maxResponseBytes: bytes,
                 maxResponseTokens: tokens, continuationToken: continuation);
         }
@@ -243,6 +296,10 @@ public sealed class SourceToolsContractTests
         SymbolTools tools, string target, string symbolIdentifier, int bytes, int tokens)
     {
         var text = new StringBuilder();
+        var broadResult = await tools.GetSymbolBody(target, [symbolIdentifier], maxBodyLines: 80,
+            maxResponseBytes: 65536, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(broadResult, 65536, 4096);
+        var expected = BodyOf(TextOf(broadResult));
         var result = await tools.GetSymbolBody(target, [symbolIdentifier], maxBodyLines: 80,
             maxResponseBytes: bytes, maxResponseTokens: tokens);
         var pages = 0;
@@ -254,7 +311,10 @@ public sealed class SourceToolsContractTests
             text.Append(BodyOf(page));
             pages++;
             if (!TryReadToken(page, "continuationToken", out var continuation))
+            {
+                Assert.Equal(expected, text.ToString());
                 return (text.ToString(), pages);
+            }
             result = await tools.GetSymbolBody(target, [symbolIdentifier], maxBodyLines: 80,
                 maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation);
         }
@@ -389,8 +449,22 @@ public sealed class SourceToolsContractTests
         var standardOutput = process.StandardOutput.ReadToEndAsync();
         var standardError = process.StandardError.ReadToEndAsync();
         var processExit = process.WaitForExitAsync();
-        await processExit.WaitAsync(TimeSpan.FromMinutes(2));
-        Assert.True(process.ExitCode == 0, $"Source-tool fixture restore failed: {await standardError}\n{await standardOutput}");
+        try
+        {
+            await processExit.WaitAsync(TimeSpan.FromMinutes(2));
+        }
+        catch (TimeoutException)
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+            await processExit;
+            var timedOutError = await standardError;
+            var timedOutOutput = await standardOutput;
+            throw new Xunit.Sdk.XunitException($"Source-tool fixture restore timed out after two minutes.\n{timedOutError}\n{timedOutOutput}");
+        }
+        var errorOutput = await standardError;
+        var standardOutputText = await standardOutput;
+        Assert.True(process.ExitCode == 0, $"Source-tool fixture restore failed: {errorOutput}\n{standardOutputText}");
         return solutionPath;
     }
 }
