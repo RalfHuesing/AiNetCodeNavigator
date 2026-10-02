@@ -1,0 +1,115 @@
+---
+status: draft
+---
+
+# Verlässliche und tokeneffiziente MCP-Navigation
+
+## Intention
+
+Agenten sollen mit AiNetCodeNavigator die relevante Deklaration, ihr Verhalten und ihre statischen Beziehungen zuverlässig finden, ohne unnötige Inventare, doppelte Darstellungen oder irreführende Vollständigkeitsangaben verarbeiten zu müssen. Dieses Vorhaben überführt die belegten Befunde des Usage-Audits vom 02.10.2026 in einen klareren Navigationsvertrag, gezielte Fehlerkorrekturen und überprüfbare Effizienzverbesserungen.
+
+Das Ergebnis ist eine kleinere, eindeutigere Agentenoberfläche mit nachvollziehbaren Analysegrenzen. Tokenersparnis darf weder Belege noch Owner-Identität oder Hinweise auf unvollständige Analyse entfernen. Das Produkt bleibt ausschließlich ein read-only MCP-Server für C#-Quellcode und verwaltete Assemblies.
+
+## Entscheidungen und Abgrenzung
+
+- Der Nutzer hat am 02.10.2026 festgelegt: **„Wir sind Greenfield. Das kann alles geändert werden wenn es dadurch besser wird.“** Bestehende Antwortformate, Parameter und Defaults müssen daher nicht kompatibel erhalten werden. Es entstehen keine Legacy-Adapter oder Übergangskataloge.
+- Die ausgewählte Entscheidung aus [tool-beurteilung/Aenderungsplan.md](../tool-beurteilung/Aenderungsplan.md) bleibt verbindlich: **kein `get_server_health`, kein `reload_config`, kein administrativer Ersatzkatalog**. Der aktuelle Quellcode registriert 19 Navigationstools. Der Audit-Server mit 21 Tools war ein abweichendes Deployment; seine Oberfläche ist nicht die Ausgangsautorität für eine erneute Aufnahme der entfernten Tools.
+- Dieses Konzept entscheidet die auditbezogene Vereinfachung: `get_assembly_context` entfällt, sein Bibliotheksüberblick gehört zu `inspect_assembly`; ausgewählte Bodies, Member und Beziehungen liefern die vorhandenen Einzeltools. Ziel sind **18 Navigationstools**. `get_feature_context` bleibt als fester Source-Einstieg für Deklaration, Aufrufer und Testkandidaten erhalten; das Audit belegt keine gleichwertige Redundanz dieses Workflows.
+- `detailLevel` entfällt bei den Assembly-Tools. Eine kompakte, verbindliche Ergebnisdarstellung ersetzt wirkungslose Varianten. Ausführliche Navigations-/Referenzdiagnosen werden über `includeDiagnostics`, standardmäßig `false`, angefordert. Das vorhandene gleichnamige Call-Tree-Argument wird mit derselben Bedeutung verwendet.
+- `search_assembly` bleibt Text-/Deklarationssuche. `searchKind` mit `external_calls` und `data_access` entfällt. Der Agent gibt einen Text- oder ausdrücklich als Regex markierten Suchausdruck an; `isRegex` hat den Default `false`. Die Heuristiken werden nicht zu einer neuen semantischen Netzwerk-/Datenbankanalyse ausgebaut.
+- `inspect_assembly.includeReferences` ist standardmäßig **`false`**, unabhängig davon, ob ein Typ-/Memberfilter gesetzt ist. Referenzinventar und unterstützte Owner-Erkundung sind eine bewusste Abfrage.
+- Die übrigen Toolnamen und ihre fachlichen Zuständigkeiten bleiben bestehen. Das breitere Redesign des alten Änderungsplans wird nicht pauschal übernommen: insbesondere keine Extension-Umbenennung/-Erweiterung, keine Zusammenführung von Impact und Call-Tree, keine Zusammenführung von Herkunft und Namenssuche.
+
+Diese Entscheidungen betreffen das geplante Ergebnis, nicht den heutigen implementierten Stand. Schritt 1 erstellt ausschließlich dieses Konzept. Prüfung/Freigabe, Roadmap und Umsetzung werden vom Nutzer jeweils separat gestartet.
+
+## Grundlage und Evidenz
+
+Referenz-HEAD der Konzeptaufnahme: `500ea51eb013f8147bf1ad756af57416737ac0e4`. Die wichtigsten Auditbelege sind hier zusammengefasst, damit das Konzept ohne die lokal ignorierten Rohdateien verständlich bleibt. Ausführliche lokale Nachweise: [Audit-Zusammenfassung](../../temp/usage-audit/usage-audit-summary.md), [Source](../../temp/usage-audit/01-source-usage.md), [PPS](../../temp/usage-audit/02-pps-usage.md), [Wawi](../../temp/usage-audit/03-wawi-usage.md), [Host/Token](../../temp/usage-audit/04-host-token-usage.md). Diese Dateien unter `temp/` sind keine dauerhafte Versionshistorie und ersetzen keine reproduzierbare Regression.
+
+| Befund | Beobachtung | Konsequenz |
+|---|---|---|
+| UA-01: rekursiver Aufruf fehlt | PPS `GesamtRueckmeldung.Execute(bool)`: eingehender Call-Tree zeigt nur Root und meldet complete; `find_references` findet mit demselben Handle, Owner und `includeReferences=false` den Selbstaufruf bei Zeile 578. | Rekursive Kanten und Fundstellen erhalten; Traversierung trotzdem begrenzen. |
+| UA-02: Deploymentabweichung | Audit-Deployment unter `C:\Daten\Tools\AiNetCodeNavigator-win-x64` hat andere Main-/Core-DLL-Hashes als Repository-`deploy` und bietet 21 statt 19 Tools. | Release und registrierten Vertrag identifizierbar machen; erneute Messung gegen einen nachweislich passenden Build. |
+| UA-03/05: Antwortaufwand | Gleicher Wawi-Getter: direkter Body 99, Assembly-Kontext 1.083 cl100k-Tokens. Gleiche Inspection: implizite Referenzen 6.908, explizit ausgeschlossene Referenzen 3.261 Tokens. PPS-Typabfrage mit compact/standard/full jeweils identische 5.729 Tokens. | Kontext entfernen, echte kompakte Projektion, Referenzen explizit, keine doppelte JSON-/FormattedText-Ausgabe. |
+| UA-04: begrenzte Semantik | PPS meldet 1.013, Wawi 5.761 semantische Decompiler-/Referenzfehler; Auflösungslimit 128 Assemblies, Versionskonflikte und fehlende Abhängigkeiten. | API-/Body-Verfügbarkeit und Beziehungs-/Referenzvollständigkeit getrennt ausweisen; keine vollständige Closure vortäuschen. |
+| UA-06: Tests am Vertrag | SAN `ISiteAccessService.CanAccessSiteAsync`: keine Testkandidaten; Implementierung liefert eine Fixture mit elf Kandidaten, Referenzen zeigen Testverwendungen. | Statische Testverwendungen und begrenzte Implementierungszuordnung statt ausschließlich vertragsnamensbasierter Suche. |
+| UA-07/08: irreführende Hinweise | `external_calls` findet XML-Kommentar „Wird im Webclient überschrieben“. Namespace-Abfrage mit Projekt fordert erneut Projektselektion; erfolgreiche Body-Fenster fordern Fehlerbehebung. | Suchvertrag vereinfachen und Recovery an den tatsächlichen Grund binden. |
+| UA-09/10/11/12: Nutzungskosten | Breite SAN-Abhängigkeiten benötigen etwa 45 s bis zur paginierten Antwort. Handles melden stale/unresident, Neuentdeckung funktioniert; Ursache nicht nachgewiesen. Kleine Budgets liefern Metadaten ohne Nutzdaten. | Reproduzierbare Messung, zuverlässige Owner-/Snapshot-Recovery, kurze Beschreibungen und ein gezielter Agentenworkflow. |
+
+Die lokalen Quellen wurden gelesen: `CallTreeBuilder` überspringt eingehende Referenzen, deren enclosing caller dem Ziel entspricht; `InspectAssemblyScanner` hängt `FormattedText` an den Payload, den der Host vollständig serialisiert; `AssemblyTools` komponiert den allgemeinen Überblick vor ausgewählten Kontextabschnitten; `TestRecommendationBuilder` sucht Fixture-Namen anhand des Zieltypnamens; `NamespaceTreeScanner.GetNextAction` berücksichtigt die konkrete Projektselektion nicht. Diese Übereinstimmungen stützen die Untersuchung, beweisen wegen der Deploymentabweichung aber nicht den exakten Code des Audit-Prozesses.
+
+## Scope
+
+### Muss
+
+**1. Beziehungen korrekt und auf ihren Scope begrenzt darstellen.** Eingehende und ausgehende direkte Rekursion müssen als Kante mit Fundstelle erkennbar sein. Mehrfache Aufrufe bleiben als Fundstellen erhalten, ohne unendliche Expansion. Referenzen, Call-Tree und Impact dürfen für denselben Scope dieselbe rekursive Stelle nicht widersprüchlich unterschlagen. Keine zusätzliche Behauptung über DI, Reflection oder dynamische Laufzeitbindung.
+
+**2. Eine kompakte Ergebnisdarstellung liefern.** Assembly-Payloads enthalten keine vollständige zweite Darstellung in `formattedText` neben den strukturierten Einträgen. Öffentliche Symbol-/Typ-/Member-/Dateiselektionen zeigen `h:`-Handles direkt beim Eintrag zusammen mit dem tatsächlichen Owner. Neue öffentliche Ergebnisse geben keine internen `i:`-Identitäten als zweiten Handle-Vertrag aus. Bodies bleiben lesbare, zeilenweise begrenzte Deklarationen. Identität, Owner, wesentliche Signatur, relevante Zählwerte, Analysegrenzen und Recovery bleiben auch bei leerem Ergebnis verfügbar.
+
+**3. Unvollständigkeit verständlich trennen.** Der Vertrag unterscheidet Antwortseiten, angefragte Ergebnis-/Traversierungsgrenzen, verfügbare Referenz-Closure und unsichere/unaufgelöste semantische Beziehungen. Eine komplett ausgelieferte Antwort darf eine unvollständige Analyse nicht als globale Vollständigkeit erscheinen lassen. Leer bedeutet „im angegebenen analysierten Scope kein Treffer“, nicht „nirgendwo vorhanden“. Gesicherte deklarative Treffer bleiben nutzbar, auch wenn unabhängige Referenzen fehlen. Jede relevante Auslassung hat einen eindeutigen Grund und eine dazu passende Folgeaktion.
+
+**4. Diagnosen kurz, aber ehrlich halten.** Standardausgaben zeigen relevante Diagnosekategorien und Zählwerte ohne wiederholte Listen langer Abhängigkeitspfade und Compilertexte. `includeDiagnostics=true` liefert die vorhandenen detaillierten Navigations-/Referenzhinweise unter denselben Budgets; es ist keine Compilerdiagnostikfunktion. Unvollständigkeit bleibt auch bei `false` sichtbar. Kein persistenter Diagnosekatalog und kein zusätzlicher Toolaufruf sind zum Verstehen einer Antwort erforderlich.
+
+**5. Ergebnisfortsetzung und Antwortfortsetzung eindeutig machen.** `operationToken` pollt die laufende Abfrage, `continuationToken` liest ausschließlich unveränderliche äußere Antwortseiten. `inspect_assembly` und `search_assembly` verwenden für ihre Domänenfortsetzung einen separat benannten `resultCursor` als Ein-/Ausgabe. Query-, Target- und Snapshot-Bindung, Replay, TTL, Cancellation und exakte Budget-Recovery bleiben erhalten. Zuerst alle äußeren Seiten einer Domänenantwort lesen, dann deren `resultCursor`. Ein Budgetwechsel ändert nicht die Query-Identität. Der Agent muss Tokenarten nicht anhand ihres Stringformats erraten.
+
+**6. Recovery dem Fehler zuordnen.** Body-Batches liefern pro Item Auflösungsstatus und nächstes Deklarationsfenster; nur tatsächlich fehlgeschlagene Items erfordern Fehlerbehebung. Namespace-Recovery berücksichtigt Targetart, gewähltes Projekt, Namespacepräfix und erlaubte Tiefen. Falscher Owner, unbekanntes Handle, geänderte Generation und nicht mehr residente Assembly werden verständlich unterschieden. Aktive Leases schützen eine laufende Owner-Analyse vor Eviction. Außerhalb einer aktiven Analyse darf die bestehende begrenzte Residency enden; der Vertrag muss dann eine ausführbare Neuentdeckung nennen. Kein stiller Fallback zu geratenen Namen oder alten Ergebnissen.
+
+**7. Testkandidaten vom Vertrag aus auffindbar machen.** Bestehende Namensheuristik bleibt als solche erkennbar. Zusätzlich werden direkte statische Verwendungen in erkannten Testmethoden sowie passende Implementierungen von Interface-/abstrakten Typ- oder Memberzielen berücksichtigt. Implementierungs- und Kandidatenexpansion sind begrenzt, projekt-/snapshotgebunden und dedupliziert; erreichte Grenzen werden ausgewiesen. Kandidaten unterscheiden direkte Symbolverwendung, Implementierungsbezug und reine Namensheuristik mit Quelle/Beleg. Das bleibt `static-test-candidates-only`; eine über einen Implementierungstyp gefundene ähnlich benannte Fixture ist kein bewiesener Test des ursprünglichen Members. Keine transitive Traversierung beliebiger Testhelfer.
+
+**8. Referenzauflösung und Residency gegen die Befunde prüfen.** Resolver-/Lease-Verhalten wird mit fehlenden Referenzen, Versionskonflikten, Closure-Grenzen und Sessiondruck reproduzierbar untersucht. Nachgewiesene Fehler in Identitätsprüfung, begrenzter Owner-Traversierung oder Lease-Lebensdauer werden korrigiert. Eine vorhandene gleichnamige DLL mit falscher Identität darf nicht zur erfolgreichen Auflösung erklärt werden. Die Grenze von 128 Referenzknoten bzw. 32 residenten Sessions wird nicht allein wegen der Audit-Zahlen erhöht. Wenn eine Grenze legitim erreicht wird oder die Installation eine Abhängigkeit nicht enthält, ist das korrekte Ergebnis eine brauchbare, explizit begrenzte Analyse.
+
+**9. Release und Zieloberfläche identifizierbar machen.** Standard-MCP-Initialisierungsmetadaten und bestehende Startup-Protokollierung liefern eine aus dem Build abgeleitete Release-/Commitkennung; keine wiederholte Kennung in jedem Symboleintrag. Standard-I/O bleibt ausschließlich MCP-Transport. Toolkatalog, Schema, Dokumentation und lokale Agentenregel beschreiben dieselben 18 Tools. Loggingkonfiguration bleibt die bestehende Startkonfiguration mit Prozessneustart. Kein Health-/Reload-Tool wird wieder eingeführt.
+
+**10. Effizienz als Workflow nachweisen und Nutzung dokumentieren.** Verglichen werden nützliche Antworten mit gleichem Target, deklarativer Auswahl, Scope und Vollständigkeit; nicht nur unterschiedlich große Einzelantworten. Erfassen: UTF-8-Bytes, exakte `cl100k_base`-Antworttokens, Requests, Polls, Seiten, Elapsed Time, initiale Residency und Buildkennung. Kalte und warme Abläufe laufen in einem eindeutig zugeordneten Serverprozess. Schema-/Requestkosten werden getrennt erfasst, wenn der Client sie tatsächlich zugänglich macht; es werden keine Modellkosten aus `cl100k_base` geschätzt. Breite Dependency-/Owner-Abfragen werden gezielt profiliert; belegter vermeidbarer Zusatzaufwand wird beseitigt. Ohne kontrollierte Baseline gibt es keine erfundene Latenz-/Speicherzusage.
+
+Die Anleitung zeigt Source-Einstieg, Assembly-Einstieg ohne implizite Referenzinventare, gezielte Einzeltools, direktes Lesen bekannter Source-Fenster, begrenzte Implementierungs-/Testsuche und Recovery. Toolbeschreibungen benennen ihren Scope kurz und präzise. Betroffene aktuelle Dokumentation wird erst mit implementierten Verträgen aktualisiert.
+
+### Nicht
+
+- Keine Builds, Tests, Änderungen am Server oder Deployment in der Konzeptphase. Keine Roadmap und keine automatische Freigabe dieses Drafts.
+- Keine Kompatibilitätsschicht für `get_assembly_context`, `detailLevel`, `searchKind` oder die alte Mehrdeutigkeit von `continuationToken`.
+- Kein vollständiges Redesign aller übrigen Toolargumente, keine Universalabfrage und kein automatisches Anfordern aller Beziehungen.
+- Keine Installation, Veränderung oder Verteilung von Sage-/SAN-Dateien; keine Umgehung korrekter Assemblyidentitäten; keine Zusage, dass die vorhandene Sage-Installation ohne alle benötigten Abhängigkeiten vollständig analysiert werden kann.
+- Keine Ausführung analysierter Assemblies, keine Codeänderungen in analysierten Workspaces, kein Linting, Code-Audit, Refactoring oder Compilerdiagnostikprodukt.
+- Keine Coverage-/Testpass-Zusagen, keine transitive fachliche Impactgarantie, keine Netzwerk-/SQL-Verhaltensanalyse aus Textheuristiken.
+- Kein unbegrenztes Caching, dauerhaft gültige Handles, globaler Refresh, Telemetrieservice, Benchmark-MCP-Tool oder Wiederaufnahme administrativer Laufzeittools.
+- Kein blindes Erhöhen von Limits, keine Optimierung auf Kosten von Ergebnisvollständigkeit oder Read-only-Verhalten.
+
+## Verifikation und Abnahme
+
+Die folgenden Kriterien gelten für die spätere Umsetzung. In dieser Konzeptaufnahme wurden lediglich Quellen und Auditberichte gelesen; kein Test oder Build wurde ausgeführt.
+
+| Bereich | Nachweis für die Abnahme |
+|---|---|
+| Rekursion | Kleine Source- und Assembly-Fixtures mit direkter Rekursion, gegenseitiger Rekursion und mehreren Callsites: Kanten/Fundstellen stimmen zwischen Relationship-Tools; Traversierung terminiert, Grenzen werden korrekt markiert. Vor einer Fehlerkorrektur einen reproduzierbar fehlenden Nachweis herstellen. |
+| Zielvertrag | Registrierter Katalog enthält genau 18 Navigationstools. Entfernte Tools/Argumente sind weder im Schema noch in der Anleitung oder als versteckte Ersatzroute vorhanden. Releasekennung ordnet den gemessenen Prozess seinem Build zu. |
+| Kompakte Antworten | Typ-/Member-/Suchtreffer haben einen öffentlich nutzbaren Owner-Handoff ohne doppelte Volltextdarstellung. Leere, diagnostisch begrenzte Such-/Extension-Ergebnisse einer kontrollierten Fixture mit kurzem Targetpfad benötigen standardmäßig höchstens 256 Antworttokens und nennen weiterhin Scope/Analysegrenzen. Detaillierte Diagnosen sind ausdrücklich anforderbar. |
+| Audit-Tokenfall | Dieselbe PPS-Auswahl `GesamtRueckmeldung.Execute(bool)`, ein Typ/ein Member, keine Referenzdetails, ausreichend großes Antwortbudget: höchstens 1.600 Antworttokens statt beobachteter 3.200 bei gleichwertiger deklarativer Information und ehrlichem Closure-Status. Sind Targetbytes/Referenzumgebung verändert, neue Vorher-/Nachher-Baseline aufnehmen und mindestens 50 % Einsparung für diesen Auswahlfall nachweisen. Eine kürzere erste Seite allein zählt nicht. |
+| Paging/Budgets | Alle äußeren Seiten vollständig rekonstruieren, dann alle benötigten Domänenseiten; Query-Bindung, Replay, abgelaufene Tokens, Cancellation, atomare Budgetfehler und exakte Retry-Minima prüfen. Mixed Batches verlieren erfolgreiche Items nicht. Keine Teilantwort mit scheinbar vollständigem StructuredContent kombinieren. |
+| Scope/Diagnosen | Fixtures mit fehlender/falsch versionierter Referenz, erreichtem Closurelimit und vollständiger eigener API: Deklarationen bleiben lesbar; fehlende Beziehungen werden nicht als globale Abwesenheit präsentiert. Kommentare und Literaltext bleiben Suchtreffer, nicht semantische Call-Beweise. |
+| Testkandidaten | Interface und Implementierung, anders benannte direkt verwendende Tests, reine Namensähnlichkeit, doppelte Typnamen in Projekten und mehr Kandidaten als Limit: Herkunft/Belegart, Bounds und Deduplikation sind überprüfbar; keine Coverage-Zusage. |
+| Recovery/Residency | Erfolgreiches Body-Fenster fordert nur sein nächstes Fenster; Projekt-/Assembly-Namespace-Recovery ist ausführbar. Aktive Owner bleiben geleast; Eviction, echter Targetmismatch und Generationwechsel ergeben passende Recovery ohne veraltete Bodies. |
+| Effizienz/Read-only | Kontrollierte kalte/warme Workflows dokumentieren Prozess, Build, Antworten, Grenzen, Zeiten und Tokens. Breiter SAN-Dependency-Fall wird separat profiliert. Ziel-Dateien bleiben unverändert; stdout enthält ausschließlich MCP. |
+
+Automatisierte Regressionen verwenden eigenständige lokale Fixtures und vorhandene transportfreie Handler-/Core-Testinfrastruktur; proprietäre Sage-DLLs und das externe SAN-Repository sind keine CI-Abhängigkeiten. Ein erneuter manueller Read-only-Abgleich mit den drei Originaltargets gehört zum fachlichen Abschluss. Ist ein Target nicht mehr verfügbar, bleibt dieser Praxisnachweis ausdrücklich unerfüllt, bis derselbe Beleg gegen das verfügbare Target nachgeholt ist; Fixture-Erfolg wird nicht als bestandener Sage-/SAN-Abgleich verkauft.
+
+Originaltargets: `C:\Daten\Entwicklung\SAN\San.smart.Planner.Platform\San.smart.Planner.Platform.slnx`; `C:\Program Files (x86)\Sage\Sage 100\9.0\Shared\Sagede.OfficeLine.Pps.RueckmeldungEngine.dll`; `C:\Program Files (x86)\Sage\Sage 100\9.0\Shared\Sagede.OfficeLine.Wawi.BelegEngine.dll`. Referenzfingerprints: PPS `00108471A36F31C4B45C05F545D830444AD6D9469564CFA014017DAF8B8F0B4A`, Wawi `9C087FC61A0405AF4A7FFDD0AE87945AE325C5C14E240743D94EF6E8D71E9A07`.
+
+Spätere Codeverifikation folgt den offiziellen Repository-Skripten und der engsten relevanten Fast-/Integration-/Extended-Auswahl gemäß `.agents/rules/04-verification.mdc`; bestehende E2E-Ausschlüsse werden nicht durch Konzeptbehauptungen umgangen. Dokumentation und Schemas werden gegen den implementierten Katalog geprüft. Der finale Nachweis bewertet semantische Ergebnisse und tatsächliche Gesamtseitenkosten, nicht bloß die Anzahl grüner Tests.
+
+## Bestehende Mechanismen und Nachbarflächen
+
+Keine neue parallele Navigationsengine: bestehende Symbolauflösung, Relationship-Scanner, Assembly-Sessions, Owner-Leases, Handoff-Registry und Antwort-/Operationsstores bleiben die Ansatzpunkte. Tokenmessung und MCP-Projektion bleiben im Host; Core erhält keine MCP-/SharpToken-Abhängigkeit.
+
+Relevante Quellen für die spätere Detailplanung:
+
+- [CallTreeBuilder](../../src/AiNetCodeNavigator.Core/CallTree/CallTreeBuilder.cs), [RelationshipTools](../../src/AiNetCodeNavigator/Mcp/Tools/Relationships/RelationshipTools.cs), [Call-Tree-Vertrag](../../docs/navigation/get-call-tree.md).
+- [AssemblyTools](../../src/AiNetCodeNavigator/Mcp/Tools/Assemblies/AssemblyTools.cs), [InspectAssemblyScanner](../../src/AiNetCodeNavigator.Core/Assemblies/InspectAssemblyScanner.cs), [NavigationToolSupport](../../src/AiNetCodeNavigator/Mcp/Tools/NavigationToolSupport.cs), [Assembly-Navigation](../../docs/navigation/assembly-navigation.md).
+- [TestRecommendationBuilder](../../src/AiNetCodeNavigator.Core/Symbols/TestRecommendationBuilder.cs), [Test-Context-Vertrag](../../docs/navigation/test-context.md), [NamespaceTreeScanner](../../src/AiNetCodeNavigator.Core/FileStructure/NamespaceTreeScanner.cs), [SymbolTools](../../src/AiNetCodeNavigator/Mcp/Tools/Symbols/SymbolTools.cs).
+- [AssemblyReferenceResolver](../../src/AiNetCodeNavigator.Core/Assemblies/AssemblyReferenceResolver.cs), [AssemblyAnalysisSessionRegistry](../../src/AiNetCodeNavigator.Core/Assemblies/AssemblyAnalysisSessionRegistry.cs), [AssemblySymbolHandoffResolver](../../src/AiNetCodeNavigator.Core/Assemblies/AssemblySymbolHandoffResolver.cs), [ResidentSolution](../../src/AiNetCodeNavigator.Core/Workspace/ResidentSolution.cs).
+- [McpServerHost](../../src/AiNetCodeNavigator/Mcp/McpServerHost.cs), [Ergebnisvertrag](../../docs/mcp-tool-results.md), [Budgets](../../docs/mcp-response-budgets.md), [Fortsetzungen](../../docs/mcp-long-running-calls.md), [Toolreferenz](../../docs/tools/README.md).
+- Vorhandene `AssemblyToolsContractTests`, `SourceToolsContractTests`, `SourceRelationshipToolsContractTests`, `NamespaceTreeScannerTests` und Assembly-/Snapshot-Tests sind Anknüpfungspunkte, kein bereits ausgeführter Abnahmenachweis.
+
+## Planungsstand
+
+Die Greenfield-Entscheidung ist eingearbeitet. Für die beschriebene Intention, den binären Scope und die Abnahme ist keine weitere Nutzerentscheidung offen. Konkrete DTO-Aufteilung und Codeorganisation sind Implementierungsdetails, keine nachträglich zu treffenden Produktentscheidungen. Das Konzept bleibt `status: draft`; unabhängige Prüfung und Freigabe erfolgen ausschließlich durch den separat vom Nutzer gestarteten Schritt 2.
