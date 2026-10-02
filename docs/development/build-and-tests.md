@@ -13,7 +13,7 @@ The solution `AiNetCodeNavigator.slnx` contains five projects:
 - `src/AiNetCodeNavigator/`: MCP server host executable and Serilog logging bootstrap.
 - `tests/AiNetCodeNavigator.TestKit/`: Shared test support infrastructure, sample code fixtures, and workspace builders.
 - `tests/AiNetCodeNavigator.FastTests/`: Fast unit and component test suite. It retains one E2E MCP SDK stream fixture, which performs a protocol handshake and remains excluded from routine gates.
-- `tests/AiNetCodeNavigator.IntegrationTests/`: Workspace-loading and transport-free source/assembly handler contract tests, including maintenance behavior, budgets, recovery, domain paging, and owner handoffs. Retained stdio/JSON-RPC host cases are categorized `E2EIntegration` and excluded from current completion gates. Current per-tool outcomes and the exact final gate counts are recorded in the task's [acceptance matrix](../../tasks/MCP-Server-Vervollstaendigung/Abnahmematrix.md); older stdio findings remain historical evidence.
+- `tests/AiNetCodeNavigator.IntegrationTests/`: Workspace-loading and transport-free source/assembly handler contract tests, including maintenance behavior, budgets, recovery, domain paging, and owner handoffs. Retained stdio/JSON-RPC host cases are categorized `E2EIntegration` and excluded from current completion gates.
 
 Core, Host, and TestKit expose internal members to the test assemblies via `InternalsVisibleTo`.
 

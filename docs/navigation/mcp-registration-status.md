@@ -1,6 +1,6 @@
 # MCP Navigation Registration Status
 
-The production catalog exposes nineteen navigation tools and two maintenance tools. The current handler contract evidence uses the original SDK definitions, direct validators and transport-free tool handlers. It covers source and assembly routes, exact budgets, handoff consumers, domain limits, and maintenance ownership. Retained child-stdio, MCP client/stream, handshake, and full JSON-RPC tests remain in the test projects under `E2EIntegration`; they are excluded from current completion gates. Their prior findings are historical implementation evidence, not current transport-free acceptance evidence. See the [21-tool reference](../tools/README.md), the task's [current acceptance matrix](../../tasks/MCP-Server-Vervollstaendigung/Abnahmematrix.md), and the [historical public contract matrix](../../tasks/Navigator-Migration/Reviews/public-contract-matrix.md).
+The production catalog exposes nineteen navigation tools and two maintenance tools. The current handler contract evidence uses the original SDK definitions, direct validators and transport-free tool handlers. It covers source and assembly routes, exact budgets, handoff consumers, domain limits, and maintenance ownership. Retained child-stdio, MCP client/stream, handshake, and full JSON-RPC tests remain in the test projects under `E2EIntegration`; they are excluded from current completion gates. Their prior findings are historical implementation evidence, not current transport-free acceptance evidence. See the [21-tool reference](../tools/README.md).
 
 ## Current transport-free handler coverage
 
@@ -10,7 +10,7 @@ The source and assembly lifecycle cases exercise `find_symbol` → runtime dispo
 
 ## Historical real-stdio test inventory
 
-The sections below record retained real-stdio test implementations, which are excluded from this completion's eligible gates. The details explain what those cases assert when explicitly run; they are not claimed as current acceptance results. Current route-by-route results and final gate counts belong in the acceptance matrix above.
+The sections below record retained real-stdio test implementations, which are excluded from eligible gates. The details explain what those cases assert when explicitly run; they are not claimed as current acceptance results.
 
 ## Exercised handler paths
 
@@ -34,6 +34,6 @@ A transport-free `get_impact` contract test checks the original SDK schema and d
 
 ## Current verification boundaries
 
-The transport-free acceptance status for all 21 tools, common budget and paging rules, lifecycle ownership, required gate counts, and excluded tests is recorded in the task's [acceptance matrix](../../tasks/MCP-Server-Vervollstaendigung/Abnahmematrix.md). The detailed stdio scenarios above are retained test descriptions from the earlier public-contract snapshot; they are not current gate results. The separate [historical matrix](../../tasks/Navigator-Migration/Reviews/public-contract-matrix.md) labels that distinction.
+The detailed stdio scenarios above are retained test descriptions from earlier public-contract testing; they are not current gate results.
 
 Current completion gates exclude child-process stdio, MCP client/server streams, handshake, JSON-RPC, and full report-publishing E2E cases. The single explicitly selected AiNetReview report-publication test is a separate user-requested report check and is not MCP acceptance evidence. The loader's tested MSBuild write guards cover concrete configured imports and output-path redirection; AiNetCodeNavigator is not a security sandbox for arbitrary executable MSBuild targets.

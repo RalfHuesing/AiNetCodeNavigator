@@ -1,6 +1,6 @@
 # Documentation Index
 
-The binding product references are these current-state pages, the [public host and tool contract matrix](../tasks/Navigator-Migration/Reviews/public-contract-matrix.md), and local Navigator code and tests. The contract matrix remains authoritative for the public host and tool contracts; its earlier stdio evidence and recorded test gaps are historical. The [completion acceptance matrix](../tasks/MCP-Server-Vervollstaendigung/Abnahmematrix.md) supplements those references with current item-7 verification outcomes. Task specifications describe acceptance requirements.
+The binding product references are these current-state pages and local Navigator code and tests. Task specifications describe acceptance requirements.
 
 ## Development
 
