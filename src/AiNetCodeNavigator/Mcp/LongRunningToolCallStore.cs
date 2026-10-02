@@ -457,7 +457,7 @@ internal sealed class McpResponseContinuationStore : IDisposable
             var bytes = Encoding.UTF8.GetByteCount(errorText);
             var tokens = McpResponseFormatter.CountTokens(errorText);
             if (bytes <= request.MaxResponseBytes && (request.MaxResponseTokens is null || tokens <= request.MaxResponseTokens.Value)) return result;
-            return McpToolResults.Recoverable("TOOL_ERROR_TOO_LARGE", "The tool error exceeded the requested response budget.", "Retry with a larger response budget.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
+            return CreateAtomicBudgetError(errorText, request, "The stored tool error");
         }
 
         var returnedText = McpToolResults.NormalizeExistingResult(result);
@@ -473,17 +473,7 @@ internal sealed class McpResponseContinuationStore : IDisposable
             var bytes = Encoding.UTF8.GetByteCount(returnedText);
             var tokens = McpResponseFormatter.CountTokens(returnedText);
             if (bytes <= request.MaxResponseBytes && (request.MaxResponseTokens is null || tokens <= request.MaxResponseTokens.Value)) return result;
-            var canRetryWithBytes = bytes > request.MaxResponseBytes && bytes <= McpResponseBudgetLimits.MaximumBytes;
-            var retryHint = bytes > McpResponseBudgetLimits.MaximumBytes
-                ? $"recovery: retry the loading call after reducing its message/action to fit within {McpResponseBudgetLimits.MaximumBytes} bytes."
-                : canRetryWithBytes
-                    ? $"retry: repeat with maxResponseBytes={bytes} and maxResponseTokens at least {tokens}."
-                    : $"recovery: repeat with maxResponseTokens at least {tokens}.";
-            return McpToolResults.BudgetTooSmall(new McpResponseFormatResult(
-                string.Empty, 0, 0, IsTruncated: false, ErrorCode: "RESPONSE_BUDGET_TOO_SMALL",
-                MinimumResponseBytes: bytes, MinimumResponseTokens: tokens, NextOffset: null, OmittedUtf8Bytes: 0,
-                ContinuationHint: null, CanRetryWithLargerResponseBudget: canRetryWithBytes, RecoveryHint: retryHint),
-                request.MaxResponseBytes, request.MaxResponseTokens);
+            return CreateAtomicBudgetError(returnedText, request, "The stored loading control");
         }
 
         if (returnedText.StartsWith(McpToolResults.RunningStatusPrefix, StringComparison.Ordinal))
@@ -515,6 +505,22 @@ internal sealed class McpResponseContinuationStore : IDisposable
             return McpToolResults.Recoverable("STRUCTURED_RESULT_TOO_LARGE", "Structured content cannot be returned with a partial text page.", "Narrow the query or increase the response budget.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
         }
         return CreatePage(snapshotId, source, offset: 0, request);
+    }
+
+    private static CallToolResult CreateAtomicBudgetError(string projection, LongRunningToolCallRequest request, string description)
+    {
+        var bytes = Encoding.UTF8.GetByteCount(projection);
+        var tokens = McpResponseFormatter.CountTokens(projection);
+        var minimumBytes = Math.Max(McpResponseBudgetLimits.MinimumBytes, bytes);
+        var canRetryWithLargerBudget = bytes <= McpResponseBudgetLimits.MaximumBytes;
+        var recoveryHint = canRetryWithLargerBudget
+            ? $"retry: repeat with maxResponseBytes={minimumBytes} and maxResponseTokens={tokens}."
+            : $"recovery: {description} exceeds the {McpResponseBudgetLimits.MaximumBytes}-byte limit; narrow it and repeat the same request.";
+        return McpToolResults.BudgetTooSmall(new McpResponseFormatResult(
+            string.Empty, 0, 0, IsTruncated: false, ErrorCode: "RESPONSE_BUDGET_TOO_SMALL",
+            MinimumResponseBytes: minimumBytes, MinimumResponseTokens: tokens, NextOffset: null, OmittedUtf8Bytes: 0,
+            ContinuationHint: null, CanRetryWithLargerResponseBudget: canRetryWithLargerBudget, RecoveryHint: recoveryHint),
+            request.MaxResponseBytes, request.MaxResponseTokens);
     }
 
     public void Dispose()

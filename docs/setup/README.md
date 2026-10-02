@@ -37,7 +37,21 @@ For a directly configured local executable, open **Claude menu → Settings → 
 
 ## Cursor
 
-For the current IDE interface, put the entry above under `mcpServers` in project `.cursor/mcp.json` or global `~/.cursor/mcp.json`, then enable the server under Cursor's available tools. Cursor's official [MCP guide](https://docs.cursor.com/context/model-context-protocol) documents local `stdio` servers, these configuration locations, and the `command`/`args` JSON shape. Cursor CLI detects the same `mcp.json` configuration; see [Using Agent in CLI](https://docs.cursor.com/en/cli/using).
+For the current IDE interface, put this Cursor-specific entry in project `.cursor/mcp.json` or global `~/.cursor/mcp.json`, then enable the server under Cursor's available tools. Cursor requires `type: "stdio"` for a local process entry:
+
+```json
+{
+  "mcpServers": {
+    "AiNetCodeNavigator": {
+      "type": "stdio",
+      "command": "C:\\Tools\\AiNetCodeNavigator\\AiNetCodeNavigator.exe",
+      "args": ["--config", "C:\\Tools\\AiNetCodeNavigator\\hostsettings.json"]
+    }
+  }
+}
+```
+
+Cursor CLI detects the same `mcp.json` configuration. See the official [MCP guide](https://cursor.com/docs/mcp) for the required `type`, local configuration locations, and `command`/`args` shape, and [Using Agent in CLI](https://cursor.com/docs/cli/using) for CLI configuration detection.
 
 ## Antigravity
 

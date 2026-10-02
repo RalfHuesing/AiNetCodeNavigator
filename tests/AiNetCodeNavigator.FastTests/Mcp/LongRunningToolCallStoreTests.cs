@@ -669,6 +669,135 @@ public sealed class LongRunningToolCallStoreTests
     }
 
     [Fact]
+    public async Task PendingLoadingControlBudgetRecoveryOffersExecutableMinimumPair()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromMilliseconds(10));
+        var release = new TaskCompletionSource<CallToolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var starts = 0;
+        Task<CallToolResult> Work(CancellationToken _) { Interlocked.Increment(ref starts); return release.Task; }
+        var pending = await store.RunAsync(Request("load_workspace", "target", "loading-recovery", Work,
+            maxResponseBytes: 512, maxResponseTokens: 256));
+        var operationToken = TokenOf(pending, "operationToken");
+        var loading = McpToolResults.Loading("Still indexing.", $"Wait and retry: {string.Concat(Enumerable.Repeat("x ", 100))}",
+            maxResponseBytes: 1_024, maxResponseTokens: 256);
+        var loadingText = TextOf(loading);
+        var loadingBytes = Encoding.UTF8.GetByteCount(loadingText);
+        var loadingTokens = McpResponseFormatter.CountTokens(loadingText);
+        Assert.InRange(loadingBytes, 1, 511);
+        Assert.True(loadingTokens > 80);
+        release.SetResult(loading);
+
+        var poll = Request("load_workspace", "target", "loading-recovery", Work, operationToken: operationToken,
+            maxResponseBytes: 512, maxResponseTokens: loadingTokens - 1);
+        var tooSmall = await store.RunAsync(poll);
+        Assert.True(tooSmall.IsError);
+        Assert.Contains("RESPONSE_BUDGET_TOO_SMALL", TextOf(tooSmall), StringComparison.Ordinal);
+        Assert.Equal(512, IntField(tooSmall, "minimumResponseBytes"));
+        Assert.Equal(loadingTokens, IntField(tooSmall, "minimumResponseTokens"));
+        var retry = await store.RunAsync(poll with
+        {
+            MaxResponseBytes = IntField(tooSmall, "minimumResponseBytes"),
+            MaxResponseTokens = IntField(tooSmall, "minimumResponseTokens")
+        });
+
+        Assert.True(Encoding.UTF8.GetByteCount(TextOf(tooSmall)) <= poll.MaxResponseBytes);
+        Assert.True(McpResponseFormatter.CountTokens(TextOf(tooSmall)) <= poll.MaxResponseTokens);
+        Assert.False(retry.IsError ?? false);
+        Assert.Equal(loadingText, TextOf(retry));
+        Assert.True(Encoding.UTF8.GetByteCount(TextOf(retry)) <= 512);
+        Assert.True(McpResponseFormatter.CountTokens(TextOf(retry)) <= loadingTokens);
+        Assert.Equal(1, starts);
+    }
+
+    [Fact]
+    public async Task PendingTypedErrorBudgetRecoveryPreservesOriginalErrorAndOffersExactPair()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromMilliseconds(10));
+        var release = new TaskCompletionSource<CallToolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var starts = 0;
+        Task<CallToolResult> Work(CancellationToken _) { Interlocked.Increment(ref starts); return release.Task; }
+        var pending = await store.RunAsync(Request("find_symbol", "target", "typed-error-recovery", Work,
+            maxResponseBytes: 512, maxResponseTokens: 256));
+        var operationToken = TokenOf(pending, "operationToken");
+        var original = McpToolResults.Recoverable("SYMBOL_NOT_FOUND", $"No match. {string.Concat(Enumerable.Repeat("detail ", 90))}",
+            "Choose another symbol.", fieldPath: "symbolIdentifier", maxResponseBytes: 2_048, maxResponseTokens: 512);
+        var originalText = TextOf(original);
+        var originalBytes = Encoding.UTF8.GetByteCount(originalText);
+        var originalTokens = McpResponseFormatter.CountTokens(originalText);
+        Assert.True(originalBytes > 512);
+        Assert.True(originalTokens > 80);
+        release.SetResult(original);
+
+        var bytePoll = Request("find_symbol", "target", "typed-error-recovery", Work, operationToken: operationToken,
+            maxResponseBytes: 512, maxResponseTokens: 256);
+        var byteError = await store.RunAsync(bytePoll);
+        Assert.True(byteError.IsError);
+        Assert.Contains("RESPONSE_BUDGET_TOO_SMALL", TextOf(byteError), StringComparison.Ordinal);
+        Assert.Equal(Math.Max(512, originalBytes), IntField(byteError, "minimumResponseBytes"));
+        Assert.Equal(originalTokens, IntField(byteError, "minimumResponseTokens"));
+        var byteRetry = await store.RunAsync(bytePoll with
+        {
+            MaxResponseBytes = IntField(byteError, "minimumResponseBytes"),
+            MaxResponseTokens = IntField(byteError, "minimumResponseTokens")
+        });
+        var tokenPoll = bytePoll with { MaxResponseBytes = 2_048, MaxResponseTokens = 80 };
+        var tokenError = await store.RunAsync(tokenPoll);
+        Assert.True(tokenError.IsError);
+        Assert.Contains("RESPONSE_BUDGET_TOO_SMALL", TextOf(tokenError), StringComparison.Ordinal);
+        Assert.Equal(Math.Max(512, originalBytes), IntField(tokenError, "minimumResponseBytes"));
+        Assert.Equal(originalTokens, IntField(tokenError, "minimumResponseTokens"));
+        var tokenRetry = await store.RunAsync(tokenPoll with
+        {
+            MaxResponseBytes = IntField(tokenError, "minimumResponseBytes"),
+            MaxResponseTokens = IntField(tokenError, "minimumResponseTokens")
+        });
+
+        Assert.True(Encoding.UTF8.GetByteCount(TextOf(byteError)) <= bytePoll.MaxResponseBytes);
+        Assert.True(McpResponseFormatter.CountTokens(TextOf(byteError)) <= bytePoll.MaxResponseTokens);
+        Assert.True(Encoding.UTF8.GetByteCount(TextOf(tokenError)) <= tokenPoll.MaxResponseBytes);
+        Assert.True(McpResponseFormatter.CountTokens(TextOf(tokenError)) <= tokenPoll.MaxResponseTokens);
+        Assert.True(byteRetry.IsError);
+        Assert.True(tokenRetry.IsError);
+        Assert.Equal(originalText, TextOf(byteRetry));
+        Assert.Equal(originalText, TextOf(tokenRetry));
+        Assert.True(Encoding.UTF8.GetByteCount(TextOf(byteRetry)) <= Math.Max(512, originalBytes));
+        Assert.True(McpResponseFormatter.CountTokens(TextOf(byteRetry)) <= originalTokens);
+        Assert.True(Encoding.UTF8.GetByteCount(TextOf(tokenRetry)) <= Math.Max(512, originalBytes));
+        Assert.True(McpResponseFormatter.CountTokens(TextOf(tokenRetry)) <= originalTokens);
+        Assert.Contains("SYMBOL_NOT_FOUND", TextOf(byteRetry), StringComparison.Ordinal);
+        Assert.Contains("fieldPath: symbolIdentifier", TextOf(byteRetry), StringComparison.Ordinal);
+        Assert.Contains("nextAction: Choose another symbol.", TextOf(byteRetry), StringComparison.Ordinal);
+        Assert.Equal(1, starts);
+    }
+
+    [Fact]
+    public async Task AtomicProjectionsAboveMaximumRequireNarrowingWithoutByteRetry()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
+        var oversizedAction = new string('x', McpResponseBudgetLimits.MaximumBytes + 1);
+        var loading = McpToolResults.TextResult(
+            $"{McpToolResults.LoadingStatusPrefix}nextAction: {oversizedAction}\n[INFO]: Still loading.", isError: false);
+        var error = McpToolResults.TextResult(
+            $"{McpToolResults.ErrorStatusPrefix}OVERSIZED_ERROR\nmessage: {oversizedAction}\nfieldPath: targetPath\nnextAction: Narrow the request.", isError: true);
+
+        var loadingResult = await store.RunAsync(Request("load_workspace", "target", "oversized-loading",
+            _ => Task.FromResult(loading), maxResponseBytes: McpResponseBudgetLimits.MaximumBytes, maxResponseTokens: 256));
+        var errorResult = await store.RunAsync(Request("find_symbol", "target", "oversized-error",
+            _ => Task.FromResult(error), maxResponseBytes: McpResponseBudgetLimits.MaximumBytes, maxResponseTokens: 256));
+
+        foreach (var result in new[] { loadingResult, errorResult })
+        {
+            Assert.True(result.IsError);
+            Assert.Contains("RESPONSE_BUDGET_TOO_SMALL", TextOf(result), StringComparison.Ordinal);
+            Assert.True(IntField(result, "minimumResponseBytes") > McpResponseBudgetLimits.MaximumBytes);
+            Assert.Contains("exceeds the 65536-byte limit; narrow it", TextOf(result), StringComparison.Ordinal);
+            Assert.DoesNotContain("retry: repeat with maxResponseBytes=", TextOf(result), StringComparison.Ordinal);
+            Assert.True(Encoding.UTF8.GetByteCount(TextOf(result)) <= McpResponseBudgetLimits.MaximumBytes);
+            Assert.True(McpResponseFormatter.CountTokens(TextOf(result)) <= 256);
+        }
+    }
+
+    [Fact]
     public async Task UnpolledBackgroundCompletionsRespectCompletedCapacity()
     {
         await using var store = new LongRunningToolCallStore(TimeSpan.FromMilliseconds(2), maxCompleted: 1);
