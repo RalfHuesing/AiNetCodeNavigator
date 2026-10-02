@@ -44,7 +44,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     [System.ComponentModel.Description("List indexed source files as a tree or flat file list, with optional path filters and metadata.")]
     public Task<CallToolResult> GetFileTree(
         [Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
-        [System.ComponentModel.Description("Directory within the selected target whose contents form the tree root; defaults to the target directory.")] string? root = null,
+        [System.ComponentModel.Description("Optional relative directory path within the selected target tree whose contents form the root; omit to use the target directory.")] string? root = null,
         [System.ComponentModel.Description("Output view: tree (default), files, or summary.")] string view = "tree",
         [System.ComponentModel.Description("Optional file extensions to include, such as .cs or .json.")] string[]? includeExtensions = null,
         [System.ComponentModel.Description("Optional file-name or relative-path filter.")] string? fileFilter = null,

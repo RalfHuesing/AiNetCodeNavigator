@@ -11,3 +11,5 @@ Generated source locations are excluded by default. Set `IncludeGenerated` to `t
 `maxResults` limits the returned entries and reports whether results were truncated. Name misses may include similar symbol suggestions. This page describes the Core scanner contract. The MCP host currently registers `find_symbol` for source and managed-assembly targets; its public routing and current implementation/test limits are listed in [MCP Host](../mcp-host.md). MCP argument validation and transport formatting are documented with the server tools.
 
 For managed assemblies, symbol results include the canonical `targetPath` of the assembly that owns the symbol alongside its opaque handoff. Use that owner path for `get_symbol_body`; passing the searched root assembly for a referenced symbol returns `TARGET_MISMATCH`. When references cannot be resolved, a no-match result is marked `completeness=truncated` and identifies `unresolvedReferences`, so it does not imply that the full reference closure was searched.
+
+The MCP `includeReferences` option applies to managed-assembly searches: it adds matches from resolved referenced assemblies. Source searches ignore this option.

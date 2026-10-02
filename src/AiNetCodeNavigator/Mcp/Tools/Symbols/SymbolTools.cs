@@ -26,7 +26,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
         string scopeType = "all",
         [System.ComponentModel.Description("Include declarations from generated source files.")] bool includeGenerated = false,
         [Range(1, 1000), System.ComponentModel.Description("Maximum matching symbols to return per pattern.")] int maxResults = 50,
-        [System.ComponentModel.Description("Include references found within each selected symbol.")] bool includeReferences = false,
+        [System.ComponentModel.Description("For assembly targets, include matches from resolved referenced assemblies; source searches ignore this option.")] bool includeReferences = false,
         [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
         [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
         [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16 * 1024,

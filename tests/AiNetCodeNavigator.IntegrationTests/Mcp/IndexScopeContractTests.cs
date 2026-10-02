@@ -126,6 +126,7 @@ public sealed class IndexScopeContractTests
         Assert.StartsWith(McpToolResults.RunningStatusPrefix, TextOf(assemblyPending), StringComparison.Ordinal);
         var assemblyToken = ReadOperationToken(TextOf(assemblyPending));
         ModelContextProtocol.Protocol.CallToolResult assemblyResult = assemblyPending;
+        var assemblyPollCompleted = false;
         for (var poll = 0; poll < 100; poll++)
         {
             await Task.Delay(50);
@@ -133,11 +134,20 @@ public sealed class IndexScopeContractTests
                 maxResponseBytes: 65536, maxResponseTokens: 4096);
             var assemblyText = TextOf(assemblyResult);
             if (assemblyText.StartsWith(McpToolResults.RunningStatusPrefix, StringComparison.Ordinal)) continue;
+            if (assemblyText.StartsWith(McpToolResults.LoadingStatusPrefix, StringComparison.Ordinal)) continue;
             Assert.False(assemblyResult.IsError ?? false, assemblyText);
-            Assert.Contains(Path.GetFileName(assemblyPath), assemblyText, StringComparison.Ordinal);
+            Assert.StartsWith("Status: operation=ok,", assemblyText, StringComparison.Ordinal);
+            var payloadOffset = assemblyText.IndexOf('\n');
+            Assert.True(payloadOffset > 0, assemblyText);
+            using var assemblyPayload = JsonDocument.Parse(assemblyText[(payloadOffset + 1)..]);
+            var assemblyOwner = assemblyPayload.RootElement;
+            Assert.Equal(Path.GetFullPath(assemblyPath), assemblyOwner.GetProperty("assemblyPath").GetString());
+            Assert.Contains(assemblyOwner.GetProperty("status").GetString(), new[] { "complete", "partial", "degraded" });
+            Assert.True(assemblyOwner.GetProperty("totalTypes").GetInt32() > 0);
+            assemblyPollCompleted = true;
             break;
         }
-        Assert.Contains(Path.GetFileName(assemblyPath), TextOf(assemblyResult), StringComparison.Ordinal);
+        Assert.True(assemblyPollCompleted, $"The assembly operation did not reach an owner result: {TextOf(assemblyResult)}");
 
         await AssertSourceAndAssemblyCancellationUsesOwnerRoutesAsync(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>(),
             solutionPath, typeof(IndexScopeContractTests).Assembly.Location);
@@ -247,6 +257,21 @@ public sealed class IndexScopeContractTests
             }
         }
         Assert.True(missingDescriptions.Count == 0, string.Join(", ", missingDescriptions));
+
+        var findSymbolDescription = registered.Single(item => item.Tool.ProtocolTool.Name == "find_symbol")
+            .Tool.ProtocolTool.InputSchema.GetProperty("properties").GetProperty("includeReferences").GetProperty("description").GetString();
+        Assert.Contains("assembly targets", findSymbolDescription, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("resolved referenced assemblies", findSymbolDescription, StringComparison.Ordinal);
+        Assert.Contains("source searches ignore", findSymbolDescription, StringComparison.Ordinal);
+        var assemblyContextReferencesDescription = registered.Single(item => item.Tool.ProtocolTool.Name == "get_assembly_context")
+            .Tool.ProtocolTool.InputSchema.GetProperty("properties").GetProperty("includeReferences").GetProperty("description").GetString();
+        Assert.Contains("reference metadata", assemblyContextReferencesDescription, StringComparison.Ordinal);
+        Assert.Contains("raw symbols", assemblyContextReferencesDescription, StringComparison.Ordinal);
+        Assert.Contains("caller/impact traversal", assemblyContextReferencesDescription, StringComparison.Ordinal);
+        var fileTreeRootDescription = registered.Single(item => item.Tool.ProtocolTool.Name == "get_file_tree")
+            .Tool.ProtocolTool.InputSchema.GetProperty("properties").GetProperty("root").GetProperty("description").GetString();
+        Assert.Contains("relative directory path", fileTreeRootDescription, StringComparison.Ordinal);
+        Assert.Contains("omit to use the target directory", fileTreeRootDescription, StringComparison.Ordinal);
     }
 
     private static string GetWireParameterName(ParameterInfo parameter)
