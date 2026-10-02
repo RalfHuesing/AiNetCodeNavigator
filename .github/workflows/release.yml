@@ -1,0 +1,65 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish
+        run: >
+          dotnet publish src/AiNetCodeNavigator/AiNetCodeNavigator.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=false
+          -p:PublishTrimmed=false
+          -o ./publish
+
+      - name: Prepare Release Archive
+        shell: pwsh
+        run: |
+          # hostsettings.json ins Publish-Verzeichnis kopieren oder Standard anlegen
+          if (Test-Path "hostsettings.json") {
+            Copy-Item "hostsettings.json" "./publish/hostsettings.json"
+          } else {
+            Set-Content -Path "./publish/hostsettings.json" -Value "{`n  `"minimumLogLevel`": `"Information`"`n}" -Encoding utf8
+          }
+
+          # README.md ins Publish-Verzeichnis kopieren
+          if (Test-Path "README.md") {
+            Copy-Item "README.md" "./publish/README.md"
+          }
+
+          # LICENSE ins Publish-Verzeichnis kopieren
+          if (Test-Path "LICENSE") {
+            Copy-Item "LICENSE" "./publish/LICENSE"
+          }
+
+          # Archiv aus dem Publish-Verzeichnis erstellen
+          Push-Location "./publish"
+          7z a "../AiNetCodeNavigator-win-x64.zip" . -r | Out-Null
+          Pop-Location
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ./AiNetCodeNavigator-win-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
