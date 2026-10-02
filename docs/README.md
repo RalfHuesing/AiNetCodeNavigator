@@ -10,7 +10,7 @@ The binding product references are these current-state pages, the [public host a
 - [MCP Argument Validation](mcp-argument-validation.md): SDK input-schema validation, binder compatibility checks, safe field paths, and error-budget behavior.
 - [MCP Long-Running Calls and Continuations](mcp-long-running-calls.md): Operation token lifecycle, polling, immutable text snapshots, continuation tokens, and their limits.
 - [MCP Host](mcp-host.md): Stdio lifecycle, twenty navigation and two maintenance registrations, health scope, and reloadable host settings.
-- [MCP Navigation Registration Status](navigation/mcp-registration-status.md): Exercised new handler paths and the still-open source/assembly, cursor, filter, Git, and response-budget contracts.
+- [MCP Navigation Registration Status](navigation/mcp-registration-status.md): Exercised handler paths and the still-open source/assembly, cursor, filter, and response-budget contracts.
 
 ## Navigation
 

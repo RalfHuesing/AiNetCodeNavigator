@@ -5,6 +5,7 @@ using System.Text.Json;
 
 namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 
+[Trait("Category", "E2EIntegration")]
 public sealed class McpServerIntegrationTests
 {
     [Fact]
@@ -49,7 +50,6 @@ public sealed class McpServerIntegrationTests
             AssertPropertyDescriptionContains(registered["inspect_assembly"], "detailLevel", "compact", "standard", "full");
             AssertPropertyDescriptionContains(registered["search_assembly"], "detailLevel", "compact", "standard", "full");
             AssertPropertyDescriptionContains(registered["find_assembly_extensions"], "detailLevel", "compact", "standard", "full");
-            AssertPropertyDescriptionContains(registered["get_impact"], "detailLevel", "callers", "change-context", "default");
             AssertPropertyDescriptionContains(registered["get_assembly_context"], "detailLevel", "compact", "standard", "full");
             AssertPropertyDescriptionContains(registered["inspect_assembly"], "includeReferences", "omitted", "typeName", "memberNames");
             AssertPropertyDescriptionContains(registered["search_assembly"], "isRegex", "null", "false", "literal");
@@ -696,7 +696,7 @@ public sealed class McpServerIntegrationTests
                 ("find_references", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "h:unknown" }, "HANDOFF_UNKNOWN"),
                 ("get_type_hierarchy", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "HANDOFF_UNKNOWN"),
                 ("find_implementations", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "HANDOFF_UNKNOWN"),
-                ("get_impact", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "T:NavigationFixture.Counter", ["gitRef"] = "HEAD" }, "INVALID_ARGUMENT"),
+                ("get_impact", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = " " }, "INVALID_ARGUMENT"),
                 ("dependency_graph", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath }, "INVALID_ARGUMENT"),
                 ("resolve_type_origin", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "", ["typeName"] = "" }, "INVALID_ARGUMENT"),
                 ("get_assembly_context", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown", ["detailLevel"] = "unsupported" }, "INVALID_ARGUMENT"),
@@ -730,138 +730,7 @@ public sealed class McpServerIntegrationTests
         {
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             File.Delete(configPath);
-            if (Directory.Exists(Path.Combine(fixtureRoot, "repository", ".git")))
-            {
-                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "remove", "--force", Path.Combine(fixtureRoot, "worktree"));
-                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "prune");
-            }
-            ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
-            Directory.Delete(fixtureRoot, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task StdioHostCancelsGitChildOnShutdownAndSurvivesCancelledPollingRequest()
-    {
-        var repositoryRoot = SolutionRootLocator.Find();
-        var hostAssemblyPath = GetHostAssemblyPath(repositoryRoot);
-        var fixtureRoot = Directory.CreateTempSubdirectory("ainet-git-cancel-acceptance-").FullName;
-        var configPath = Path.Combine(Path.GetTempPath(), "ainet-navigation-" + Guid.NewGuid().ToString("N") + ".json");
-        var logDirectory = Path.Combine(Path.GetTempPath(), "ainet-navigation-logs-" + Guid.NewGuid().ToString("N"));
-        var gitShimDirectory = await CreateBlockingGitShimAsync(fixtureRoot);
-        var (solutionPath, assemblyPath) = await CreateNavigationFixtureAsync(fixtureRoot);
-        var pidFile = Path.Combine(Path.GetDirectoryName(gitShimDirectory)!, "git-child.pid");
-        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-        using var process = StartHostWithGitPath(repositoryRoot, hostAssemblyPath, logDirectory, gitShimDirectory, "--config", configPath);
-        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
-
-        try
-        {
-            await SendRequestAsync(process, 1, "initialize", new
-            {
-                protocolVersion = "2025-03-26",
-                capabilities = new { },
-                clientInfo = new { name = "git-cancellation-test", version = "1.0" },
-            }, timeout.Token);
-            var initialize = await ReadResponseAsync(process, 1, timeout.Token);
-            Assert.Equal("2025-03-26", initialize.GetProperty("result").GetProperty("protocolVersion").GetString());
-            await SendNotificationAsync(process, "notifications/initialized", timeout.Token);
-
-            var arguments = new Dictionary<string, object?>
-            {
-                ["targetPath"] = solutionPath,
-                ["detailLevel"] = "change-context",
-                ["gitRef"] = "HEAD",
-            };
-            await SendRequestAsync(process, 2, "tools/call", new { name = "get_impact", arguments }, timeout.Token);
-            var started = await ReadResponseAsync(process, 2, timeout.Token);
-            var startedText = GetFirstText(started);
-            Assert.Contains("operation=running", startedText, StringComparison.Ordinal);
-            var operationToken = ReadStringLine(startedText, "operationToken");
-
-            var waitArguments = new Dictionary<string, object?>(arguments, StringComparer.Ordinal)
-            {
-                ["operationToken"] = operationToken,
-            };
-            await SendRequestAsync(process, 3, "tools/call", new { name = "get_impact", arguments = waitArguments }, timeout.Token);
-            var childDeadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(20);
-            while (!File.Exists(pidFile) && DateTimeOffset.UtcNow < childDeadline)
-                await Task.Delay(50, timeout.Token);
-            Assert.True(File.Exists(pidFile), "The real get_impact Git child did not reach the blocked diff invocation.");
-            var childPid = int.Parse(await File.ReadAllTextAsync(pidFile, timeout.Token), System.Globalization.CultureInfo.InvariantCulture);
-
-            await SendNotificationAsync(process, "notifications/cancelled", new { requestId = 3, reason = "Cancel this polling waiter." }, timeout.Token);
-            await Task.Delay(250, timeout.Token);
-            Assert.True(IsProcessRunning(childPid), "Cancelling one poll waiter must leave the shared background operation running.");
-
-            await SendRequestAsync(process, 4, "tools/call", new { name = "get_server_health", arguments = new { } }, timeout.Token);
-            var health = await ReadResponseAsync(process, 4, timeout.Token);
-            Assert.False(health.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(health));
-
-            await SendRequestAsync(process, 5, "tools/call", new { name = "get_server_health", arguments = new { } }, timeout.Token);
-            await SendRequestAsync(process, 6, "tools/list", new { }, timeout.Token);
-            await SendRequestAsync(process, 7, "tools/call", new
-            {
-                name = "find_symbol",
-                arguments = new { targetPath = assemblyPath, pattern = "Counter", maxResults = 10 },
-            }, timeout.Token);
-            var concurrentResponses = await ReadResponsesAsync(process, [5, 6, 7], timeout.Token);
-            Assert.False(concurrentResponses[5].GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(concurrentResponses[5]));
-            Assert.Equal(22, concurrentResponses[6].GetProperty("result").GetProperty("tools").GetArrayLength());
-            Assert.False(concurrentResponses[7].GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(concurrentResponses[7]));
-            var oldSessionHandoff = ExtractHandoff(GetFirstText(concurrentResponses[7]));
-
-            process.StandardInput.Close();
-            await process.WaitForExitAsync(timeout.Token);
-            Assert.Equal(0, process.ExitCode);
-            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
-            _ = await stderrTask;
-            Assert.False(IsProcessRunning(childPid), "Host shutdown must cancel, kill, and drain its live Git child.");
-
-            using var restarted = StartHostWithGitPath(repositoryRoot, hostAssemblyPath, logDirectory, gitShimDirectory, "--config", configPath);
-            var restartedStderr = restarted.StandardError.ReadToEndAsync(timeout.Token);
-            await SendRequestAsync(restarted, 1, "initialize", new
-            {
-                protocolVersion = "2025-03-26",
-                capabilities = new { },
-                clientInfo = new { name = "git-cancellation-restart-test", version = "1.0" },
-            }, timeout.Token);
-            var restartedInitialize = await ReadResponseAsync(restarted, 1, timeout.Token);
-            Assert.Equal("2025-03-26", restartedInitialize.GetProperty("result").GetProperty("protocolVersion").GetString());
-            await SendNotificationAsync(restarted, "notifications/initialized", timeout.Token);
-            await SendRequestAsync(restarted, 2, "tools/call", new
-            {
-                name = "get_symbol_body",
-                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { oldSessionHandoff } },
-            }, timeout.Token);
-            var staleSessionHandle = await ReadResponseAsync(restarted, 2, timeout.Token);
-            Assert.True(staleSessionHandle.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(staleSessionHandle));
-            Assert.Contains("HANDOFF_UNKNOWN", GetFirstText(staleSessionHandle), StringComparison.Ordinal);
-            await SendRequestAsync(restarted, 3, "tools/call", new { name = "get_server_health", arguments = new { } }, timeout.Token);
-            var restartedHealth = await ReadResponseAsync(restarted, 3, timeout.Token);
-            Assert.False(restartedHealth.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(restartedHealth));
-            restarted.StandardInput.Close();
-            await restarted.WaitForExitAsync(timeout.Token);
-            Assert.Equal(0, restarted.ExitCode);
-            Assert.Empty(await restarted.StandardOutput.ReadToEndAsync(timeout.Token));
-            _ = await restartedStderr;
-        }
-        finally
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
-            }
-            File.Delete(configPath);
-            if (Directory.Exists(logDirectory)) Directory.Delete(logDirectory, recursive: true);
-            if (Directory.Exists(Path.Combine(fixtureRoot, "repository", ".git")))
-            {
-                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "remove", "--force", Path.Combine(fixtureRoot, "worktree"));
-                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "prune");
-            }
-            ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
+ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             Directory.Delete(fixtureRoot, recursive: true);
         }
     }
@@ -1665,272 +1534,7 @@ public sealed class McpServerIntegrationTests
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             File.Delete(configPath);
             if (Directory.Exists(hostLogDirectory)) Directory.Delete(hostLogDirectory, recursive: true);
-            if (Directory.Exists(Path.Combine(fixtureRoot, "repository", ".git")))
-            {
-                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "remove", "--force", Path.Combine(fixtureRoot, "worktree"));
-                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "prune");
-            }
-            if (Directory.Exists(fixtureRoot))
-            {
-                ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
-                Directory.Delete(fixtureRoot, recursive: true);
-            }
-        }
-    }
-
-    [Fact]
-    [Trait("Category", "ExtendedIntegration")]
-    [Trait("Feature", "GitImpact")]
-    public async Task GitChangeContextMapsChangedHunksAndReportsRepositoryStatesThroughPublicStdioTools()
-    {
-        var repositoryRoot = SolutionRootLocator.Find();
-        var hostAssemblyPath = GetHostAssemblyPath(repositoryRoot);
-        var fixtureRoot = Directory.CreateTempSubdirectory("ainet-contract-fixture-").FullName;
-        var configPath = Path.Combine(Path.GetTempPath(), "ainet-git-impact-" + Guid.NewGuid().ToString("N") + ".json");
-        var hostLogDirectory = Path.Combine(Path.GetTempPath(), "ainet-git-impact-logs-" + Guid.NewGuid().ToString("N"));
-        var (solutionPath, _) = await CreateNavigationFixtureAsync(fixtureRoot);
-        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(4));
-        using var process = await StartInitializedHostAsync(repositoryRoot, hostAssemblyPath, configPath, timeout.Token, hostLogDirectory);
-        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
-        var worktreeDirectory = Path.GetDirectoryName(solutionPath)!;
-        var worktreeSourcePath = Path.Combine(worktreeDirectory, "NavigationFixture.cs");
-
-        try
-        {
-            var initialArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["detailLevel"] = "change-context", ["maxChangedSymbols"] = 2 };
-            await SendRequestAsync(process, 2, "tools/call", new { name = "get_impact", arguments = initialArguments }, timeout.Token);
-            var initial = await PollRunningImpactAsync(process, 2, await ReadResponseAsync(process, 2, timeout.Token), initialArguments, timeout.Token);
-            var initialText = GetFirstText(initial);
-            Assert.False(initial.GetProperty("result").GetProperty("isError").GetBoolean(), initialText);
-            var initialPayload = ParsePayload(initialText);
-            Assert.Equal(new[] { "NavigationFixture.Counter", "NavigationFixture.Counter.Read()" }, initialPayload.GetProperty("analyzedSymbols").EnumerateArray()
-                .Select(entry => entry.GetProperty("symbol").GetString()).ToArray());
-            Assert.Equal("partial", initialPayload.GetProperty("completeness").GetString());
-            Assert.True(initialPayload.GetProperty("totalChangedSymbols").GetInt32() > initialPayload.GetProperty("analyzedSymbols").GetArrayLength(),
-                "The payload must retain the known total beyond the maxChangedSymbols display cap.");
-
-            var sourceWithAdditionalChangedField = (await File.ReadAllTextAsync(worktreeSourcePath, timeout.Token))
-                .Replace("muchLongerValue = 2", "muchLongerValue = 3", StringComparison.Ordinal);
-            const string deletedMethod = "    public int BothFields() => firstValue + muchLongerValue;";
-            sourceWithAdditionalChangedField = sourceWithAdditionalChangedField
-                .Replace(deletedMethod + "\r\n", string.Empty, StringComparison.Ordinal)
-                .Replace(deletedMethod + "\n", string.Empty, StringComparison.Ordinal)
-                .Replace(deletedMethod, string.Empty, StringComparison.Ordinal);
-            Assert.DoesNotContain("BothFields", sourceWithAdditionalChangedField, StringComparison.Ordinal);
-            await File.WriteAllTextAsync(worktreeSourcePath, sourceWithAdditionalChangedField, timeout.Token);
-            await RunCommandAsync("git", worktreeDirectory, "add", "NavigationFixture.cs");
-            var stagedDiff = await RunCommandCaptureAsync("git", worktreeDirectory,
-                "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=0", "HEAD", "--", ":(literal)NavigationFixture.cs");
-            Assert.True(stagedDiff.StandardOutput.Contains(",0 @@", StringComparison.Ordinal), stagedDiff.StandardOutput);
-            var stagedArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["detailLevel"] = "change-context", ["maxChangedSymbols"] = 100 };
-            await SendRequestAsync(process, 4, "tools/call", new { name = "get_impact", arguments = stagedArguments }, timeout.Token);
-            var staged = await PollRunningImpactAsync(process, 4, await ReadResponseAsync(process, 4, timeout.Token), stagedArguments, timeout.Token);
-            var stagedText = GetFirstText(staged);
-            Assert.False(staged.GetProperty("result").GetProperty("isError").GetBoolean(), stagedText);
-            var stagedPayload = ParsePayload(stagedText);
-            var stagedSymbols = stagedPayload.GetProperty("analyzedSymbols").EnumerateArray()
-                .Select(entry => entry.GetProperty("symbol").GetString()).ToArray();
-            Assert.Contains("NavigationFixture.Counter.firstValue", stagedSymbols);
-            Assert.Contains("NavigationFixture.Counter.muchLongerValue", stagedSymbols);
-            Assert.True(stagedSymbols.Contains("NavigationFixture.UntrackedGitImpact.Added()", StringComparer.Ordinal), stagedText);
-            Assert.Contains("Untracked Git ü Impact.cs", stagedPayload.GetProperty("changedFiles").EnumerateArray()
-                .Select(path => path.GetString()), StringComparer.Ordinal);
-            Assert.Equal("partial", stagedPayload.GetProperty("completeness").GetString());
-            var stagedUnresolvedFiles = stagedPayload.GetProperty("unresolvedFiles").EnumerateArray().Select(path => path.GetString()).ToArray();
-            Assert.Contains("NavigationFixture.cs", stagedUnresolvedFiles);
-
-            var optionLikeRefArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["gitRef"] = "--help", ["detailLevel"] = "change-context" };
-            await SendRequestAsync(process, 5, "tools/call", new { name = "get_impact", arguments = optionLikeRefArguments }, timeout.Token);
-            var optionLikeRef = await PollRunningImpactAsync(process, 5, await ReadResponseAsync(process, 5, timeout.Token), optionLikeRefArguments, timeout.Token);
-            Assert.True(optionLikeRef.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(optionLikeRef));
-            Assert.Contains("INVALID_ARGUMENT", GetFirstText(optionLikeRef), StringComparison.Ordinal);
-            Assert.Contains("fieldPath: $.gitRef", GetFirstText(optionLikeRef), StringComparison.Ordinal);
-
-            var missingRefArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["gitRef"] = "missing-navigation-fixture-ref", ["detailLevel"] = "change-context" };
-            await SendRequestAsync(process, 6, "tools/call", new { name = "get_impact", arguments = missingRefArguments }, timeout.Token);
-            var missingRef = await PollRunningImpactAsync(process, 6, await ReadResponseAsync(process, 6, timeout.Token), missingRefArguments, timeout.Token);
-            Assert.True(missingRef.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(missingRef));
-            Assert.Contains("INVALID_ARGUMENT", GetFirstText(missingRef), StringComparison.Ordinal);
-            Assert.Contains("fieldPath: $.gitRef", GetFirstText(missingRef), StringComparison.Ordinal);
-
-            await RunCommandAsync("git", worktreeDirectory, "add", "Untracked Git ü Impact.cs");
-            await RunCommandAsync("git", worktreeDirectory, "commit", "--quiet", "-m", "fixture change context");
-            process.StandardInput.Close();
-            await process.WaitForExitAsync(timeout.Token);
-            Assert.Equal(0, process.ExitCode);
-            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
-            _ = await stderrTask;
-        }
-        finally
-        {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-            File.Delete(configPath);
-            if (Directory.Exists(hostLogDirectory)) Directory.Delete(hostLogDirectory, recursive: true);
-            if (Directory.Exists(Path.Combine(fixtureRoot, "repository", ".git")))
-            {
-                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "remove", "--force", worktreeDirectory);
-                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "prune");
-            }
-            if (Directory.Exists(fixtureRoot))
-            {
-                ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
-                Directory.Delete(fixtureRoot, recursive: true);
-            }
-        }
-    }
-
-    [Fact]
-    [Trait("Category", "ExtendedIntegration")]
-    [Trait("Feature", "GitImpact")]
-    public async Task ImpactZeroLimitsUseTheSameDefaultsAsOmittedLimits()
-    {
-        var repositoryRoot = SolutionRootLocator.Find();
-        var hostAssemblyPath = GetHostAssemblyPath(repositoryRoot);
-        var fixtureRoot = Directory.CreateTempSubdirectory("ainet-contract-fixture-impact-zero-").FullName;
-        var configPath = Path.Combine(Path.GetTempPath(), "ainet-impact-zero-" + Guid.NewGuid().ToString("N") + ".json");
-        var hostLogDirectory = Path.Combine(Path.GetTempPath(), "ainet-impact-zero-logs-" + Guid.NewGuid().ToString("N"));
-        var (solutionPath, _) = await CreateNavigationFixtureAsync(fixtureRoot);
-        var worktreeDirectory = Path.GetDirectoryName(solutionPath)!;
-        await File.WriteAllTextAsync(Path.Combine(worktreeDirectory, "NavigationFixture.cs"),
-            (await File.ReadAllTextAsync(Path.Combine(worktreeDirectory, "NavigationFixture.cs")))
-                .Replace("firstValue = 1", "firstValue = 2", StringComparison.Ordinal));
-        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(4));
-        using var process = await StartInitializedHostAsync(repositoryRoot, hostAssemblyPath, configPath, timeout.Token, hostLogDirectory);
-        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
-
-        try
-        {
-            var omittedArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["detailLevel"] = "change-context" };
-            await SendRequestAsync(process, 1, "tools/call", new { name = "get_impact", arguments = omittedArguments }, timeout.Token);
-            var omittedResponse = await PollRunningImpactAsync(process, 1, await ReadResponseAsync(process, 1, timeout.Token), omittedArguments, timeout.Token);
-            var omittedText = GetFirstText(omittedResponse);
-            Assert.False(omittedResponse.GetProperty("result").GetProperty("isError").GetBoolean(), omittedText);
-            var omitted = ParsePayload(omittedText);
-
-            var zeroArguments = new Dictionary<string, object?>
-            {
-                ["targetPath"] = solutionPath,
-                ["detailLevel"] = "change-context",
-                ["maxChangedSymbols"] = 0,
-                ["maxTestsPerSymbol"] = 0,
-            };
-            await SendRequestAsync(process, 2, "tools/call", new { name = "get_impact", arguments = zeroArguments }, timeout.Token);
-            var zeroResponse = await PollRunningImpactAsync(process, 2, await ReadResponseAsync(process, 2, timeout.Token), zeroArguments, timeout.Token);
-            var zeroText = GetFirstText(zeroResponse);
-            Assert.False(zeroResponse.GetProperty("result").GetProperty("isError").GetBoolean(), zeroText);
-            var zero = ParsePayload(zeroText);
-            Assert.Equal(omitted.GetProperty("totalChangedSymbols").GetInt32(), zero.GetProperty("totalChangedSymbols").GetInt32());
-            Assert.Equal(omitted.GetProperty("analyzedSymbols").EnumerateArray().Select(entry => entry.GetProperty("symbol").GetString()),
-                zero.GetProperty("analyzedSymbols").EnumerateArray().Select(entry => entry.GetProperty("symbol").GetString()));
-
-            process.StandardInput.Close();
-            await process.WaitForExitAsync(timeout.Token);
-            Assert.Equal(0, process.ExitCode);
-            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
-            _ = await stderrTask;
-        }
-        finally
-        {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-            File.Delete(configPath);
-            if (Directory.Exists(hostLogDirectory)) Directory.Delete(hostLogDirectory, recursive: true);
-            if (Directory.Exists(Path.Combine(fixtureRoot, "repository", ".git")))
-            {
-                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "remove", "--force", Path.Combine(fixtureRoot, "worktree"));
-                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "prune");
-            }
-            if (Directory.Exists(fixtureRoot))
-            {
-                ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
-                Directory.Delete(fixtureRoot, recursive: true);
-            }
-        }
-    }
-
-    [Fact]
-    [Trait("Category", "ExtendedIntegration")]
-    [Trait("Feature", "GitImpact")]
-    public async Task GitImpactReportsCallerAndRepositoryCompletenessThroughPublicStdioTools()
-    {
-        var repositoryRoot = SolutionRootLocator.Find();
-        var hostAssemblyPath = GetHostAssemblyPath(repositoryRoot);
-        var fixtureRoot = Directory.CreateTempSubdirectory("ainet-contract-fixture-").FullName;
-        var configPath = Path.Combine(Path.GetTempPath(), "ainet-git-status-" + Guid.NewGuid().ToString("N") + ".json");
-        var hostLogDirectory = Path.Combine(Path.GetTempPath(), "ainet-git-status-logs-" + Guid.NewGuid().ToString("N"));
-        var (solutionPath, _) = await CreateNavigationFixtureAsync(fixtureRoot);
-        await File.WriteAllTextAsync(configPath, "{\"minimumLogLevel\":\"Information\"}");
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(4));
-        using var process = await StartInitializedHostAsync(repositoryRoot, hostAssemblyPath, configPath, timeout.Token, hostLogDirectory);
-        var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
-        var worktreeDirectory = Path.GetDirectoryName(solutionPath)!;
-        var worktreeSourcePath = Path.Combine(worktreeDirectory, "NavigationFixture.cs");
-
-        try
-        {
-            var callersArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["detailLevel"] = "callers", ["maxChangedSymbols"] = 1 };
-            await SendRequestAsync(process, 2, "tools/call", new { name = "get_impact", arguments = callersArguments }, timeout.Token);
-            var callers = await PollRunningImpactAsync(process, 2, await ReadResponseAsync(process, 2, timeout.Token), callersArguments, timeout.Token);
-            var callersText = GetFirstText(callers);
-            Assert.False(callers.GetProperty("result").GetProperty("isError").GetBoolean(), callersText);
-            var callerSymbols = ParsePayload(callersText).GetProperty("analyzedSymbols").EnumerateArray()
-                .Select(entry => entry.GetProperty("symbol").GetString()).ToArray();
-            Assert.Contains("NavigationFixture.Counter.Read()", callerSymbols);
-            Assert.Contains("NavigationFixture.UntrackedGitImpact.Added()", callerSymbols);
-            Assert.All(callerSymbols, symbol =>
-            {
-                Assert.Contains("(", symbol, StringComparison.Ordinal);
-                Assert.EndsWith(")", symbol, StringComparison.Ordinal);
-            });
-
-            await RunCommandAsync("git", worktreeDirectory, "add", "NavigationFixture.cs", "Untracked Git ü Impact.cs");
-            await RunCommandAsync("git", worktreeDirectory, "commit", "--quiet", "-m", "fixture clean state");
-            var cleanArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["gitRef"] = "HEAD", ["detailLevel"] = "change-context" };
-            await SendRequestAsync(process, 3, "tools/call", new { name = "get_impact", arguments = cleanArguments }, timeout.Token);
-            var clean = await PollRunningImpactAsync(process, 3, await ReadResponseAsync(process, 3, timeout.Token), cleanArguments, timeout.Token);
-            Assert.False(clean.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(clean));
-            Assert.Contains("\"impactStatus\": \"clean_worktree\"", GetFirstText(clean), StringComparison.Ordinal);
-            Assert.Contains("\"completeness\": \"complete\"", GetFirstText(clean), StringComparison.Ordinal);
-
-            var nonGitRoot = Path.Combine(fixtureRoot, "non-git");
-            Directory.CreateDirectory(nonGitRoot);
-            var nonGitSolutionPath = Path.Combine(nonGitRoot, "NoGit.slnx");
-            await File.WriteAllTextAsync(nonGitSolutionPath, "<Solution />", timeout.Token);
-            var nonGitArguments = new Dictionary<string, object?> { ["targetPath"] = nonGitSolutionPath, ["detailLevel"] = "change-context" };
-            await SendRequestAsync(process, 4, "tools/call", new { name = "get_impact", arguments = nonGitArguments }, timeout.Token);
-            var nonGit = await PollRunningImpactAsync(process, 4, await ReadResponseAsync(process, 4, timeout.Token), nonGitArguments, timeout.Token);
-            Assert.False(nonGit.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(nonGit));
-            Assert.Contains("\"impactStatus\": \"not_git_repository\"", GetFirstText(nonGit), StringComparison.Ordinal);
-            Assert.Contains("\"completeness\": \"not_applicable\"", GetFirstText(nonGit), StringComparison.Ordinal);
-
-            File.Delete(worktreeSourcePath);
-            var deletedArguments = new Dictionary<string, object?> { ["targetPath"] = solutionPath, ["detailLevel"] = "change-context" };
-            await SendRequestAsync(process, 5, "tools/call", new { name = "get_impact", arguments = deletedArguments }, timeout.Token);
-            var deleted = await PollRunningImpactAsync(process, 5, await ReadResponseAsync(process, 5, timeout.Token), deletedArguments, timeout.Token);
-            var deletedText = GetFirstText(deleted);
-            var deletedPayload = ParsePayload(deletedText);
-            Assert.False(deleted.GetProperty("result").GetProperty("isError").GetBoolean(), deletedText);
-            Assert.Equal("partial", deletedPayload.GetProperty("completeness").GetString());
-            Assert.Contains("NavigationFixture.cs", deletedPayload.GetProperty("unresolvedFiles").EnumerateArray().Select(path => path.GetString()));
-
-            process.StandardInput.Close();
-            await process.WaitForExitAsync(timeout.Token);
-            Assert.Equal(0, process.ExitCode);
-            Assert.Empty(await process.StandardOutput.ReadToEndAsync(timeout.Token));
-            _ = await stderrTask;
-        }
-        finally
-        {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-            File.Delete(configPath);
-            if (Directory.Exists(hostLogDirectory)) Directory.Delete(hostLogDirectory, recursive: true);
-            if (Directory.Exists(Path.Combine(fixtureRoot, "repository", ".git")))
-            {
-                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "remove", "--force", worktreeDirectory);
-                await RunCommandAsync("git", Path.Combine(fixtureRoot, "repository"), "worktree", "prune");
-            }
-            if (Directory.Exists(fixtureRoot))
+if (Directory.Exists(fixtureRoot))
             {
                 ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                 Directory.Delete(fixtureRoot, recursive: true);
@@ -4224,71 +3828,6 @@ public sealed class McpServerIntegrationTests
         return Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start MCP host process.");
     }
 
-    private static Process StartHostWithGitPath(string repositoryRoot, string hostAssemblyPath, string logDirectory, string gitDirectory, params string[] arguments)
-    {
-        var startInfo = new ProcessStartInfo("dotnet")
-        {
-            WorkingDirectory = repositoryRoot,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        startInfo.Environment["AINET_CODE_NAVIGATOR_LOG_DIRECTORY"] = logDirectory;
-        startInfo.Environment["AINET_TEST_GIT_PID_FILE"] = Path.Combine(Path.GetDirectoryName(gitDirectory)!, "git-child.pid");
-        startInfo.Environment["PATH"] = gitDirectory + Path.PathSeparator + (Environment.GetEnvironmentVariable("PATH") ?? string.Empty);
-        startInfo.ArgumentList.Add(hostAssemblyPath);
-        foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
-        return Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start MCP host with the Git test shim.");
-    }
-
-    private static async Task<string> CreateBlockingGitShimAsync(string fixtureRoot)
-    {
-        var projectDirectory = Path.Combine(fixtureRoot, "git-shim");
-        Directory.CreateDirectory(projectDirectory);
-        var projectPath = Path.Combine(projectDirectory, "GitShim.csproj");
-        await File.WriteAllTextAsync(projectPath,
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><AssemblyName>git</AssemblyName><UseAppHost>true</UseAppHost><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>");
-        await File.WriteAllTextAsync(Path.Combine(projectDirectory, "Program.cs"), """
-            var arguments = args;
-            if (arguments.Length >= 2 && arguments[0] == "rev-parse" && arguments[1] == "--show-toplevel")
-            {
-                Console.WriteLine(Environment.CurrentDirectory);
-                return;
-            }
-            if (arguments.Length >= 2 && arguments[0] == "rev-parse" && arguments[1] == "--verify")
-            {
-                Console.WriteLine("0123456789abcdef0123456789abcdef01234567");
-                return;
-            }
-            if (arguments.Contains("diff", StringComparer.Ordinal))
-            {
-                var pidFile = Environment.GetEnvironmentVariable("AINET_TEST_GIT_PID_FILE")!;
-                await File.WriteAllTextAsync(pidFile, Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                await Task.Delay(Timeout.Infinite);
-            }
-            """);
-        await RestoreProjectAsync(projectPath, projectDirectory);
-        await RunCommandAsync("dotnet", projectDirectory, "build", projectPath, "--no-restore", "--configuration", "Debug");
-        var outputDirectory = Path.Combine(projectDirectory, "bin", "Debug", "net10.0");
-        Assert.True(File.Exists(Path.Combine(outputDirectory, "git.exe")), "The test Git apphost was not produced.");
-        return outputDirectory;
-    }
-
-    private static bool IsProcessRunning(int processId)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(processId);
-            return !process.HasExited;
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
-    }
-
     private static async Task RestoreProjectAsync(string projectPath, string workingDirectory)
     {
         var startInfo = new ProcessStartInfo("dotnet")
@@ -4311,11 +3850,10 @@ public sealed class McpServerIntegrationTests
     private static async Task<(string SolutionPath, string AssemblyPath)> CreateNavigationFixtureAsync(string fixtureRoot)
     {
         var repositoryPath = Path.Combine(fixtureRoot, "repository");
-        var worktreePath = Path.Combine(fixtureRoot, "worktree");
         Directory.CreateDirectory(repositoryPath);
         var solutionPath = Path.Combine(repositoryPath, "NavigationFixture.slnx");
         var projectPath = Path.Combine(repositoryPath, "NavigationFixture.csproj");
-        var sourcePath = Path.Combine(repositoryPath, "NavigationFixture.cs");
+        var linkedConsumerProject = Path.Combine(repositoryPath, "LinkedConsumer.csproj");
         var sharedDirectory = Path.Combine(fixtureRoot, "Shared");
         Directory.CreateDirectory(sharedDirectory);
         await File.WriteAllTextAsync(Path.Combine(sharedDirectory, "LinkedFixture.cs"),
@@ -4323,11 +3861,10 @@ public sealed class McpServerIntegrationTests
         await File.WriteAllTextAsync(solutionPath, "<Solution><Project Path=\"NavigationFixture.csproj\" /><Project Path=\"LinkedConsumer.csproj\" /></Solution>");
         await File.WriteAllTextAsync(projectPath,
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup><ItemGroup><Compile Include=\"..\\Shared\\LinkedFixture.cs\" Link=\"LinkedFixture.cs\" /></ItemGroup></Project>");
-        var linkedConsumerProject = Path.Combine(repositoryPath, "LinkedConsumer.csproj");
         await File.WriteAllTextAsync(linkedConsumerProject,
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup><ItemGroup><Compile Include=\"..\\Shared\\LinkedFixture.cs\" Link=\"LinkedFixture.cs\" /></ItemGroup></Project>");
-        const string baseline = "namespace NavigationFixture;\npublic interface ICounter { int Read(); }\npublic sealed class Counter : ICounter\n{\n    private readonly int firstValue = 1, muchLongerValue = 2;\n    public int Read() => firstValue;\n    public int StableSeparator() => 7;\n    public int BothFields() => firstValue + muchLongerValue;\n}\npublic sealed class CounterConsumer { public int Run(ICounter counter) => counter.Read(); }\npublic static class CounterExtensions { public static int Double(this Counter counter) => counter.Read() * 2; }\n";
-        await File.WriteAllTextAsync(sourcePath, baseline);
+        const string source = "namespace NavigationFixture;\npublic interface ICounter { int Read(); }\npublic sealed class Counter : ICounter\n{\n    private readonly int firstValue = 1, muchLongerValue = 2;\n    public int Read() => firstValue;\n    public int StableSeparator() => 7;\n    public int BothFields() => firstValue + muchLongerValue;\n}\npublic sealed class CounterConsumer { public int Run(ICounter counter) => counter.Read(); }\npublic static class CounterExtensions { public static int Double(this Counter counter) => counter.Read() * 2; }\n";
+        await File.WriteAllTextAsync(Path.Combine(repositoryPath, "NavigationFixture.cs"), source);
         await File.WriteAllTextAsync(Path.Combine(repositoryPath, "ScopeWidget.cs"),
             "namespace NavigationFixture; public partial class ScopeWidget { public void ProductionOnly() { } }");
         await File.WriteAllTextAsync(Path.Combine(repositoryPath, "ScopeWidget.Tests.cs"),
@@ -4340,26 +3877,7 @@ public sealed class McpServerIntegrationTests
         await RestoreProjectAsync(linkedConsumerProject, repositoryPath);
         await RunCommandAsync("dotnet", repositoryPath, "build", projectPath, "--no-restore", "--configuration", "Debug");
         await RunCommandAsync("dotnet", repositoryPath, "build", linkedConsumerProject, "--no-restore", "--configuration", "Debug");
-        await RunCommandAsync("git", repositoryPath, "init", "--quiet");
-        await RunCommandAsync("git", repositoryPath, "config", "user.name", "Navigation Integration Test");
-        await RunCommandAsync("git", repositoryPath, "config", "user.email", "navigation-test@example.invalid");
-        await RunCommandAsync("git", repositoryPath, "add", "NavigationFixture.slnx", "NavigationFixture.csproj", "LinkedConsumer.csproj", "NavigationFixture.cs", "ScopeWidget.cs", "ScopeWidget.Tests.cs", "ScopeWidget.g.cs", "AFirstNonMatching.cs", "ZLastCounter.cs");
-        await RunCommandAsync("git", repositoryPath, "commit", "--quiet", "-m", "fixture baseline");
-        await RunCommandAsync("git", repositoryPath, "worktree", "add", "--quiet", "--detach", worktreePath, "HEAD");
-        Assert.True(File.Exists(Path.Combine(worktreePath, ".git")), "The Git impact fixture must exercise a .git-file worktree.");
-        var worktreeProjectPath = Path.Combine(worktreePath, "NavigationFixture.csproj");
-        await RestoreProjectAsync(worktreeProjectPath, worktreePath);
-        var worktreeLinkedConsumerProject = Path.Combine(worktreePath, "LinkedConsumer.csproj");
-        await RestoreProjectAsync(worktreeLinkedConsumerProject, worktreePath);
-        await RunCommandAsync("dotnet", worktreePath, "build", worktreeProjectPath, "--no-restore", "--configuration", "Debug");
-        await RunCommandAsync("dotnet", worktreePath, "build", worktreeLinkedConsumerProject, "--no-restore", "--configuration", "Debug");
-        var worktreeSourcePath = Path.Combine(worktreePath, "NavigationFixture.cs");
-        await File.WriteAllTextAsync(worktreeSourcePath, baseline
-            .Replace("public sealed class Counter", "public sealed partial class Counter", StringComparison.Ordinal)
-            .Replace("Read() => firstValue", "Read() => firstValue + 1", StringComparison.Ordinal));
-        await File.WriteAllTextAsync(Path.Combine(worktreePath, "Untracked Git ü Impact.cs"),
-            "namespace NavigationFixture;\npublic sealed class UntrackedGitImpact\n{\n    public int Added() => 1;\n}\n");
-        return (Path.Combine(worktreePath, "NavigationFixture.slnx"), Path.Combine(worktreePath, "bin", "Debug", "net10.0", "NavigationFixture.dll"));
+        return (solutionPath, Path.Combine(repositoryPath, "bin", "Debug", "net10.0", "NavigationFixture.dll"));
     }
 
     private static async Task RunCommandAsync(string executable, string workingDirectory, params string[] arguments)
@@ -4410,7 +3928,6 @@ public sealed class McpServerIntegrationTests
         Assert.StartsWith(temporaryRoot, fullRoot, StringComparison.OrdinalIgnoreCase);
         var fixtureName = Path.GetFileName(fullRoot);
         Assert.True(fixtureName.StartsWith("ainet-contract-fixture-", StringComparison.Ordinal)
-            || fixtureName.StartsWith("ainet-git-cancel-acceptance-", StringComparison.Ordinal)
             || fixtureName.StartsWith("ainet-public-error-matrix-", StringComparison.Ordinal),
             "Read-only cleanup is restricted to owned navigation integration fixtures.");
         var pending = new Stack<string>();

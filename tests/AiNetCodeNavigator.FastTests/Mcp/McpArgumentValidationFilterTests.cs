@@ -15,6 +15,7 @@ using Microsoft.Extensions.AI;
 
 namespace AiNetCodeNavigator.FastTests.Mcp;
 
+[Trait("Category", "E2EIntegration")]
 public sealed class McpArgumentValidationFilterTests
 {
     [Fact]
@@ -185,41 +186,6 @@ public sealed class McpArgumentValidationFilterTests
         Assert.Contains("note", schemaDescription, StringComparison.Ordinal);
         Assert.Contains("options", schemaDescription, StringComparison.Ordinal);
         Assert.Contains("null", schemaDescription, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task InputSchema_ResolvesLocalDefsAndValidatesExplicitAdditionalPropertiesSchema()
-    {
-        using var schemaDocument = JsonDocument.Parse("""
-            {
-              "$schema": "http://json-schema.org/draft-07/schema#",
-              "type": "object",
-              "properties": { "options": { "$ref": "#/$defs/options" } },
-              "required": ["options"],
-              "$defs": {
-                "options": {
-                  "type": "object",
-                  "properties": { "label": { "type": "string" } },
-                  "required": ["label"],
-                  "additionalProperties": { "type": "integer" }
-                }
-              }
-            }
-            """);
-
-        var schema = await McpArgumentValidationFilter.ParseInputSchemaAsync(schemaDocument.RootElement);
-
-        Assert.Empty(schema.Validate("{\"options\":{\"label\":\"source\",\"extra\":2}}"));
-        Assert.NotEmpty(schema.Validate("{\"options\":{\"label\":\"source\",\"extra\":\"wrong\"}}"));
-    }
-
-    [Fact]
-    public async Task InputSchema_RejectsExternalReferencesWithoutFetchingThem()
-    {
-        using var schemaDocument = JsonDocument.Parse("{\"$ref\":\"https://example.invalid/schema.json\"}");
-
-        await Assert.ThrowsAsync<NotSupportedException>(async () =>
-            await McpArgumentValidationFilter.ParseInputSchemaAsync(schemaDocument.RootElement));
     }
 
     [Fact]

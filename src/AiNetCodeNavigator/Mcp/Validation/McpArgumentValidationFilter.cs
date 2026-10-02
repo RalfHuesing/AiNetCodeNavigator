@@ -88,6 +88,18 @@ internal static class McpArgumentValidationFilter
         }
 
         var arguments = context.Params?.Arguments ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        return await ValidateArgumentsAsync(tool, arguments, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static async Task<CallToolResult?> ValidateArgumentsAsync(
+        McpServerTool tool,
+        IDictionary<string, JsonElement> arguments,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(tool);
+        ArgumentNullException.ThrowIfNull(arguments);
+        cancellationToken.ThrowIfCancellationRequested();
+
         var inputSchema = tool.ProtocolTool.InputSchema;
         if (inputSchema.ValueKind != JsonValueKind.Object)
         {

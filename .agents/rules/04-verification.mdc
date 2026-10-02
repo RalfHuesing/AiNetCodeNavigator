@@ -10,13 +10,15 @@ alwaysApply: true
 - For reproducible defects, verify a failing test before fixing them. If a deterministic reproduction is infeasible, state why and verify the fix with the strongest practical check.
 - Do not claim a test, build, or product behavior passed without running the relevant check.
 - For code changes, run the affected tests and required project gates using the official PowerShell scripts before committing. For documentation-only changes, review the diff and run `git diff --check`.
+- For each code slice, run the official build and the narrowest affected FastTests/IntegrationTests selection. Run the complete eligible routine solution selection once at task completion; repeat only after changes, failures, or concrete unresolved concerns.
+- All official test scripts exclude `E2EIntegration`, including with `-IncludeExtended` or a supplied filter. Inventory actual test flows; keep transport-free tests in the eligible selection.
 - Execute verification gates via:
   - `pwsh -File ./scripts/build.ps1` to build the solution with all analyzers and warnings-as-errors enabled.
   - `pwsh -File ./scripts/test-fast.ps1` for fast unit tests.
   - `pwsh -File ./scripts/test-integration.ps1` for routine integration tests, excluding `ExtendedIntegration`.
   - `pwsh -File ./scripts/test.ps1` for routine tests across the solution, excluding `ExtendedIntegration`.
   - `pwsh -File ./scripts/test.ps1 -IncludeExtended` for an explicitly requested complete solution gate or release verification.
-- Do not run `ExtendedIntegration` as a routine per-commit gate. When changes affect Git impact or its shared host, workspace, symbol-analysis, or response-processing dependencies, select the relevant extended tests through `scripts/test-integration.ps1 -IncludeExtended -Filter ...`. Start with the narrowest affected selection; do not automatically run the entire extended suite.
-- Use the scripts' `-Filter` parameter for test selection. A filter without `-IncludeExtended` still excludes extended tests. See [Build and Tests](../../docs/development/build-and-tests.md#extended-integration-tests) for categories and commands.
+- Do not run `ExtendedIntegration` as a routine per-commit gate. When changes affect source/assembly relationship navigation or shared host, workspace, symbol-analysis, or response-processing dependencies, select the relevant extended tests through `scripts/test-integration.ps1 -IncludeExtended -Filter ...`. Start with the narrowest affected selection; do not automatically run the entire extended suite.
+- Use the scripts' `-Filter` parameter for test selection. A filter without `-IncludeExtended` still excludes extended tests. See [Build and Tests](../../docs/development/build-and-tests.md#e2e-and-extended-integration-tests) for categories and commands.
 - All scripts stream their console output into static log files under `temp/*.log` (`temp/build.log`, `temp/test-fast.log`, `temp/test-integration.log`, `temp/test.log`). When diagnosing build or test failures, inspect the corresponding log in `temp/`.
 - Do not run performance tests as a routine per-commit gate; run them when the relevant acceptance criteria require them.

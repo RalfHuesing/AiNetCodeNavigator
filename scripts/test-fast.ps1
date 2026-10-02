@@ -6,7 +6,7 @@
 
 .DESCRIPTION
     Agents and automated workflows can inspect the complete execution output
-    at the following path:
+    at the following path. E2EIntegration tests are always excluded by the script.
     <RepoRoot>/temp/test-fast.log
 #>
 [CmdletBinding()]
@@ -57,10 +57,16 @@ $testArgs = @(
     '--logger', "trx;LogFileName=$trxFile",
     '--results-directory', $resultsDir
 )
+$effectiveFilter = 'Category!=E2EIntegration'
 if ($Filter) {
-    $testArgs += @('--filter', $Filter)
+    $effectiveFilter = "($Filter)&($effectiveFilter)"
 }
+$testArgs += @('--filter', $effectiveFilter)
+Write-Host '[NOTE] E2EIntegration tests are excluded.' -ForegroundColor Yellow
 if ($AdditionalArgs) {
+    if ($AdditionalArgs | Where-Object { $_ -match '^(--filter|-filter)(=|$)' }) {
+        throw 'Pass test selection through -Filter; additional --filter arguments cannot override the E2E exclusion.'
+    }
     $testArgs += $AdditionalArgs
 }
 

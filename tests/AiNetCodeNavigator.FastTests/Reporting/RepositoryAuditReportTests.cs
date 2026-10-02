@@ -3,6 +3,7 @@ using System.Text.Json;
 
 namespace AiNetCodeNavigator.FastTests.Reporting;
 
+[Trait("Category", "E2EIntegration")]
 public sealed class RepositoryAuditReportTests
 {
     private const string ExecutablePath = @"C:\Daten\Tools\AiNetReview-win-x64\AiNetReview.exe";

@@ -67,50 +67,34 @@ Run the test suites using the dedicated test scripts:
 # FastTests (dumps full console log to temp/test-fast.log and TRX to TestResults/FastTests.trx)
 pwsh -File ./scripts/test-fast.ps1
 
-# Routine IntegrationTests (excludes ExtendedIntegration; logs and TRX as above)
+# Routine IntegrationTests (excludes ExtendedIntegration and E2EIntegration; logs and TRX as above)
 pwsh -File ./scripts/test-integration.ps1
 
-# Routine tests across the solution (excludes ExtendedIntegration; logs to temp/test.log)
+# Routine tests across the solution (excludes ExtendedIntegration and E2EIntegration; logs to temp/test.log)
 pwsh -File ./scripts/test.ps1
 
-# Complete solution suite, including extended integration tests
+# Solution suite including ExtendedIntegration (E2EIntegration remains excluded)
 pwsh -File ./scripts/test.ps1 -IncludeExtended
 ```
+
+All test scripts exclude `Category=E2EIntegration` and combine that exclusion with any supplied `-Filter`. This category marks complete product flows over the child stdio host, MCP client/server stream handshakes, and repository-wide report publication. Those cases remain in the test projects but are outside the completion gates.
 
 Agents and automation tools should inspect the static log files under `temp/*.log` whenever diagnosing build or test outcomes.
 
 The full solution script runs test projects sequentially (`-m:1`) so IntegrationTests workspace snapshot checks are isolated from FastTests cache and audit report generation. Parallelism within each test assembly follows its existing runner settings.
 
-### Extended integration tests
+### E2E and extended integration tests
 
-`scripts/test-integration.ps1` and `scripts/test.ps1` exclude `Category=ExtendedIntegration` by default. `-IncludeExtended` removes this exclusion. Both scripts combine a supplied `-Filter` with the default exclusion using parentheses, so an OR filter cannot accidentally include extended tests. Use the scripts' `-Filter` parameter rather than passing `--filter` through additional arguments. Direct `dotnet test` calls do not apply the scripts' default exclusion.
+`scripts/test-integration.ps1` and `scripts/test.ps1` exclude `Category=ExtendedIntegration` by default; `-IncludeExtended` removes only that exclusion. All scripts always exclude `Category=E2EIntegration`. Supplied filters are parenthesized and AND-combined with the exclusions, so an OR filter cannot bypass them. Use the scripts' `-Filter` parameter rather than passing `--filter` through additional arguments. Direct `dotnet test` calls do not apply the scripts' exclusions.
 
-The following real Git-impact stdio tests retain their assertions and carry both `Category=ExtendedIntegration` and `Feature=GitImpact`:
-
-| Test | Contract |
-|---|---|
-| `GitChangeContextMapsChangedHunksAndReportsRepositoryStatesThroughPublicStdioTools` | Changed-line declaration mapping, staged/untracked files, deletion hunks, and invalid Git refs. |
-| `GitImpactReportsCallerAndRepositoryCompletenessThroughPublicStdioTools` | Caller selection and clean, non-Git, and deleted-file states. |
-| `ImpactZeroLimitsUseTheSameDefaultsAsOmittedLimits` | Omitted and zero-valued limits select the same changed symbols and totals. |
-
-Run the affected extended tests when changing Git impact or relevant shared host, workspace, symbol-analysis, or response-processing behavior. They are not routine per-commit gates. Include all tests for release verification or an explicitly requested complete gate.
-
-```powershell
-# Only the extended Git-impact cases
-pwsh -File ./scripts/test-integration.ps1 -IncludeExtended -Filter 'Category=ExtendedIntegration&Feature=GitImpact'
-
-# One affected extended test
-pwsh -File ./scripts/test-integration.ps1 -IncludeExtended -Filter 'FullyQualifiedName~ImpactZeroLimitsUseTheSameDefaultsAsOmittedLimits'
-```
-
-The runtime of these three tests still needs improvement. Categorization changes execution frequency and does not optimize their fixture preparation or product path. Any runtime improvement should preserve their contract assertions; diagnosis should use a focused test and timings for individual phases before a wider run.
+`McpServerIntegrationTests`, `McpArgumentValidationFilterTests`, and `RepositoryAuditReportTests` carry the E2E category because they run a child stdio host, a client/server stream handshake, or repository-wide report publication. `McpInputSchemaTests` and `RelationshipToolsContractTests` exercise schema parsing and source/assembly symbol-impact handlers without MCP transport and remain eligible. Select affected `ExtendedIntegration` tests for shared host, workspace, symbol-analysis, or response-processing changes only when they are not `E2EIntegration`. Include eligible extended tests only for release verification or an explicitly requested complete gate.
 
 ### Automatic audit reports
 
-`RepositoryAuditReportTests` runs as an ordinary FastTests case, including in `scripts/test-fast.ps1` and the full solution test suite. It launches `C:\Daten\Tools\AiNetReview-win-x64\AiNetReview.exe review <repository-root>` without a window and captures both process streams, so successful report generation produces no additional console output. The executable must exist at that path. Missing tools, process errors, missing report indexes, cancellation, or a ten-minute timeout fail the test; findings never fail it.
+`RepositoryAuditReportTests` is an E2EIntegration FastTests case excluded from official script gates. When run directly, it launches `C:\Daten\Tools\AiNetReview-win-x64\AiNetReview.exe review <repository-root>` without a window and captures both process streams, so successful report generation produces no additional console output. The executable must exist at that path. Missing tools, process errors, missing report indexes, cancellation, or a ten-minute timeout fail the test; findings never fail it.
 
 The versioned [`ainetreview.json`](../../ainetreview.json) selects `AiNetCodeNavigator.slnx`, enables all eight current analyses with their defaults, and publishes to the Git-ignored `audit-reporting/` directory. Each review creates its own timestamped run directory with a root `index.md` and `production/`, `tests/`, and `mixed/` area directories. Each area publishes separate `changed-files/` and `all-findings/` indexes. No baseline is created or updated. Because AiNetReview automatically reads an existing baseline, the test rejects `audit-reporting/baseline.json` if one has been added manually. Without a baseline, both views include all current findings in their applicable areas.
 
 Published reports remain available across test runs and are deleted only manually. For a later agent review, select a run and explicitly request an audit/review using its `index.md`; report generation itself does not start an agent review or modify code. AiNetReview may include baseline instructions in its generated index, but this test only invokes `review`. AiNetReview's own executable logs are stored beside that external tool under `logs/`.
 
-The MCP stream fixture in FastTests verifies SDK schema exposure and request-filter behavior over the real SDK client/server transport. The production stdio host registers two maintenance tools and twenty navigation tools; IntegrationTests perform initialize, catalog listing, source and assembly calls across all thirteen Cluster 9.2 handlers, and clean EOF shutdown against the child process. Current real-host cases also verify exact duplicate-project routing, source and assembly namespace type handoffs, automatic assembly-search regex/file filtering, matched-file limits, and bound `search_assembly` domain paging within the selected `maxFiles` scope. Focused Git-impact stdio fixtures cover staged/unstaged and untracked changes, innermost declaration mapping, same-line sibling fields, mixed deletion hunks, deleted files, clean/non-Git status, invalid refs, and callers-only methods. The remaining public defaults, Git process cancellation, unusual-path handling, and per-tool byte/token recovery contract remain under verification. A cold source integration test snapshots files and directories before the first public call and confirms MSBuild design-time analysis does not write into the analyzed workspace. The loader redirects intermediate/output files to a per-host, per-workspace scratch directory under the system temp directory and removes that scratch on host disposal. See [MCP Argument Validation](../mcp-argument-validation.md), [MCP Host](../mcp-host.md), and [MCP navigation registration status](../navigation/mcp-registration-status.md).
+E2EIntegration cases remain excluded from the gates above. The SDK client/server stream fixture and child-host stdio paths are complete product flows; permitted verification uses transport-free SDK definitions, validators, handlers, formatters, stores, runtimes, and bounded component integrations. See [MCP Argument Validation](../mcp-argument-validation.md), [MCP Host](../mcp-host.md), and [MCP navigation registration status](../navigation/mcp-registration-status.md).

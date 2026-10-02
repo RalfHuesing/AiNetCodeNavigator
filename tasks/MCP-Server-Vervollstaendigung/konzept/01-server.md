@@ -29,7 +29,7 @@ S = Source-Solution, A = verwaltete Assembly, R = Runtime. Jedes Tool muss mit s
 | `find_references` | S, A | direkte/transitive Verwendungen mit Position, Spalte, Dispatch/Provenienz und Owner; Depth/Resultlimit; referenzierte Assemblysource bei `includeReferences=true` |
 | `get_type_hierarchy` | S, A | Basisklassen, Interfaces, abgeleitete Typen, Partialdeklarationen und auflösbare Source-/Assembly-Handoffs; Assembly betrachtet eigene dekompilierte Source, keine neue Referenzclosure-Option |
 | `find_implementations` | S, A | Interface/abstrakt/virtuell, Methoden und Properties einschließlich Overrides; konkrete Owner-Handoffs; unsupported Targetsymbol wiederherstellbar |
-| `get_impact` | S, A | Symbolmodus mit transitiven Callern/Projekten und Assemblyclosure; getrennt davon Source-Gitmodus mit `gitRef`, callers/change-context, Hunkmapping und Repositoryzuständen |
+| `get_impact` | S, A | Erforderliches `symbolIdentifier`; transitiv betroffene Caller/Projekte und begrenzte Assemblyclosure. Kein Git- oder Änderungsdateimodus. |
 | `dependency_graph` | S, A | genau eine Datei- oder Symbolauswahl; incoming/outgoing/both; projektgenaue Typ-/Datei-/Namespacekanten; generische Typen, Dokumentfenster und begrenzte Traversierung |
 | `resolve_type_origin` | S, A | genau ein nicht leerer Symbolidentifier oder Typname; eigene Source, Metadata-/Framework-/NuGetherkunft und exakte DLL-Identität; Nested/Generic, Ambiguität und fehlende Herkunft |
 | `get_assembly_context` | A | Assemblyübersicht beziehungsweise ausgewähltes Symbol mit angeforderten Body-/Structure-/Caller-/Impactabschnitten; Sectionfehler ist kein Gesamterfolg; optionale Referenzen |
@@ -82,7 +82,7 @@ Assembly-`get_impact` mit omitted/false `includeReferences` muss raw Method-Doc-
 
 Alle veröffentlichten Felder müssen genau den publizierten SDK-Schema-/Bindingvertrag erfüllen. Die produktiven SDK-Definitionen sind die Parameterquelle; eine zweite vollständige Parameter-/Nachweistabelle wird nicht erstellt. Die Toolreferenz erläutert deren Verwendung und die konkreten Abweichungen wie Defaults, Zero-Normalisierung oder Targetgrenzen. Kein schema-akzeptierter Parameter darf still unberücksichtigt bleiben, außer einer ausdrücklich beschriebenen Target-Inapplicability wie Sourcescope im Assemblymodus. Scope/Filter greifen vor Counts/Caps; fachlich ungültige Enum-/Selektorkombinationen werden zurückgewiesen.
 
-Die verbindlichen Zero-Defaults lauten: `inspect_assembly.maxResults/maxMembers=0` → 100; `search_assembly.maxResults=0` → 50; `find_assembly_extensions.maxResults=0` → 100; `get_assembly_context.maxResults=0` → 100; `get_impact.maxChangedSymbols=0` → 20 und `maxTestsPerSymbol=0` → 10. `search_assembly.maxFiles=0` bedeutet kein zusätzliches matched-file-Limit, nicht keine Ergebnisse. Zero-Bytebudgets der Assemblytools wählen deren publizierten Default. Andere Tools dürfen daraus keine unpublizierte Zero-Semantik ableiten. Core-Defaults ersetzen keine abweichend festgelegten öffentlichen Defaults.
+Die verbindlichen Zero-Defaults lauten: `inspect_assembly.maxResults/maxMembers=0` → 100; `search_assembly.maxResults=0` → 50; `find_assembly_extensions.maxResults=0` → 100; `get_assembly_context.maxResults=0` → 100. `search_assembly.maxFiles=0` bedeutet kein zusätzliches matched-file-Limit, nicht keine Ergebnisse. Zero-Bytebudgets der Assemblytools wählen deren publizierten Default. Andere Tools dürfen daraus keine unpublizierte Zero-Semantik ableiten. Core-Defaults ersetzen keine abweichend festgelegten öffentlichen Defaults.
 
 ## Handoffs, Owner und Fehler
 
@@ -94,7 +94,7 @@ Unknown, foreign, stale, abgelaufene oder frühere Runtimehandles liefern die da
 
 ## Runtime, Langläufer, Continuations und Wartung
 
-Der Host und die gemeinsame Runtime müssen parallele unabhängige Requests bedienen. Operationsstore besitzt die Cancellation der Hintergrundarbeit. Abbruch des ersten Requests beendet seine Arbeit; Abbruch eines Poll-Waiters beendet ausschließlich dessen Warten. Hoststop/EOF beendet und drained eigene Operationen und eigene Git-Kindprozesse, bevor Resident-/Assemblyzustand disposed wird. Ein neuer Prozess reaktiviert keine alten opaken Handles/Tokens. Logging darf die Protokollausgabe nicht verschmutzen.
+Der Host und die gemeinsame Runtime müssen parallele unabhängige Requests bedienen. Operationsstore besitzt die Cancellation der Hintergrundarbeit. Abbruch des ersten Requests beendet seine Arbeit; Abbruch eines Poll-Waiters beendet ausschließlich dessen Warten. Hoststop/EOF beendet und drained eigene Operationen, bevor Resident-/Assemblyzustand disposed wird. Ein neuer Prozess reaktiviert keine alten opaken Handles/Tokens. Logging darf die Protokollausgabe nicht verschmutzen.
 
 Verbindliche Grenzen: Responsewindow 15 s; bis zu vier aktive und 32 abgeschlossene Operations; standardmäßig 30 min Inaktivitätsretention; Continuations bis 32 Snapshots, 8 MiB Text, 512 Tokens und vier Budgetvarianten pro Pagetoken. Laufende Idleexpiry wird auch ohne spätere Calls angewendet. Cancellation-/Dispose-/Completionwege dürfen keine disposed-CTS-Races erzeugen. Replay einer completed Operation alloziert nicht für jedes Poll einen neuen Snapshot.
 
@@ -124,12 +124,10 @@ Ein zusätzlich notwendiger Toolcall kann zusätzliche Latenz erzeugen; er erzwi
 
 Vermeidbar sind falsche Minima, fehlende Recoveryfelder, erneute Arbeit auf Immutable-Replay, doppelte Status-/Textdaten und unbrauchbare Metadatenprojektionen. Diese Ursachen sind zu beheben. Pflichtinformation wird dabei nicht entfernt. Tests prüfen bei identischen gespeicherten Inputs/Resultaten, dass normale und ausführbare Recoveryseiten keinen zusätzlichen Budgetfehler produzieren. Große fachliche Ergebnismengen dürfen legitime Folgeseiten benötigen.
 
-## Read-only-Grenze, Git und Laufzeit
+## Read-only-Grenze und Laufzeit
 
 Design-Time-MSBuild erhält Scratch außerhalb des analysierten Workspace. Die Read-only-Grenze für Custom-Targets wird mit kontrollierten importierten Targets geprüft, die Intermediate-/Outputpfade umleiten. Bekannte produktive Outputpfade dürfen weder Sources noch `obj`/`bin` oder fremde Benutzerpfade beschreiben. Ein vom Loader nicht sicher unterstützter Fall muss vor dem betreffenden Schreibeffekt als nicht unterstütztes Laden scheitern; nachträgliches Zurückkopieren ist keine Read-only-Lösung. Die Nachweise erfassen Dateien und Verzeichnisse vor/nach Loader-/Runtime-Dispose sowie Scratchcleanup.
 
 Das Produkt ist keine Sicherheits-Sandbox für willkürlich bösartigen, ausführbaren MSBuildcode. Der Abschlussbericht benennt die konkret getesteten Custom-Targetfälle und kann daraus keinen Beweis für jeden beliebigen Fremdtask ableiten. Die Navigation selbst implementiert keine Workspace-Schreibfunktion.
 
-Gitimpact erhält beide getrennten Modi und deren bekannte Fälle: staged/unstaged/untracked, `.git`-File-Worktree, clean/non-Git, invalid/option-like refs, innermost Hunkmapping, sibling Declarators auf gleicher Zeile, positive/deletion-only/mixed Hunks, vollständig gelöschte Dateien, Callerfilter und bekannte Totals vor Caps. Rename und zulässige ungewöhnliche Dateinamen werden komponentennah mit tatsächlich von Git gelieferten nulldelimitierten Daten geprüft; Plattform-unzulässige Namen sind keine erfundenen Erfolgsszenarien. Deletion-only/unmapped Bereiche werden nicht dem Nachbarn zugeschrieben. Kindprozessabbruch wird am zuständigen Prozessowner geprüft, ohne einen vollständigen MCP-Hosttest aufzubauen.
-
-Die konkrete Anpassung der langsamen Git-Integrationstestvorbereitung und deren begrenzter Laufzeitnachweis stehen in Kapitel 02. Allgemeine Performanceinfrastruktur und eine repositoryweite Testoptimierung gehören nicht zum Auftrag.
+`get_impact` accepts a required source or assembly `symbolIdentifier` and returns caller impact. Git revisions, worktree status, and changed-file mapping are outside the product contract.

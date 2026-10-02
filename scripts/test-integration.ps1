@@ -5,8 +5,8 @@
     to a fixed file at temp/test-integration.log and test results to TestResults/IntegrationTests.trx.
 
 .DESCRIPTION
-    ExtendedIntegration tests are excluded by default. Use -IncludeExtended to opt in;
-    combine it with -Filter for a focused extended run.
+    ExtendedIntegration and E2EIntegration tests are excluded by default. Use
+    -IncludeExtended to opt into ExtendedIntegration; E2EIntegration remains excluded.
 
     Agents and automated workflows can inspect the complete execution output
     at the following path:
@@ -61,15 +61,24 @@ $testArgs = @(
     '--logger', "trx;LogFileName=$trxFile",
     '--results-directory', $resultsDir
 )
-$effectiveFilter = $Filter
+$exclusions = @('Category!=E2EIntegration')
 if (-not $IncludeExtended) {
-    $effectiveFilter = if ($Filter) { "($Filter)&(Category!=ExtendedIntegration)" } else { 'Category!=ExtendedIntegration' }
-    Write-Host '[NOTE] ExtendedIntegration tests are excluded. Use -IncludeExtended to opt in.' -ForegroundColor Yellow
+    $exclusions += 'Category!=ExtendedIntegration'
+    Write-Host '[NOTE] ExtendedIntegration tests are excluded. Use -IncludeExtended to opt in; E2EIntegration tests remain excluded.' -ForegroundColor Yellow
+} else {
+    Write-Host '[NOTE] E2EIntegration tests are always excluded.' -ForegroundColor Yellow
+}
+$effectiveFilter = ($exclusions -join '&')
+if ($Filter) {
+    $effectiveFilter = "($Filter)&($effectiveFilter)"
 }
 if ($effectiveFilter) {
     $testArgs += @('--filter', $effectiveFilter)
 }
 if ($AdditionalArgs) {
+    if ($AdditionalArgs | Where-Object { $_ -match '^(--filter|-filter)(=|$)' }) {
+        throw 'Pass test selection through -Filter; additional --filter arguments cannot override the E2E exclusion.'
+    }
     $testArgs += $AdditionalArgs
 }
 

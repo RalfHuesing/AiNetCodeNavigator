@@ -45,7 +45,7 @@ Pflichtfälle am produktiven Handler ohne MCP-Transport: andere Pflichtfelder g�
 | `find_references` | Unbekanntes Source-`h:` als Symbolauswahl | `HANDOFF_UNKNOWN` |
 | `get_type_hierarchy` | Unbekanntes Assembly-`h:` als Typauswahl | `HANDOFF_UNKNOWN` |
 | `find_implementations` | Unbekanntes Assembly-`h:` als Symbolauswahl | `HANDOFF_UNKNOWN` |
-| `get_impact` | `symbolIdentifier` und `gitRef` gleichzeitig gesetzt | `INVALID_ARGUMENT` |
+| `get_impact` | Leerer erforderlicher `symbolIdentifier` | `INVALID_ARGUMENT` vor Symbolauflösung |
 | `dependency_graph` | Weder Datei- noch Symbolauswahl gesetzt | `INVALID_ARGUMENT` |
 | `resolve_type_origin` | `symbolIdentifier` und `typeName` beide leer | `INVALID_ARGUMENT` |
 | `get_assembly_context` | Nicht unterstütztes `detailLevel` und unbekanntes `h:` | `INVALID_ARGUMENT`; Detailprüfung vor Symbolauflösung |
@@ -76,7 +76,7 @@ Recovery wiederholt beide angebotenen Minima unverändert bis zu einer ausführb
 | `get_file_tree`, `get_namespace_tree`, `get_index_scope` | je eigene begrenzte Textprojektion; fachliche Tiefe/Caps bleiben truncation; ausführbare Fortsetzung des Indexscopeberichts |
 | `get_call_tree` | begrenzte Graphprojektion in ASCII und Mermaid; ausführbare Token-Recovery statt ausschließlich one-token fallback |
 | `find_references`, `get_type_hierarchy`, `find_implementations` | je eigene begrenzte Projektion mit unveränderten fachlichen Grenzen |
-| `get_impact` | Source-/Assembly-Symbolresultat und Gitresultat; Git-Pending→Poll→Endresultat getrennt vom Targetloading; äußere Pages |
+| `get_impact` | Source-/Assembly-Symbolresultat; gemeinsame Operation-/Budget-/Fortsetzungsmechanismen |
 | `dependency_graph`, `resolve_type_origin` | eigene begrenzte Graph-/Originprojektion; keine neuen Domaincursor |
 | `get_assembly_context` | gesamter gewählter Sectionmix einschließlich mehrseitigem Body; Sectionfehler und exakte Recovery der zusammengesetzten Antwort |
 | `inspect_assembly` | 512-Byte-Anfrage mit ausführbarer Seite beziehungsweise Recovery; äußere Pages und `v1.`-Domainpages getrennt und ineinander geschachtelt |
@@ -90,28 +90,9 @@ Gemeinsame Pagination: vollständige immutable Rekonstruktion ohne Auslassungen/
 
 Kaltes Source-/Assemblyloading bis zur fachlichen Antwort, Operationskontrolle je unterschiedlichem Weg und mindestens zwei unabhängige Waiter mit Cancellation eines Waiters prüfen. Wartung lädt keine Targets.
 
-## Integrationstestlaufzeit und konkrete Git-Fixturekorrektur
+## Testauswahl und Fixturegrenzen
 
-Die vom Nutzer berichteten ungefähr 20 Minuten Integrationstestlaufzeit sind keine gemessene Baseline. Git-Commits verwenden betroffene Testauswahlen und einen vollständigen Abschlusslauf gemäß dem nächsten Abschnitt. Auswahl allein ersetzt keine Optimierung unnötiger Fixturearbeit.
-
-Eine bereits im Source erkennbare Ursache betrifft folgende vorhandenen Fälle in `tests/AiNetCodeNavigator.IntegrationTests/Mcp/McpServerIntegrationTests.cs`:
-
-- `GitChangeContextMapsChangedHunksAndReportsRepositoryStatesThroughPublicStdioTools`
-- `ImpactZeroLimitsUseTheSameDefaultsAsOmittedLimits`
-- `GitImpactReportsCallerAndRepositoryCompletenessThroughPublicStdioTools`
-
-Diese drei Fälle verwerfen den Assemblypfad aus `CreateNavigationFixtureAsync`. Dessen vier Restores und vier Builds über Repository/Worktree werden für Source-Git vereinfacht. Assertions und fachliche Inhalte bleiben erhalten; die Stdio-E2E-Fälle werden kategorisiert und nicht ausgeführt.
-
-Im vorhandenen Testowner Source-Git- und Assemblyvorbereitung trennen. Source-Git behält Solutions, Source-/Linked-Dateien, Git-Baseline, `.git`-File-Worktree und Änderungen; nur die zwei zu ladenden Worktreeprojekte werden restored, kein Projekt gebaut. Im Baseline-Repository kein Restore/Build. Assemblyfälle erhalten weiterhin nötige Binaries. Passende leichte Fixtures wiederverwenden; keine globale Fixturebibliothek, neuen Projekte oder gemeinsam veränderlichen Git-Repositories.
-
-Abnahme dieser Anpassung:
-
-- Die drei Fälle verwenden die Sourcevariante bei unveränderten fachlichen Assertions.
-- Nicht-E2E prüft tatsächliche Vorbereitung und produktive Git-Komponenten/Handler direkt: Worktree, Hunks, Caller, Repositoryzustände, Omitted-/Zero-Defaults. Passende bestehende Nachweise verwenden, nur fehlende ergänzen. Kein Host/Transport.
-- Dateien, Git-Index, Änderungen und Cleanup je Test isoliert; keine Dummy-Assets oder entfernten Linked-/Generated-/Testscopefälle.
-- Fixturelaufzeit und Restore-/Buildprozesszahl vor/nach Änderung unter gleichen lokalen Bedingungen messen. Unnötige Prozesse müssen entfallen. Keine Benchmarkinfrastruktur, feste Minuten-/Prozentzusage oder bloße Kategorie-/Timeoutänderung.
-
-Nur Fixturevorbereitung messen, keine E2E-Gesamtlaufzeit als geprüft behaupten. Weitere Optimierung nur bei konkret belegter unnötiger Wiederholung/Warteursache im bearbeiteten Testpfad innerhalb der Refactoringgrenzen. Keine repositoryweite Testoptimierung.
+Allgemeine Testkategorisierung und offizielle Filter werden an den tatsächlichen Testablauf angepasst. Git-Änderungsermittlung, Git-Fixtures, Git-spezifische Antwortbudgets und der Git-Prozesslebenszyklus sind kein Produktvertrag.
 
 ## Host-, Lifecycle-, Read-only- und Assemblynachweise
 
@@ -119,7 +100,7 @@ Registrierung: exakt 22 Tools, korrekte ReadOnly/Destructive/Idempotent/OpenWorl
 
 Validierung einmal: Required, unbekannte Felder einschließlich `$ref`-/composed Roots, Null, Arrays, Typen, fractional/out-of-range int, Enums, Bindbarkeit. Wire-Namen nach `AIParameterNameAttribute`/CLR, nicht Serializer-Policy. Externe Schemareferenzen ohne Netzwerk abweisen; sichere `fieldPath`, unsafe-key-Fallback `$`. Abweisung führt keinen Handler aus; gültiger Folgeaufruf bleibt möglich. Interne Extraktion ändert SDK-Binder/Regeln nicht.
 
-Lifecycle komponentennah: Disposal, parallele unabhängige Aufträge, initiale/Pollwaiter-Cancellation, Ablauf/Capacity, Stopmitteilung, eigener Gitprozess-Kill-and-Drain, frische Runtime ohne alte Handles. Stdoutsauberkeit am Logging-/CLI-Writer und im Host-Codeaudit; kein JSON-RPC-/EOF-Gesamtprozess.
+Lifecycle komponentennah: Disposal, parallele unabhängige Aufträge, initiale/Pollwaiter-Cancellation, Ablauf/Capacity, Stopmitteilung, frische Runtime ohne alte Handles. Stdoutsauberkeit am Logging-/CLI-Writer und im Host-Codeaudit; kein JSON-RPC-/EOF-Gesamtprozess.
 
 Read-only: echter Loader mit kalten Fixtures, zwei Solutions mit gleichen Projektnamen, Datei-/Verzeichnissnapshots einschließlich obj/bin, Custom-Targets aus Kapitel 01. Endvergleich nach Dispose/Scratchcleanup. Navigation/Wartung schreiben weder Inputs noch Benutzerconfig. Bezeichnete Fixtureänderungen für Staleness sind keine Navigatorwrites.
 
@@ -127,7 +108,7 @@ Assembly: reale Root→B→C-PEidentitäten, gleiche/mehrdeutige Namen, direkt r
 
 ## Offizielle Gates und Nachweise
 
-Nach abgeschlossener Testkategorisierung gelten folgende Gates für die spätere Umsetzung und deren Git-Commits:
+Nach abgeschlossener Testkategorisierung gelten folgende Gates für die spätere Umsetzung und deren Commits:
 
 Pro Code-Slice: offizieller Build und engste betroffene Auswahl über `test-fast.ps1`/`test-integration.ps1`, bei beiden betroffenen Bereichen beide Auswahlen. Filter anhand geänderter Komponenten/Aufrufer begründen. Keine betroffene Pflichtprüfung weglassen, kein vollständiger Integrationstestlauf je kleinem Commit. Diese auftragsbezogene Regel bei Umsetzung in Git-/Verifikationsregeln und Build-/Testdokumentation festhalten.
 

@@ -1,6 +1,6 @@
 # MCP server completion
 
-This task specifies a functional, read-only C# navigation MCP server with twenty navigation tools and two maintenance tools. Completion takes priority: reuse correct components, fix required behavior, focus per-commit integration gates, simplify Git fixtures, and keep evidence and documentation concise. Additional refactoring requires a bounded audit-defined task within the existing correction limit.
+This task specifies a functional, read-only C# navigation MCP server with twenty navigation tools and two maintenance tools. Completion takes priority: reuse correct components, fix required behavior, focus per-commit integration gates, and keep evidence and documentation concise. `get_impact` supports source and assembly symbol navigation only; Git change discovery and change-context have been removed from the product scope. Additional refactoring requires a bounded audit-defined task within the existing correction limit.
 
 - [Concept](Konzept.md): intent, scope, implementation constraints, agent models, and completion criteria.
 - [Server contracts](konzept/01-server.md): required navigation, runtime, ownership, budgets, recovery, and read-only behavior.

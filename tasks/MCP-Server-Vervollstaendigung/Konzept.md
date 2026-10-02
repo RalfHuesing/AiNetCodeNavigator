@@ -34,12 +34,12 @@ Die Anforderungen stehen vollständig in diesen drei Dokumenten. Code, Tests und
 
 ### Muss
 
-- Genau die 22 Tools mit sämtlichen in Kapitel 01 festgelegten Source-, Assembly-, Git- und Wartungsfunktionen liefern.
+- Genau die 22 Tools mit sämtlichen in Kapitel 01 festgelegten Source-, Assembly- und Wartungsfunktionen liefern. `get_impact` navigiert Symbole in Source- und Assembly-Targets; Git-Änderungsermittlung gehört nicht zum Produktumfang.
 - MSBuild-Strukturinvalidierung, Symbol-/Ownerauflösung, Handoffs, öffentliche Parameter/Defaults/Filter/Caps und Assembly-Membersortierung korrekt umsetzen.
 - Loading, Operationen, Fortsetzungen, Cancellation, Disposal, Konfigurationsreload und Read-only-Grenzen zuverlässig erfüllen.
 - Harte Byte-/Tokengrenzen und automatisch passende Antwortseiten anwenden. Explizite Budgets niemals automatisch anheben. Mindestwerte und Recovery müssen ausführbar sein; vermeidbare Fehlerwiederholungen und erneute Analyse gespeicherter Ergebnisse entfallen.
 - Die relevanten Verträge durch Unit-, Komponenten- und eng begrenzte Nicht-E2E-Integrationstests gemäß Kapitel 02 nachweisen.
-- Die langen Integrationstestläufe vor Git-Commits gemäß Kapitel 02 anpassen: betroffene Tests gezielt ausführen, die abschließende Suite nicht mehrfach wiederholen und unnötige Fixturearbeit entfernen. Für die Source-Git-Fälle entfallen unbenutzte Assemblybuilds und unnötige Restores. Assertions und fachliche Aussagekraft erhalten; E2E-Fälle nicht ausführen.
+- Die langen Integrationstestläufe vor Git-Commits gemäß Kapitel 02 anpassen: betroffene Tests gezielt ausführen und die abschließende Suite nicht mehrfach wiederholen. Allgemeine Testkategorien und offizielle Skriptauswahl stimmen mit den tatsächlichen Abläufen überein; E2E-Fälle werden nicht ausgeführt.
 - Eine kompakte englische Toolreferenz und eine Setupseite mit Abschnitten für Claude Desktop, Cursor und Antigravity anhand der implementierten Verträge liefern.
 
 ### Nicht
@@ -52,7 +52,7 @@ Die Anforderungen stehen vollständig in diesen drei Dokumenten. Code, Tests und
 
 ## Umsetzung und Audit
 
-Der Implementierer verwendet `gpt-6-luna/high`; der unabhängige Auditor verwendet `gpt-6.1-sol/high`. Die spätere Umsetzung folgt dem Repository-Workflow: fachliche Arbeitsschritte seriell ausführen, nach einem abgeschlossenen Milestone unabhängig prüfen und bei Findings höchstens einen Korrekturauftrag ausführen. Ein verbleibender Pflichtdefekt verhindert die Abnahme; ein ausgeschöpfter Prüfablauf erklärt ihn nicht für behoben.
+Der Implementierer verwendet `gpt-6-luna/high`; der unabhängige Auditor verwendet `gpt-6.1-sol/medium`. Die spätere Umsetzung folgt dem Repository-Workflow: fachliche Arbeitsschritte seriell ausführen, nach einem abgeschlossenen Milestone unabhängig prüfen und bei Findings höchstens einen Korrekturauftrag ausführen. Ein verbleibender Pflichtdefekt verhindert die Abnahme; ein ausgeschöpfter Prüfablauf erklärt ihn nicht für behoben.
 
 Codeänderungen, Dokumentation, Builds, Tests, Restores und Git-Aktionen laufen seriell. Der Auditor prüft einen festen Stand ausschließlich lesend. Belege nennen den geprüften Commit, konkrete Tests und deren Ergebnisse.
 
