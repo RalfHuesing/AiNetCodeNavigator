@@ -24,7 +24,7 @@ Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept 
 
 ### M1-T1 — Ausgangsmessung festschreiben
 
-- [ ] **M1-T1 abschließen**
+- [x] **M1-T1 abschließen**
 
 **Intention:** Die spätere Umstellung mit einer nachvollziehbaren Ausgangsaufnahme vergleichen, bevor Servercode oder Verträge verändert werden.
 
@@ -33,6 +33,8 @@ Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept 
 **Nicht:** Kein neuer Zielkorpus, kein Benchmarkframework, keine Serveränderung zur Baseline, keine Beendigung bestehender Clientprozesse und keine Gleichsetzung des abweichenden Audit-Deployments mit dem lokalen Quellstand. Die Messung ist keine zusätzliche Konzeptfreigabe.
 
 **Abnahme:** Für jedes Szenario sind Ausgangsargumente, Ergebnismenge, Build-/Targetzuordnung und vollständig rekonstruierte Antwortkosten vorhanden oder der konkrete fehlende Nachweis innerhalb des Zeitlimits dokumentiert. Messwerte enthalten Bytes, Antworttokens, Requests, Polls, Seiten und Laufzeiten; unzugängliche Clientkosten sind ausdrücklich nicht gemessen. Targetdateien bleiben unverändert. Unverfügbarkeit wird nicht als bestandene Baseline behauptet und eröffnet keine unbegrenzte Wartephase. Vor dem nächsten Codepunkt liegen die vorhandenen Baselinebelege gesichert vor.
+
+**Abschlussnachweis (2026-10-02, anonymisierte Targets A/B/R):** Die sechs Konzept-Szenarien und ihre Varianten sind festgeschrieben. Auf sauberem HEAD `ac149ad5812dcd00ff35fa698006159bd9859ef2` bestand `pwsh -File ./scripts/build.ps1` mit 0 Warnungen und 0 Fehlern. 27 dreifach ausgeführte Abfrage-Workflows sowie ein abgebrochener M5-Versuch blieben unter 36 begonnenen Workflows und unter 60 Minuten. M1 lieferte vollständig eine Antwortseite mit 10.873 UTF-8-Bytes / 3.263 `cl100k_base`-Antworttokens; die drei Antwortzeiten waren 1.783/77/69 ms. M6 rekonstruierte jeweils alle 32 eindeutigen Treffer: beim 4-KiB-Budget 18 Seiten und 57.854 Bytes / 17.590 Tokens je Workflow, beim 16-KiB-Budget 8 Seiten und 55.681 Bytes / 17.102 Tokens. M2s frische Memberauswahl entsprach nicht dem archivierten fünfzeiligen Getter; M3- und M4-Antworten sind gespeichert, aber Prozess-Discoverykosten fehlen und die rekursive Caller-Gleichwertigkeit von M4 ist nicht belegt. M5 blieb offen: Das frühere Prozess-Handle ist keinem Symbolnamen zugeordnet; eine separate breite Source-Abfrage lieferte nach 5 Minuten 44 Sekunden keine Antwort und zählt nicht als Baseline. Diese Punkte gelten nicht als bestandene Vergleichsmessung. Originalnamen, Pfade, Target-/Referenzfingerprints, Rohantworten und die sechs konkreten Queries sind in den ignorierten lokalen Belegen `temp/usage-audit/m1-baseline-results.md`, `m1-baseline-raw.json`, `m6-baseline-raw.json` und `m1-baseline.ps1` gesichert; die abschließenden Hashes bestätigten unveränderte Targets. Die Prozesszuordnung erfolgte über den offiziellen Build auf diesem HEAD, den gestarteten lokalen stdio-Prozess und seine lokalen DLL-Hashes; das Build besitzt keine eingebettete Commitkennung und der verbundene 21-Tool-Client wurde nicht als Repository-Baseline verwendet. Schema-/Requestkosten sind nicht gemessen. M2/M4-Auswahl und M5-Root-Zuordnung bleiben für M3-T2 ausdrücklich offen.
 
 ### M1-T2 — Snapshot, Referenzidentität und Owner-Leases härten
 
