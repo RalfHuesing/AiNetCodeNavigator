@@ -1,56 +1,70 @@
 ---
-description: Proactively use AiNetCodeNavigator MCP server for C# semantic code navigation and exploration.
+description: Use AiNetCodeNavigator for efficient, evidence-based C# source and managed assembly navigation.
 globs: '*'
 alwaysApply: true
 ---
 
-# MCP Navigation Workflow
+# C# MCP navigation
 
-Proactively use the `AiNetCodeNavigator` MCP server as the primary tool for C# code exploration, symbol navigation, structural inspection, and relationship analysis. Do not use broad text searches (`rg`) when semantic AST tools can answer the question directly.
+Use the `AiNetCodeNavigator` MCP server as the primary tool for C# symbol discovery, declaration inspection, and static relationship analysis when it is available. Choose the smallest query that answers the current question, then follow returned handles to deepen only the relevant context.
 
-The binding references are this repository's `docs/`, local public contract matrix, code, and tests. Consult them for supported parameters and failure behavior; task specifications may describe work that is still planned.
+## Targets and tool availability
 
-## Execution and Target Path
+- Discover the server's exposed tools when needed; client prefixes may differ. Use their actual input schemas for supported parameters, values, defaults, and limits. Do not invent tools or arguments.
+- Set `targetPath` to the absolute path of the relevant existing `.sln` / `.slnx` solution or managed `.dll` / `.exe` assembly. A directory, `.csproj`, or `.cs` file is not a navigation target.
+- Select the solution containing the code being investigated. If several solutions could own it, use repository structure and task context to choose; clarify only unresolved ownership.
+- `get_index_scope`, `get_feature_context`, and `get_test_context` are source-only. `get_assembly_context`, `inspect_assembly`, `search_assembly`, and `find_assembly_extensions` require an assembly. Other navigation tools support source and assembly targets, with tool-specific scope options.
+- If the server is unavailable, no supported target exists, or loading fails persistently, continue with focused file reads and text searches. State the limitation when it affects the result; do not repeatedly issue the same failing call.
 
-- `targetPath`: Absolute path specifying the operational target:
-  - **Source solution**: Absolute path to this repository's `AiNetCodeNavigator.slnx`.
-  - **Assembly / Decompilation**: Absolute path to a `.dll` or `.exe` file.
-- **Handoff IDs**: Reuse canonical `handoffId` values (`h:...`) from prior MCP responses unchanged as `symbolIdentifier` or in `symbolIdentifiers`.
-- **Loading & Retries**: On `operation=running`, repeat the same tool and query with the returned `operationToken` to poll; do not treat the running control as a navigation result. On `operation=retry` with `completeness=not_applicable`, wait briefly and repeat the same call and query.
-- **Budget Adjustments**: On `RESPONSE_BUDGET_TOO_SMALL`, repeat the identical request with both offered minimums unchanged: `maxResponseBytes = minimumResponseBytes` and, when present, `maxResponseTokens = minimumResponseTokens`.
-- **Text Search Fallback**: `rg` or `search_pattern` is only a fallback for unindexed files, string literals, comments, or non-C# files.
+## Choose by question
 
-## Navigation Tools Inventory
+| Question | Tool and starting point |
+|---|---|
+| Which C# projects/documents are indexed? | `get_index_scope`; use only when the indexed scope is uncertain. |
+| Where should I start in an unfamiliar codebase? | `get_namespace_tree`; drill into a project or namespace. |
+| Where is this declaration? | `find_symbol` with `pattern` or `namePatterns`, optionally narrowed by `kind`. |
+| What is declared in these files or this type? | `get_file_skeleton` with `filePaths`; `get_class_structure` with `symbolIdentifier`. |
+| What does this declaration do? | `get_symbol_body` with `symbolIdentifiers`; read a bounded declaration window. |
+| Who calls it / what does it call? | `get_call_tree` with `direction: incoming` / `outgoing` / `both`. |
+| Where is it used, including non-call usages? | `find_references`; start at `depth: 1`. |
+| What inherits from or implements it? | `get_type_hierarchy` for inheritance; `find_implementations` for implementations and overrides. |
+| Which callers/dependents could be affected? | `get_impact` from a symbol; start at `depth: 1`. This tool does not accept Git refs or changed-file lists. |
+| Which types/files depend on this file or symbol? | `dependency_graph` with exactly one of `filePath` or `symbolIdentifier`. |
+| Which source project or external assembly owns this type? | `resolve_type_origin` with exactly one of `symbolIdentifier` or `typeName`. |
+| Which source declaration, callers, and test candidates matter? | `get_feature_context` for combined context; `get_test_context` for test candidates alone. |
+| What API or behavior exists in a compiled library? | `inspect_assembly` for API declarations; `get_assembly_context` for selected context sections; `search_assembly` for decompiled text, external calls, or data access. |
+| Which compiled extension methods are available? | `find_assembly_extensions`, narrowed by receiver, name, or namespace. |
 
-For the current targets, wire arguments, defaults, limits, and paging behavior, use the canonical [MCP tool reference](../../docs/tools/README.md); SDK definitions and handlers remain authoritative for exact wire behavior.
+## Gather context progressively
 
-| Category | Tool | Purpose |
-|---|---|---|
-| **Symbol & Code Inspection** | `find_symbol` | Find symbol declarations by name/pattern (`pattern`, `namePatterns`, optional `kind`, `scopeType`). |
-| | `get_symbol_body` | Read source or decompiled body of symbols (`symbolIdentifiers: ["h:..."]`, windowed with `startLine`, `maxBodyLines`). |
-| | `get_file_skeleton` | Structural outline of declarations within files without method bodies (`filePaths`). |
-| | `get_class_structure` | Detailed member outline of classes, structs, records, or interfaces (`symbolIdentifier`). |
-| | `get_feature_context` | Composite context for a symbol including callers, declaration, and tests (`symbolIdentifier`). |
-| | `get_test_context` | Identify test classes and methods covering a symbol (`symbolIdentifier`). |
-| **Call Graphs & Relationships** | `get_call_tree` | Caller and callee call hierarchy tree (`symbolIdentifier`, `direction: "incoming"\|"outgoing"\|"both"`). |
-| | `find_references` | All call and usage sites of a symbol across the AST (`symbolIdentifier`, `depth`). |
-| | `get_type_hierarchy` | Inheritance chain, base types, and implemented interfaces (`symbolIdentifier`). |
-| | `find_implementations` | Concrete implementations of interfaces or abstract members (`symbolIdentifier`). |
-| | `get_impact` | Transitive blast radius and affected dependents of a symbol (`symbolIdentifier`). |
-| | `dependency_graph` | Architectural dependency graph between projects and namespaces. |
-| | `resolve_type_origin` | Resolve external/NuGet types to their originating assembly and DLL path. |
-| **Project & Scope Structure** | `get_namespace_tree` | Hierarchical namespace tree across the target. |
-| | `get_index_scope` | Overview of indexed source documents and current scope; use external file search for physical file discovery. |
-| **Assembly Decompilation** | `get_assembly_context` | High-level summary of compiled binaries. |
-| | `inspect_assembly` | Public API surface and types in a compiled assembly; follow its type handoffs to `get_file_skeleton`, `get_class_structure`, or `get_symbol_body`. |
-| | `search_assembly` | Search within decompiled assembly code (`data_access`, `external_calls`, `text`). |
-| | `find_assembly_extensions` | Discover extension methods in compiled assemblies. |
-| **Server Operations** | `get_server_health` | Diagnostic status, cache health, and memory stats. |
-| | `reload_config` | Reload active configuration. |
+1. Start from a known symbol with `find_symbol`, a known file with `get_file_skeleton`, or an assembly API with filtered `inspect_assembly`. Skip discovery already answered by current results.
+2. Reuse returned `handoffId` values (`h:...`) unchanged as `symbolIdentifier`, in `symbolIdentifiers`, or in `filePaths` where supported. Never fabricate, parse, or replace a handle with its display name.
+3. Keep each handle paired with its returned owner `targetPath`. Referenced-assembly results may belong to a different DLL than the initial target; use that owner for follow-ups.
+4. Read the relevant bodies, then inspect callers, implementations, dependencies, and test candidates as the task requires. Before changing a public contract or shared behavior, inspect its relevant consumers and runtime wiring.
+5. Batch related lookups with `find_symbol.namePatterns` (up to ten), `get_symbol_body.symbolIdentifiers`, or `get_file_skeleton.filePaths`. Use exactly one of `pattern` or `namePatterns`; keep batches focused.
+6. Start with shallow traversal and bounded results. Use member/name/project/namespace filters where supported. Increase depth or limits only to resolve an unanswered question or reported truncation; do not request every graph and context tool for every symbol.
+7. Source `scopeType` is `all`, `production`, or `tests` where supported; generated declarations are excluded by default. Check these filters and indexed scope before concluding that no declaration or consumer exists. Assembly `includeReferences` is tool-specific; enable it when the question requires supported referenced owners.
+8. Treat `get_symbol_body.startLine` / `endLine` as one-based positions within the declaration, not physical file lines. Follow the returned next window when more body text is needed. Use returned source locations for precise file edits and citations.
 
-## Explicitly Excluded Tools (No Verification / Linting)
+## Process control responses before drawing conclusions
 
-AiNetCodeNavigator is exclusively a code navigation server. The following tools must **NOT** be used for navigation or task verification:
-- `verify`, `get_verify_advisories` (Linter gates and advisory checks)
-- `metrics_lookup`, `metrics_tree`, `get_hotspots` (Linter complexity metrics and hotspot scoring)
-- `pattern_detect`, `find_duplicates` (Linter code-smell and clone detection)
+- **Running:** On `operation=running`, poll the same tool, target, and query using the returned `operationToken`. Preserve an active assembly domain cursor if present; do not combine polling with an outer response-page token. A running response is not a navigation result.
+- **Retry:** On `operation=retry` with `completeness=not_applicable`, wait briefly and repeat the same call as instructed. Avoid a busy loop; persistent failure requires diagnosis or fallback.
+- **Response pages:** Follow the response preamble's `continuationToken` with the same tool, target, and query, without an `operationToken`. These pages contain one stored response; consuming them does not expand the search or traversal.
+- **Assembly domain pages:** `inspect_assembly` and `search_assembly` may also return a domain cursor (`v1...`) inside the result. Consume that response's outer pages first, then pass the domain cursor as `continuationToken` with unchanged query parameters. Repeat until the required domain results have been read. Do not interpret or construct cursor contents.
+- **Domain truncation:** Read completeness, truncation details, and `nextAction`. If no cursor is provided, narrow the query or change a supported result/traversal limit in a fresh request. A larger response budget alone does not remove domain limits.
+- **Budget too small:** On `RESPONSE_BUDGET_TOO_SMALL`, retry the same request, including any current token, with `maxResponseBytes = minimumResponseBytes` and, when offered, `maxResponseTokens = minimumResponseTokens`. Use the exact offered pair. If recovery exceeds a supported limit, start a narrower query rather than looping.
+- **Ambiguous symbol:** Select the returned candidate by signature, project, file, and owner, then follow its handle. Never choose the first candidate solely because its name matches.
+- **Invalid/stale handle or token:** Follow the reported recovery action. Correct an owner mismatch using the original result; rediscover a symbol after snapshot changes or runtime replacement, and restart an expired page query. Do not silently fall back from a failed handle to a guessed name.
+- **Partial batch:** Retain successful items and inspect failed-item details. Do not present a mixed-success body batch as complete.
+
+## Evidence and fallbacks
+
+- Use physical file discovery (`rg --files` or equivalent) for solutions, paths, assets, and files outside the index. `get_index_scope` describes indexed documents, not all files on disk.
+- Prefer semantic tools over repository-wide text searches for declarations, callers, references, inheritance, and implementations. Use targeted text search for literals, comments, configuration, non-C# content, unindexed files, unsupported semantic questions, or unavailable navigation. Text matches are leads; they do not prove symbol identity or semantic relationships.
+- Use direct file reads for editing context and checking current source. Rediscover affected handles when needed after edits; stored response pages are immutable and do not verify the edited state.
+- Interpret results within the selected target, indexed scope, filters, depth, reference closure, and completeness. Static navigation cannot establish all runtime behavior, reflection/DI wiring, or consumers outside the analyzed scope. Report material gaps in conclusions about absence or impact.
+- `get_test_context` and `get_feature_context` return static test candidates, including heuristic matches. Inspect the candidate tests and run the relevant verification tools; these results do not measure coverage or prove that tests pass.
+- Assembly bodies are decompiled representations, not original source. Navigation does not execute analyzed binaries.
+- Use `get_server_health` to diagnose host/cache state or target residency; it does not load or refresh the target. Use `reload_config` only for intentional runtime configuration reloads, not to repair handles or refresh source. Neither is a routine prerequisite for navigation.
+- AiNetCodeNavigator provides read-only navigation, not linting, code-quality scoring, refactoring, builds, or test execution. Use the appropriate external tools for changes and verification.
