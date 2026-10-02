@@ -4,11 +4,11 @@ Verbindliche Spezifikation: [freigegebenes Konzept](Konzept.md), `status: ready`
 
 ## Ausführung und Nachweise
 
-Die Aufgaben stehen vollständig in dieser Datei. Jeder nummerierte Punkt ist ein eigener, begrenzter Arbeitsauftrag; zusätzliche Leaf-Dateien sind nicht erforderlich. In Schritt 4 werden die Punkte in der angegebenen Reihenfolge bearbeitet. Resume ist der erste offene ausführbare Punkt. Die Milestone-Checkbox wird erst geschlossen, wenn ihre Aufgaben einschließlich Audit abgeschlossen sind.
+Diese Datei ist der Index mit Reihenfolge, verbindlichen Status-Checkboxen und Scopeabdeckung. Jeder Aufgaben- und Auditpunkt steht vollständig in einer eigenen Datei unter `roadmap/`; dort werden auch seine Nachweise gepflegt. Gemeinsame Ausführungsregeln stehen hier und gelten für alle Punkt-Dateien. In Schritt 4 werden die Punkte in der angegebenen Reihenfolge bearbeitet. Resume ist der erste offene ausführbare Aufgabenpunkt im Index; eine offene Milestone-Checkbox ist ein Aggregat und kein eigener Arbeitsauftrag. Status-Checkboxen werden ausschließlich in diesem Index gepflegt. Die Milestone-Checkbox wird erst geschlossen, wenn ihre Aufgaben einschließlich Audit abgeschlossen sind.
 
 Für jeden Codepunkt gelten dieselben Anforderungen: betroffenen Ist-Stand und Verbraucher lesen, bei einem reproduzierbaren Defekt zuerst einen fehlgeschlagenen Nachweis herstellen, den vollständigen betroffenen Vertrag implementieren, gezielt verifizieren, aktuelle Dokumentation im selben Slice aktualisieren und ausschließlich die eigenen Änderungen committen. Anforderungen und Grenzwerte werden nicht zugunsten grüner Checks abgeschwächt. Der Abschlussnachweis wird direkt beim jeweiligen Punkt ergänzt: Commit, ausgeführte Checks/Ergebnisse, belegte Analysegrenzen und tatsächlich unerfüllte Nachweise. Keine separate Fortschritts-, Audit- oder Schuldenverwaltung.
 
-Die [Verifikationsregeln](../../.agents/rules/04-verification.mdc) und [Build-/Testanleitung](../../docs/development/build-and-tests.md) bestimmen die späteren Gates. Code-Slices verwenden das offizielle Buildskript sowie die engste betroffene Fast-/Integration-Auswahl; relevante Extended-Fälle werden gezielt ausgewählt. Das vollständige eligible Routine-Gate liegt in M3-T1. Reine Dokumentations-Slices brauchen Diffprüfung und `git diff --check`. In dieser Roadmap-Erstellung werden weder Builds noch Tests ausgeführt.
+Die [Verifikationsregeln](../../.agents/rules/04-verification.mdc) und [Build-/Testanleitung](../../docs/development/build-and-tests.md) bestimmen die späteren Gates. Code-Slices verwenden das offizielle Buildskript sowie die engste betroffene Fast-/Integration-Auswahl; relevante Extended-Fälle werden gezielt ausgewählt. Das vollständige eligible Routine-Gate liegt in [M3-T1](roadmap/M3-T1.md). Reine Dokumentations-Slices brauchen Diffprüfung und `git diff --check`. In dieser Roadmap-Erstellung werden weder Builds noch Tests ausgeführt.
 
 Alle Aufgaben übernehmen die [Nicht-Ziele des Konzepts](Konzept.md#nicht): read-only Targets, kein administrativer Ersatzkatalog, keine Ausführung analysierter Bibliotheken, keine Erweiterung zur Compilerdiagnostik-/Refactoringfunktion, keine Legacy-Aliase und keine neuen universellen Toolketten. Core bleibt frei von MCP-Transport und Tokenisierung. Analysierte Anwendungsdateien werden nicht verändert. Technische Tool-/Komponentennamen sind zulässig; Produkt-, Hersteller- und Kundennamen sowie reale Anwendungspfade gehören weder in diese Planung noch in Commit-Nachrichten. Lokale Messdetails bleiben in den bestehenden, nicht versionierten Auditartefakten; versionierte Nachweise verwenden neutrale Aliase.
 
@@ -16,241 +16,49 @@ Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept 
 
 ## Reihenfolge
 
-- [x] **M1 — Vergleichsgrundlage und konsistente Analyse**
-- [ ] **M2 — Nachladbare, kompakte Navigation und gemeinsamer Kontext**
-- [ ] **M3 — Gesamtabnahme und begrenzter Praxisvergleich**
+- [x] **[M1 — Vergleichsgrundlage und konsistente Analyse](#m1--vergleichsgrundlage-und-konsistente-analyse)**
+- [ ] **[M2 — Nachladbare, kompakte Navigation und gemeinsamer Kontext](#m2--nachladbare-kompakte-navigation-und-gemeinsamer-kontext)**
+- [ ] **[M3 — Gesamtabnahme und begrenzter Praxisvergleich](#m3--gesamtabnahme-und-begrenzter-praxisvergleich)**
 
 ## M1 — Vergleichsgrundlage und konsistente Analyse
 
-### M1-T1 — Ausgangsmessung festschreiben
-
-- [x] **M1-T1 abschließen**
-
-**Intention:** Die spätere Umstellung mit einer nachvollziehbaren Ausgangsaufnahme vergleichen, bevor Servercode oder Verträge verändert werden.
-
-**Scope:** Die vorhandenen Belege für Repository R sowie Assembly A/B lesen und die sechs Szenarien M1–M6 aus dem [begrenzten Messumfang](Konzept.md#begrenzter-messumfang) festschreiben. Queries, deklarative Auswahl, erforderliche Information, Target-/Referenzfingerprints und tatsächliche Prozess-/Buildzuordnung erfassen. Passende vorhandene vollständige Messungen übernehmen; die nötige Ausgangsmessung einmal read-only aufnehmen. Die Baseline-Artefakte über die späteren Codeänderungen hinaus verfügbar halten. Handles je Prozess neu entdecken. Pro festgelegter Variante ein kalter und zwei warme Durchläufe in isolierter Zuordnung, maximal zwei Varianten je Szenario und 36 vollständige Workflows insgesamt, höchstens 60 Minuten.
-
-**Nicht:** Kein neuer Zielkorpus, kein Benchmarkframework, keine Serveränderung zur Baseline, keine Beendigung bestehender Clientprozesse und keine Gleichsetzung des abweichenden Audit-Deployments mit dem lokalen Quellstand. Die Messung ist keine zusätzliche Konzeptfreigabe.
-
-**Abnahme:** Für jedes Szenario sind Ausgangsargumente, Ergebnismenge, Build-/Targetzuordnung und vollständig rekonstruierte Antwortkosten vorhanden oder der konkrete fehlende Nachweis innerhalb des Zeitlimits dokumentiert. Messwerte enthalten Bytes, Antworttokens, Requests, Polls, Seiten und Laufzeiten; unzugängliche Clientkosten sind ausdrücklich nicht gemessen. Targetdateien bleiben unverändert. Unverfügbarkeit wird nicht als bestandene Baseline behauptet und eröffnet keine unbegrenzte Wartephase. Vor dem nächsten Codepunkt liegen die vorhandenen Baselinebelege gesichert vor.
-
-**Abschlussnachweis (2026-10-02, anonymisierte Targets A/B/R):** Die sechs Konzept-Szenarien und ihre Varianten sind festgeschrieben. Auf sauberem HEAD `ac149ad5812dcd00ff35fa698006159bd9859ef2` bestand `pwsh -File ./scripts/build.ps1` mit 0 Warnungen und 0 Fehlern. 27 dreifach ausgeführte Abfrage-Workflows sowie ein abgebrochener M5-Versuch blieben unter 36 begonnenen Workflows und unter 60 Minuten. M1 lieferte vollständig eine Antwortseite mit 10.873 UTF-8-Bytes / 3.263 `cl100k_base`-Antworttokens; die drei Antwortzeiten waren 1.783/77/69 ms. M6 rekonstruierte jeweils alle 32 eindeutigen Treffer: beim 4-KiB-Budget 18 Seiten und 57.854 Bytes / 17.590 Tokens je Workflow, beim 16-KiB-Budget 8 Seiten und 55.681 Bytes / 17.102 Tokens. M2s frische Memberauswahl entsprach nicht dem archivierten fünfzeiligen Getter; M3- und M4-Antworten sind gespeichert, aber Prozess-Discoverykosten fehlen und die rekursive Caller-Gleichwertigkeit von M4 ist nicht belegt. M5 blieb offen: Das frühere Prozess-Handle ist keinem Symbolnamen zugeordnet; eine separate breite Source-Abfrage lieferte nach 5 Minuten 44 Sekunden keine Antwort und zählt nicht als Baseline. Diese Punkte gelten nicht als bestandene Vergleichsmessung. Originalnamen, Pfade, Target-/Referenzfingerprints, Rohantworten und die sechs konkreten Queries sind in den ignorierten lokalen Belegen `temp/usage-audit/m1-baseline-results.md`, `m1-baseline-raw.json`, `m6-baseline-raw.json` und `m1-baseline.ps1` gesichert; die abschließenden Hashes bestätigten unveränderte Targets. Die Prozesszuordnung erfolgte über den offiziellen Build auf diesem HEAD, den gestarteten lokalen stdio-Prozess und seine lokalen DLL-Hashes; das Build besitzt keine eingebettete Commitkennung und der verbundene 21-Tool-Client wurde nicht als Repository-Baseline verwendet. Schema-/Requestkosten sind nicht gemessen. M2/M4-Auswahl und M5-Root-Zuordnung bleiben für M3-T2 ausdrücklich offen.
-
-### M1-T2 — Snapshot, Referenzidentität und Owner-Leases härten
-
-- [x] **M1-T2 abschließen**
-
-**Intention:** Innerhalb einer Analyse einen verlässlichen Stand verwenden und dessen Owner während der Analyse schützen.
-
-**Scope:** Muss 8 und 12 sowie den Lease-Anteil von Muss 6 umsetzen. `ResidentSolution`, gemeinsame Source-Routen und Batchaufrufe auf einen einmal bezogenen Snapshot/Identität unter Source-Lease ausrichten. Hash und Text aus denselben Dateibytes ableiten; Refresh-Lesefehler strukturiert melden. Assembly-Batches und Owner-Analysen an einen festen Root-/Referenzstand unter aktiver Lease binden. Referenzresolver und Residency mit fehlenden DLLs, falschen Identitäten, Closure-Grenzen und Sessiondruck prüfen und nachgewiesene Fehler korrigieren. Vorhandene Registry-/Handoff-/Resolvermechanismen verwenden.
-
-**Nicht:** Keine globale atomare Dateisystemaufnahme, kein Refresh-Tool, keine dauerhaften Handles und keine pauschale Erhöhung der 128-/32-Grenzen. Keine geratenen DLL-Ersatzidentitäten.
-
-**Abnahme:** Deterministische Änderungen zwischen Batchteilen liefern keine gemischten Symbolstände; gesperrte Dateien ergeben einen wiederholbaren Fehler statt scheinbar aktueller alter Bodies. Hash/Text stimmen überein. Falsche Referenzversionen werden nicht erfolgreich aufgelöst. Aktive Owner bleiben geleast; legitime Closure-/Residency-Grenzen ergeben explizite Grenzen oder ausführbare Recovery. Entsprechende Source-/Assembly-Fixtures und relevante bestehende Snapshot-/Lifecycle-Prüfungen bestehen.
-
-**Abschlussnachweis (2026-10-02):** `pwsh -File ./scripts/build.ps1` bestand mit 0 Warnungen und 0 Fehlern. Die Fast-Auswahl `ResidentSolutionStalenessTests|AssemblyFingerprintAndReferenceTests|AssemblySymbolHandoffResolverTests.SessionRegistry|AssemblyNavigationScannerTests.FindSymbol_RejectsOwner|AssemblyDecompilationCacheTests` bestand mit 26/26; sie deckt atomaren Refresh samt wiederholbarem Lese-Fehler, Hash/Text-Bytes, PublicKeyToken-Identität, aktive Owner-Leases unter 32-Session-Druck, Closure-/transitive-Referenzgrenzen und Cache-Schema v5 ab. Die abschließende Integrationsauswahl `FindSymbolPatternBatch_UsesOneSnapshotAcrossPatternParts|AssemblyToolsContractTests` bestand mit 11/11. Die Regression `AssemblyBodyBatch_UsesOneSnapshotAcrossItems` wies im tatsächlich ausgeführten alten Einzelöffnungs-Handler eine vollständige gemischte Antwort nach (`First() => 101`, `Second() => 202`); sie prüft nach dem Fix sowohl rohe IDs als auch Handoffs und besteht. Die Skeleton-Regressionsprüfung wies im tatsächlich ausgeführten alten per-Handoff-Resolver nach DLL-Wechsel vor Item 2 `completeness=truncated` nach; mit Handoff-Auflösung im gepinnten Root-Scope ist die Batchantwort vollständig. Die Workspace-Refresh-/Retry-Integration bestand mit 2/2; die Extended-Auswahl `MSBuildSolutionLoader_CustomTargetsAndScratchCleanupPreserveWorkspaceSnapshot|MSBuildSolutionLoader_ColdSolutionsWithSameNamedProjectsHaveIsolatedSnapshots` bestand mit 2/2. Gesperrte Refresh-Datei und falscher PublicKeyToken wurden jeweils vor der Korrektur mit einer fehlschlagenden Regression nachgewiesen; die Transitivitätsregression wurde zusätzlich mit deaktivierter Subgraph-Prüfung als Negativkontrolle fehlschlagend ausgeführt und danach mit aktiver Prüfung bestanden. Die vollständige Routine-Suite bleibt gemäß Prüfplan bis M3-T1 ausstehend.
-
-### M1-T3 — Statische Beziehungen korrekt belegen
-
-- [x] **M1-T3 abschließen**
-
-**Intention:** Rekursion und unklare Bindungen so ausgeben, dass Agenten daraus keine falschen Abwesenheits- oder Aufrufbeweise ableiten.
-
-**Scope:** Muss 1 in den vorhandenen Relationship-Scannern und betroffenen Projektionen umsetzen. Direkte rekursive Kanten erhalten, Expansion begrenzen, mehrfache Fundstellen mit Zeile/Spalte bewahren und dieselbe rekursive Stelle zwischen Referenzen, Call-Tree und Impact konsistent behandeln. Erste Kandidaten bei mehrdeutiger Symbolbindung nicht als exakte Ziele übernehmen. Aufruf, Memberzugriff sowie statisch gebundene virtuelle/interfacebasierte Ziele unterscheiden; mögliche Ziele und unaufgelöste Stellen kennzeichnen. Gemeinsame direkte Referenzsemantik wiederverwenden.
-
-**Nicht:** Keine Zusammenführung der öffentlichen Impact-/Call-Tree-Workflows und keine Laufzeitbehauptungen über DI, Reflection oder dynamischen Dispatch. Kein zusätzliches Redesign von Graphformaten oder Traversierungsargumenten.
-
-**Abnahme:** Source- und Assembly-Fixtures für direkte/gegenseitige Rekursion und mehrere Callsites liefern übereinstimmende Fundstellen und terminierende Traversierung. Zwei Aufrufe auf derselben Zeile bleiben unterscheidbar. Eine mehrdeutige Überladung erscheint nicht als geratener exakter Call. Grenzen und Belegarten sind im öffentlichen Ergebnis sichtbar.
-
-**Umsetzung und Nachweis (2026-10-02):** Die Source- und emittierte Assembly-Fixture erhalten direkte und gegenseitige Rekursionskanten sowie getrennte Spalten für Aufrufe auf derselben Zeile. Referenzen und Impact projizieren dieselbe begrenzte Caller-Traversierung; Call-Tree-Ausgaben behalten Fundstelle und Belegart. Mehrdeutige Ziele erscheinen als `possibleTarget` mit Kandidaten, ungebundene Stellen als `unresolved`; Memberzugriffe in Aufrufreceivern und Argumenten werden nicht als Aufruf des äußeren Members ausgegeben. Die öffentliche Assembly-Fixture folgt Owner-Handoffs und prüft Call-Tree, Referenzen und Impact. Die anfänglichen Regressionen für fehlende Self-Edges, verschmolzene gleiche-Zeilen-Calls, geratene Überladungen und später den Receiver `holder.Value.Execute()` scheiterten vor der jeweiligen Korrektur und bestanden danach.
-
-Verifiziert mit `pwsh -File ./scripts/build.ps1` (0 Warnungen, 0 Fehler); `pwsh -File ./scripts/test-fast.ps1 -Filter "FullyQualifiedName~CallTreeTests|FullyQualifiedName~CrossFeatureRelationshipContractTests|FullyQualifiedName~FindReferencesResolverTests|FullyQualifiedName~ImpactAnalyzerTests"` (52/52); und `pwsh -File ./scripts/test-integration.ps1 -IncludeExtended -Filter "FullyQualifiedName~AssemblyCallTree_PreservesRecursiveAndSameLineCallSitesWithEvidence|FullyQualifiedName~AssemblyNavigationHandlersReturnOwnerResultsAcrossAllSixteenRoutes|FullyQualifiedName~AssemblyReferenceClosureHandsOffAcrossRootBridgeAndLeafOwners|FullyQualifiedName~SourceRelationshipHandlersReturnNavigableResultsErrorsAndBoundedProjections"` (4/4). Die Suite enthält keine als `ExtendedIntegration` kategorisierten Beziehungstests; die gefilterte Assembly-Closure-Prüfung lief im angegebenen `-IncludeExtended`-Aufruf mit. Die analysierten Quellen bleiben unverändert; Belegarten beschreiben statische Quellbindung und machen keine Laufzeitbehauptungen zu DI, Reflection oder dynamischem Dispatch.
-
-### M1-T4 — Ergebnisstatus und Fortsetzungsgrundlage vereinheitlichen
-
-- [x] **M1-T4 abschließen**
-
-**Intention:** Analysestand, Analysegrenzen und Antwort-/Ergebnisfortsetzung unabhängig voneinander verständlich machen.
-
-**Scope:** Die gemeinsame Grundlage aus Muss 3 und 5 in den vorhandenen Ergebnis-, Operations- und Antwortmechanismen schaffen. `snapshotId`, tatsächlich analysierten Scope und konkrete Auslassungsgründe knapp ausweisen. `operationToken` für Polling, `continuationToken` ausschließlich für unveränderliche äußere Seiten und `resultCursor` für Domänenseiten unterscheiden. Query-/Target-/Snapshot-/Abschnittsbindung, Replay, TTL, Cancellation, begrenzte Retention und Budget-Recovery bewahren. Die nachfolgenden Scanner-/Toolpunkte verwenden diese Grundlage; keine zweite parallele Cursorengine. Gemeinsame Verträge und Verbraucher in diesem Slice konsistent halten.
-
-**Nicht:** Keine unbegrenzte Trefferhaltung, keine Erweiterung einer Analyse durch einen Cursor, keine globale Vollständigkeitszusage und kein Rückfall in die Stringformat-Erkennung verschiedener Tokenarten. Keine neue Refresh- oder Messroute.
-
-**Abnahme:** Transportfreie Handler-/Store-Prüfungen zeigen verschachtelte äußere/Domänenseiten, Bindung und Replay, Ablauf und Kapazitätsgrenzen, Cancellation sowie exakte Retry-Minima. Budgetwechsel ändern nicht die Query. Äußere Seiten dürfen ihren sichtbaren alten Stand fertig ausliefern; neue Domänen-/Handoff-Verwendung gegen veränderte Targets wird strukturiert abgewiesen. Leere, begrenzte und fehlgeschlagene Ergebnisse sind unterscheidbar; keine Teiltextseite steht neben scheinbar vollständigem StructuredContent.
-
-**Abschlussnachweis (2026-10-02):** Die Umsetzung ist im Commit dieses Abschlussnachweises enthalten. `pwsh -File ./scripts/build.ps1` bestand mit 0 Warnungen/Fehlern. `pwsh -File ./scripts/test-fast.ps1 -Filter "FullyQualifiedName~LongRunningToolCallStoreTests|FullyQualifiedName~McpFormattingTests|FullyQualifiedName~AssemblyNavigationScannerTests|FullyQualifiedName~InspectAssemblyScannerTests"` bestand mit 87/87. `pwsh -File ./scripts/test-integration.ps1 -Filter "FullyQualifiedName~AssemblyNavigationHandlersReturnOwnerResultsAcrossAllSixteenRoutes|FullyQualifiedName~GetImpact_OriginalSdkContractRequiresSymbolAndRoutesSourceAndAssemblySymbols|FullyQualifiedName~SourceRelationshipHandlersReturnNavigableResultsErrorsAndBoundedProjections|FullyQualifiedName~SourceChangeGetsANewSnapshotWhileStoredOuterPagesKeepTheOldSnapshot"` bestand mit 4/4. `pwsh -File ./scripts/test-integration.ps1 -IncludeExtended -Filter "FullyQualifiedName~MSBuildSolutionLoader_CustomTargetsAndScratchCleanupPreserveWorkspaceSnapshot|FullyQualifiedName~MSBuildSolutionLoader_ColdSolutionsWithSameNamedProjectsHaveIsolatedSnapshots"` bestand mit 2/2. Die neu hinzugefügte 80-/120-Token-Formatterprüfung belegt kompakte TooSmall-Fehler samt beiden exakten Minima; erfolgreiche Antwortseiten enthalten weiterhin vollständige Metadaten. Für die vollständige Impact-Rekonstruktion bei kombiniertem 512-Byte-/120-Token-Budget erreichte die 30-Caller-Fixture die begrenzte Retention von 512 äußeren Seiten nach 1.898 rekonstruierten Body-Bytes; es wurden weder Store-Caps erhöht noch vollständige Rekonstruktion behauptet. Die vollständige Rekonstruktionsprüfung besteht mit 512 Tokens; der 80-Token-Recoveryfall wird getrennt geprüft.
-
-Das vollständige `pwsh -File ./scripts/test-fast.ps1` hatte bei 572/573 Tests eine bestehende Abweichung in `tests/AiNetCodeNavigator.FastTests/Assemblies/AssemblyDecompilationBoundaryTests.cs:359`. Die T2-ergänzten Referenz-DTOs behalten gleiche Graphfelder, zeigen beim ersetzten Dependency-PE aber zu Recht einen anderen `ContentHash` und Snapshot-Hash; diese Identitätskorrektur wurde im Vergleich berücksichtigt. Die unveränderte Stale-Publish-Assertion scheitert weiterhin: der gleichzeitige Publish des alten Reference-Snapshots liefert `Succeeded=true`. Der Test wurde nicht abgeschwächt und die T2-Cache-Implementierung in T4 nicht geändert. Das bleibt ein konkreter M1-Audit-/Korrekturpunkt; der volle Routine-Gate-Scope bleibt M3-T1.
-
-### M1-A — Audit der Analysegrundlage
-
-- [x] **M1-Audit abschließen**
-
-**Intention/Scope:** Baselinezuordnung, Snapshot-/Ownerkonsistenz, korrekte Beziehungen sowie neue gemeinsame Ergebnis-/Fortsetzungsverträge unabhängig lesen und gegen Muss 1, 3, 5, 6, 8 und 12 prüfen. Implementierung, Verbraucher, Tests und aktuelle Dokumentation einbeziehen.
-
-**Nicht:** Keine zusätzliche Messaufnahme, kein Produktionscode durch den Auditor und keine Scope-Erweiterung.
-
-**Abnahme:** Keine offene blockierende Abweichung; Findings und deren belegte Behandlung sind am Punkt dokumentiert. Fehlende externe Baselinewerte werden als fehlend weitergegeben. Alle M1-Aufgaben und ihr Audit sind nachgewiesen, bevor der Aggregate-Haken gesetzt wird.
-
-**Independent audit (2026-10-02):** Reviewed cumulative `ac149ad5812dcd00ff35fa698006159bd9859ef2..c956452081979bb49f196dcb71791edf340c4298`, local implementation, public consumers, tests and affected current-state documentation against M1-T1–T4 and Muss 1/3/5/6/8/12. The working tree was clean at audit entry. M1-A and the M1 aggregate remain open because the following three findings block acceptance:
-
-- **M1-A1 / P1 — Stale reference content can still publish successfully.** `src/AiNetCodeNavigator.Core/Assemblies/AssemblyReferenceSnapshotFingerprint.cs:32` now trusts the captured DTO `ContentHash` and skips reading current reference bytes. Cache compatibility (`Coordinators/AssemblyCacheGenerationStorage.cs:129`) and pointer validation (`AssemblyDecompilationCache.PointerPublishing.cs:24`, `:52`) reuse that captured resolution. After replacing a dependency with the same assembly identity, the old request therefore validates against its own old hash and can report success or compete with the current publish. This breaks the current-reference publish boundary required by M1-T2 / Muss 8/12. Independently reproduced through the official single-test selection: `AssemblyDecompilationBoundaryTests.CacheCompatibility_BindsPublishedSourceToReferenceContentDuringConcurrentPublish` fails at `tests/AiNetCodeNavigator.FastTests/Assemblies/AssemblyDecompilationBoundaryTests.cs:359`, expected `Succeeded=false`, actual `true` (0/1 passed). Captured snapshot identity is correct for immutable results; it must not substitute for validation of current bytes at cache publication.
-- **M1-A2 / P1 — Assembly call-tree metadata can describe a different generation than its graph.** `src/AiNetCodeNavigator/Mcp/Tools/Relationships/RelationshipTools.cs:49` acquires the symbol access; `:52` builds the graph and its handoffs from that leased solution. `:62` subsequently opens the target again, and `:70`/`:77` take diagnostics and the reported snapshot identity from this second scope. A target/reference change during graph analysis can therefore label the old graph with the new generation's `snapshotId` and diagnostics. This violates M1-T4's actual-snapshot contract and Muss 12. This is a confirmed code-path finding; the audit did not add a mutation-hook regression. The correction must first reproduce the change window deterministically, then obtain identity and diagnostics from the same leased generation used for graph construction. The other single-owner relationship and structure routes examined derive their result identity from the analyzed access/scope; their metadata must retain that property.
-- **M1-A3 / P1 — Closure owners are not checked against the pinned root reference snapshot.** `src/AiNetCodeNavigator/Mcp/Tools/Relationships/AssemblyReferenceClosureSession.cs:98` pins the root, while `:153`–`:163` opens referenced owners later and accepts them into `Owners` without comparing their PE content or transitive reference snapshot to the root's captured reference edges. `RootAnalysisIdentity` at `:70` remains the earlier root/reference identity. The raw-owner discovery path at `:230`–`:236` has the same omission. A dependency replacement between those acquisitions can combine the old root reference stand with a new owner and its handoffs; `AssemblyCallTreeClosureBuilder`, `AssemblyReferencesClosureScanner` and `AssemblyImpactClosureScanner` consume those owners for the public `includeReferences=true` routes. An assembly-identity comparison alone cannot reject same-identity/different-byte replacements. This violates M1-T2/T4 / Muss 8/12. Confirmed by reading the complete acquisition/consumer paths; a deterministic changed-owner regression remains required before correction. Reuse the existing owner content/subgraph checks from `AssemblyFindSymbolScanner` rather than adding another navigation engine or enlarging closure/session limits.
-
-**Verified boundaries and evidence:** The ignored baseline notes and both raw JSON files identify baseline HEAD `ac149ad5812dcd00ff35fa698006159bd9859ef2`; M1 and M6 have complete captured query-response evidence. M2 selected the wrong getter; M3/M4 lack discovery costs, M4 lacks independently established recursive equivalence, and M5 lacks its original root plus a completed matching query. Schema/request costs remain unmeasured. No new measurement was taken and no missing baseline was promoted to a successful comparison. The connected MCP deployment was used only for focused symbol discovery; its differing surface is not implementation evidence.
-
-Source refresh derives hash and text from the same read bytes and reports refresh failures; batch consumers pin a common solution/root scope. The inspected recursion/evidence paths preserve repeated call sites, bound expansion and avoid selecting the first ambiguous candidate as an exact call. The shared store separates operation polling, immutable outer pages and domain cursors, retains query/target/section binding, bounds TTL/retention/capacity and preserves cancellation ownership. Outer-page replay keeps an expired embedded domain token unchanged; a cached operation poll can create a fresh projection. Budget recovery measures metadata and offers executable minima; structured content is rejected beside partial text. Those findings do not close the changed-generation acquisition gaps above or pre-approve M2 list/context work. The documented 512-byte/120-token capacity stop is a bounded-retention result, not proof of complete reconstruction; the successful 512-token reconstruction and separate 80/120-token minima checks keep their stated scope.
-
-**Checks executed by this auditor:** `pwsh -File ./scripts/test-fast.ps1 -Filter "FullyQualifiedName~CacheCompatibility_BindsPublishedSourceToReferenceContentDuringConcurrentPublish"` reproduced M1-A1 (0/1). A focused Fast selection of `LongRunningToolCallStoreTests`, `McpFormattingTests`, `AssemblyFingerprintAndReferenceTests`, `AssemblySymbolHandoffResolverTests`, `ResidentSolutionStalenessTests`, `CallTreeTests`, `CrossFeatureRelationshipContractTests`, `FindReferencesResolverTests` and `ImpactAnalyzerTests` passed 135/135. `pwsh -File ./scripts/test-integration.ps1 -Filter "FullyQualifiedName~AssemblyNavigationHandlersReturnOwnerResultsAcrossAllSixteenRoutes|FullyQualifiedName~SourceChangeGetsANewSnapshotWhileStoredOuterPagesKeepTheOldSnapshot|FullyQualifiedName~AssemblyReferenceClosureHandsOffAcrossRootBridgeAndLeafOwners|FullyQualifiedName~AssemblyCallTree_PreservesRecursiveAndSameLineCallSitesWithEvidence|FullyQualifiedName~AssemblyContextReturnsBodyOwnerStaleSnapshotAfterSuccessfulSymbolResolution"` passed 5/5. These existing integrations do not exercise the M1-A2/A3 change windows. Prior T4 build/Fast/Integration/Extended results remain prior slice evidence, not newly executed audit gates. No full routine suite, additional benchmark or production/test edit was performed.
-
-**One correction-leaf instruction:** Address M1-A1–A3 together within M1. Keep the stale-publish rejection assertion, captured snapshot hashes, original limits and immutable outer pages intact. Establish failing deterministic public-handler/closure regressions for a change between graph/scope acquisitions and between root/reference-owner acquisitions, including transitive same-identity/different-content replacement. Fix the owning cache and scope-acquisition boundaries, with structured stale/error recovery or one consistently pinned result; do not silently relabel mixed stands. Verify through the official build and the narrow affected cache/reference/relationship/store Fast and handler Integration selections; use relevant Extended tests only where required by the repository rules. Update affected canonical documentation and record exact outcomes here. No new baseline campaign, M2 feature work or audit/correction loop is authorized by this point. M1-A/M1 may only close after the three findings have evidenced treatment; remaining external comparison gaps stay open for M3-T2.
-
-**Correction treatment (2026-10-02):**
-
-- **M1-A1:** Kept `AssemblyReferenceSnapshotFingerprint.Create` bound to captured reference DTO hashes for immutable analysis identity. Cache manifest compatibility now also compares that captured reference fingerprint with a second fingerprint made from the current bytes at each resolved path, including the pointer revalidation performed during publication. The unchanged stale-publish regression was red before the correction (0/1, `Succeeded=true` at line 359) and green in the affected Fast selection after it.
-- **M1-A2:** Added diagnostics to the leased `AssemblySymbolHandoffAccess` and derive call-tree diagnostics plus `snapshotId` from that access after graph construction; the handler no longer opens another scope. A deterministic handler fixture replaces the DLL after graph construction. Against the old separate-scope path it failed because the metadata `snapshotId` changed from the graph's `assembly:6A53D81039027F1CCAA27242` to `assembly:7EE1EC79245CFC7A53E9ED0C`; with the correction, the result reports the captured graph snapshot.
-- **M1-A3:** Extracted the existing assembly-find-symbol reference-owner validator and reused it in bounded relationship closure acquisition. Owners must match the root-captured PE identity/content; their transitive subgraph is compared with the same source-aware edge matcher. A mismatch is `STALE_SNAPSHOT`; when the root already has a closure boundary, direct-byte-validated owners remain pinned and the closure is marked incomplete. Handoff-owner generation is compared with the owner scope. A public handler fixture replaces a same-identity transitive dependency after root handoff acquisition; the old path returned a complete graph spanning the pinned root and the replacement dependency, while the corrected handler rejects it as stale. Additional handler cases verify one pinned generation when the root changes between acquisitions and stale recovery when raw discovery is followed by a target replacement before handoff reopen.
-
-**Correction gates:** `pwsh -File ./scripts/build.ps1` passed (0 warnings, 0 errors). `pwsh -File ./scripts/test-fast.ps1 -Filter "FullyQualifiedName~AssemblyDecompilationBoundaryTests.CacheCompatibility_BindsPublishedSourceToReferenceContentDuringConcurrentPublish|FullyQualifiedName~AssemblyDecompilationCacheTests|FullyQualifiedName~AssemblyNavigationScannerTests|FullyQualifiedName~AssemblyFingerprintAndReferenceTests|FullyQualifiedName~AssemblySymbolHandoffResolverTests|FullyQualifiedName~ResidentSolutionStalenessTests|FullyQualifiedName~CallTreeTests|FullyQualifiedName~CrossFeatureRelationshipContractTests|FullyQualifiedName~FindReferencesResolverTests|FullyQualifiedName~ImpactAnalyzerTests|FullyQualifiedName~LongRunningToolCallStoreTests|FullyQualifiedName~McpFormattingTests"` passed 158/158. `pwsh -File ./scripts/test-integration.ps1 -Filter "FullyQualifiedName~AssemblyCallTree_MetadataUsesTheGraphGenerationWhenTargetChangesAfterGraphBuild|FullyQualifiedName~AssemblyCallTree_RejectsChangedTransitiveOwnerAfterHandoffAcquisition|FullyQualifiedName~AssemblyCallTree_UsesPinnedRootWhenTargetChangesBetweenRootScopeAndRootHandoffAcquisitions|FullyQualifiedName~AssemblyCallTree_RawClosureResolutionRejectsChangesBeforeHandoffReopen|FullyQualifiedName~AssemblyReferenceClosureHandsOffAcrossRootBridgeAndLeafOwners|FullyQualifiedName~AssemblyCallTree_PreservesRecursiveAndSameLineCallSitesWithEvidence|FullyQualifiedName~AssemblyNavigationHandlersReturnOwnerResultsAcrossAllSixteenRoutes|FullyQualifiedName~SourceChangeGetsANewSnapshotWhileStoredOuterPagesKeepTheOldSnapshot"` passed 8/8. The only `ExtendedIntegration` cases discovered are workspace-loader snapshot tests and do not exercise these relationship/cache changes. No full routine-suite run or new baseline campaign was performed; the M2/M3 external comparison gaps recorded above remain open for M3-T2.
+- [x] **[M1-T1 — Ausgangsmessung festschreiben](roadmap/M1-T1.md)**
+- [x] **[M1-T2 — Snapshot, Referenzidentität und Owner-Leases härten](roadmap/M1-T2.md)**
+- [x] **[M1-T3 — Statische Beziehungen korrekt belegen](roadmap/M1-T3.md)**
+- [x] **[M1-T4 — Ergebnisstatus und Fortsetzungsgrundlage vereinheitlichen](roadmap/M1-T4.md)**
+- [x] **[M1-A — Audit der Analysegrundlage](roadmap/M1-A.md)**
 
 ## M2 — Nachladbare, kompakte Navigation und gemeinsamer Kontext
 
-### M2-T1 — Source- und gemeinsame Trefferlisten vollständig nachladen
-
-- [ ] **M2-T1 abschließen**
-
-**Intention:** Bekannte Treffer nicht durch Anzeigecaps verlieren und den tatsächlichen Source-Scope nachvollziehbar machen.
-
-**Scope:** Muss 3 und 5 für Symbolsuche, direkte Referenzlisten, Implementierungen, Typ-/Dateistruktur, Projekt-/Namespaceinventare, Hierarchielisten und Impact-Fundstellen umsetzen. `get_index_scope` zeigt stabile Projektidentität, geladene Framework-Kontexte und Ausschlüsse. Begrenzte ermittelte Listen deterministisch über `resultCursor` nachladen; positives `maxResults` dort als Seitengröße verwenden und bereits bekannte Einträge bewahren. Vorhandene Scanner-/Traversalgrenzen separat ausweisen. Source- und Assembly-Routen der gemeinsamen Tools abdecken, ohne ihre fachlichen Unterschiede zu beseitigen.
-
-**Nicht:** Keine Erweiterung zur Analyse aller Target Frameworks, kein Entfernen unentschiedener Toolargumente und keine Umdeutung von Call-Tree-/Dependency-Graphgrenzen oder Body-Fenstern in Trefferseiten. Nicht begrenzte Listen erhalten keine künstliche Ergebnisgrenze.
-
-**Abnahme:** Jede betroffene Listenfamilie wird mit mehr ermittelten Treffern als Seitengröße durchlaufen: alle Einträge innerhalb desselben ausgewiesenen Analysescopes sind exakt einmal erreichbar. Scopefilter gelten vor Zählung und Paging; Owner und Handoffs bleiben korrekt. Nicht analysierte Frameworks, ausgeschlossene Dokumente und erreichte Scannergrenzen sind sichtbar. Targetänderungen, ungültige Cursor und äußere Budgetseiten funktionieren gemäß M1-T4.
-
-**Arbeitsstand am 2026-10-03:** Checkbox bleibt offen. Auf ausdrücklichen Nutzerwunsch werden sämtliche offenen Implementierungs-, Test- und Dokumentationsänderungen als WIP-Sicherungscommit festgehalten; dies ist kein geprüfter Slice-Abschluss. Der gemeinsame Integrationsfilter für `SourceToolsContractTests`, `SourceRelationshipToolsContractTests`, `RelationshipToolsContractTests`, `AssemblyToolsContractTests` und `IndexScopeContractTests` lief rund sieben Minuten ohne Testausgabe und wurde als eigener Lauf abgebrochen. Die Ursache des kombinierten Stillstands ist nicht belegt. Einzelne aktuelle Läufe: `SourceToolsContractTests` bestanden 6/6; `SourceRelationshipToolsContractTests` bestanden 7/7; `RelationshipToolsContractTests` bestanden 7/8. Der fehlgeschlagene Fall `GetImpact_OriginalSdkContractRequiresSymbolAndRoutesSourceAndAssemblySymbols` erreicht beim äußeren Impact-Paging mit 512 Antwortbytes und 512 Tokens `CONTINUATION_CAPACITY` in `AssertImpactPagesReconstructAsync`; die Testkonfiguration muss innerhalb der vorhandenen Store-Grenzen angepasst und erneut geprüft werden. Aus dem jüngsten Abschlusslauf fehlen `AssemblyToolsContractTests` und `IndexScopeContractTests`; ein früherer fokussierter Indexscope-Lauf war grün, ist aber kein Ersatz für die noch ausstehende aktuelle Klassenprüfung. Vor dem Abhaken bleiben außerdem der grüne gemeinsame Abschlussfilter oder eine nachvollziehbar gelöste Klassenisolation, passende Source-/Assembly-Folgepage-/Exact-once-/Handoff-/Scope-/Stale-/Invalid-Cursor-Belege für alle Listenfamilien, die getrennten Indexscope-Identitäts-/Framework-/Ausschlussbelege sowie vollständige Diff-, Konzept-Nichtziel-, Verbraucher- und Dokumentationsprüfung offen. Frühere offizielle Build- und Fast-Gates waren grün (Fast: 101/101), jedoch vor der letzten testseitigen Anpassung; der Integrationslauf kompilierte deren aktuelle Testquellen. Diese Momentaufnahme wird durch tatsächlichen Git- und Roadmap-Stand überholt.
-
-### M2-T2 — Assembly-Ausgaben und Suchvertrag vereinfachen
-
-- [ ] **M2-T2 abschließen**
-
-**Intention:** API-/Suchnavigation ohne doppelte Volltextausgabe und implizite Inventare liefern.
-
-**Scope:** Muss 2 und 4 sowie den Assembly-Anteil von Muss 5 umsetzen. `inspect_assembly`, `search_assembly` und `find_assembly_extensions` erhalten eine kompakte Projektion mit öffentlichen Owner-Handoffs direkt am Eintrag und ehrlichen Closure-/Semantikgrenzen. `formattedText`-Doppelungen und `detailLevel` entfernen; kurze Diagnosekategorien/Zählwerte standardmäßig und vorhandene ausführliche Hinweise über `includeDiagnostics=true` liefern. Das vorhandene gleichnamige Call-Tree-Argument verwendet dieselbe Bedeutung. `inspect_assembly.includeReferences=false` unabhängig von Filtern. `searchKind` entfernen; explizite Literal-/Regex-Auswahl mit `isRegex=false` als Default verwenden, Deklarations-/Dateifilter bewahren. Assembly-Inventar-/Suchseiten und begrenzte Extension-Treffer verwenden `resultCursor`.
-
-**Nicht:** Keine semantische Netzwerk-/SQL-Analyse, keine Extension-Umbenennung oder Erweiterung, keine internen `i:`-Identitäten als zweiter öffentlicher Handle-Vertrag. Keine automatische Closure-Ausweitung aufgrund ausgeschalteter Diagnoseausgabe.
-
-**Abnahme:** API-/Such-/Extension-Ergebnisse erlauben den Owner-Handoff zu Body/Struktur; alle ermittelten Einträge bleiben nachladbar. Leere, diagnostisch begrenzte Such-/Extension-Fixtures mit kurzem Targetpfad brauchen standardmäßig höchstens 256 Antworttokens und nennen dennoch Scope/Grenzen. Missing-/Wrong-Version-/Closurelimit-Fixtures lassen eigene Deklarationen nutzbar und versprechen keine vollständigen Beziehungen. Literal/Regex und Deklarationsfilter werden getrennt geprüft; Kommentar-/Texttreffer sind keine semantischen Calls. Der volle Tokenvergleich für Messszenario M1 erfolgt erst in M3-T2, nicht in zusätzlichen Zwischenkampagnen.
-
-### M2-T3 — Body- und Namespace-Recovery präzisieren
-
-- [ ] **M2-T3 abschließen**
-
-**Intention:** Folgeaktionen an den tatsächlichen Fehler oder das nächste Fenster binden.
-
-**Scope:** Den verbleibenden Recovery-Anteil von Muss 6 implementieren. Body-Batches geben pro Item Auflösungsstatus und nächste Deklarationsfensterposition aus. Erfolgreiche Fenster verlangen keine Fehlerbehebung; mixed Batches erhalten erfolgreiche Items. Namespace-Recovery berücksichtigt Targetart, Projektselektion, Präfix und erlaubte Tiefe. Owner-Mismatch, unbekanntes Handle, Generationwechsel und unresidenter Owner bleiben unterscheidbar und führen zu ausführbaren Folgeaktionen. Äußere Seiten sind vor dem nächsten Body-/Domänenschritt zu lesen.
-
-**Nicht:** Kein Fallback auf erratene Namen/alte Bodies, keine neue Residency-/Refreshroute und kein unabhängiges Redesign der Body-Argumente.
-
-**Abnahme:** Erfolgreiches Body-Fenster, mixed Batch und tatsächlicher Itemfehler liefern jeweils passende Recovery. Ausgewählte Source-Projekte werden nicht erneut unnötig verlangt; Assemblies erhalten keine Source-Projektanweisung. Wrong-Owner-/Unknown-/Stale-/Unresident-Fälle liefern unterscheidbare Gründe und ausführbare Neuentdeckung. Budget-Recovery und neue Cursorbegriffe bleiben konsistent.
-
-### M2-T4 — Testkandidaten semantisch ergänzen
-
-- [ ] **M2-T4 abschließen**
-
-**Intention:** Vom Vertrag aus statisch belegte Testkandidaten finden und Heuristik von Beleg unterscheiden.
-
-**Scope:** Muss 7 im vorhandenen Testkandidaten-Owner implementieren und für die spätere Kontextabfrage wiederverwenden. Neben der gekennzeichneten Namensheuristik direkte Verwendungen in erkannten Testmethoden und passende Implementierungen von Interface-/abstrakten Typ-/Memberzielen berücksichtigen. Expansion begrenzen, an Projekt/Snapshot binden und deduplizieren. Herkunft mit Fundstelle/Belegart für direkte Verwendung, Implementierungsbezug und Namensheuristik ausgeben. Die Zieldeklaration darf Production-Code sein; Testkandidaten werden unabhängig vom späteren Caller-Scope gesammelt.
-
-**Nicht:** Keine transitive Traversierung beliebiger Testhelfer, keine Coverage-/Testpass-Zusage und keine Umdeutung einer ähnlich benannten Implementierungsfixture zum bewiesenen Membertest.
-
-**Abnahme:** Fixtures decken Interface/Implementierung, anders benannte direkte Tests, reine Namensähnlichkeit, doppelte Typnamen in verschiedenen Projekten sowie erreichte Expansion-/Seitenlimits ab. Kandidaten und Belege sind dedupliziert und statisch gekennzeichnet; außerhalb des analysierten Scopes wird nichts behauptet. Listen nutzen die gemeinsame Cursor-/Statusgrundlage und verlieren ermittelte Kandidaten nicht.
-
-### M2-T5 — Gemeinsamen Kontext einführen und drei Routen entfernen
-
-- [ ] **M2-T5 abschließen**
-
-**Intention:** Eine begrenzte Kontextfrage mit gemeinsamem Analysestand und ausschließlich angeforderten Abschnitten beantworten.
-
-**Scope:** Muss 11 und den [gemeinsamen Kontextvertrag](Konzept.md#gemeinsamer-kontextvertrag) vollständig über Scanner, Host, Schema, Registrierung und Verbraucher umsetzen. `get_context` unterstützt Source und Assembly mit den ausdrücklich gewählten Abschnitten `body`, `members`, `callers`, `tests`; die kompakte Zieldeklaration steht einmal im Kopf. Abschnittsstatus und -cursor, Scope-Vorprüfung, gemeinsame Symbolauflösung/Identität/Lease, unabhängiger Test-Scope sowie Fehler-/Teilergebnisverhalten gemäß Konzept implementieren. Die drei bisherigen Kontexttools im selben vollständigen Slice aus dem öffentlichen Katalog entfernen und exklusive ungenutzte Pfade bereinigen. Bibliotheksüberblick über `inspect_assembly`, gezielte Einzeltools und unterschiedliche Relationship-Aufgaben erhalten.
-
-**Nicht:** Keine öffentlichen Aliase, Presets als zweite Abschnittsauswahl, automatischen Inventare, beliebigen Toolketten oder zusätzlichen Abschnitte für transitive Impactanalyse. Nicht gewählte Abschnitte führen weder Scannerarbeit noch Ausgabe aus.
-
-**Abnahme:** Source-/Assembly-Fälle mit einzelnen und kombinierten Abschnitten belegen einen gemeinsamen Analysestand ohne doppelte Targetöffnung. Assembly plus `tests`, Nicht-Typ plus `members` und ausdrücklich wirkungslose Argumente ergeben klare Eingabefehler; weggelassene Defaults tun dies nicht. Caller-Scope `production` unterdrückt keine Tests. Abschnittsfehler liefern keine vollständige Gesamterfolgsmeldung. Ein Abschnittscursor setzt nur diesen Abschnitt fort und wiederholt keine andere Analyse/Ausgabe. Registrierter Katalog enthält exakt 17 Navigationstools; alte Kontextrouten sind nicht als Alias verfügbar.
-
-### M2-T6 — Releasezuordnung, Katalog und Agentenanleitung abschließen
-
-- [ ] **M2-T6 abschließen**
-
-**Intention:** Gemessenen Serverstand identifizierbar machen und einen durchgängig passenden Agentenworkflow anbieten.
-
-**Scope:** Muss 9 und den Anleitungsanteil von Muss 10 umsetzen. Buildabgeleitete Release-/Commitkennung in Standardinitialisierung und vorhandener Startup-Protokollierung ausgeben. Katalog, Schemas, aktuelle Dokumentation und lokale Navigationsregel auf dieselben 17 Tools ausrichten. Kurze Toolbeschreibungen und konkrete Folgeoperationen beschreiben Source-/Assembly-Einstieg, Owner-Handoff, explizite Kontextabschnitte, gezielte Einzeltools, direktes Lesen bekannter Source-Fenster sowie Testsuche und Recovery. Verbleibende aktive Verweise auf entfernte Argumente/Routen bereinigen; historische Belege und negative Assertions als solche erhalten.
-
-**Nicht:** Kein Health-/Reload-Ersatz, keine Kennung pro Symboleintrag, keine Loggingänderung über Laufzeittools und keine Aktualisierung aktueller Dokumentation auf einen noch nicht implementierten Stand. Keine Produktnamen in neu abgeleiteten Beispielen oder Commits.
-
-**Abnahme:** Standard-MCP-Initialisierung/Startup ordnen den Prozess nachvollziehbar dem Build zu; stdout enthält nur MCP. Exakter Katalog-/Schematest, Dokumentations-/Regelabgleich und navigierbare Beispiele stimmen überein. Neue Namen/Argumente sind erklärt, entfernte Verträge tauchen in aktiven Anleitungen nicht auf. Startup-Konfiguration mit Prozessneustart bleibt der dokumentierte Mechanismus.
-
-### M2-A — Audit der Agentenoberfläche
-
-- [ ] **M2-Audit abschließen**
-
-**Intention/Scope:** Alle betroffenen Source-/Assembly-Routen, Projektionen, Cursor-/Budgetverträge, Testkandidaten, Kontextabschnitte, Ersatzwege, den exakten 17-Tool-Katalog und aktuelle Agentenanleitung unabhängig gegen Muss 2–7 und 9–11 prüfen. Nicht gewählte Kontextarbeit und entfernte exklusive Pfade besonders beachten.
-
-**Nicht:** Kein Benchmark der Zwischenstände, keine Scope-Erweiterung und keine Implementierung durch den Auditor.
-
-**Abnahme:** Keine offene blockierende Abweichung. Findings und belegte Behandlung stehen direkt am Punkt. Die fachlichen Voraussetzungen für den finalen Vorher-/Nachher-Abgleich sind hergestellt; erst dann wird der M2-Aggregate-Haken gesetzt.
+- [ ] **[M2-T1 — Source- und gemeinsame Trefferlisten vollständig nachladen](roadmap/M2-T1.md)**
+- [ ] **[M2-T2 — Assembly-Ausgaben und Suchvertrag vereinfachen](roadmap/M2-T2.md)**
+- [ ] **[M2-T3 — Body- und Namespace-Recovery präzisieren](roadmap/M2-T3.md)**
+- [ ] **[M2-T4 — Testkandidaten semantisch ergänzen](roadmap/M2-T4.md)**
+- [ ] **[M2-T5 — Gemeinsamen Kontext einführen und drei Routen entfernen](roadmap/M2-T5.md)**
+- [ ] **[M2-T6 — Releasezuordnung, Katalog und Agentenanleitung abschließen](roadmap/M2-T6.md)**
+- [ ] **[M2-A — Audit der Agentenoberfläche](roadmap/M2-A.md)**
 
 ## M3 — Gesamtabnahme und begrenzter Praxisvergleich
 
-### M3-T1 — Konsolidierte technische Abnahme
-
-- [ ] **M3-T1 abschließen**
-
-**Intention:** Das Zusammenspiel der geänderten Analyse-/Host-/Toolverträge mit eigenständigen, reproduzierbaren Nachweisen abnehmen.
-
-**Scope:** Die [Abnahmematrix des Konzepts](Konzept.md#verifikation-und-abnahme) vollständig gegen die bereits implementierten Slices prüfen. Verbleibende Integrationslücken in deren Scope schließen. Das vollständige eligible Routine-Solution-Gate einmal ausführen; relevante Extended-Beziehungs-/Host-/Workspace-/Response-Fälle gezielt auswählen. Stdio-/Katalog- und transportfreie Handlerbelege sauber trennen. Projekt-/Frameworkidentität, Referenz-Closure, Fehler, Cancellation, Residency, nested Paging, Read-only und Protokollausgabe zusammen betrachten. Nach späteren Änderungen die betroffenen Checks erneut ausführen, ohne unveränderte Gates routinemäßig zu wiederholen.
-
-**Nicht:** Keine proprietären CI-Abhängigkeiten, keine Umgehung vorhandener E2E-Ausschlüsse und keine Gleichsetzung eines kompilierten oder ausgeschlossenen Checks mit einem ausgeführten Nachweis.
-
-**Abnahme:** Die technischen Kriterien einschließlich Rekursion, unsicherer Bindung, vollständiger Listenfortsetzung, Snapshot, Kontextvorprüfung, Testprovenienz, Recovery, Diagnosegrenzen und kurzem leeren Ergebnis sind durch tatsächlich ausgeführte passende Nachweise erfüllt. Offizielle Gates bestehen; nicht ausgeführte Checks und ihre praktische Grenze sind ausdrücklich benannt. Katalog/Schema/Dokumentation passen zum implementierten Ergebnis. Kein Praxisvergleich wird dadurch vorweg als bestanden behauptet.
-
-### M3-T2 — Abschlussmessung und Effizienzbefund
-
-- [ ] **M3-T2 abschließen**
-
-**Intention:** Das konkrete Ergebnis anhand der festgeschriebenen Workflows bewerten und die Messarbeit abschließen.
-
-**Scope:** Die in M1-T1 festgeschriebenen sechs Szenarien M1–M6 gegen den endgültigen, eindeutig zugeordneten Stand aufnehmen. Der [begrenzte Messumfang](Konzept.md#begrenzter-messumfang) gilt unverändert: ein kalter und zwei warme Durchläufe je Variante, höchstens zwei Varianten je Szenario/36 vollständige Workflows, maximal 60 Minuten. Vorher/Nachher nach deklarativer Information, Scope und Vollständigkeit vergleichen; sämtliche benötigten Antwort- und Domänenseiten mitzählen. Den breiten Dependency-Fall einmal innerhalb dieses Umfangs einordnen. Neue Belege/Testkandidaten und korrigierte Rekursion als Korrektheitsänderungen ausweisen; nicht gegen unvollständige Altdaten als reine Tokensteigerung werten. Ergebnisse und verbleibenden Mehraufwand anonym zusammenfassen. Bei verfehltem Tokenkriterium oder konkretem Messfehler ausschließlich die betroffenen Szenarien einmal gezielt nachmessen, maximal weitere 30 Minuten.
-
-**Nicht:** Keine weiteren Targets, Statistik-, Last- oder Monitoringkampagnen, Modellkosten aus Tokenisierung, positiven Latenzversprechen ohne kontrollierten Beleg oder Messschleifen nach Ablauf der festgelegten Runde.
-
-**Abnahme:** Der Bericht nennt Build/Prozess, Target-/Referenzzuordnung, Semantik/Grenzen, vollständige Antworttokens/Bytes, Requests/Polls/Seiten und Kalt-/Warmlaufzeiten. Verfügbare Schema-/Requestkosten sind getrennt von Antworttokens; fehlende Clientdaten bleiben als nicht gemessen sichtbar. Der schmale Assembly-A-Fall erfüllt das 1.600-Token-Kriterium bzw. das im Konzept definierte 50-Prozent-Kriterium bei veränderten Targetbytes/Referenzumgebungen. Eine kürzere erste Seite zählt nicht. Unverfügbare Targets, Timeouts, unvollständige Seiten oder verletzte Kriterien bleiben ausdrücklich fehlende/verfehlte Nachweise; damit wird kein entsprechender Erfolgshaken gesetzt. Messarbeit endet nach der begrenzten Runde mit konkreten Befunden. Technische Fixture-Abnahme und tatsächlich erreichter externer Praxisnachweis bleiben getrennt.
-
-### M3-A — Finale Abnahmeprüfung
-
-- [ ] **M3-Audit abschließen**
-
-**Intention/Scope:** Den vollständigen Task-Diff, Scopeabdeckung, technischen Abschluss, unveränderte Targets und begrenzten Vorher-/Nachher-Bericht unabhängig gegen das freigegebene Konzept prüfen. Alle zwölf Muss-Anforderungen und ihre Ergebnisse, entfernte Routen/Argumente, positive/negative Schemafälle und verbleibende Nachweisgrenzen berücksichtigen.
-
-**Nicht:** Keine erneute vollständige Messkampagne und keine automatische Freigabe unerfüllter Kriterien wegen abgelaufener Messzeit.
-
-**Abnahme:** Keine offene blockierende Abweichung; keine offenen Nutzerentscheidungen; Ergebnisse werden nur entsprechend ihren tatsächlich erbrachten Belegen abgeschlossen. Nach einer erforderlichen gezielten Korrektur werden ausschließlich die betroffenen technischen Nachweise wiederholt, mit erneuter Messung nur innerhalb der in M3-T2 festgelegten Runde. Ein offener externer Praxisnachweis bleibt ausdrücklich offen und wird nicht durch technische Fixture-Ergebnisse ersetzt. Der Gesamtabschluss enthält überprüfbare Commits/Checks und den konkreten Effizienzbefund.
+- [ ] **[M3-T1 — Konsolidierte technische Abnahme](roadmap/M3-T1.md)**
+- [ ] **[M3-T2 — Abschlussmessung und Effizienzbefund](roadmap/M3-T2.md)**
+- [ ] **[M3-A — Finale Abnahmeprüfung](roadmap/M3-A.md)**
 
 ## Abdeckung des freigegebenen Scopes
 
 | Muss im Konzept | Verantwortliche Aufgaben |
 |---|---|
-| 1 — Beziehungen | M1-T3; Gesamtabnahme M3-T1 |
-| 2 — Kompakte Darstellung | M2-T2, M2-T5 |
-| 3 — Unvollständigkeit/Scope | M1-T4, M2-T1, M2-T2, M2-T5 |
-| 4 — Diagnosen | M2-T2; Kontextverbrauch M2-T5 |
-| 5 — Fortsetzungen | M1-T4, M2-T1, M2-T2, M2-T5 |
-| 6 — Recovery/Leases | M1-T2, M2-T3, M2-T5 |
-| 7 — Testkandidaten | M2-T4; Kontextverbrauch M2-T5 |
-| 8 — Resolver/Residency | M1-T2 |
-| 9 — Release/Katalog | M2-T5, M2-T6 |
-| 10 — Effizienz/Anleitung | M1-T1, M2-T6, M3-T2 |
-| 11 — Gemeinsamer Kontext | M2-T5 |
-| 12 — Snapshot/Batch | M1-T2; Verbraucher M1-T3, M2-T1, M2-T5 |
+| 1 — Beziehungen | [M1-T3](roadmap/M1-T3.md); Gesamtabnahme [M3-T1](roadmap/M3-T1.md) |
+| 2 — Kompakte Darstellung | [M2-T2](roadmap/M2-T2.md), [M2-T5](roadmap/M2-T5.md) |
+| 3 — Unvollständigkeit/Scope | [M1-T4](roadmap/M1-T4.md), [M2-T1](roadmap/M2-T1.md), [M2-T2](roadmap/M2-T2.md), [M2-T5](roadmap/M2-T5.md) |
+| 4 — Diagnosen | [M2-T2](roadmap/M2-T2.md); Kontextverbrauch [M2-T5](roadmap/M2-T5.md) |
+| 5 — Fortsetzungen | [M1-T4](roadmap/M1-T4.md), [M2-T1](roadmap/M2-T1.md), [M2-T2](roadmap/M2-T2.md), [M2-T5](roadmap/M2-T5.md) |
+| 6 — Recovery/Leases | [M1-T2](roadmap/M1-T2.md), [M2-T3](roadmap/M2-T3.md), [M2-T5](roadmap/M2-T5.md) |
+| 7 — Testkandidaten | [M2-T4](roadmap/M2-T4.md); Kontextverbrauch [M2-T5](roadmap/M2-T5.md) |
+| 8 — Resolver/Residency | [M1-T2](roadmap/M1-T2.md) |
+| 9 — Release/Katalog | [M2-T5](roadmap/M2-T5.md), [M2-T6](roadmap/M2-T6.md) |
+| 10 — Effizienz/Anleitung | [M1-T1](roadmap/M1-T1.md), [M2-T6](roadmap/M2-T6.md), [M3-T2](roadmap/M3-T2.md) |
+| 11 — Gemeinsamer Kontext | [M2-T5](roadmap/M2-T5.md) |
+| 12 — Snapshot/Batch | [M1-T2](roadmap/M1-T2.md); Verbraucher [M1-T3](roadmap/M1-T3.md), [M2-T1](roadmap/M2-T1.md), [M2-T5](roadmap/M2-T5.md) |
 
 Alle Aufgaben bleiben bis zur tatsächlich ausgeführten Umsetzung und Verifikation offen. Konzept und Messgrenzen werden durch diese Roadmap nicht geändert.
