@@ -20,7 +20,7 @@ The optional server argument `--config <absolute-path>` selects a host-settings 
 }
 ```
 
-Valid values are `Verbose`, `Debug`, `Information`, `Warning`, `Error`, and `Fatal`. The server does not create or watch the file. `reload_config` reloads the same active file.
+Valid values are `Verbose`, `Debug`, `Information`, `Warning`, `Error`, and `Fatal`. The server reads the file at startup, does not create or watch it, and requires a process restart to apply changes.
 
 Use this process entry for a client that accepts an MCP `mcpServers` JSON configuration:
 

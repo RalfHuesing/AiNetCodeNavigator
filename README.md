@@ -16,7 +16,7 @@ The server runs locally over stdio. Source navigation uses Roslyn; assembly navi
 | Resolve a type to its source project or framework/NuGet assembly | `resolve_type_origin` |
 | Gather a declaration, callers, and related test candidates | `get_feature_context`, `get_test_context` |
 
-The server exposes **19 navigation tools and two runtime tools**. The [tool reference](docs/tools/README.md) lists all 21, including supported targets, parameters, result limits, and examples.
+The server exposes **19 read-only navigation tools**. The [tool reference](docs/tools/README.md) lists their supported targets, parameters, result limits, and examples.
 
 Navigation results provide opaque symbol handles (`h:...`) for follow-up calls. Byte and optional token budgets bound responses; polling and continuation tokens let clients retrieve long-running or paged results. See the [tool reference's shared response rules](docs/tools/README.md#shared-request-and-response-behavior).
 

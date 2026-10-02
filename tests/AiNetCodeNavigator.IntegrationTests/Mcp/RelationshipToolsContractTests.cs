@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
-using AiNetCodeNavigator.Configuration;
 using AiNetCodeNavigator.Mcp;
 using AiNetCodeNavigator.Mcp.Tools.Relationships;
 using AiNetCodeNavigator.Mcp.Tools.Symbols;
@@ -10,8 +9,6 @@ using AiNetCodeNavigator.TestKit;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Server;
-using Serilog.Core;
-using Serilog.Events;
 using static AiNetCodeNavigator.IntegrationTests.Mcp.IntegrationMcpAssertions;
 
 namespace AiNetCodeNavigator.IntegrationTests.Mcp;
@@ -23,12 +20,7 @@ public sealed class RelationshipToolsContractTests
     public async Task GetImpact_OriginalSdkContractRequiresSymbolAndRoutesSourceAndAssemblySymbols()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var configuration = new NavigatorHostConfiguration(
-            Path.Combine(Path.GetTempPath(), "ainet-impact-contract-" + Guid.NewGuid().ToString("N") + ".json"),
-            isDefaultPath: true,
-            new LoggingLevelSwitch(LogEventLevel.Warning));
-        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
-        await using var runtime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var tools = new RelationshipTools(runtime);
         Func<string, string, int, int, bool, int, int?, string?, string?, CancellationToken, Task<ModelContextProtocol.Protocol.CallToolResult>> handler = tools.GetImpact;
         var sdkTool = McpServerTool.Create(handler, new McpServerToolCreateOptions { Name = "get_impact" });

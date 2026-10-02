@@ -3,11 +3,9 @@ using System.Text;
 using System.Diagnostics;
 using System.Linq.Expressions;
 using System.Reflection;
-using AiNetCodeNavigator.Configuration;
 using AiNetCodeNavigator.Mcp;
 using AiNetCodeNavigator.Mcp.Formatting;
 using AiNetCodeNavigator.Mcp.Tools.Assemblies;
-using AiNetCodeNavigator.Mcp.Tools.Maintenance;
 using AiNetCodeNavigator.Mcp.Tools.Relationships;
 using AiNetCodeNavigator.Mcp.Tools.Symbols;
 using AiNetCodeNavigator.Mcp.Tools;
@@ -17,8 +15,6 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Server;
-using Serilog.Core;
-using Serilog.Events;
 using static AiNetCodeNavigator.IntegrationTests.Mcp.IntegrationMcpAssertions;
 
 namespace AiNetCodeNavigator.IntegrationTests.Mcp;
@@ -27,18 +23,13 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class IndexScopeContractTests
 {
     [Fact]
-    public async Task GetIndexScope_OriginalSdkDefinitionPublishesSharedRoutingParameters()
+    public async Task GetIndexScope_SdkDefinitionPublishesSharedRoutingParameters()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var configuration = new NavigatorHostConfiguration(
-            Path.Combine(Path.GetTempPath(), "ainet-index-scope-contract-" + Guid.NewGuid().ToString("N") + ".json"),
-            isDefaultPath: true,
-            new LoggingLevelSwitch(LogEventLevel.Warning));
-        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
-        await using var runtime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>(),
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>(),
             operationResponseWindow: TimeSpan.FromMilliseconds(1));
         var tools = new StructureTools(runtime);
-        AssertOriginalSdkToolCatalog(runtime);
+        AssertNavigationSdkToolCatalog(runtime);
         Func<string, int, int?, string?, string?, CancellationToken, Task<ModelContextProtocol.Protocol.CallToolResult>> handler = tools.GetIndexScope;
         var sdkTool = McpServerTool.Create(handler, new McpServerToolCreateOptions { Name = "get_index_scope" });
 
@@ -121,7 +112,7 @@ public sealed class IndexScopeContractTests
         var assemblyTools = new AssemblyTools(runtime);
         var assemblyPath = typeof(TestTempDirectory).Assembly.Location;
         var assemblyPendingTask = assemblyTools.GetAssemblyContext(assemblyPath, maxResponseBytes: 65536, maxResponseTokens: 4096);
-        await WaitUntilAsync(() => runtime.AssemblyRegistry.GetHealthSnapshot(assemblyPath).Any(snapshot => snapshot.ActiveAccesses > 0),
+        await WaitUntilAsync(() => runtime.AssemblyRegistry.GetActiveAccessCount(assemblyPath) > 0,
             TimeSpan.FromSeconds(10));
         var assemblyPending = await assemblyPendingTask;
         Assert.StartsWith(McpToolResults.RunningStatusPrefix, TextOf(assemblyPending), StringComparison.Ordinal);
@@ -150,7 +141,7 @@ public sealed class IndexScopeContractTests
         }
         Assert.True(assemblyPollCompleted, $"The assembly operation did not reach an owner result: {TextOf(assemblyResult)}");
 
-        await AssertSourceAndAssemblyCancellationUsesOwnerRoutesAsync(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>(),
+        await AssertSourceAndAssemblyCancellationUsesOwnerRoutesAsync(host.Services.GetRequiredService<IHostApplicationLifetime>(),
             solutionPath, typeof(IndexScopeContractTests).Assembly.Location);
 
         var expiredOperation = await tools.GetIndexScope(solutionPath, 512, 512, "unknown-operation");
@@ -190,16 +181,15 @@ public sealed class IndexScopeContractTests
         return await function.InvokeAsync(arguments, CancellationToken.None);
     }
 
-    private static void AssertOriginalSdkToolCatalog(NavigatorHostRuntime runtime)
+    private static void AssertNavigationSdkToolCatalog(NavigatorHostRuntime runtime)
     {
-        var instances = new Dictionary<Type, object>
-        {
-            [typeof(MaintenanceTools)] = new MaintenanceTools(runtime),
-            [typeof(SymbolTools)] = new SymbolTools(runtime),
-            [typeof(StructureTools)] = new StructureTools(runtime),
-            [typeof(RelationshipTools)] = new RelationshipTools(runtime),
-            [typeof(AssemblyTools)] = new AssemblyTools(runtime),
-        };
+        var toolTypes = typeof(SymbolTools).Assembly.GetTypes()
+            .Where(type => type.GetCustomAttribute<McpServerToolTypeAttribute>() is not null)
+            .OrderBy(type => type.FullName, StringComparer.Ordinal)
+            .ToArray();
+        var instances = toolTypes.ToDictionary(type => type, type =>
+            Activator.CreateInstance(type, runtime)
+            ?? throw new InvalidOperationException($"Could not create MCP tool type {type.FullName}."));
         var registered = new List<(ModelContextProtocol.Server.McpServerTool Tool, MethodInfo Method)>();
         foreach (var (type, instance) in instances)
         {
@@ -217,13 +207,16 @@ public sealed class IndexScopeContractTests
         }
 
         var names = registered.Select(item => item.Tool.ProtocolTool.Name).Order(StringComparer.Ordinal).ToArray();
+        Assert.Equal(19, names.Length);
         Assert.Equal(new[]
         {
             "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol",
             "get_assembly_context", "get_call_tree", "get_class_structure", "get_feature_context", "get_file_skeleton",
-            "get_impact", "get_index_scope", "get_namespace_tree", "get_server_health", "get_symbol_body",
-            "get_test_context", "get_type_hierarchy", "inspect_assembly", "reload_config", "resolve_type_origin", "search_assembly",
+            "get_impact", "get_index_scope", "get_namespace_tree", "get_symbol_body",
+            "get_test_context", "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly",
         }, names);
+        Assert.DoesNotContain("get_server_health", names);
+        Assert.DoesNotContain("reload_config", names);
         Assert.DoesNotContain("get_file_tree", names);
 
         var missingDescriptions = new List<string>();
@@ -347,12 +340,11 @@ public sealed class IndexScopeContractTests
     }
 
     private static async Task AssertSourceAndAssemblyCancellationUsesOwnerRoutesAsync(
-        NavigatorHostConfiguration configuration,
         IHostApplicationLifetime lifetime,
         string solutionPath,
         string assemblyPath)
     {
-        await using var runtime = new NavigatorHostRuntime(configuration, lifetime, operationResponseWindow: TimeSpan.FromSeconds(30));
+        await using var runtime = new NavigatorHostRuntime(lifetime, operationResponseWindow: TimeSpan.FromSeconds(30));
         var structure = new StructureTools(runtime);
         using (var sourceCancellation = new CancellationTokenSource())
         {
@@ -365,11 +357,11 @@ public sealed class IndexScopeContractTests
         using var assemblyCancellation = new CancellationTokenSource();
         var assemblies = new AssemblyTools(runtime);
         var assemblyCall = assemblies.GetAssemblyContext(assemblyPath, cancellationToken: assemblyCancellation.Token);
-        await WaitUntilAsync(() => runtime.AssemblyRegistry.GetHealthSnapshot(assemblyPath).Any(snapshot => snapshot.ActiveAccesses > 0),
+        await WaitUntilAsync(() => runtime.AssemblyRegistry.GetActiveAccessCount(assemblyPath) > 0,
             TimeSpan.FromSeconds(10));
         await assemblyCancellation.CancelAsync();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => assemblyCall);
-        await WaitUntilAsync(() => runtime.AssemblyRegistry.GetHealthSnapshot(assemblyPath).All(snapshot => snapshot.ActiveAccesses == 0),
+        await WaitUntilAsync(() => runtime.AssemblyRegistry.GetActiveAccessCount(assemblyPath) == 0,
             TimeSpan.FromSeconds(10));
     }
 

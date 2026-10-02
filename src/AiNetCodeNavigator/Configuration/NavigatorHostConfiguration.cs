@@ -5,18 +5,17 @@ using Serilog.Events;
 
 namespace AiNetCodeNavigator.Configuration;
 
-internal sealed record NavigatorHostSettingsSnapshot(long Version, LogEventLevel MinimumLogLevel);
+internal sealed record NavigatorHostConfigurationLoadResult(
+    bool Succeeded,
+    LogEventLevel MinimumLogLevel,
+    string? ErrorCode = null,
+    string? Message = null);
 
-internal sealed record ConfigurationReloadResult(bool Succeeded, NavigatorHostSettingsSnapshot Settings, string? ErrorCode = null, string? Message = null);
-
-internal sealed class NavigatorHostConfiguration : IDisposable
+internal sealed class NavigatorHostConfiguration
 {
     private readonly string path;
     private readonly bool isDefaultPath;
     private readonly LoggingLevelSwitch minimumLevelSwitch;
-    private readonly SemaphoreSlim reloadGate = new(1, 1);
-    private readonly object stateGate = new();
-    private NavigatorHostSettingsSnapshot current = new(0, LogEventLevel.Information);
 
     internal NavigatorHostConfiguration(string path, bool isDefaultPath, LoggingLevelSwitch minimumLevelSwitch)
     {
@@ -27,124 +26,73 @@ internal sealed class NavigatorHostConfiguration : IDisposable
         this.minimumLevelSwitch = minimumLevelSwitch;
     }
 
-    internal string Path => path;
-    internal NavigatorHostSettingsSnapshot Current
-    {
-        get
-        {
-            lock (stateGate)
-            {
-                return current;
-            }
-        }
-    }
-
-    internal async Task<ConfigurationReloadResult> LoadStartupAsync(CancellationToken cancellationToken)
+    internal async Task<NavigatorHostConfigurationLoadResult> LoadStartupAsync(CancellationToken cancellationToken)
     {
         if (isDefaultPath && !File.Exists(path))
         {
-            var defaults = new NavigatorHostSettingsSnapshot(1, LogEventLevel.Information);
-            lock (stateGate)
-            {
-                LoggingSetup.SetMinimumLevel(minimumLevelSwitch, defaults.MinimumLogLevel);
-                Volatile.Write(ref current, defaults);
-            }
-            return new ConfigurationReloadResult(true, defaults);
+            LoggingSetup.SetMinimumLevel(minimumLevelSwitch, LogEventLevel.Information);
+            return new NavigatorHostConfigurationLoadResult(true, LogEventLevel.Information);
         }
 
-        return await ReloadAsync(cancellationToken).ConfigureAwait(false);
-    }
+        if (!File.Exists(path))
+        {
+            return Failure("CONFIG_NOT_FOUND", "The configured host settings file does not exist.");
+        }
 
-    internal async Task<ConfigurationReloadResult> ReloadAsync(CancellationToken cancellationToken)
-        => await ReloadAsync(static _ => true, cancellationToken).ConfigureAwait(false);
-
-    internal async Task<ConfigurationReloadResult> ReloadAsync(
-        Func<NavigatorHostSettingsSnapshot, bool> canPublish,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(canPublish);
-        await reloadGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        string? minimumLogLevel;
         try
         {
-            if (!File.Exists(path))
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
             {
-                return Failure("CONFIG_NOT_FOUND", "The configured host settings file does not exist.");
+                return Failure("CONFIG_INVALID", "The host settings must be a JSON object with a minimumLogLevel string.");
             }
 
-            NavigatorHostConfigurationFile? candidate;
-            try
+            var seenMinimumLogLevel = false;
+            minimumLogLevel = null;
+            foreach (var property in document.RootElement.EnumerateObject())
             {
-                await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
-                using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
-                if (document.RootElement.ValueKind != JsonValueKind.Object)
+                if (!string.Equals(property.Name, "minimumLogLevel", StringComparison.Ordinal) || seenMinimumLogLevel)
                 {
-                    return Failure("CONFIG_INVALID", "The host settings must be a JSON object with a minimumLogLevel string.");
+                    return Failure("CONFIG_INVALID", "The host settings contain an unsupported or duplicate field.");
                 }
 
-                var seenMinimumLogLevel = false;
-                string? minimumLogLevel = null;
-                foreach (var property in document.RootElement.EnumerateObject())
+                if (property.Value.ValueKind != JsonValueKind.String)
                 {
-                    if (!string.Equals(property.Name, "minimumLogLevel", StringComparison.Ordinal) || seenMinimumLogLevel)
-                    {
-                        return Failure("CONFIG_INVALID", "The host settings contain an unsupported or duplicate field.");
-                    }
-
-                    if (property.Value.ValueKind != JsonValueKind.String)
-                    {
-                        return Failure("CONFIG_INVALID", "minimumLogLevel must be a string.");
-                    }
-
-                    seenMinimumLogLevel = true;
-                    minimumLogLevel = property.Value.GetString();
+                    return Failure("CONFIG_INVALID", "minimumLogLevel must be a string.");
                 }
 
-                candidate = seenMinimumLogLevel ? new NavigatorHostConfigurationFile(minimumLogLevel) : null;
-            }
-            catch (JsonException)
-            {
-                return Failure("CONFIG_INVALID", "The host settings file is malformed or contains unsupported fields.");
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-            {
-                return Failure("CONFIG_UNAVAILABLE", "The host settings file could not be read.");
+                seenMinimumLogLevel = true;
+                minimumLogLevel = property.Value.GetString();
             }
 
-            if (candidate is null || !TryParseLogLevel(candidate.MinimumLogLevel, out var level))
+            if (!seenMinimumLogLevel)
             {
-                return Failure("CONFIG_INVALID", "minimumLogLevel must be one of Verbose, Debug, Information, Warning, Error, or Fatal.");
+                return Failure("CONFIG_INVALID", "The host settings must be a JSON object with a minimumLogLevel string.");
             }
-
-            NavigatorHostSettingsSnapshot next;
-            lock (stateGate)
-            {
-                next = current.Version > 0 && current.MinimumLogLevel == level
-                    ? current
-                    : new NavigatorHostSettingsSnapshot(current.Version + 1, level);
-            }
-
-            if (!canPublish(next))
-            {
-                return Failure("RESPONSE_BUDGET_TOO_SMALL", "The response budget cannot represent the complete reload confirmation.");
-            }
-
-            lock (stateGate)
-            {
-                if (current != next)
-                {
-                    LoggingSetup.SetMinimumLevel(minimumLevelSwitch, next.MinimumLogLevel);
-                    Volatile.Write(ref current, next);
-                }
-            }
-            return new ConfigurationReloadResult(true, next);
         }
-        finally
+        catch (JsonException)
         {
-            reloadGate.Release();
+            return Failure("CONFIG_INVALID", "The host settings file is malformed or contains unsupported fields.");
         }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return Failure("CONFIG_UNAVAILABLE", "The host settings file could not be read.");
+        }
+
+        if (!TryParseLogLevel(minimumLogLevel, out var level))
+        {
+            return Failure("CONFIG_INVALID", "minimumLogLevel must be one of Verbose, Debug, Information, Warning, Error, or Fatal.");
+        }
+
+        LoggingSetup.SetMinimumLevel(minimumLevelSwitch, level);
+        return new NavigatorHostConfigurationLoadResult(true, level);
     }
 
-    private ConfigurationReloadResult Failure(string code, string message) => new(false, Current, code, message);
+    private static NavigatorHostConfigurationLoadResult Failure(string code, string message) =>
+        new(false, LogEventLevel.Information, code, message);
 
     private static bool TryParseLogLevel(string? value, out LogEventLevel level)
     {
@@ -160,11 +108,4 @@ internal sealed class NavigatorHostConfiguration : IDisposable
         level = default;
         return false;
     }
-
-    public void Dispose()
-    {
-        reloadGate.Dispose();
-    }
-
-    private sealed record NavigatorHostConfigurationFile(string? MinimumLogLevel);
 }

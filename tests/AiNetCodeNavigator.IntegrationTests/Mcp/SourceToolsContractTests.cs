@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text;
-using AiNetCodeNavigator.Configuration;
 using AiNetCodeNavigator.Mcp;
 using AiNetCodeNavigator.Mcp.Tools;
 using AiNetCodeNavigator.Mcp.Tools.Relationships;
@@ -9,8 +8,6 @@ using AiNetCodeNavigator.TestKit;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Protocol;
-using Serilog.Core;
-using Serilog.Events;
 using static AiNetCodeNavigator.IntegrationTests.Mcp.IntegrationMcpAssertions;
 
 namespace AiNetCodeNavigator.IntegrationTests.Mcp;
@@ -22,15 +19,9 @@ public sealed class SourceToolsContractTests
     public async Task DisposedRuntimeHandoffsAreUnknownToFreshRuntimeConsumers()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var configuration = new NavigatorHostConfiguration(
-            Path.Combine(Path.GetTempPath(), "ainet-source-runtime-lifecycle-" + Guid.NewGuid().ToString("N") + ".json"),
-            isDefaultPath: true,
-            new LoggingLevelSwitch(LogEventLevel.Warning));
-        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
-
         using var fixture = TestTempDirectory.Create("ainet-source-runtime-lifecycle-");
         var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
-        var oldRuntime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var oldRuntime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var producer = new SymbolTools(oldRuntime);
         var found = await producer.FindSymbol(target, pattern: "Run", kind: "method", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(found, 16384, 1024);
@@ -38,7 +29,7 @@ public sealed class SourceToolsContractTests
 
         await oldRuntime.DisposeAsync();
 
-        await using var freshRuntime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        await using var freshRuntime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var consumer = new SymbolTools(freshRuntime);
         var body = await consumer.GetSymbolBody(target, [oldHandoff], maxResponseBytes: 16384, maxResponseTokens: 1024);
 
@@ -57,12 +48,7 @@ public sealed class SourceToolsContractTests
     public async Task SourceHandlersReturnNavigableResultsAndTypedDomainErrorsWithoutTransport()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var configuration = new NavigatorHostConfiguration(
-            Path.Combine(Path.GetTempPath(), "ainet-source-tools-contract-" + Guid.NewGuid().ToString("N") + ".json"),
-            isDefaultPath: true,
-            new LoggingLevelSwitch(LogEventLevel.Warning));
-        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
-        await using var runtime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var symbols = new SymbolTools(runtime);
         var structure = new StructureTools(runtime);
         var relationships = new RelationshipTools(runtime);

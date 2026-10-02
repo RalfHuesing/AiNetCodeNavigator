@@ -1,4 +1,6 @@
-Bewerte den beigefügten Funktionsumfang von AiNetCodeNavigator und entscheide konkret, welche Features bleiben, welche wegkönnen und welche fehlen.
+Historische Erstbeurteilung des beigefügten Funktionsumfangs. Ihre Empfehlungen sind Ausgangsmaterial; spätere ausgewählte Umsetzungsentscheidungen stehen in [Aenderungsplan.md](Aenderungsplan.md) und haben Vorrang. Die ursprüngliche Aufgabenstellung lautete:
+
+> Bewerte den beigefügten Funktionsumfang von AiNetCodeNavigator und entscheide konkret, welche Features bleiben, welche wegkönnen und welche fehlen.
 
 Produktziel:
 AiNetCodeNavigator ist ein MCP-Server für autonome AI-Agenten, die C#/.NET-Software entwickeln. Er soll ihnen helfen, relevanten Code zu finden, Verhalten und Beziehungen zu verstehen, Änderungen vorzubereiten und passende Tests zu identifizieren.

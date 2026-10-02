@@ -9,8 +9,8 @@ The binding product references are these current-state pages and local Navigator
 - [MCP Tool Results](mcp-tool-results.md): Internal `CallToolResult` builders, status text, structured success content, and error classification.
 - [MCP Argument Validation](mcp-argument-validation.md): SDK input-schema validation, binder compatibility checks, safe field paths, and error-budget behavior.
 - [MCP Long-Running Calls and Continuations](mcp-long-running-calls.md): Operation token lifecycle, polling, immutable text snapshots, continuation tokens, and their limits.
-- [MCP Host](mcp-host.md): Stdio lifecycle, nineteen navigation and two maintenance registrations, health scope, and reloadable host settings.
-- [MCP Tools](tools/README.md): All 21 tools, targets, wire arguments, defaults, paging, recovery, and usage examples.
+- [MCP Host](mcp-host.md): Stdio lifecycle, the navigation tool catalog, and startup host settings.
+- [MCP Tools](tools/README.md): The 19 navigation tools, targets, wire arguments, defaults, paging, recovery, and usage examples.
 - [Setup](setup/README.md): Windows executable, stdio process configuration, host settings, and current Claude Desktop, Cursor, and Antigravity setup references.
 - [MCP Navigation Registration Status](navigation/mcp-registration-status.md): Current transport-free handler contracts and the boundary around retained end-to-end tests.
 

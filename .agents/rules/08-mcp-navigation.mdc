@@ -66,5 +66,5 @@ Use the `AiNetCodeNavigator` MCP server as the primary tool for C# symbol discov
 - Interpret results within the selected target, indexed scope, filters, depth, reference closure, and completeness. Static navigation cannot establish all runtime behavior, reflection/DI wiring, or consumers outside the analyzed scope. Report material gaps in conclusions about absence or impact.
 - `get_test_context` and `get_feature_context` return static test candidates, including heuristic matches. Inspect the candidate tests and run the relevant verification tools; these results do not measure coverage or prove that tests pass.
 - Assembly bodies are decompiled representations, not original source. Navigation does not execute analyzed binaries.
-- Use `get_server_health` to diagnose host/cache state or target residency; it does not load or refresh the target. Use `reload_config` only for intentional runtime configuration reloads, not to repair handles or refresh source. Neither is a routine prerequisite for navigation.
+- Host settings are read at process startup. Restart the MCP server after changing its configuration file; configuration reload is not an MCP navigation capability.
 - AiNetCodeNavigator provides read-only navigation, not linting, code-quality scoring, refactoring, builds, or test execution. Use the appropriate external tools for changes and verification.

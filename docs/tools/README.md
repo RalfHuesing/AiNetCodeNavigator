@@ -1,6 +1,6 @@
 # MCP Tools
 
-The server registers 21 read-only tools: 19 navigation tools and two runtime-maintenance tools. Their SDK method definitions are the authority for wire names, descriptions, defaults, and validation; this page explains how to choose and use them. Targets are absolute paths: source tools require an existing `.sln` or `.slnx`, assembly tools require a managed `.dll` or `.exe`, and maintenance health may inspect either without loading it. Assembly navigation uses the selected binary's decompiled source and supported owner references; it never executes analyzed binaries. `get_index_scope`, `get_feature_context`, and `get_test_context` are source-only. `get_server_health` and `reload_config` operate on the current runtime.
+The server registers 19 read-only navigation tools. Their SDK method definitions are the authority for wire names, descriptions, defaults, and validation; this page explains how to choose and use them. Targets are absolute paths: source tools require an existing `.sln` or `.slnx`, and assembly tools require a managed `.dll` or `.exe`. Assembly navigation uses the selected binary's decompiled source and supported owner references; it never executes analyzed binaries. `get_index_scope`, `get_feature_context`, and `get_test_context` are source-only.
 
 ## Shared request and response behavior
 
@@ -36,13 +36,6 @@ Symbol producers return opaque `h:...` handoffs when the owning source snapshot 
 | `get_feature_context` | Combine a source declaration, callers, and related static test candidates. | Source `targetPath`, required `symbolIdentifier`; source `scopeType=all`, `includeGenerated=false`; `maxCallers=10`, `maxTests=10` (1–50); operation/page tokens; bytes default 24,576. Text labels candidates `static-test-candidates-only`; it does not report measured test coverage or linter findings. |
 | `get_test_context` | Find project-specific source test candidates for a symbol. | Source `targetPath`, required `symbolIdentifier`; source `scopeType=all`, `includeGenerated=false`; `maxResults=30` (1–100); operation/page tokens; bytes default 16,384. Name-only fixture matches remain heuristic and are labeled `Unknown`; this is not test-coverage measurement. |
 
-## Runtime tools
-
-| Tool | Purpose and targets | Wire arguments and notable behavior |
-|---|---|---|
-| `get_server_health` | Return a complete current host/cache/memory/settings snapshot. Optional `targetPath` checks residency only and never loads or refreshes it. | Optional absolute solution/assembly `targetPath`; `maxResponseBytes=16,384` (512–65,536); optional positive `maxResponseTokens`. The response is atomic; its recovery pair is conservatively sized for changing snapshot counters. No cursor. |
-| `reload_config` | Validate and atomically apply the host settings file's log level. | `maxResponseBytes=16,384` (512–65,536); optional positive `maxResponseTokens`. No user target or client configuration is read. A failed parse, budget preflight, or file read preserves current settings. |
-
 ## Practical patterns
 
 Find a declaration and follow its handle to the body:
@@ -62,4 +55,4 @@ Inspect a large assembly with a small domain page, first consuming any outer pag
 
 `inspect_assembly` returns type and member handoffs. Pass a type handoff to `get_file_skeleton` for its declaration-file outline or `get_class_structure` for its members; pass a type or member handoff to `get_symbol_body` for decompiled source. For physical source files and assets, use external file search. `get_index_scope` reports which solution documents participate in C# navigation.
 
-Use `get_index_scope` on the solution path to see which C# projects/documents participate before choosing a source query. Use `get_server_health` with a target path when you need to know whether it is already resident; that check does not initiate analysis.
+Use `get_index_scope` on the solution path to see which C# projects/documents participate before choosing a source query. To change host logging, edit the startup settings file and restart the MCP process.

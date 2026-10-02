@@ -1,6 +1,5 @@
 using System.Text;
 using System.Reflection;
-using AiNetCodeNavigator.Configuration;
 using AiNetCodeNavigator.Mcp;
 using AiNetCodeNavigator.Mcp.Tools;
 using AiNetCodeNavigator.Mcp.Tools.Assemblies;
@@ -10,8 +9,6 @@ using AiNetCodeNavigator.TestKit;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Protocol;
-using Serilog.Core;
-using Serilog.Events;
 using static AiNetCodeNavigator.IntegrationTests.Mcp.IntegrationMcpAssertions;
 
 namespace AiNetCodeNavigator.IntegrationTests.Mcp;
@@ -23,25 +20,20 @@ public sealed class AssemblyToolsContractTests
     public async Task DisposedRuntimeAssemblyHandoffsAreUnknownAndRepeatedDisposeKeepsFreshHandles()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var configuration = new NavigatorHostConfiguration(
-            Path.Combine(Path.GetTempPath(), "ainet-assembly-runtime-lifecycle-" + Guid.NewGuid().ToString("N") + ".json"),
-            isDefaultPath: true,
-            new LoggingLevelSwitch(LogEventLevel.Warning));
-        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
         using var fixture = TestTempDirectory.Create("ainet-assembly-runtime-lifecycle-");
         var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "AssemblyRuntimeLifecycleProbe", """
             namespace AssemblyRuntimeLifecycleProbe;
             public sealed class Probe { public int Read() => 42; }
             """);
 
-        var oldRuntime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var oldRuntime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var oldTools = new SymbolTools(oldRuntime);
         var oldResult = await oldTools.FindSymbol(assemblyPath, pattern: "Probe.Read", kind: "method", maxResponseBytes: 16384);
         AssertOwnerResult(oldResult, "Read");
         var oldHandoff = ReadAnyHandoff(TextOf(oldResult));
         await oldRuntime.DisposeAsync();
 
-        await using var freshRuntime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        await using var freshRuntime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var freshTools = new SymbolTools(freshRuntime);
         var staleResult = await freshTools.GetSymbolBody(assemblyPath, [oldHandoff], maxResponseBytes: 16384);
         AssertError(staleResult, "HANDOFF_UNKNOWN");
@@ -58,12 +50,7 @@ public sealed class AssemblyToolsContractTests
     public async Task AssemblyClassStructureUsesDeclarationOrderBeforeCapAndContextAndMemberHandlesStayNavigable()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var configuration = new NavigatorHostConfiguration(
-            Path.Combine(Path.GetTempPath(), "ainet-assembly-structure-contract-" + Guid.NewGuid().ToString("N") + ".json"),
-            isDefaultPath: true,
-            new LoggingLevelSwitch(LogEventLevel.Warning));
-        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
-        await using var runtime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var structureTools = new StructureTools(runtime);
         var assemblyTools = new AssemblyTools(runtime);
         var symbolTools = new SymbolTools(runtime);
@@ -142,12 +129,7 @@ public sealed class AssemblyToolsContractTests
     public async Task AssemblyNavigationHandlersReturnOwnerResultsAcrossAllSixteenRoutes()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var configuration = new NavigatorHostConfiguration(
-            Path.Combine(Path.GetTempPath(), "ainet-assembly-routes-" + Guid.NewGuid().ToString("N") + ".json"),
-            isDefaultPath: true,
-            new LoggingLevelSwitch(LogEventLevel.Warning));
-        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
-        await using var runtime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var symbols = new SymbolTools(runtime);
         var structure = new StructureTools(runtime);
         var relationships = new RelationshipTools(runtime);
@@ -314,12 +296,7 @@ public sealed class AssemblyToolsContractTests
     public async Task AssemblyLockedTargetReturnsTypedErrorAndRecoversAfterUnlock()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var configuration = new NavigatorHostConfiguration(
-            Path.Combine(Path.GetTempPath(), "ainet-assembly-lock-" + Guid.NewGuid().ToString("N") + ".json"),
-            isDefaultPath: true,
-            new LoggingLevelSwitch(LogEventLevel.Warning));
-        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
-        await using var runtime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var assemblies = new AssemblyTools(runtime);
 
         using var fixture = TestTempDirectory.Create("ainet-assembly-lock-");
@@ -340,12 +317,7 @@ public sealed class AssemblyToolsContractTests
     public async Task AssemblyZeroByteDefaultsMatchPublishedBudgetsForLargeResults()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var configuration = new NavigatorHostConfiguration(
-            Path.Combine(Path.GetTempPath(), "ainet-assembly-zero-bytes-" + Guid.NewGuid().ToString("N") + ".json"),
-            isDefaultPath: true,
-            new LoggingLevelSwitch(LogEventLevel.Warning));
-        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
-        await using var runtime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var assemblies = new AssemblyTools(runtime);
 
         using var fixture = TestTempDirectory.Create("ainet-assembly-zero-bytes-");
@@ -421,12 +393,7 @@ public sealed class AssemblyToolsContractTests
     public async Task AssemblyContextReturnsBodyOwnerStaleSnapshotAfterSuccessfulSymbolResolution()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var configuration = new NavigatorHostConfiguration(
-            Path.Combine(Path.GetTempPath(), "ainet-assembly-context-section-error-" + Guid.NewGuid().ToString("N") + ".json"),
-            isDefaultPath: true,
-            new LoggingLevelSwitch(LogEventLevel.Warning));
-        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
-        await using var runtime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var assemblies = new AssemblyTools(runtime);
         var symbols = new SymbolTools(runtime);
 
@@ -478,12 +445,7 @@ public sealed class AssemblyToolsContractTests
     public async Task AssemblyInspectAndSearchHandlersKeepDomainCursorsSeparateFromOuterPages()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var configuration = new NavigatorHostConfiguration(
-            Path.Combine(Path.GetTempPath(), "ainet-assembly-domain-pages-" + Guid.NewGuid().ToString("N") + ".json"),
-            isDefaultPath: true,
-            new LoggingLevelSwitch(LogEventLevel.Warning));
-        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
-        await using var runtime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var assemblies = new AssemblyTools(runtime);
         var symbols = new SymbolTools(runtime);
 
@@ -588,12 +550,7 @@ public sealed class AssemblyToolsContractTests
     public async Task AssemblyReferenceClosureHandsOffAcrossRootBridgeAndLeafOwners()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var configuration = new NavigatorHostConfiguration(
-            Path.Combine(Path.GetTempPath(), "ainet-assembly-root-bridge-leaf-" + Guid.NewGuid().ToString("N") + ".json"),
-            isDefaultPath: true,
-            new LoggingLevelSwitch(LogEventLevel.Warning));
-        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
-        await using var runtime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var symbols = new SymbolTools(runtime);
         var relationships = new RelationshipTools(runtime);
         var assemblies = new AssemblyTools(runtime);

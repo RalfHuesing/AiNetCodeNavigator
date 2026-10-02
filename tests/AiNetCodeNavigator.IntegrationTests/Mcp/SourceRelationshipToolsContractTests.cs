@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
-using AiNetCodeNavigator.Configuration;
 using AiNetCodeNavigator.Mcp;
 using AiNetCodeNavigator.Mcp.Tools.Relationships;
 using AiNetCodeNavigator.Mcp.Tools.Symbols;
@@ -10,8 +9,6 @@ using AiNetCodeNavigator.TestKit;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Protocol;
-using Serilog.Core;
-using Serilog.Events;
 using static AiNetCodeNavigator.IntegrationTests.Mcp.IntegrationMcpAssertions;
 
 namespace AiNetCodeNavigator.IntegrationTests.Mcp;
@@ -23,12 +20,7 @@ public sealed class SourceRelationshipToolsContractTests
     public async Task DependencyGraph_TraversesTargetInDocumentWindowAfterOneThousand()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var configuration = new NavigatorHostConfiguration(
-            Path.Combine(Path.GetTempPath(), "ainet-source-relationship-window-" + Guid.NewGuid().ToString("N") + ".json"),
-            isDefaultPath: true,
-            new LoggingLevelSwitch(LogEventLevel.Warning));
-        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
-        await using var runtime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var relationships = new RelationshipTools(runtime);
 
         using var fixture = TestTempDirectory.Create("ainet-source-relationship-window-");
@@ -45,12 +37,7 @@ public sealed class SourceRelationshipToolsContractTests
     public async Task DependencyGraph_UsesHandoffProjectIdentityForEqualGenericTypeNames()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var configuration = new NavigatorHostConfiguration(
-            Path.Combine(Path.GetTempPath(), "ainet-source-relationship-identity-" + Guid.NewGuid().ToString("N") + ".json"),
-            isDefaultPath: true,
-            new LoggingLevelSwitch(LogEventLevel.Warning));
-        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
-        await using var runtime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var relationships = new RelationshipTools(runtime);
         var symbols = new SymbolTools(runtime);
 
@@ -73,12 +60,7 @@ public sealed class SourceRelationshipToolsContractTests
     public async Task SourceRelationshipHandlersReturnNavigableResultsErrorsAndBoundedProjections()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var configuration = new NavigatorHostConfiguration(
-            Path.Combine(Path.GetTempPath(), "ainet-source-relationships-" + Guid.NewGuid().ToString("N") + ".json"),
-            isDefaultPath: true,
-            new LoggingLevelSwitch(LogEventLevel.Warning));
-        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
-        await using var runtime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var relationships = new RelationshipTools(runtime);
         var symbols = new SymbolTools(runtime);
 

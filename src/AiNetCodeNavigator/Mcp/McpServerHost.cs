@@ -1,7 +1,6 @@
 using AiNetCodeNavigator.Cli;
 using AiNetCodeNavigator.Configuration;
 using AiNetCodeNavigator.Logging;
-using AiNetCodeNavigator.Mcp.Tools.Maintenance;
 using AiNetCodeNavigator.Mcp.Tools.Relationships;
 using AiNetCodeNavigator.Mcp.Tools.Assemblies;
 using AiNetCodeNavigator.Mcp.Tools.Symbols;
@@ -24,7 +23,7 @@ internal static class McpServerHost
     {
         var path = configuredPath ?? GetDefaultConfigurationPath();
         var minimumLevelSwitch = LoggingSetup.Initialize(command: "mcp");
-        using var configuration = new NavigatorHostConfiguration(path, isDefaultPath, minimumLevelSwitch);
+        var configuration = new NavigatorHostConfiguration(path, isDefaultPath, minimumLevelSwitch);
         var startup = await configuration.LoadStartupAsync(cancellationToken).ConfigureAwait(false);
         if (!startup.Succeeded)
         {
@@ -40,13 +39,11 @@ internal static class McpServerHost
             builder.Logging.ClearProviders();
             builder.Logging.AddSerilog(Log.Logger, dispose: false);
             builder.Services.AddSingleton<NavigatorHostRuntime>(serviceProvider => new NavigatorHostRuntime(
-                configuration,
                 serviceProvider.GetRequiredService<IHostApplicationLifetime>()));
 
             builder.Services
                 .AddMcpServer()
                 .WithStdioServerTransport()
-                .WithTools<MaintenanceTools>()
                 .WithTools<SymbolTools>()
                 .WithTools<StructureTools>()
                 .WithTools<RelationshipTools>()

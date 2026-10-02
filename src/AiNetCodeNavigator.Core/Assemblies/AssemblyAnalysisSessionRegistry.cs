@@ -25,16 +25,13 @@ internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
 
     internal static AssemblyAnalysisSessionRegistry Default => DefaultRegistry.Value;
 
-    /// <summary>Returns resident session metadata without acquiring or refreshing a session.</summary>
-    internal IReadOnlyList<AssemblySessionHealthSnapshot> GetHealthSnapshot(string? assemblyPath = null)
+    /// <summary>Returns the active access count without acquiring or refreshing a session.</summary>
+    internal int GetActiveAccessCount(string assemblyPath)
     {
-        var canonicalPath = assemblyPath is null ? null : Path.GetFullPath(assemblyPath);
+        var canonicalPath = Path.GetFullPath(assemblyPath);
         lock (gate)
         {
-            return sessions.Values
-                .Where(entry => canonicalPath is null || string.Equals(entry.Path, canonicalPath, StringComparison.OrdinalIgnoreCase))
-                .Select(entry => new AssemblySessionHealthSnapshot(entry.Path, entry.LastAccessUtc, entry.ActiveAccesses, entry.Session.CurrentGeneration is not null))
-                .ToArray();
+            return sessions.TryGetValue(canonicalPath, out var entry) ? entry.ActiveAccesses : 0;
         }
     }
 
@@ -239,5 +236,3 @@ internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
         }
     }
 }
-
-internal sealed record AssemblySessionHealthSnapshot(string Path, DateTime LastAccessUtc, int ActiveAccesses, bool HasResidentGeneration);
