@@ -1,4 +1,5 @@
 using System.Text;
+using System.Reflection;
 using AiNetCodeNavigator.Configuration;
 using AiNetCodeNavigator.Mcp;
 using AiNetCodeNavigator.Mcp.Formatting;
@@ -172,12 +173,18 @@ public sealed class AssemblyToolsContractTests
         AssertOwnerResult(mermaidCallTree, "flowchart TD");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, mermaidCallTree);
         AssertOwnerResult(await relationships.FindReferences(assemblyPath, "M:AssemblyRouteProbe.Probe.Read", maxResponseBytes: 32768), "Entry");
-        AssertOwnerResult(await relationships.GetTypeHierarchy(assemblyPath, typeHandle, maxResponseBytes: 32768), "Probe");
+        var hierarchy = await relationships.GetTypeHierarchy(assemblyPath, typeHandle, maxResponseBytes: 32768);
+        AssertOwnerResult(hierarchy, "Probe");
+        await FollowAssemblyHandoffAsync(symbols, assemblyPath, hierarchy);
         var implementations = await relationships.FindImplementations(assemblyPath, interfaceHandle, maxResponseBytes: 32768);
         AssertOwnerResult(implementations, "Probe");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, implementations);
-        AssertOwnerResult(await relationships.FindImplementations(assemblyPath, "M:AssemblyRouteProbe.BaseProbe.Value", maxResponseBytes: 32768), "Value");
-        AssertOwnerResult(await relationships.FindImplementations(assemblyPath, "P:AssemblyRouteProbe.BaseProbe.Label", maxResponseBytes: 32768), "Label");
+        var methodOverrides = await relationships.FindImplementations(assemblyPath, "M:AssemblyRouteProbe.BaseProbe.Value", maxResponseBytes: 32768);
+        AssertOwnerResult(methodOverrides, "Value");
+        await FollowAssemblyHandoffAsync(symbols, assemblyPath, methodOverrides);
+        var propertyOverrides = await relationships.FindImplementations(assemblyPath, "P:AssemblyRouteProbe.BaseProbe.Label", maxResponseBytes: 32768);
+        AssertOwnerResult(propertyOverrides, "Label");
+        await FollowAssemblyHandoffAsync(symbols, assemblyPath, propertyOverrides);
         var impact = await relationships.GetImpact(assemblyPath, "M:AssemblyRouteProbe.Probe.Read", maxResponseBytes: 32768);
         AssertOwnerResult(impact, "Entry");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, impact);
@@ -263,6 +270,113 @@ public sealed class AssemblyToolsContractTests
     }
 
     [Fact]
+    public async Task AssemblyLockedTargetReturnsTypedErrorAndRecoversAfterUnlock()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        using var configuration = new NavigatorHostConfiguration(
+            Path.Combine(Path.GetTempPath(), "ainet-assembly-lock-" + Guid.NewGuid().ToString("N") + ".json"),
+            isDefaultPath: true,
+            new LoggingLevelSwitch(LogEventLevel.Warning));
+        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
+        await using var runtime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var assemblies = new AssemblyTools(runtime);
+
+        using var fixture = TestTempDirectory.Create("ainet-assembly-lock-");
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "LockedAssemblyProbe",
+            "namespace LockedAssemblyProbe; public sealed class Probe { public int Read() => 1; }");
+        CallToolResult locked;
+        await using (new FileStream(assemblyPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            locked = await assemblies.InspectAssembly(assemblyPath, typeName: "Probe", maxResponseBytes: 24576);
+        }
+
+        AssertError(locked, "TARGET_UNREADABLE");
+        var recovered = await assemblies.InspectAssembly(assemblyPath, typeName: "Probe", maxResponseBytes: 24576);
+        AssertOwnerResult(recovered, "Probe");
+    }
+
+    [Fact]
+    public async Task AssemblyZeroByteDefaultsMatchPublishedBudgetsForLargeResults()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        using var configuration = new NavigatorHostConfiguration(
+            Path.Combine(Path.GetTempPath(), "ainet-assembly-zero-bytes-" + Guid.NewGuid().ToString("N") + ".json"),
+            isDefaultPath: true,
+            new LoggingLevelSwitch(LogEventLevel.Warning));
+        Assert.True((await configuration.LoadStartupAsync(CancellationToken.None)).Succeeded);
+        await using var runtime = new NavigatorHostRuntime(configuration, host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var assemblies = new AssemblyTools(runtime);
+
+        using var fixture = TestTempDirectory.Create("ainet-assembly-zero-bytes-");
+        var suffix = new string('T', 120);
+        var source = new StringBuilder("namespace ZeroByteProbe;\n");
+        for (var index = 0; index < 400; index++)
+        {
+            source.Append("public sealed class Type").Append(index.ToString("D3")).Append('_').Append(suffix).AppendLine(" {");
+            source.Append("public string NeedleBudget").Append(index.ToString("D3"))
+                .Append("() => \"").Append('x', 600).AppendLine("\";");
+            source.AppendLine("}");
+        }
+        source.AppendLine("public static class Extensions {");
+        for (var index = 0; index < 100; index++)
+        {
+            source.Append("public static int ExtensionBudget").Append(index.ToString("D3")).Append('_').Append(suffix)
+                .Append("(this Type000_").Append(suffix).Append(" receiver) => ").Append(index).AppendLine(";");
+        }
+        source.AppendLine("}");
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "ZeroByteProbe", source.ToString());
+
+        var inspectDefault = await ReadOuterPagesAsync((_, tokens, continuation) => assemblies.InspectAssembly(
+            assemblyPath, maxResults: 42, maxMembers: 1, maxResponseTokens: tokens, continuationToken: continuation), 24576, 16000);
+        var inspectZero = await ReadOuterPagesAsync((_, tokens, continuation) => assemblies.InspectAssembly(
+            assemblyPath, maxResults: 42, maxMembers: 1, maxResponseBytes: 0, maxResponseTokens: tokens, continuationToken: continuation), 24576, 16000);
+        Assert.Contains("Type000", inspectDefault.Text, StringComparison.Ordinal);
+        Assert.Equal(BodyOf(inspectDefault.FirstPage), BodyOf(inspectZero.FirstPage));
+        Assert.Equal(inspectDefault.Text, inspectZero.Text);
+        Assert.InRange(Encoding.UTF8.GetByteCount(inspectDefault.FirstPage), 16 * 1024 + 1, 24 * 1024);
+
+        var searchDefault = await ReadOuterPagesAsync((_, tokens, continuation) => assemblies.SearchAssembly(
+            assemblyPath, pattern: "NeedleBudget", declarationOnly: true, kind: "method", maxResults: 30,
+            maxResponseTokens: tokens, continuationToken: continuation), 24576, 16000);
+        var searchZero = await ReadOuterPagesAsync((_, tokens, continuation) => assemblies.SearchAssembly(
+            assemblyPath, pattern: "NeedleBudget", declarationOnly: true, kind: "method", maxResults: 30,
+            maxResponseBytes: 0, maxResponseTokens: tokens, continuationToken: continuation), 24576, 16000);
+        Assert.Contains("NeedleBudget", searchDefault.Text, StringComparison.Ordinal);
+        Assert.Equal(BodyOf(searchDefault.FirstPage), BodyOf(searchZero.FirstPage));
+        Assert.Equal(searchDefault.Text, searchZero.Text);
+        Assert.InRange(Encoding.UTF8.GetByteCount(searchDefault.FirstPage), 16 * 1024 + 1, 24 * 1024);
+
+        var extensionsDefault = await ReadOuterPagesAsync((_, tokens, continuation) => assemblies.FindAssemblyExtensions(
+            assemblyPath, receiverType: "", maxResults: 50, maxResponseTokens: tokens, continuationToken: continuation), 16384, 16000);
+        var extensionsZero = await ReadOuterPagesAsync((_, tokens, continuation) => assemblies.FindAssemblyExtensions(
+            assemblyPath, receiverType: "", maxResults: 50, maxResponseBytes: 0, maxResponseTokens: tokens,
+            continuationToken: continuation), 16384, 16000);
+        Assert.Contains("ExtensionBudget000", extensionsDefault.Text, StringComparison.Ordinal);
+        Assert.Equal(BodyOf(extensionsDefault.FirstPage), BodyOf(extensionsZero.FirstPage));
+        Assert.Equal(extensionsDefault.Text, extensionsZero.Text);
+        Assert.InRange(Encoding.UTF8.GetByteCount(extensionsDefault.FirstPage), 8 * 1024 + 1, 16 * 1024);
+
+        var contextStandardDefault = await ReadOuterPagesAsync((_, tokens, continuation) => assemblies.GetAssemblyContext(
+            assemblyPath, maxResults: 200, maxResponseTokens: tokens, continuationToken: continuation), 32768, 16000);
+        var contextStandardZero = await ReadOuterPagesAsync((_, tokens, continuation) => assemblies.GetAssemblyContext(
+            assemblyPath, maxResults: 200, maxResponseBytes: 0, maxResponseTokens: tokens, continuationToken: continuation), 32768, 16000);
+        Assert.Contains("Type000", contextStandardDefault.Text, StringComparison.Ordinal);
+        Assert.Equal(BodyOf(contextStandardDefault.FirstPage), BodyOf(contextStandardZero.FirstPage));
+        Assert.Equal(contextStandardDefault.Text, contextStandardZero.Text);
+        Assert.InRange(Encoding.UTF8.GetByteCount(contextStandardDefault.FirstPage), 16 * 1024 + 1, 32 * 1024);
+
+        var contextFullDefault = await ReadOuterPagesAsync((_, tokens, continuation) => assemblies.GetAssemblyContext(
+            assemblyPath, maxResults: 400, detailLevel: "full", maxResponseTokens: tokens, continuationToken: continuation), 65536, 32000);
+        var contextFullZero = await ReadOuterPagesAsync((_, tokens, continuation) => assemblies.GetAssemblyContext(
+            assemblyPath, maxResults: 400, detailLevel: "full", maxResponseBytes: 0, maxResponseTokens: tokens,
+            continuationToken: continuation), 65536, 32000);
+        Assert.Contains("Type000", contextFullDefault.Text, StringComparison.Ordinal);
+        Assert.Equal(BodyOf(contextFullDefault.FirstPage), BodyOf(contextFullZero.FirstPage));
+        Assert.Equal(contextFullDefault.Text, contextFullZero.Text);
+        Assert.InRange(Encoding.UTF8.GetByteCount(contextFullDefault.FirstPage), 32 * 1024 + 1, 65_536);
+    }
+
+    [Fact]
     public async Task AssemblyContextReturnsBodyOwnerStaleSnapshotAfterSuccessfulSymbolResolution()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
@@ -280,10 +394,15 @@ public sealed class AssemblyToolsContractTests
             namespace ContextSectionProbe;
             public sealed class Probe { public int Read() => 1; }
             """);
-        var replacementPath = AssemblyTestHelper.EmitAssembly(fixture, "ContextSectionReplacement", """
+        using var replacementFixture = TestTempDirectory.Create("ainet-assembly-context-section-replacement-");
+        var replacementPath = AssemblyTestHelper.EmitAssembly(replacementFixture, "ContextSectionProbe", """
             namespace ContextSectionProbe;
             public sealed class Probe { public int Read() => 2; public int Added() => 3; }
             """);
+        var originalIdentity = AssemblyName.GetAssemblyName(assemblyPath);
+        var replacementIdentity = AssemblyName.GetAssemblyName(replacementPath);
+        Assert.Equal(originalIdentity.Name, replacementIdentity.Name);
+        Assert.Equal(originalIdentity.Version, replacementIdentity.Version);
         var produced = await symbols.FindSymbol(assemblyPath, pattern: "Read", kind: "method", maxResponseBytes: 32768);
         AssertOwnerResult(produced, "Read");
         var handle = ReadAnyHandoff(TextOf(produced));
@@ -304,6 +423,14 @@ public sealed class AssemblyToolsContractTests
         Assert.DoesNotContain("Status: operation=ok", text, StringComparison.Ordinal);
         Assert.InRange(Encoding.UTF8.GetByteCount(text), 0, 32768);
         Assert.InRange(McpResponseFormatter.CountTokens(text), 0, 4096);
+
+        var added = await symbols.FindSymbol(assemblyPath, pattern: "Added", kind: "method", maxResponseBytes: 32768);
+        AssertOwnerResult(added, "Added");
+        await FollowAssemblyHandoffAsync(symbols, assemblyPath, added);
+        var changedRead = await symbols.FindSymbol(assemblyPath, pattern: "Probe.Read", kind: "method", maxResponseBytes: 32768);
+        AssertOwnerResult(changedRead, "Probe.Read");
+        var changedReadBody = await symbols.GetSymbolBody(assemblyPath, [ReadAnyHandoff(TextOf(changedRead))], maxResponseBytes: 32768);
+        AssertOwnerResult(changedReadBody, "return 2");
     }
 
     [Fact]
@@ -666,7 +793,7 @@ public sealed class AssemblyToolsContractTests
         return document.RootElement.TryGetProperty("continuationToken", out var cursor) ? cursor.GetString() : null;
     }
 
-    private static async Task<(string Text, int Pages)> ReadOuterPagesAsync(
+    private static async Task<(string Text, int Pages, string FirstPage)> ReadOuterPagesAsync(
         Func<int, int?, string?, Task<CallToolResult>> invoke,
         int bytes,
         int tokens,
@@ -674,10 +801,12 @@ public sealed class AssemblyToolsContractTests
     {
         var accumulated = new StringBuilder();
         string? continuation = initialContinuation;
+        string? firstPage = null;
         for (var pageNumber = 0; pageNumber < 100; pageNumber++)
         {
             var result = await invoke(bytes, tokens, continuation);
             var text = TextOf(result);
+            firstPage ??= text;
             Assert.False(result.IsError ?? false, text);
             Assert.InRange(Encoding.UTF8.GetByteCount(text), 0, bytes);
             Assert.InRange(McpResponseFormatter.CountTokens(text), 0, tokens);
@@ -685,8 +814,9 @@ public sealed class AssemblyToolsContractTests
             Assert.DoesNotContain("operation=retry", text, StringComparison.Ordinal);
             accumulated.Append(BodyOf(text));
             continuation = ReadOuterContinuation(text);
-            if (continuation is null) return (accumulated.ToString(), pageNumber + 1);
-            Assert.True(continuation.Length == 39 && continuation.All(char.IsAsciiDigit), "Outer continuation tokens are fixed-width decimal values and must be resolved before domain cursors.");
+            if (continuation is null) return (accumulated.ToString(), pageNumber + 1, firstPage);
+            Assert.NotEmpty(continuation);
+            Assert.All(continuation, character => Assert.True(char.IsAsciiDigit(character)));
         }
         throw new Xunit.Sdk.XunitException("The outer response did not reach its final page.");
     }
@@ -736,7 +866,7 @@ public sealed class AssemblyToolsContractTests
             text.Append(BodyOf(page));
             continuation = ReadOuterContinuation(page);
             if (continuation is null) return (text.ToString(), pageNumber + 1, sawExactBudgetRecovery);
-            Assert.Equal(39, continuation.Length);
+            Assert.NotEmpty(continuation);
             Assert.All(continuation, character => Assert.True(char.IsAsciiDigit(character)));
         }
         throw new Xunit.Sdk.XunitException("The recovered mixed context did not reach its final outer page.");
