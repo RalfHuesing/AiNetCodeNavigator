@@ -105,6 +105,8 @@ Agents and automation tools should inspect the static log files under `temp/*.lo
 
 The full solution script runs test projects sequentially (`-m:1`) so IntegrationTests workspace snapshot checks are isolated from FastTests cache and audit report generation. Parallelism within each test assembly follows its existing runner settings.
 
+For agent handling of slow or stalled tests, follow the [verification rule](../../.agents/rules/04-verification.mdc#slow-or-stalled-tests). Its five-minute threshold triggers separate diagnosis by the agent; it is not an automatic timeout enforced by the test scripts.
+
 ### E2E and extended integration tests
 
 `scripts/test-integration.ps1` and `scripts/test.ps1` exclude `Category=ExtendedIntegration` by default; `-IncludeExtended` removes only that exclusion. All ordinary script invocations exclude `Category=E2EIntegration`. `scripts/test-fast.ps1 -ReviewReportsOnly` remains available to select `AiNetCodeNavigator.FastTests.Reporting.RepositoryAuditReportTests.Review_PublishesRepositoryReportsWithoutBaseline` directly. Supplied filters are parenthesized and AND-combined with exclusions, so an OR filter cannot bypass them. `-ReviewReportsOnly` cannot be combined with `-Filter`. Use the scripts' `-Filter` parameter rather than passing `--filter` through additional arguments. Direct `dotnet test` calls do not apply the scripts' exclusions.

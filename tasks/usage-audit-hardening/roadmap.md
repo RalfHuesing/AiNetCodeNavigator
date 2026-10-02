@@ -12,6 +12,8 @@ Die [Verifikationsregeln](../../.agents/rules/04-verification.mdc) und [Build-/T
 
 Alle Aufgaben übernehmen die [Nicht-Ziele des Konzepts](Konzept.md#nicht): read-only Targets, kein administrativer Ersatzkatalog, keine Ausführung analysierter Bibliotheken, keine Erweiterung zur Compilerdiagnostik-/Refactoringfunktion, keine Legacy-Aliase und keine neuen universellen Toolketten. Core bleibt frei von MCP-Transport und Tokenisierung. Analysierte Anwendungsdateien werden nicht verändert. Technische Tool-/Komponentennamen sind zulässig; Produkt-, Hersteller- und Kundennamen sowie reale Anwendungspfade gehören weder in diese Planung noch in Commit-Nachrichten. Lokale Messdetails bleiben in den bestehenden, nicht versionierten Auditartefakten; versionierte Nachweise verwenden neutrale Aliase.
 
+Bei langsamen oder hängenden Tests gilt verbindlich die [gesonderte Behandlung nach fünf Minuten](../../.agents/rules/04-verification.mdc#slow-or-stalled-tests). Der Orchestrator vergibt den eigenständigen Diagnose-/Korrekturpunkt vor weiterer Implementierung; unveränderte breite Wiederholungsläufe und Verschiebung auf einen späteren Milestone sind kein zulässiger Umgang. Für den bereits bekannten Sammellauf ist [M2-T1.1](roadmap/M2-T1.1.md) zuständig.
+
 Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept und seine Abnahme. In Schritt 4 ist danach höchstens ein gezielter Korrektur-Leaf je Milestone vorgesehen; offene Abweichungen bleiben sichtbar und erlauben keinen unbelegten Abschluss.
 
 ## Reihenfolge
