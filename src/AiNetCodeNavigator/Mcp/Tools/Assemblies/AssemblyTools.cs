@@ -18,6 +18,8 @@ namespace AiNetCodeNavigator.Mcp.Tools.Assemblies;
 [McpServerToolType]
 public sealed class AssemblyTools(NavigatorHostRuntime runtime)
 {
+    internal Action? BeforeAssemblyContextBodyLoadForTesting { get; set; }
+
     [McpServerTool(Name = "get_assembly_context", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Combine assembly metadata, body, structure, callers, and impact sections for a selected target or symbol.")]
     public Task<CallToolResult> GetAssemblyContext([Required, System.ComponentModel.Description("Absolute path to an existing managed .dll or .exe target.")] string targetPath, [System.ComponentModel.Description("Optional type or member identifier; omit to return only the assembly overview.")] string? symbolIdentifier = null,
@@ -92,6 +94,7 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                 var incompleteActions = new List<string>();
                 if (includeBody)
                 {
+                    BeforeAssemblyContextBodyLoadForTesting?.Invoke();
                     var result = await AssemblySymbolBodyScanner.GetAsync(effectiveSymbolIdentifier, maxBodyLines, 1, ct, ownerPath).ConfigureAwait(false);
                     if (result.Error is { } error) return NavigationToolSupport.Failure(error, effectiveResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                     var body = result.Body!;

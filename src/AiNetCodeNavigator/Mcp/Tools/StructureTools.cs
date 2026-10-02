@@ -428,7 +428,11 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         var payload = await NamespaceTreeScanner.ScanSolutionAsync(solution, project, ct,
             new NamespaceTreeScanOptions(Math.Clamp(depth, 1, 3), maxResults, includeGenerated, prefix, kind, includeTypes,
                 IncludeProjectOverview: includeProjectOverview,
-                FormatTypeHandoff: identity is null ? null : symbol => identity.FormatHandoff(symbol, solution))).ConfigureAwait(false);
+                FormatTypeHandoff: identity is null ? null : symbol =>
+                {
+                    var internalId = identity.FormatHandoff(symbol, solution);
+                    return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
+                })).ConfigureAwait(false);
         if (payload.Error is not null)
             return payload.ErrorCode == NavigationErrorCodes.AmbiguousSymbol
                 ? McpToolResults.Recoverable(NavigationErrorCodes.AmbiguousSymbol, payload.Error,
@@ -486,7 +490,10 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         {
             "kind" => members.OrderBy(member => member.Kind, StringComparer.Ordinal).ThenBy(member => member.Name, StringComparer.Ordinal).ToList(),
             "name" => members.OrderBy(member => member.Name, StringComparer.Ordinal).ToList(),
-            _ => members.OrderBy(member => member.LineCount).ThenBy(member => member.Name, StringComparer.Ordinal).ToList(),
+            _ => members.OrderBy(member => member.FilePath, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(member => member.StartLine)
+                .ThenBy(member => member.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList(),
         };
         var shown = members.Take(Math.Clamp(maxMembers, 1, 200)).ToArray();
         var typeKind = type.IsRecord ? type.TypeKind == TypeKind.Struct ? "Record Struct" : "Record Class" : type.TypeKind.ToString();
