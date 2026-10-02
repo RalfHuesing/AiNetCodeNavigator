@@ -82,7 +82,7 @@ internal static class McpResponseFormatter
             var minimumText = responsePrefix + (omittedBytes == 0
                 ? firstUnit
                 : $"{firstUnit}\n{CreateContinuationHint(firstEnd, omittedBytes)}");
-            var minimumBytes = Encoding.UTF8.GetByteCount(minimumText);
+            var minimumBytes = Math.Max(McpResponseBudgetLimits.MinimumBytes, Encoding.UTF8.GetByteCount(minimumText));
             var minimumTokens = TokenEncoding.CountTokens(minimumText);
             var canRetryWithLargerBudget = minimumBytes > maxResponseBytes
                 && minimumBytes <= McpResponseBudgetLimits.MaximumBytes;

@@ -123,9 +123,15 @@ public static class SourceTypeOriginScanner
 
     private static IReadOnlyList<ITypeSymbol> FindTypes(IAssemblySymbol assembly, string name)
     {
-        var metadataName = name.StartsWith("T:", StringComparison.Ordinal) ? name[2..] : name;
+        var metadataName = ResolveTypeOriginScanner.NormalizeMetadataName(
+            name.StartsWith("T:", StringComparison.Ordinal) ? name[2..] : name);
         var exact = assembly.GetTypeByMetadataName(metadataName);
         if (exact is not null) return [exact];
+
+        var nestedMatches = new List<ITypeSymbol>();
+        if (!metadataName.Contains('+') && ResolveTypeOriginScanner.TryAddNestedMatches(assembly, metadataName, nestedMatches))
+            return nestedMatches;
+
         if (metadataName.Contains('.')) return Array.Empty<ITypeSymbol>();
         return AssemblyAnalysisSymbolTraversal.GetAllTypes(assembly.GlobalNamespace)
             .Where(type => string.Equals(type.Name, metadataName, StringComparison.Ordinal))

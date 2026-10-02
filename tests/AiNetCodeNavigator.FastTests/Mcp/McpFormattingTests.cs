@@ -121,6 +121,23 @@ public sealed class McpFormattingTests
     }
 
     [Fact]
+    public void Format_AdvertisesByteMinimumWithinPublicBudgetFloorForTokenRecovery()
+    {
+        var text = new string('x', 300) + "\n" + new string('y', 300);
+
+        var recovery = McpResponseFormatter.Format(text, 65_536, maxResponseTokens: 50);
+
+        Assert.Equal("RESPONSE_BUDGET_TOO_SMALL", recovery.ErrorCode);
+        Assert.Equal(McpResponseBudgetLimits.MinimumBytes, recovery.MinimumResponseBytes);
+        Assert.True(recovery.MinimumResponseTokens > 50);
+        var retry = McpResponseFormatter.Format(text, recovery.MinimumResponseBytes!.Value, recovery.MinimumResponseTokens);
+        Assert.Null(retry.ErrorCode);
+        Assert.True(retry.IsTruncated);
+        Assert.InRange(retry.Utf8Bytes, 0, recovery.MinimumResponseBytes.Value);
+        Assert.InRange(retry.TokenCount, 0, recovery.MinimumResponseTokens.Value);
+    }
+
+    [Fact]
     public void Format_ContinuationOffsetResumesAtTheNextCompleteLine()
     {
         var text = string.Join("\n", Enumerable.Range(0, 120).Select(index => $"entry-{index:D3}"));

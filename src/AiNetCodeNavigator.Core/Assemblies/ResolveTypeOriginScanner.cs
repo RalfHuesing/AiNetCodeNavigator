@@ -118,7 +118,7 @@ public static class ResolveTypeOriginScanner
         }
     }
 
-    private static bool TryAddNestedMatches(IAssemblySymbol assembly, string name, ICollection<ITypeSymbol> matches)
+    internal static bool TryAddNestedMatches(IAssemblySymbol assembly, string name, ICollection<ITypeSymbol> matches)
     {
         var found = false;
         for (var separator = name.LastIndexOf('.'); separator > 0; separator = name.LastIndexOf('.', separator - 1))
@@ -136,7 +136,7 @@ public static class ResolveTypeOriginScanner
         .Replace("global::", string.Empty, StringComparison.Ordinal)
         .Replace('/', '+');
 
-    private static string NormalizeMetadataName(string value)
+    internal static string NormalizeMetadataName(string value)
     {
         if (!value.Contains('<')) return value;
         var normalized = new System.Text.StringBuilder(value.Length);

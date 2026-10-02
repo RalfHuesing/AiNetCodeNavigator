@@ -358,16 +358,126 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     fileTypeIds = await DependencyGraphScanner.GetDocumentTypeIdsAsync(selectedDocument.Document, ct).ConfigureAwait(false);
                 }
                 var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
-                var scan = await DependencyGraphScanner.ScanSolutionAsync(solution, ct,
-                    new DependencyGraphScanOptions(PageSize: maxResults, TargetFilePath: filePath, TargetTypeName: typeName,
-                        TargetTypeId: typeId, TargetTypeIds: fileTypeIds, Direction: parsedDirection, Depth: depth,
-                        ScopeType: parsedScope, IncludeGenerated: includeGenerated), CreateSourceHandoffFormatter(solution, identity)).ConfigureAwait(false);
+                var scan = await ScanSourceDependencyGraphAcrossDocumentsAsync(solution,
+                    new DependencyGraphTraversalOptions(TargetFilePath: filePath,
+                        TargetTypeName: typeName, Direction: parsedDirection, Depth: depth,
+                        PageSize: maxResults, TargetTypeId: typeId, TargetTypeIds: fileTypeIds),
+                    new DependencyGraphScanOptions(ScopeType: parsedScope, IncludeGenerated: includeGenerated),
+                    CreateSourceHandoffFormatter(solution, identity), ct).ConfigureAwait(false);
                 return NavigationToolSupport.Success(scan, scan.IsTruncated, "Increase maxResults, depth, or document coverage and repeat the query.");
                 }, maxResponseBytes, maxResponseTokens, ct);
             }, null, cancellationToken);
 
         CallToolResult Invalid(string field, string hint) => McpToolResults.InvalidArgument("The requested value is not supported.", "$." + field, hint,
             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+    }
+
+    private static async Task<DependencyGraphPayload> ScanSourceDependencyGraphAcrossDocumentsAsync(
+        Solution solution,
+        DependencyGraphTraversalOptions traversalOptions,
+        DependencyGraphScanOptions scanOptions,
+        Func<ISymbol, string?> handoffFormatter,
+        CancellationToken cancellationToken)
+    {
+        var pages = new List<DependencyGraphPayload>();
+        var documentOffset = 0;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var relationshipOffset = 0;
+            DependencyGraphPayload? firstPage = null;
+            while (true)
+            {
+                var page = await DependencyGraphScanner.ScanSolutionAsync(solution, cancellationToken,
+                    scanOptions with
+                    {
+                        Offset = relationshipOffset,
+                        PageSize = DependencyGraphScanner.MaximumPageSize,
+                        MaxDocuments = DependencyGraphScanner.MaximumDocuments,
+                        DocumentOffset = documentOffset,
+                        TargetFilePath = null,
+                        TargetTypeName = null,
+                        TargetProject = null,
+                        TargetTypeId = null,
+                        TargetTypeIds = null,
+                    }).ConfigureAwait(false);
+                pages.Add(page);
+                firstPage ??= page;
+                var relationshipTotal = Math.Max(page.TotalProjectDependencyCount,
+                    Math.Max(page.TotalNamespaceDependencyCount,
+                        Math.Max(page.TotalFileDependencyCount, page.TotalTypeDependencyCount)));
+                if (relationshipOffset + page.PageSize >= relationshipTotal) break;
+                relationshipOffset += page.PageSize;
+            }
+
+            if (firstPage!.NextDocumentOffset is not int nextDocumentOffset) break;
+            documentOffset = nextDocumentOffset;
+        }
+
+        var merged = DependencyGraphTraversal.MergeAndTraverse(pages, traversalOptions);
+        var visibleEdges = merged.TypeDependencies ?? [];
+        if (visibleEdges.Count == 0) return merged;
+
+        var requestedTypeIds = visibleEdges.SelectMany(edge => new[] { edge.FromTypeId, edge.ToTypeId })
+            .ToHashSet(StringComparer.Ordinal);
+        var symbolsByTypeId = await ResolveSourceDependencyTypesAsync(solution, requestedTypeIds, cancellationToken).ConfigureAwait(false);
+        return merged with
+        {
+            TypeDependencies = visibleEdges.Select(edge => edge with
+            {
+                FromHandoffId = symbolsByTypeId.TryGetValue(edge.FromTypeId, out var fromSymbol) ? handoffFormatter(fromSymbol) : null,
+                ToHandoffId = symbolsByTypeId.TryGetValue(edge.ToTypeId, out var toSymbol) ? handoffFormatter(toSymbol) : null,
+            }).ToArray(),
+        };
+    }
+
+    private static async Task<IReadOnlyDictionary<string, INamedTypeSymbol>> ResolveSourceDependencyTypesAsync(
+        Solution solution,
+        HashSet<string> requestedTypeIds,
+        CancellationToken cancellationToken)
+    {
+        var symbolsByTypeId = new Dictionary<string, INamedTypeSymbol>(StringComparer.Ordinal);
+        foreach (var project in solution.Projects.OrderBy(project => project.FilePath, StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var compilation = await project.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
+            if (compilation is null) continue;
+            VisitNamespace(compilation.Assembly.GlobalNamespace);
+            if (symbolsByTypeId.Count == requestedTypeIds.Count) break;
+        }
+        return symbolsByTypeId;
+
+        void VisitNamespace(INamespaceSymbol namespaceSymbol)
+        {
+            if (symbolsByTypeId.Count == requestedTypeIds.Count) return;
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach (var childNamespace in namespaceSymbol.GetNamespaceMembers())
+            {
+                VisitNamespace(childNamespace);
+                if (symbolsByTypeId.Count == requestedTypeIds.Count) return;
+            }
+            foreach (var type in namespaceSymbol.GetTypeMembers())
+            {
+                VisitType(type);
+                if (symbolsByTypeId.Count == requestedTypeIds.Count) return;
+            }
+        }
+
+        void VisitType(INamedTypeSymbol type)
+        {
+            if (symbolsByTypeId.Count == requestedTypeIds.Count) return;
+            cancellationToken.ThrowIfCancellationRequested();
+            if (type.Locations.Any(location => location.IsInSource))
+            {
+                var typeId = DependencyGraphScanner.GetSourceTypeId(solution, type);
+                if (requestedTypeIds.Contains(typeId)) symbolsByTypeId.TryAdd(typeId, type.OriginalDefinition);
+            }
+            foreach (var nestedType in type.GetTypeMembers())
+            {
+                VisitType(nestedType);
+                if (symbolsByTypeId.Count == requestedTypeIds.Count) return;
+            }
+        }
     }
 
     private static (Document? Document, string? Error) ResolveDependencyDocument(Solution solution, string filePath)

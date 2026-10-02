@@ -1,7 +1,9 @@
 #nullable enable
 
 using System.Linq;
+using System.IO;
 using System.Threading.Tasks;
+using AiNetCodeNavigator.TestKit;
 using AiNetCodeNavigator.Core.CallTree;
 using AiNetCodeNavigator.Core.Hierarchy;
 using AiNetCodeNavigator.Core.Assemblies;
@@ -266,7 +268,7 @@ public sealed class CrossFeatureRelationshipContractTests
     {
         using var fixture = TestWorkspaceBuilder.CreateSolution(
             @"C:\VirtualRepo\TypeOrigins.slnx",
-            new ProjectSpec("First", [("Worker.cs", "namespace Shared; public sealed class Worker { }")]),
+            new ProjectSpec("First", [("Worker.cs", "namespace Shared { public sealed class Worker { } } namespace Nested { public class Outer<T> { public class Inner<U> { } } }")]),
             new ProjectSpec("Second", [("Worker.cs", "namespace Shared; public sealed class Worker { }")]));
         var second = fixture.Solution.Projects.Single(project => project.Name == "Second");
         var compilation = await second.GetCompilationAsync();
@@ -281,12 +283,73 @@ public sealed class CrossFeatureRelationshipContractTests
         Assert.Equal("source", local.Value.AssemblyOrigin);
         Assert.All(local.Value.SourceLocations, location => Assert.Contains("Second", location.FilePath, StringComparison.Ordinal));
 
+        var first = fixture.Solution.Projects.Single(project => project.Name == "First");
+        var firstCompilation = await first.GetCompilationAsync();
+        Assert.NotNull(firstCompilation);
+        var nestedGeneric = firstCompilation.GetTypeByMetadataName("Nested.Outer`1+Inner`1");
+        Assert.NotNull(nestedGeneric);
+        var nestedOrigin = await SourceTypeOriginScanner.ResolveAsync(fixture.Solution, fixture.Solution.FilePath!, nestedGeneric, null);
+        Assert.True(nestedOrigin.IsSuccess);
+        Assert.True(nestedOrigin.Value!.Found);
+        Assert.Equal("First", nestedOrigin.Value.ProjectName);
+        Assert.Equal("source", nestedOrigin.Value.AssemblyOrigin);
+        Assert.Contains("Nested.Outer<T>.Inner<U>", nestedOrigin.Value.TypeName);
+
         var metadata = await SourceTypeOriginScanner.ResolveAsync(fixture.Solution, fixture.Solution.FilePath!, null, "System.String");
         Assert.True(metadata.IsSuccess);
         Assert.True(metadata.Value!.Found);
         Assert.Equal("reference", metadata.Value.AssemblyOrigin);
         Assert.False(string.IsNullOrWhiteSpace(metadata.Value.OutputAssembly));
         Assert.Contains("System.Private.CoreLib", metadata.Value.SearchedAssemblies);
+    }
+
+    [Fact]
+    public async Task SourceTypeOriginReportsAmbiguousMetadataReferences()
+    {
+        using var temp = TestTempDirectory.Create("source-type-origin-ambiguous-");
+        var firstPath = AssemblyTestHelper.EmitAssembly(temp, "OriginCandidateOne", "namespace External; public sealed class SharedType { }");
+        var secondPath = AssemblyTestHelper.EmitAssembly(temp, "OriginCandidateTwo", "namespace External; public sealed class SharedType { }");
+        using var fixture = TestWorkspaceBuilder.CreateSolution(@"C:\VirtualRepo\SourceTypeOriginAmbiguous.slnx",
+            new ProjectSpec("Consumer", [("Consumer.cs", "namespace Consumer; public sealed class UsesFramework { public string Value => string.Empty; }")],
+                AdditionalReferences: [MetadataReference.CreateFromFile(firstPath), MetadataReference.CreateFromFile(secondPath)]));
+
+        var result = await SourceTypeOriginScanner.ResolveAsync(fixture.Solution, fixture.Solution.FilePath!, null, "External.SharedType");
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.Value!.Found);
+        Assert.True(result.Value.IsAmbiguous);
+        Assert.Equal("ambiguous", result.Value.AssemblyOrigin);
+        Assert.NotNull(result.Value.CandidatePaths);
+        Assert.Contains(Path.GetFullPath(firstPath), result.Value.CandidatePaths!);
+        Assert.Contains(Path.GetFullPath(secondPath), result.Value.CandidatePaths!);
+    }
+
+    [Fact]
+    public async Task SourceTypeOriginMatchesNestedGenericMetadataTypeAndExactReferenceIdentity()
+    {
+        using var temp = TestTempDirectory.Create("source-type-origin-nested-metadata-");
+        var oldPackage = temp.CreateSubdirectory(Path.Combine(".nuget", "packages", "shared.package", "1.0.0", "lib", "net10.0"));
+        var newPackage = temp.CreateSubdirectory(Path.Combine(".nuget", "packages", "shared.package", "2.0.0", "lib", "net10.0"));
+        using var oldTemp = TestTempDirectory.Create("source-type-origin-old-reference-");
+        using var newTemp = TestTempDirectory.Create("source-type-origin-new-reference-");
+        var oldGenerated = AssemblyTestHelper.EmitAssembly(oldTemp, "SharedDependency", "[assembly: System.Reflection.AssemblyVersion(\"1.0.0.0\")] namespace External; public sealed class OtherType { }");
+        var newGenerated = AssemblyTestHelper.EmitAssembly(newTemp, "SharedDependency", "[assembly: System.Reflection.AssemblyVersion(\"2.0.0.0\")] namespace External; public class Outer<T> { public class Inner<U> { } }");
+        var oldPath = Path.Combine(oldPackage, "SharedDependency.dll");
+        var newPath = Path.Combine(newPackage, "SharedDependency.dll");
+        File.Move(oldGenerated, oldPath);
+        File.Move(newGenerated, newPath);
+        using var fixture = TestWorkspaceBuilder.CreateSolution(@"C:\VirtualRepo\SourceTypeOriginNestedMetadata.slnx",
+            new ProjectSpec("Consumer", [("Consumer.cs", "namespace Consumer; public sealed class UsesFramework { public string Value => string.Empty; }")],
+                AdditionalReferences: [MetadataReference.CreateFromFile(oldPath), MetadataReference.CreateFromFile(newPath)]));
+
+        var result = await SourceTypeOriginScanner.ResolveAsync(fixture.Solution, fixture.Solution.FilePath!, null,
+            "External.Outer<int>.Inner<string>");
+
+        Assert.True(result.IsSuccess);
+        Assert.True(result.Value!.Found);
+        Assert.False(result.Value.IsAmbiguous);
+        Assert.Equal("reference", result.Value.AssemblyOrigin);
+        Assert.Equal(Path.GetFullPath(newPath), Path.GetFullPath(result.Value.OutputAssembly!));
     }
 
     private static TestSolutionHandle CreateRelationshipSolution() => TestWorkspaceBuilder.CreateSolution(
