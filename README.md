@@ -1,27 +1,89 @@
-# AiNetCodeNavigator
+# AiNetCodeNavigator — MCP server for C# code navigation
 
-AiNetCodeNavigator is a .NET project for an MCP server that helps agents navigate C# source code and managed assemblies. Its scope is code navigation; linting, diagnostics, metrics, and automated refactoring are outside the project.
+AiNetCodeNavigator gives AI coding agents read-only navigation tools for **C# source code and compiled .NET assemblies** through the **Model Context Protocol (MCP)**. Find symbols, read method bodies, trace callers and references, inspect type hierarchies, and explore decompiled libraries without editing the analyzed code.
 
-## Status
+The server runs locally over stdio. Source navigation uses Roslyn; assembly navigation uses the ILSpy decompiler (`ICSharpCode.Decompiler`). Targets are existing `.sln` / `.slnx` solutions or managed `.dll` / `.exe` files.
 
-The MCP stdio host registers `get_server_health`, `reload_config`, and nineteen navigation tools. Current contract evidence exercises the original SDK tool definitions and transport-free handlers, including source and assembly handoffs, response budgets, paging, and runtime lifecycle. Retained stdio/client end-to-end cases are categorized separately from the eligible completion gates. See the [tool reference](docs/tools/README.md), [setup guide](docs/setup/README.md), [MCP host](docs/mcp-host.md), and [build and test guide](docs/development/build-and-tests.md) for current behavior and verification limits. The core library contains components for loading solutions, resolving symbols, examining code structure and relationships, and inspecting assemblies.
+## What you can do
 
-AiNetCodeNavigator is autonomous. Its binding product references are the [current-state documentation](docs/README.md) and local code and tests.
+| Task | Tools |
+| --- | --- |
+| Find declarations and read source or decompiled bodies | `find_symbol`, `get_symbol_body` |
+| Browse namespaces, file outlines, and type members | `get_namespace_tree`, `get_file_skeleton`, `get_class_structure` |
+| Trace callers, callees, references, and affected dependents | `get_call_tree`, `find_references`, `get_impact` |
+| Follow inheritance, implementations, and dependency edges | `get_type_hierarchy`, `find_implementations`, `dependency_graph` |
+| Inspect library APIs, search decompiled code, and find extension methods | `inspect_assembly`, `search_assembly`, `find_assembly_extensions` |
+| Resolve a type to its source project or framework/NuGet assembly | `resolve_type_origin` |
+| Gather a declaration, callers, and related test candidates | `get_feature_context`, `get_test_context` |
 
-## Build and test
+The server exposes **19 navigation tools and two runtime tools**. The [tool reference](docs/tools/README.md) lists all 21, including supported targets, parameters, result limits, and examples.
 
-Requirements: .NET 10 SDK and PowerShell 7 or later. The SDK version is specified in [`global.json`](global.json).
+Navigation results provide opaque symbol handles (`h:...`) for follow-up calls. Byte and optional token budgets bound responses; polling and continuation tokens let clients retrieve long-running or paged results. See the [tool reference's shared response rules](docs/tools/README.md#shared-request-and-response-behavior).
+
+## Quick start on Windows
+
+### 1. Get the server
+
+Check [GitHub Releases](https://github.com/RalfHuesing/AiNetCodeNavigator/releases) for published builds. The release workflow produces `AiNetCodeNavigator-win-x64.zip`, a self-contained Windows x64 package. Extract the entire archive to a folder such as `C:\Tools\AiNetCodeNavigator`; the package includes the .NET runtime. Source-solution loading still needs the MSBuild/.NET SDK tooling required by the target solution.
+
+To build from source instead, use PowerShell 7 or later and the .NET 10 SDK specified in [`global.json`](global.json). From a checkout of this repository, run:
+
+```powershell
+pwsh -File ./scripts/deploy.ps1 -SkipTests
+```
+
+This builds the solution and publishes the executable and its dependencies to `deploy/`, skipping the test suite. Keep the published files together. This local deployment is framework-dependent and requires the .NET 10 runtime. See [setup requirements](docs/setup/README.md) for both installation options.
+
+### 2. Configure your MCP client
+
+Use the absolute path to the published executable. For clients that accept an `mcpServers` process configuration:
+
+```json
+{
+  "mcpServers": {
+    "AiNetCodeNavigator": {
+      "command": "C:\\Tools\\AiNetCodeNavigator\\AiNetCodeNavigator.exe"
+    }
+  }
+}
+```
+
+Replace the example path with your installation path. The client starts the server as a child process; no server arguments are required for default settings. The [setup guide](docs/setup/README.md) covers optional configuration, logging, and client-specific entries for Claude Desktop, Cursor, and Antigravity. Cursor additionally requires `"type": "stdio"` in its server entry.
+
+### 3. Navigate a solution or assembly
+
+For example, ask your agent to find `OrderService.Save`, read its implementation, and identify its callers. The corresponding MCP tool requests are:
+
+```json
+{"name":"find_symbol","arguments":{"targetPath":"C:\\work\\App.slnx","pattern":"OrderService.Save","kind":"method"}}
+{"name":"get_symbol_body","arguments":{"targetPath":"C:\\work\\App.slnx","symbolIdentifiers":["h:..."]}}
+{"name":"get_call_tree","arguments":{"targetPath":"C:\\work\\App.slnx","symbolIdentifier":"h:...","direction":"incoming"}}
+```
+
+Replace `h:...` with the exact handle returned by `find_symbol`. For a compiled library, start with `inspect_assembly` and its absolute DLL path, then follow a returned type or member handle to structure or body tools.
+
+## Scope and limitations
+
+- Navigation is read-only. The server writes its own logs, caches, and temporary analysis files; navigation tools do not edit analyzed source files or binaries. Source loading uses MSBuild design-time evaluation, which is not a sandbox for arbitrary custom build targets.
+- The product focuses on C# navigation. Linting, compiler diagnostics, code-quality scoring, and automatic refactoring are outside its scope.
+- Assembly navigation requires managed .NET binaries with IL. Native binaries are unsupported; the server does not execute analyzed assemblies.
+- Test context identifies static test candidates, including heuristic name matches. It does not measure test coverage.
+- Tools differ in source and assembly support. `get_index_scope`, `get_feature_context`, and `get_test_context` are source-only; indexed scope is not a complete physical-file inventory.
+- Current verification covers SDK contracts and transport-free source/assembly handlers. The documented client configurations are not handshake-tested compatibility claims; retained stdio/client end-to-end tests are excluded from the official test scripts. See [MCP Host](docs/mcp-host.md) and [Build and Tests](docs/development/build-and-tests.md).
+
+## Development and documentation
 
 ```powershell
 pwsh -File ./scripts/build.ps1
 pwsh -File ./scripts/test.ps1
 ```
 
-The scripts write logs to `temp/`. Routine test scripts exclude extended integration tests, and every official test script excludes `E2EIntegration`; `scripts/test.ps1 -IncludeExtended` includes eligible extended tests while keeping E2E excluded. See [Build and Tests](docs/development/build-and-tests.md) for the project layout, test selection, and individual test commands.
+The scripts write logs to `temp/`. Routine tests exclude extended integration cases; `scripts/test.ps1 -IncludeExtended` includes them while still excluding `E2EIntegration`. The fast suite includes an audit launcher that requires a local AiNetReview installation at the [documented path](docs/development/build-and-tests.md#automatic-audit-reports).
 
-## Documentation
-
-The [documentation index](docs/README.md) covers implemented behavior.
+- [Documentation index](docs/README.md): implemented behavior and architecture.
+- [MCP tool reference](docs/tools/README.md): tool contracts and usage patterns.
+- [Setup guide](docs/setup/README.md): executable configuration and client setup.
+- [Build and test guide](docs/development/build-and-tests.md): project layout and verification commands.
 
 ## License
 

@@ -2,6 +2,12 @@
 
 AiNetCodeNavigator is a local MCP server that uses standard input/output (stdio). Use a Windows `AiNetCodeNavigator.exe` built or published from this repository. Building requires the .NET 10 SDK version in [`global.json`](../../global.json) (10.0.203 with latest-feature roll-forward); a framework-dependent executable also needs the .NET 10 runtime on the host. The source build command is `pwsh -File ./scripts/build.ps1`; deploy the executable and its dependencies to a testable directory with `pwsh -File ./scripts/deploy.ps1`.
 
+## Windows release package
+
+The [release workflow](../../.github/workflows/release.yml) publishes a self-contained Windows x64 build as `AiNetCodeNavigator-win-x64.zip`, including the .NET runtime, `hostsettings.json`, README, and license. Check [GitHub Releases](https://github.com/RalfHuesing/AiNetCodeNavigator/releases) for published packages. Extract the entire archive and keep the executable and its dependencies together. Source-solution loading uses installed MSBuild/.NET SDK tooling appropriate to the target solution, even with a self-contained server package.
+
+The included `hostsettings.json` is used only when selected with `--config`; placing it beside the executable does not change the default settings-file path described below.
+
 ## Local process configuration
 
 Clients start the executable as a child process. Set `command` to the executable's absolute path, and pass each CLI argument as its own string in `args`. The server reads MCP JSON-RPC from standard input and writes only protocol messages to standard output. Startup/configuration errors go to standard error. Logging goes to daily rolling files in `<exe-directory>\logs` by default; error and fatal log events are also written to standard error. Set `AINET_CODE_NAVIGATOR_LOG_DIRECTORY` in the server process environment to select another log directory.
