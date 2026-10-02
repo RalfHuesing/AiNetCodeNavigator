@@ -174,7 +174,11 @@ public sealed class SourceToolsContractTests
         var namespaceTree = await structure.GetNamespaceTree(target, project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"), namespacePrefix: "ScopeProbe",
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(namespaceTree, 16384, 1024);
-        Assert.Contains("ScopeProbe.Target", TextOf(namespaceTree), StringComparison.Ordinal);
+        var namespaceLines = TextOf(namespaceTree).Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
+        var scopeNamespaceIndex = Array.FindIndex(namespaceLines, line => line.StartsWith("- ScopeProbe ", StringComparison.Ordinal));
+        var targetTypeIndex = Array.FindIndex(namespaceLines, line => line.StartsWith("  - class Target (", StringComparison.Ordinal));
+        Assert.True(scopeNamespaceIndex >= 0, string.Join('\n', namespaceLines));
+        Assert.True(targetTypeIndex > scopeNamespaceIndex, string.Join('\n', namespaceLines));
         var namespaceBytes = await structure.GetNamespaceTree(target,
             project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
             namespacePrefix: "ScopeProbe", depth: 1, includeTypes: false, maxResults: 1,

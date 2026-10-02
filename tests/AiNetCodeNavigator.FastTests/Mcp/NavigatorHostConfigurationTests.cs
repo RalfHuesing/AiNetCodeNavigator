@@ -12,6 +12,13 @@ using Serilog.Events;
 
 namespace AiNetCodeNavigator.FastTests.Mcp;
 
+[CollectionDefinition(HostRuntimeIsolationCollection.Name, DisableParallelization = true)]
+public sealed class HostRuntimeIsolationCollection
+{
+    public const string Name = "Process-wide host runtime lifecycle";
+}
+
+[Collection(HostRuntimeIsolationCollection.Name)]
 public sealed class NavigatorHostConfigurationTests
 {
     [Fact]
