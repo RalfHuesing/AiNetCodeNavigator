@@ -73,6 +73,127 @@ public sealed class AssemblyToolsContractTests
     }
 
     [Fact]
+    public async Task AssemblyCallTree_MetadataUsesTheGraphGenerationWhenTargetChangesAfterGraphBuild()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        using var fixture = TestTempDirectory.Create("ainet-calltree-generation-boundary-");
+        using var replacementFixture = TestTempDirectory.Create("ainet-calltree-generation-replacement-");
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "CallTreeGenerationProbe", "namespace Probe; public sealed class Caller { public int Target() => 1; public int Run() => Target(); }");
+        var replacementPath = AssemblyTestHelper.EmitAssembly(replacementFixture, "CallTreeGenerationProbe", "namespace Probe; public sealed class Caller { public int Target() => 2; public int Run() => Target(); public int Added() => 3; }");
+        AssertSameAssemblyIdentity(assemblyPath, replacementPath);
+        await AssertDifferentBytesAsync(assemblyPath, replacementPath);
+        var symbols = new SymbolTools(runtime);
+        var produced = await symbols.FindSymbol(assemblyPath, pattern: "Caller.Run", kind: "method", maxResponseBytes: 32768);
+        AssertOwnerResult(produced, "Run");
+        var graphSnapshot = ReadHeader(TextOf(produced), "snapshotId");
+        var replaced = false;
+        var relationships = new RelationshipTools(runtime, _ =>
+        {
+            File.Copy(replacementPath, assemblyPath, overwrite: true);
+            replaced = true;
+            return Task.CompletedTask;
+        }, null);
+
+        var result = await relationships.GetCallTree(assemblyPath, ReadAnyHandoff(TextOf(produced)),
+            direction: "outgoing", includeDiagnostics: true, maxResponseBytes: 32768);
+
+        Assert.True(replaced);
+        AssertOwnerResult(result, "Caller.Target");
+        Assert.Equal(graphSnapshot, ReadHeader(TextOf(result), "snapshotId"));
+    }
+
+    [Fact]
+    public async Task AssemblyCallTree_RejectsChangedTransitiveOwnerAfterHandoffAcquisition()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        using var fixture = TestTempDirectory.Create("ainet-closure-owner-generation-");
+        using var replacementFixture = TestTempDirectory.Create("ainet-closure-owner-replacement-");
+        var leaf = AssemblyTestHelper.EmitAssembly(fixture, "ClosureLeafProbe",
+            "namespace ClosureLeaf; public sealed class Probe { public int Run() => new ClosureTransitive.Value().Number; }",
+            AssemblyTestHelper.EmitAssembly(fixture, "ClosureTransitiveProbe", "namespace ClosureTransitive; public sealed class Value { public int Number => 1; }"));
+        var transitivePath = Path.Combine(Path.GetDirectoryName(leaf)!, "ClosureTransitiveProbe.dll");
+        var replacementTransitive = AssemblyTestHelper.EmitAssembly(replacementFixture, "ClosureTransitiveProbe",
+            "namespace ClosureTransitive; public sealed class Value { public int Number => 2; public int Added => 3; }");
+        AssertSameAssemblyIdentity(transitivePath, replacementTransitive);
+        await AssertDifferentBytesAsync(transitivePath, replacementTransitive);
+        var root = AssemblyTestHelper.EmitAssembly(fixture, "ClosureRootProbe",
+            "namespace ClosureRoot; public sealed class Root { public int Run() => new ClosureLeaf.Probe().Run(); }", leaf);
+        var symbols = new SymbolTools(runtime);
+        var produced = await symbols.FindSymbol(root, pattern: "ClosureRoot.Root.Run", kind: "method", maxResponseBytes: 32768);
+        AssertOwnerResult(produced, "Run");
+        var replaced = false;
+        var relationships = new RelationshipTools(runtime, null, null, (_, _) =>
+        {
+            File.Copy(replacementTransitive, transitivePath, overwrite: true);
+            replaced = true;
+            return Task.CompletedTask;
+        });
+
+        var result = await relationships.GetCallTree(root, ReadAnyHandoff(TextOf(produced)),
+            direction: "outgoing", includeReferences: true, maxResponseBytes: 32768);
+
+        Assert.True(replaced);
+        Assert.True(result.IsError ?? false, TextOf(result));
+        Assert.Contains("STALE_SNAPSHOT", TextOf(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AssemblyCallTree_UsesPinnedRootWhenTargetChangesBetweenRootScopeAndRootHandoffAcquisitions()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        using var fixture = TestTempDirectory.Create("ainet-closure-root-generation-");
+        using var replacementFixture = TestTempDirectory.Create("ainet-closure-root-replacement-");
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "ClosureRootGenerationProbe", "namespace Probe; public sealed class Root { public int Run() => 1; }");
+        var replacementPath = AssemblyTestHelper.EmitAssembly(replacementFixture, "ClosureRootGenerationProbe", "namespace Probe; public sealed class Root { public int Run() => 2; public int Added() => 3; }");
+        var symbols = new SymbolTools(runtime);
+        var produced = await symbols.FindSymbol(assemblyPath, pattern: "Root.Run", kind: "method", maxResponseBytes: 32768);
+        AssertOwnerResult(produced, "Run");
+        var graphSnapshot = ReadHeader(TextOf(produced), "snapshotId");
+        var replaced = false;
+        var relationships = new RelationshipTools(runtime, null, null, (_, _) =>
+        {
+            File.Copy(replacementPath, assemblyPath, overwrite: true);
+            replaced = true;
+            return Task.CompletedTask;
+        });
+
+        var result = await relationships.GetCallTree(assemblyPath, ReadAnyHandoff(TextOf(produced)),
+            direction: "outgoing", includeReferences: true, maxResponseBytes: 32768);
+
+        Assert.True(replaced);
+        AssertOwnerResult(result, "Root.Run");
+        Assert.Equal(graphSnapshot, ReadHeader(TextOf(result), "snapshotId"));
+    }
+
+    [Fact]
+    public async Task AssemblyCallTree_RawClosureResolutionRejectsChangesBeforeHandoffReopen()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        using var fixture = TestTempDirectory.Create("ainet-closure-raw-handoff-");
+        using var replacementFixture = TestTempDirectory.Create("ainet-closure-raw-replacement-");
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "ClosureRawProbe", "namespace Probe; public sealed class Root { public int Run() => 1; }");
+        var replacementPath = AssemblyTestHelper.EmitAssembly(replacementFixture, "ClosureRawProbe", "namespace Probe; public sealed class Root { public int Run() => 2; public int Added() => 3; }");
+        var replaced = false;
+        var relationships = new RelationshipTools(runtime, null, null, null, _ =>
+        {
+            File.Copy(replacementPath, assemblyPath, overwrite: true);
+            replaced = true;
+            return Task.CompletedTask;
+        });
+
+        var result = await relationships.GetCallTree(assemblyPath, "Root.Run",
+            direction: "outgoing", includeReferences: true, maxResponseBytes: 32768);
+
+        Assert.True(replaced);
+        Assert.True(result.IsError ?? false, TextOf(result));
+        Assert.Contains("STALE_SNAPSHOT", TextOf(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AssemblyBodyBatch_UsesOneSnapshotAcrossItems()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
@@ -873,6 +994,23 @@ public sealed class AssemblyToolsContractTests
         Assert.Contains(expectedText, text, StringComparison.Ordinal);
         Assert.InRange(Encoding.UTF8.GetByteCount(text), 0, bytes);
         Assert.InRange(TokenCount(text), 0, tokens);
+    }
+
+    private static void AssertSameAssemblyIdentity(string originalPath, string replacementPath)
+    {
+        var original = AssemblyName.GetAssemblyName(originalPath);
+        var replacement = AssemblyName.GetAssemblyName(replacementPath);
+        Assert.Equal(original.Name, replacement.Name);
+        Assert.Equal(original.Version, replacement.Version);
+        Assert.Equal(original.CultureName, replacement.CultureName);
+        Assert.Equal(original.GetPublicKeyToken(), replacement.GetPublicKeyToken());
+    }
+
+    private static async Task AssertDifferentBytesAsync(string originalPath, string replacementPath)
+    {
+        var original = await File.ReadAllBytesAsync(originalPath);
+        var replacement = await File.ReadAllBytesAsync(replacementPath);
+        Assert.False(original.SequenceEqual(replacement));
     }
 
     private static void AssertError(CallToolResult result, string code)

@@ -90,32 +90,14 @@ public static class AssemblyFindSymbolScanner
             }
             await using var scopeAccess = result.Value!;
             var context = scopeAccess.Context;
-            var expectedReference = rootContext.References.FirstOrDefault(reference =>
-                reference.ResolvedPath is not null
-                && string.Equals(Path.GetFullPath(reference.ResolvedPath), Path.GetFullPath(candidate), StringComparison.OrdinalIgnoreCase));
-            if (expectedReference is null
-                || !AssemblyReferenceResolver.IdentityMatches(expectedReference, context.Identity!)
-                || !string.Equals(expectedReference.ContentHash, context.Origin.ContentHash, StringComparison.OrdinalIgnoreCase))
+            var ownerStatus = AssemblyReferenceSnapshotValidator.ValidateOwner(
+                rootContext, candidate, context, out var staleError);
+            if (ownerStatus == AssemblyReferenceSnapshotValidator.OwnerValidationStatus.Stale)
+                return Failure(staleError!.Value);
+            if (ownerStatus == AssemblyReferenceSnapshotValidator.OwnerValidationStatus.Incomplete)
             {
-                return Failure(new ResultError(
-                    NavigationErrorCodes.StaleSnapshot,
-                    $"Referenced assembly '{Path.GetFileName(candidate)}' changed after the root assembly snapshot was captured.",
-                    "Repeat the query so the root and referenced assembly snapshots can be acquired together."));
-            }
-
-            var subgraphMatch = ReferenceSubgraphMatches(rootContext.References, candidate, context.References);
-            if (!subgraphMatch.Matches)
-            {
-                if (subgraphMatch.RootHasBoundary)
-                {
-                    incompleteReferences = true;
-                    continue;
-                }
-
-                return Failure(new ResultError(
-                    NavigationErrorCodes.StaleSnapshot,
-                    $"Referenced assembly '{Path.GetFileName(candidate)}' has a different transitive reference snapshot than the root assembly.",
-                    "Repeat the query so the root and referenced assembly snapshots can be acquired together."));
+                incompleteReferences = true;
+                continue;
             }
 
             var project = scopeAccess.Solution.Projects.FirstOrDefault();
@@ -123,43 +105,6 @@ public static class AssemblyFindSymbolScanner
             if (scope == SymbolScopeType.Tests && !isTest || scope == SymbolScopeType.Production && isTest) continue;
 
             ScanContext(context, candidate);
-        }
-
-        static (bool Matches, bool RootHasBoundary) ReferenceSubgraphMatches(
-            IReadOnlyList<AssemblyReferenceDto> rootReferences,
-            string ownerPath,
-            IReadOnlyList<AssemblyReferenceDto> ownerReferences)
-        {
-            static (HashSet<string> Edges, bool HasBoundary) GetEdges(
-                IReadOnlyList<AssemblyReferenceDto> references,
-                string rootPath)
-            {
-                var reachable = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Path.GetFullPath(rootPath) };
-                var edges = new HashSet<string>(StringComparer.Ordinal);
-                var hasBoundary = false;
-                var changed = true;
-                while (changed)
-                {
-                    changed = false;
-                    foreach (var reference in references)
-                    {
-                        if (reference.SourceAssemblyPath is null
-                            || !reachable.Contains(Path.GetFullPath(reference.SourceAssemblyPath))) continue;
-                        var source = Path.GetFullPath(reference.SourceAssemblyPath);
-                        var resolvedPath = reference.ResolvedPath is null ? string.Empty : Path.GetFullPath(reference.ResolvedPath);
-                        edges.Add(string.Join("|", source, reference.Name, reference.Version, reference.Culture,
-                            reference.PublicKeyToken, reference.ResolutionState, resolvedPath, reference.ContentHash ?? string.Empty));
-                        hasBoundary |= reference.ResolutionState is "depth_limit" or "invalid";
-                        if (reference.ResolvedPath is not null && reachable.Add(resolvedPath)) changed = true;
-                    }
-                }
-
-                return (edges, hasBoundary);
-            }
-
-            var root = GetEdges(rootReferences, ownerPath);
-            var owner = GetEdges(ownerReferences, ownerPath);
-            return (root.Edges.SetEquals(owner.Edges), root.HasBoundary);
         }
 
         void ScanContext(AssemblyContext context, string candidatePath)

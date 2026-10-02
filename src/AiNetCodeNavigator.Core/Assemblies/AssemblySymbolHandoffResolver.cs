@@ -1,6 +1,7 @@
 #nullable enable
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
@@ -145,6 +146,10 @@ public sealed class AssemblySymbolHandoffAccess : IAsyncDisposable
     public AssemblyIdentityDto Identity => sessionAccess.Generation.Identity;
     public long Generation => sessionAccess.Generation.Number;
     public string ReferenceSnapshotHash => sessionAccess.Generation.ReferenceSnapshotHash;
+    public IReadOnlyList<string> Diagnostics => sessionAccess.Generation.Diagnostics
+        .Select(diagnostic => diagnostic.Message)
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
 
     public ValueTask DisposeAsync() => sessionAccess.DisposeAsync();
 }

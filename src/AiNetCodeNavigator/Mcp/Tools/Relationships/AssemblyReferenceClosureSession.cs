@@ -83,7 +83,10 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
     internal static async Task<AssemblyReferenceClosureSessionOpenResult> OpenAsync(
         string targetPath,
         string identifier,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<CancellationToken, Task>? afterRawDiscovery = null,
+        Func<AssemblyNavigationSessionScope, CancellationToken, Task>? afterRootScopeOpened = null,
+        Func<AssemblySymbolHandoffAccess, CancellationToken, Task>? afterHandoffResolved = null)
     {
         var normalizedIdentifier = InputNormalizer.NormalizeSymbolIdentifier(identifier);
         if (!InputNormalizer.HasOpaqueHandoffPrefix(normalizedIdentifier)
@@ -92,7 +95,11 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
             var rawResolution = await ResolveRawAcrossReferencesAsync(targetPath, normalizedIdentifier, cancellationToken).ConfigureAwait(false);
             if (!rawResolution.IsSuccess)
                 return Failed(rawResolution.Error!.Value, "$.symbolIdentifier");
-            return await OpenAsync(targetPath, rawResolution.HandoffId!, cancellationToken).ConfigureAwait(false);
+            if (afterRawDiscovery is not null)
+                await afterRawDiscovery(cancellationToken).ConfigureAwait(false);
+            return await OpenAsync(targetPath, rawResolution.HandoffId!, cancellationToken,
+                afterRootScopeOpened: afterRootScopeOpened,
+                afterHandoffResolved: afterHandoffResolved).ConfigureAwait(false);
         }
 
         var openedRoot = await AssemblyNavigationSessionScope.OpenAsync(targetPath, cancellationToken).ConfigureAwait(false);
@@ -102,9 +109,13 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
         var scopes = new List<AssemblyNavigationSessionScope>();
         try
         {
+            if (afterRootScopeOpened is not null)
+                await afterRootScopeOpened(root, cancellationToken).ConfigureAwait(false);
             var resolvedHandoff = await AssemblySymbolHandoffResolver.ResolveAsync(identifier, cancellationToken).ConfigureAwait(false);
             if (!resolvedHandoff.IsSuccess) return await FailedAndDisposeAsync(resolvedHandoff.Error!.Value, "$.symbolIdentifier").ConfigureAwait(false);
             handoff = resolvedHandoff.Value!;
+            if (afterHandoffResolved is not null)
+                await afterHandoffResolved(handoff, cancellationToken).ConfigureAwait(false);
 
             var rootPath = Path.GetFullPath(root.Context.Origin.CanonicalPath);
             var handoffOwnerPath = Path.GetFullPath(handoff.Origin.CanonicalPath);
@@ -117,6 +128,14 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
                 return await FailedAndDisposeAsync(new ResultError(NavigationErrorCodes.TargetMismatch,
                     "The symbol handoff is not owned by the selected assembly or its current reference snapshot.",
                     "Use a handoff returned by this assembly's find_symbol(includeReferences=true) result."), "$.symbolIdentifier").ConfigureAwait(false);
+
+            if (string.Equals(rootPath, handoffOwnerPath, StringComparison.OrdinalIgnoreCase)
+                && (!string.Equals(root.Context.Origin.ContentHash, handoff.Origin.ContentHash, StringComparison.OrdinalIgnoreCase)
+                    || root.Context.Generation != handoff.Generation
+                    || !string.Equals(root.Context.ReferenceSnapshotHash, handoff.ReferenceSnapshotHash, StringComparison.OrdinalIgnoreCase)))
+                return await FailedAndDisposeAsync(new ResultError(NavigationErrorCodes.StaleSnapshot,
+                    "The root assembly changed between root-scope and handoff acquisition.",
+                    "Repeat the query so the root scope and symbol handoff share one assembly generation."), "$.targetPath").ConfigureAwait(false);
 
             var declarationId = DocumentationCommentId.CreateDeclarationId(handoff.Symbol);
             if (string.IsNullOrWhiteSpace(declarationId) || handoff.Symbol.ContainingAssembly is null)
@@ -160,6 +179,22 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
                     scopes.Add(ownerScope);
                 }
                 if (ownerScope.Context.Status is not AssemblySessionStatus.Complete) hasFailedOwners = true;
+                if (string.Equals(ownerPath, handoffOwnerPath, StringComparison.OrdinalIgnoreCase)
+                    && (!string.Equals(ownerScope.Context.Origin.ContentHash, handoff.Origin.ContentHash, StringComparison.OrdinalIgnoreCase)
+                        || ownerScope.Context.Generation != handoff.Generation
+                        || !string.Equals(ownerScope.Context.ReferenceSnapshotHash, handoff.ReferenceSnapshotHash, StringComparison.OrdinalIgnoreCase)))
+                    return await FailedAndDisposeAsync(new ResultError(NavigationErrorCodes.StaleSnapshot,
+                        "The handoff owner changed between handoff and closure-owner acquisition.",
+                        "Repeat the query so the handoff and closure owner share one assembly generation."), "$.targetPath").ConfigureAwait(false);
+                if (!string.Equals(ownerPath, rootPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    var validation = AssemblyReferenceSnapshotValidator.ValidateOwner(
+                        root.Context, ownerPath, ownerScope.Context, out var staleError);
+                    if (validation == AssemblyReferenceSnapshotValidator.OwnerValidationStatus.Stale)
+                        return await FailedAndDisposeAsync(staleError!.Value, "$.targetPath").ConfigureAwait(false);
+                    if (validation == AssemblyReferenceSnapshotValidator.OwnerValidationStatus.Incomplete)
+                        hasFailedOwners = true;
+                }
                 owners.Add(new(ownerPath, ownerScope));
             }
 
@@ -237,6 +272,18 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
                     scopes.Add(scope);
                 }
                 if (scope.Context.Status is not AssemblySessionStatus.Complete) ownerOpenFailed = true;
+                if (!string.Equals(ownerPath, rootPath, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    var validation = AssemblyReferenceSnapshotValidator.ValidateOwner(
+                        root.Context, ownerPath, scope.Context, out var staleError);
+                    if (validation == AssemblyReferenceSnapshotValidator.OwnerValidationStatus.Stale)
+                        return new(null, null, System.Array.Empty<AssemblySymbolInputCandidate>(), staleError!.Value);
+                    if (validation == AssemblyReferenceSnapshotValidator.OwnerValidationStatus.Incomplete)
+                        return new(null, null, System.Array.Empty<AssemblySymbolInputCandidate>(), new ResultError(
+                            NavigationErrorCodes.TargetUnreadable,
+                            "The current reference snapshot reaches a boundary before raw symbol resolution can verify every owner.",
+                            "Use a handoff returned by find_symbol(includeReferences=true) or resolve the missing reference boundary."));
+                }
 
                 var resolved = await SourceSymbolResolver.ResolveRawWithoutHandoffsAsync(
                     scope.Solution, identifier, cancellationToken).ConfigureAwait(false);

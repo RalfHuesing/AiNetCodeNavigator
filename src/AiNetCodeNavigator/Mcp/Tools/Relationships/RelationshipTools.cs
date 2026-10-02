@@ -22,6 +22,25 @@ namespace AiNetCodeNavigator.Mcp.Tools.Relationships;
 [McpServerToolType]
 public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 {
+    private Func<CancellationToken, Task>? afterAssemblyCallTreeGraphBuilt;
+    private Func<AssemblyNavigationSessionScope, CancellationToken, Task>? afterAssemblyClosureRootScopeOpened;
+    private Func<AssemblySymbolHandoffAccess, CancellationToken, Task>? afterAssemblyClosureHandoffResolved;
+    private Func<CancellationToken, Task>? afterAssemblyClosureRawDiscovery;
+
+    internal RelationshipTools(
+        NavigatorHostRuntime runtime,
+        Func<CancellationToken, Task>? afterAssemblyCallTreeGraphBuilt,
+        Func<AssemblyNavigationSessionScope, CancellationToken, Task>? afterAssemblyClosureRootScopeOpened,
+        Func<AssemblySymbolHandoffAccess, CancellationToken, Task>? afterAssemblyClosureHandoffResolved = null,
+        Func<CancellationToken, Task>? afterAssemblyClosureRawDiscovery = null)
+        : this(runtime)
+    {
+        this.afterAssemblyCallTreeGraphBuilt = afterAssemblyCallTreeGraphBuilt;
+        this.afterAssemblyClosureRootScopeOpened = afterAssemblyClosureRootScopeOpened;
+        this.afterAssemblyClosureHandoffResolved = afterAssemblyClosureHandoffResolved;
+        this.afterAssemblyClosureRawDiscovery = afterAssemblyClosureRawDiscovery;
+    }
+
     [McpServerTool(Name = "get_call_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Trace incoming, outgoing, or combined call relationships from a source or assembly symbol.")]
     public async Task<CallToolResult> GetCallTree([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type, member, documentation ID, or current symbol handoff to trace.")] string symbolIdentifier,
@@ -58,20 +77,12 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                             ? node
                             : node with { OwnerTargetPath = access.Origin.CanonicalPath }).ToArray(),
                     };
+                    if (afterAssemblyCallTreeGraphBuilt is not null)
+                        await afterAssemblyCallTreeGraphBuilt(ct).ConfigureAwait(false);
                     var body = format == "mermaid" ? CallTreeMermaidRenderer.RenderMermaid(graph) : CallGraphTextRenderer.RenderAscii(graph);
-                    var diagnosticScope = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
-                    if (!diagnosticScope.IsSuccess)
-                        return NavigationToolSupport.Failure(diagnosticScope.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
-                    IReadOnlyList<string> sessionDiagnostics;
-                    AnalysisSymbolIdentity identity;
-                    await using (var scopeAccess = diagnosticScope.Value!)
-                    {
-                        sessionDiagnostics = scopeAccess.Context.Diagnostics;
-                        identity = AnalysisSymbolIdentity.ForAssembly(scopeAccess.Context.Origin.CanonicalPath,
-                            scopeAccess.Context.Origin.ContentHash, scopeAccess.Context.Generation,
-                            scopeAccess.Context.ReferenceSnapshotHash);
-                    }
-                    body = AppendCallTreeDiagnostics(body, graph, sessionDiagnostics, includeDiagnostics);
+                    var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath,
+                        access.Origin.ContentHash, access.Generation, access.ReferenceSnapshotHash);
+                    body = AppendCallTreeDiagnostics(body, graph, access.Diagnostics, includeDiagnostics);
                     var response = NavigationToolSupport.SuccessText(body, graph.Truncated,
                         graph.Truncated ? "Increase depth or topN and repeat the query." : null);
                     return NavigationToolSupport.WithAssemblyMetadata(response, identity,
@@ -760,7 +771,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         return resolved;
     }
 
-    private static async Task<CallToolResult> BuildAssemblyCallTreeWithClosureAsync(
+    private async Task<CallToolResult> BuildAssemblyCallTreeWithClosureAsync(
         AnalysisTarget target,
         string identifier,
         int depth,
@@ -775,7 +786,10 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         int? maxResponseTokens,
         CancellationToken ct)
     {
-        var opened = await AssemblyReferenceClosureSession.OpenAsync(target.CanonicalPath, identifier, ct).ConfigureAwait(false);
+        var opened = await AssemblyReferenceClosureSession.OpenAsync(target.CanonicalPath, identifier, ct,
+            afterRawDiscovery: afterAssemblyClosureRawDiscovery,
+            afterRootScopeOpened: afterAssemblyClosureRootScopeOpened,
+            afterHandoffResolved: afterAssemblyClosureHandoffResolved).ConfigureAwait(false);
         if (opened.Error is { } openError)
             return NavigationToolSupport.Failure(openError, maxResponseBytes, maxResponseTokens, opened.ErrorField);
         await using var session = opened.Session!;

@@ -131,6 +131,11 @@ internal static class AssemblyCacheGenerationStorage
         AssemblyManifestDiagnostics diagnostics,
         AssemblyReferenceResolution references) =>
         string.Equals(
+            AssemblyReferenceSnapshotFingerprint.Create(references),
+            AssemblyReferenceSnapshotFingerprint.CreateForCurrentContent(references),
+            StringComparison.OrdinalIgnoreCase)
+        &&
+        string.Equals(
             manifestReferences.ReferenceSnapshotHash,
             AssemblyReferenceSnapshotFingerprint.Create(references),
             StringComparison.OrdinalIgnoreCase)

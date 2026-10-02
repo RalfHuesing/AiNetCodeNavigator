@@ -10,6 +10,12 @@ namespace AiNetCodeNavigator.Core.Assemblies;
 internal static class AssemblyReferenceSnapshotFingerprint
 {
     internal static string Create(AssemblyReferenceResolution resolution)
+        => Create(resolution, useCapturedContent: true);
+
+    internal static string CreateForCurrentContent(AssemblyReferenceResolution resolution)
+        => Create(resolution, useCapturedContent: false);
+
+    private static string Create(AssemblyReferenceResolution resolution, bool useCapturedContent)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         foreach (var reference in resolution.References
@@ -29,7 +35,7 @@ internal static class AssemblyReferenceSnapshotFingerprint
             Append(hash, reference.Diagnostic ?? string.Empty);
 
             if (reference.ResolvedPath is null) continue;
-            if (reference.ContentHash is { Length: > 0 } contentHash)
+            if (useCapturedContent && reference.ContentHash is { Length: > 0 } contentHash)
             {
                 Append(hash, contentHash);
                 continue;
