@@ -215,6 +215,37 @@ public sealed class NamespaceTreeScannerTests
     }
 
     [Fact]
+    public async Task ScanSolutionAsync_UsesExactProjectPathToDisambiguateSameNamedProjects()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\DuplicateProjectNames.slnx",
+            new ProjectSpec("Shared.App", [("First.cs", "namespace FirstOwner; public class FirstType { }")], VirtualProjectDirectory: "src/first"));
+        var first = fixture.Solution.Projects.Single();
+        var secondId = ProjectId.CreateNewId("Shared.App");
+        var withSecond = fixture.Solution.AddProject(ProjectInfo.Create(
+                secondId,
+                VersionStamp.Create(),
+                "Shared.App",
+                "Shared.App",
+                LanguageNames.CSharp,
+                filePath: @"C:\VirtualRepo\src\second\Shared.App.csproj",
+                metadataReferences: TestWorkspaceBuilder.CoreReferences))
+            .AddDocument(DocumentId.CreateNewId(secondId), "Second.cs",
+                SourceText.From("namespace SecondOwner; public class SecondType { }"),
+                filePath: @"C:\VirtualRepo\src\second\Second.cs");
+        Assert.True(fixture.Workspace.TryApplyChanges(withSecond));
+
+        var ambiguous = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Workspace.CurrentSolution, projectName: "Shared.App");
+        Assert.Contains("matches multiple projects", ambiguous.Error, StringComparison.Ordinal);
+
+        var selected = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Workspace.CurrentSolution, projectName: first.FilePath);
+        Assert.Null(selected.Error);
+        Assert.Contains(selected.RootNamespaces, node => node.Name == "FirstOwner");
+        Assert.DoesNotContain(selected.RootNamespaces, node => node.Name == "SecondOwner");
+        Assert.Equal(1, selected.TotalTypes);
+    }
+
+    [Fact]
     public async Task ScanSolutionAsync_ClampsDeepNamespaceTraversal()
     {
         var source = new StringBuilder();

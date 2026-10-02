@@ -8,4 +8,4 @@ Supported views are `tree`, `files`, and `summary`. The tree view shows director
 
 The Core result reports truncation and warnings and includes one `Next` action that suggests how to refine or repeat a bounded scan. This scanner does not retain continuation state or expose offset-based pages; `MaxResults` is a display limit, not a cursor.
 
-The MCP host currently registers `get_file_tree` with an absolute `targetPath` and relative tree root. The initial public integration test exercises a source target; the full public parameter and budget matrix remains open. See [MCP Host](../mcp-host.md).
+The MCP host currently registers `get_file_tree` with an absolute `targetPath` and relative tree root. `SourceToolsContractTests` directly calls the source handler with extension and view filters, checks its normal result under separate byte and token caps, and verifies the typed error for an unsupported view. Scanner tests cover rooted traversal, reparse-point boundaries, filtering, depth, and display limits. See [MCP Host](../mcp-host.md).

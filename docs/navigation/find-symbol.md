@@ -12,4 +12,4 @@ Generated source locations are excluded by default. Set `IncludeGenerated` to `t
 
 For managed assemblies, symbol results include the canonical `targetPath` of the assembly that owns the symbol alongside its opaque handoff. Use that owner path for `get_symbol_body`; passing the searched root assembly for a referenced symbol returns `TARGET_MISMATCH`. When references cannot be resolved, a no-match result is marked `completeness=truncated` and identifies `unresolvedReferences`, so it does not imply that the full reference closure was searched.
 
-The MCP `includeReferences` option applies to managed-assembly searches: it adds matches from resolved referenced assemblies. Source searches ignore this option.
+The MCP `includeReferences` option applies to managed-assembly searches: it adds matches from resolved referenced assemblies. Source searches ignore this option. The transport-free `SourceToolsContractTests` calls the source handler with byte and token caps, verifies a returned declaration handoff, and reconstructs an outer response spread across multiple continuation pages.
