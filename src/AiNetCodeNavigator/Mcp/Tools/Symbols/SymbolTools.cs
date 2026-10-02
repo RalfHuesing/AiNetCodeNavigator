@@ -71,18 +71,22 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                 var results = new List<FindSymbolScanResult>();
                 if (target.TargetType == AnalysisTargetType.Project)
                 {
-                    return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, token) =>
+                    return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, source, token) =>
                     {
-                        var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, token).ConfigureAwait(false);
                         foreach (var searchPattern in effectivePatterns)
                         {
                             token.ThrowIfCancellationRequested();
                             results.Add(await FindSymbolScanner.FindMatchesWithDetailsAsync(
                                 new FindSymbolScanRequest(solution, searchPattern, symbolKind, scope, maxResults,
-                                    SourceIdentity: identity, IncludeGenerated: includeGenerated), token).ConfigureAwait(false));
+                                    SourceIdentity: source.Identity, IncludeGenerated: includeGenerated), token).ConfigureAwait(false));
                         }
 
-                        return FormatFindResults(results, effectivePatterns, target.TargetType, maxResponseBytes, maxResponseTokens);
+                        var response = FormatFindResults(results, effectivePatterns, target.TargetType, maxResponseBytes, maxResponseTokens);
+                        var omissions = results.SelectMany(static result => result.TruncatedBy).Distinct(StringComparer.Ordinal).ToArray();
+                        var scopes = string.Join(";", effectivePatterns.Select(patternValue => $"pattern={patternValue}"));
+                        return source.WithMetadata(response,
+                            $"findSymbol({scopes}, kind={symbolKind}, scope={scope}, includeGenerated={includeGenerated}, maxResultsPerPattern={maxResults})",
+                            omissions);
                     }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
                 }
 
@@ -104,7 +108,10 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                     results.Add(result);
                 }
 
-                return FormatFindResults(results, effectivePatterns, target.TargetType, maxResponseBytes, maxResponseTokens);
+                var response = FormatFindResults(results, effectivePatterns, target.TargetType, maxResponseBytes, maxResponseTokens);
+                var omissions = results.SelectMany(static result => result.TruncatedBy).Distinct(StringComparer.Ordinal).ToArray();
+                var analyzedScope = $"findSymbol(patterns={string.Join('|', effectivePatterns)}, kind={symbolKind}, scope={scope}, includeGenerated={includeGenerated}, includeReferences={includeReferences}, maxResultsPerPattern={maxResults})";
+                return NavigationToolSupport.WithAssemblyMetadata(response, AssemblySymbolInputResolver.CreateIdentity(assemblyScope), analyzedScope, omissions);
             }, null, cancellationToken);
     }
 
@@ -141,20 +148,23 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
             {
                 var items = new List<object>();
                 var hasDomainGaps = false;
+                var hasSourceResolutionGaps = false;
+                var hasSourceBodyLimit = false;
                 var suggestedStartLine = startLine;
                 if (target.TargetType == AnalysisTargetType.Project)
                 {
-                    var response = await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, token) =>
+                    var response = await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, source, token) =>
                     {
-                        var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, token).ConfigureAwait(false);
                         ResultError? firstSourceResolutionError = null;
                         var resolvedSourceBodies = 0;
                         foreach (var identifier in symbolIdentifiers)
                         {
                             token.ThrowIfCancellationRequested();
                             var resolved = await SourceSymbolBodyResolver.ResolveAsync(
-                                solution, identifier, effectiveLines, startLine, identity, token).ConfigureAwait(false);
+                                solution, identifier, effectiveLines, startLine, source.Identity, token).ConfigureAwait(false);
                             hasDomainGaps |= resolved.Error is not null || resolved.Body?.HasMore == true;
+                            hasSourceResolutionGaps |= resolved.Error is not null;
+                            hasSourceBodyLimit |= resolved.Body?.HasMore == true;
                             if (resolved.Body?.HasMore == true)
                                 suggestedStartLine = Math.Max(suggestedStartLine, resolved.Body.DisplayedEnd + 1);
                             if (resolved.Error is { } error)
@@ -173,14 +183,23 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                         if (resolvedSourceBodies == 0 && firstSourceResolutionError is { } resolutionError)
                             return NavigationToolSupport.Failure(resolutionError, maxResponseBytes, maxResponseTokens, "$.symbolIdentifiers");
 
-                        return NavigationToolSupport.SuccessText(string.Join("\n\n", items), hasDomainGaps,
+                        var response = NavigationToolSupport.SuccessText(string.Join("\n\n", items), hasDomainGaps,
                             hasDomainGaps ? $"Resolve item errors and repeat; for a body with more lines set startLine to {suggestedStartLine}." : null);
+                        return source.WithMetadata(response,
+                            $"symbolBody(identifiers={string.Join('|', symbolIdentifiers)}, lines={startLine}..{(endLine?.ToString() ?? $"+{effectiveLines}")})",
+                            new[]
+                            {
+                                hasSourceResolutionGaps ? "unresolvedSymbol" : null,
+                                hasSourceBodyLimit ? "maxBodyLines" : null,
+                            }.Where(static reason => reason is not null).Select(static reason => reason!).ToArray());
                     }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
                     return response;
                 }
 
                 ResultError? firstAssemblyResolutionError = null;
                 var resolvedAssemblyBodies = 0;
+                var hasAssemblyResolutionGaps = false;
+                var hasAssemblyBodyLimit = false;
                 var openedAssemblyScope = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
                 if (!openedAssemblyScope.IsSuccess)
                     return NavigationToolSupport.Failure(openedAssemblyScope.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
@@ -193,6 +212,8 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                     var resolved = await AssemblySymbolBodyScanner.GetAsync(
                         identifier, effectiveLines, startLine, ct, expectedTargetPath: target.CanonicalPath, pinnedScope: assemblyScope).ConfigureAwait(false);
                     hasDomainGaps |= resolved.Error is not null || resolved.Body?.HasMore == true;
+                    hasAssemblyResolutionGaps |= resolved.Error is not null;
+                    hasAssemblyBodyLimit |= resolved.Body?.HasMore == true;
                     if (resolved.Body?.HasMore == true)
                         suggestedStartLine = Math.Max(suggestedStartLine, resolved.Body.DisplayedEnd + 1);
                     if (resolved.Error is { } error)
@@ -211,8 +232,15 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                 if (resolvedAssemblyBodies == 0 && firstAssemblyResolutionError is { } resolutionError)
                     return NavigationToolSupport.Failure(resolutionError, maxResponseBytes, maxResponseTokens, "$.symbolIdentifiers");
 
-                return NavigationToolSupport.SuccessText(string.Join("\n\n", items), hasDomainGaps,
+                var assemblyResponse = NavigationToolSupport.SuccessText(string.Join("\n\n", items), hasDomainGaps,
                     hasDomainGaps ? $"Resolve item errors and repeat; for a body with more lines set startLine to {suggestedStartLine}." : null);
+                return NavigationToolSupport.WithAssemblyMetadata(assemblyResponse, AssemblySymbolInputResolver.CreateIdentity(assemblyScope),
+                    $"symbolBody(identifiers={string.Join('|', symbolIdentifiers)}, lines={startLine}..{(endLine?.ToString() ?? $"+{effectiveLines}")})",
+                    new[]
+                    {
+                        hasAssemblyResolutionGaps ? "unresolvedSymbol" : null,
+                        hasAssemblyBodyLimit ? "maxBodyLines" : null,
+                    }.Where(static reason => reason is not null).Select(static reason => reason!).ToArray());
             }, null, cancellationToken);
     }
 

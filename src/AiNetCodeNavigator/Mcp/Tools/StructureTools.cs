@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text;
+using System.Text.Json;
 using AiNetCodeNavigator.Core.Common;
 using AiNetCodeNavigator.Core.Assemblies;
 using AiNetCodeNavigator.Core.FileStructure;
@@ -31,13 +32,15 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     {
         return NavigationToolSupport.RouteAsync(runtime, "get_index_scope", targetPath, new { }, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens,
-            async (target, ct) => await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, token) =>
+            async (target, ct) => await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, source, token) =>
             {
                 var result = await IndexScopeScanner.ScanAsync(solution, token).ConfigureAwait(false);
                 if (!result.ScanCompleted)
                     return McpToolResults.Recoverable("INDEX_SCOPE_FAILED", result.Error ?? "The source index scope could not be scanned.",
                         "Check the loaded solution and repeat the query.");
-                return NavigationToolSupport.SuccessText(result.FormattedText, result.IsTruncated, result.NextAction);
+                var response = NavigationToolSupport.SuccessText(result.FormattedText, result.IsTruncated, result.NextAction);
+                return source.WithMetadata(response,
+                    $"indexScope(project=*, maxProjects={result.EffectiveMaxProjects}, maxFileTypes={result.EffectiveMaxFileTypes})");
             }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false),
             AnalysisTargetType.Project, cancellationToken);
     }
@@ -61,8 +64,14 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             {
                 if (target.TargetType == AnalysisTargetType.Project)
                     return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target,
-                        async (solution, token) => await BuildSkeletonsAsync(solution, target.CanonicalPath, filePaths,
-                            await AnalysisSymbolIdentity.ForSourceAsync(solution, token).ConfigureAwait(false), token, maxResponseBytes, maxResponseTokens).ConfigureAwait(false),
+                        async (solution, source, token) =>
+                        {
+                            var omissions = new List<string>();
+                            var response = await BuildSkeletonsAsync(solution, target.CanonicalPath, filePaths,
+                                source.Identity, token, maxResponseBytes, maxResponseTokens, omissionReasons: omissions).ConfigureAwait(false);
+                            return source.WithMetadata(response,
+                                $"fileSkeleton(paths={string.Join('|', filePaths.Select(Path.GetFullPath))})", omissions.ToArray());
+                        },
                         maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
 
                 var opened = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
@@ -75,8 +84,11 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                             "Use inspect_assembly for metadata-only navigation.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                 var identity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash,
                     scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
-                    return await BuildSkeletonsAsync(scope.Solution, target.CanonicalPath, filePaths, identity, ct,
-                        maxResponseBytes, maxResponseTokens, sourceRoot, scope, BeforeAssemblySkeletonItemForTesting).ConfigureAwait(false);
+                    var omissions = new List<string>();
+                    var response = await BuildSkeletonsAsync(scope.Solution, target.CanonicalPath, filePaths, identity, ct,
+                        maxResponseBytes, maxResponseTokens, sourceRoot, scope, BeforeAssemblySkeletonItemForTesting, omissions).ConfigureAwait(false);
+                    return NavigationToolSupport.WithAssemblyMetadata(response, identity,
+                        $"fileSkeleton(paths={string.Join('|', filePaths.Select(Path.GetFullPath))})", omissions);
             }, null, cancellationToken);
     }
 
@@ -114,16 +126,18 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             maxResponseBytes, maxResponseTokens, async (target, ct) =>
             {
                 if (target.TargetType == AnalysisTargetType.Project)
-                    return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, token) =>
+                    return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, source, token) =>
                     {
-                        var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, token).ConfigureAwait(false);
                         var result = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(
-                            solution, symbolIdentifier, sortBy, maxMembers, kindFilter, nameFilter, identity, parsedScope, includeGenerated), token).ConfigureAwait(false);
+                            solution, symbolIdentifier, sortBy, maxMembers, kindFilter, nameFilter, source.Identity, parsedScope, includeGenerated), token).ConfigureAwait(false);
                         if (result is null) return McpToolResults.InvalidArgument("The identifier did not resolve to a type.", "$.symbolIdentifier", "Use a type name or type handoff.",
                             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                         if (result.Error is { } error) return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
-                        return NavigationToolSupport.SuccessText(FormatClassStructure(result), result.Truncated,
+                        var response = NavigationToolSupport.SuccessText(FormatClassStructure(result), result.Truncated,
                             result.Truncated ? "Increase maxMembers up to 200 and repeat the query." : null);
+                        return source.WithMetadata(response,
+                            $"classStructure(symbol={symbolIdentifier.Trim()}, scope={scopeType}, includeGenerated={includeGenerated}, kind={kindFilter?.Trim() ?? "*"}, name={nameFilter?.Trim() ?? "*"}, sortBy={sortBy.Trim().ToLowerInvariant()}, maxMembers={maxMembers})",
+                            result.TruncatedBy.ToArray());
                     }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
 
                 var normalizedIdentifier = InputNormalizer.NormalizeSymbolIdentifier(symbolIdentifier);
@@ -140,8 +154,11 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                         maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                     var rawIdentity = AssemblySymbolInputResolver.CreateIdentity(rawScope);
                     var rawStructure = BuildAssemblyClassStructure(rawType, target.CanonicalPath, rawIdentity, sortBy, maxMembers, kindFilter, nameFilter);
-                    return NavigationToolSupport.SuccessText(FormatClassStructure(rawStructure), rawStructure.Truncated,
+                    var rawResponse = NavigationToolSupport.SuccessText(FormatClassStructure(rawStructure), rawStructure.Truncated,
                         rawStructure.Truncated ? "Increase maxMembers up to 200 and repeat the query." : null);
+                    return NavigationToolSupport.WithAssemblyMetadata(rawResponse, rawIdentity,
+                        $"classStructure(symbol={normalizedIdentifier}, maxMembers={maxMembers}, kind={kindFilter?.Trim() ?? "*"}, name={nameFilter?.Trim() ?? "*"}, sortBy={sortBy.Trim().ToLowerInvariant()})",
+                        rawStructure.Truncated ? ["maxMembers"] : []);
                 }
 
                 var assembly = await AssemblySymbolHandoffResolver.ResolveAsync(symbolIdentifier, ct).ConfigureAwait(false);
@@ -156,8 +173,11 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
                     access.Generation, access.ReferenceSnapshotHash);
                 var result = BuildAssemblyClassStructure(type, access.Origin.CanonicalPath, identity, sortBy, maxMembers, kindFilter, nameFilter);
-                return NavigationToolSupport.SuccessText(FormatClassStructure(result), result.Truncated,
+                var response = NavigationToolSupport.SuccessText(FormatClassStructure(result), result.Truncated,
                     result.Truncated ? "Increase maxMembers up to 200 and repeat the query." : null);
+                return NavigationToolSupport.WithAssemblyMetadata(response, identity,
+                    $"classStructure(symbol={symbolIdentifier.Trim()}, maxMembers={maxMembers}, kind={kindFilter?.Trim() ?? "*"}, name={nameFilter?.Trim() ?? "*"}, sortBy={sortBy.Trim().ToLowerInvariant()})",
+                    result.Truncated ? ["maxMembers"] : []);
             }, null, cancellationToken);
     }
 
@@ -184,11 +204,14 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             {
                 if (target.TargetType == AnalysisTargetType.Project)
                     return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target,
-                        async (solution, token) =>
+                        async (solution, source, token) =>
                         {
-                            var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, token).ConfigureAwait(false);
-                            return await ScanNamespaceTreeAsync(solution, project, namespacePrefix, depth, includeTypes, kind, maxResults,
-                                includeGenerated, identity, token, maxResponseBytes, maxResponseTokens, includeProjectOverview: true).ConfigureAwait(false);
+                            var response = await ScanNamespaceTreeAsync(solution, project, namespacePrefix, depth, includeTypes, kind, maxResults,
+                                includeGenerated, source.Identity, token, maxResponseBytes, maxResponseTokens, includeProjectOverview: true).ConfigureAwait(false);
+                            var omissions = ReadStringArrayFromResult(response, "truncatedBy");
+                            return source.WithMetadata(response,
+                                $"namespaceTree(project={project?.Trim() ?? "*"}, prefix={namespacePrefix?.Trim() ?? "*"}, depth={depth}, includeTypes={includeTypes}, kind={kind.Trim().ToLowerInvariant()}, maxResults={maxResults}, includeGenerated={includeGenerated})",
+                                omissions.ToArray());
                         }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
 
                 var opened = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
@@ -196,14 +219,19 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 await using var scope = opened.Value!;
                 var identity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash,
                     scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
-                return await ScanNamespaceTreeAsync(scope.Solution, project, namespacePrefix, depth, includeTypes, kind, maxResults, includeGenerated, identity, ct,
+                var response = await ScanNamespaceTreeAsync(scope.Solution, project, namespacePrefix, depth, includeTypes, kind, maxResults, includeGenerated, identity, ct,
                     maxResponseBytes, maxResponseTokens, includeProjectOverview: false).ConfigureAwait(false);
+                var omissions = ReadStringArrayFromResult(response, "truncatedBy");
+                return NavigationToolSupport.WithAssemblyMetadata(response, identity,
+                    $"namespaceTree(project={project?.Trim() ?? "*"}, prefix={namespacePrefix?.Trim() ?? "*"}, depth={depth}, includeTypes={includeTypes}, kind={kind.Trim().ToLowerInvariant()}, maxResults={maxResults}, includeGenerated={includeGenerated})",
+                    omissions);
             }, null, cancellationToken);
     }
 
     private static async Task<CallToolResult> BuildSkeletonsAsync(Solution solution, string targetPath, string[] filePaths,
         AnalysisSymbolIdentity? identity, CancellationToken ct, int maxResponseBytes, int? maxResponseTokens,
-        string? selectedRoot = null, AssemblyNavigationSessionScope? assemblyScope = null, Action<int>? beforeAssemblyItem = null)
+        string? selectedRoot = null, AssemblyNavigationSessionScope? assemblyScope = null, Action<int>? beforeAssemblyItem = null,
+        List<string>? omissionReasons = null)
     {
         var targetDirectory = Path.GetFullPath(selectedRoot ?? Path.GetDirectoryName(targetPath)!);
         var chunks = new List<string>();
@@ -306,8 +334,22 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 "Use an indexed source path present in exactly one loaded project, or a current handoff that identifies one declaration file.",
                 maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         }
+        if (hasMissing) omissionReasons?.Add("unresolvedOrMissingFiles");
         return NavigationToolSupport.SuccessText(string.Join("\n\n", chunks), hasMissing,
             hasMissing ? "Correct invalid, missing, out-of-target, or ambiguous paths and repeat the file skeleton query." : null);
+    }
+
+    private static IReadOnlyList<string> ReadStringArrayFromResult(CallToolResult response, string property)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(response.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text ?? "{}");
+            return document.RootElement.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Array
+                ? value.EnumerateArray().Where(static item => item.ValueKind == JsonValueKind.String)
+                    .Select(static item => item.GetString()!).ToArray()
+                : Array.Empty<string>();
+        }
+        catch (JsonException) { return Array.Empty<string>(); }
     }
 
     private static async Task<(Document[]? Documents, ResultError? Error)> ResolveSkeletonHandoffAsync(

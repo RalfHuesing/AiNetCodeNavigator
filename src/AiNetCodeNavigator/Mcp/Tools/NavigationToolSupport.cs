@@ -1,6 +1,9 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Linq;
 using AiNetCodeNavigator.Core.Models;
+using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Core.Workspace;
 using AiNetCodeNavigator.Mcp.Formatting;
 using Microsoft.CodeAnalysis;
@@ -30,6 +33,27 @@ internal static class NavigationToolSupport
             ? McpToolResults.DomainTruncated(text, nextAction ?? "Increase a supported result or traversal limit and repeat the query.")
             : McpToolResults.TextResult(text, isError: false);
 
+    internal static CallToolResult WithAssemblyMetadata(CallToolResult response, AnalysisSymbolIdentity identity,
+        string analyzedScope, IReadOnlyList<string>? omissionReasons = null, bool resultContinuationAvailable = false)
+    {
+        if (response.IsError == true) return response;
+        if (!identity.IsAssembly) throw new ArgumentException("The analysis identity must belong to an assembly.", nameof(identity));
+        var reasons = omissionReasons ?? Array.Empty<string>();
+        var metadata = new NavigationAnalysisMetadata(NavigationAnalysisMetadata.CreateSnapshotId("assembly", identity.ContentHash), analyzedScope,
+            reasons.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(),
+            reasons.Count == 0 ? "complete" : "partial", resultContinuationAvailable);
+        response.Meta ??= new JsonObject();
+        if (response.Meta["navigationAnalysis"] is JsonNode existing)
+        {
+            var owner = existing.Deserialize<NavigationAnalysisMetadata>(JsonOptions);
+            if (owner is null || !string.Equals(owner.SnapshotId, metadata.SnapshotId, StringComparison.Ordinal))
+                throw new InvalidOperationException("Assembly result metadata does not match the assembly analysis snapshot.");
+            return response;
+        }
+        response.Meta["navigationAnalysis"] = JsonSerializer.SerializeToNode(metadata, JsonOptions);
+        return response;
+    }
+
     internal static CallToolResult Failure(
         ResultError error,
         int maxResponseBytes,
@@ -54,11 +78,79 @@ internal static class NavigationToolSupport
         int? maxResponseTokens,
         Func<AnalysisTarget, CancellationToken, Task<CallToolResult>> operation,
         AnalysisTargetType? requiredType,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        return await RouteAsync(runtime, toolName, targetPath, arguments, operationToken, continuationToken,
+            maxResponseBytes, maxResponseTokens, (target, _, token) => operation(target, token), requiredType, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    internal static async Task<CallToolResult> RouteAsync(
+        NavigatorHostRuntime runtime,
+        string toolName,
+        string? targetPath,
+        object arguments,
+        string? operationToken,
+        string? continuationToken,
+        int maxResponseBytes,
+        int? maxResponseTokens,
+        Func<AnalysisTarget, string?, CancellationToken, Task<CallToolResult>> operation,
+        AnalysisTargetType? requiredType,
         CancellationToken cancellationToken,
-        bool acceptsDomainCursor = false)
+        string? resultCursor = null,
+        string? resultSection = null)
     {
         ArgumentNullException.ThrowIfNull(runtime);
         ArgumentNullException.ThrowIfNull(operation);
+
+        if (continuationToken is not null)
+        {
+            if (operationToken is not null || resultCursor is not null)
+            {
+                return McpToolResults.InvalidArgument(
+                    "Outer response pages cannot be combined with polling or domain result cursors.",
+                    "$.continuationToken",
+                    "Read the outer response page by itself, then use resultCursor on the completed payload.",
+                    maxResponseBytes: maxResponseBytes,
+                    maxResponseTokens: maxResponseTokens);
+            }
+
+            var requestedPath = targetPath?.Trim();
+            if (string.IsNullOrWhiteSpace(requestedPath) || !Path.IsPathFullyQualified(requestedPath)
+                || requestedPath.Contains('*') || requestedPath.Contains('?'))
+            {
+                return McpToolResults.InvalidArgument("The original absolute target path is required.", "$.targetPath",
+                    "Repeat the continuation with the original absolute target path.",
+                    maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+            }
+
+            string canonicalPath;
+            try { canonicalPath = Path.GetFullPath(requestedPath); }
+            catch (Exception exception) when (exception is ArgumentException or IOException or NotSupportedException)
+            {
+                return McpToolResults.InvalidArgument("The target path is not valid.", "$.targetPath",
+                    "Repeat the continuation with the original absolute target path.",
+                    maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+            }
+            if (Path.GetExtension(canonicalPath).ToLowerInvariant() is not (".sln" or ".slnx" or ".dll" or ".exe"))
+            {
+                return McpToolResults.InvalidArgument("The original target path must identify a supported navigation file.", "$.targetPath",
+                    "Repeat the continuation with the original absolute .sln, .slnx, .dll or .exe target path.",
+                    maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+            }
+
+            return await runtime.Operations.RunAsync(new LongRunningToolCallRequest(
+                toolName,
+                canonicalPath,
+                JsonSerializer.Serialize(arguments, JsonOptions),
+                (_, _) => Task.FromResult(McpToolResults.Error("UNUSED_CONTINUATION_OPERATION", "An outer response page cannot start new work.")),
+                ContinuationToken: continuationToken,
+                MaxResponseBytes: maxResponseBytes,
+                MaxResponseTokens: maxResponseTokens,
+                ResultSection: resultSection), cancellationToken).ConfigureAwait(false);
+        }
+
         var resolved = AnalysisTargetResolver.Resolve(new AnalysisTargetRequest(targetPath));
         if (!resolved.Succeeded)
         {
@@ -83,21 +175,20 @@ internal static class NavigationToolSupport
             toolName,
             target.CanonicalPath,
             JsonSerializer.Serialize(arguments, JsonOptions),
-            ct => operation(target, ct),
+            (coreCursor, ct) => operation(target, coreCursor, ct),
             operationToken,
             continuationToken,
             maxResponseBytes,
             maxResponseTokens,
-            DomainCursor: acceptsDomainCursor && continuationToken?.StartsWith("v1.", StringComparison.Ordinal) == true
-                ? continuationToken
-                : null);
+            DomainCursor: resultCursor,
+            ResultSection: resultSection);
         return await runtime.Operations.RunAsync(request, cancellationToken).ConfigureAwait(false);
     }
 
     internal static async Task<CallToolResult> WithSourceSolutionAsync(
         NavigatorHostRuntime runtime,
         AnalysisTarget target,
-        Func<Solution, CancellationToken, Task<CallToolResult>> operation,
+        Func<Solution, SourceAnalysisContext, CancellationToken, Task<CallToolResult>> operation,
         int maxResponseBytes,
         int? maxResponseTokens,
         CancellationToken cancellationToken)
@@ -137,6 +228,32 @@ internal static class NavigationToolSupport
                 maxResponseTokens: maxResponseTokens);
         }
 
-        return await operation(snapshot.Solution!, cancellationToken).ConfigureAwait(false);
+        var sourceSolution = snapshot.Solution!;
+        var identity = await AnalysisSymbolIdentity.ForSourceAsync(sourceSolution, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("The loaded source solution has no analysis identity.");
+        return await operation(sourceSolution, new SourceAnalysisContext(identity), cancellationToken).ConfigureAwait(false);
+    }
+
+    internal sealed class SourceAnalysisContext(AnalysisSymbolIdentity identity)
+    {
+        internal AnalysisSymbolIdentity Identity { get; } = identity;
+
+        internal CallToolResult WithMetadata(CallToolResult response, string analyzedScope, params string[] omissionReasons)
+        {
+            if (response.IsError == true) return response;
+            var metadata = new NavigationAnalysisMetadata(NavigationAnalysisMetadata.CreateSnapshotId("source", Identity.ContentHash), analyzedScope,
+                omissionReasons.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(),
+                omissionReasons.Length == 0 ? "complete" : "partial");
+            response.Meta ??= new JsonObject();
+            if (response.Meta["navigationAnalysis"] is JsonNode existing)
+            {
+                var owner = existing.Deserialize<NavigationAnalysisMetadata>(JsonOptions);
+                if (owner is null || !string.Equals(owner.SnapshotId, metadata.SnapshotId, StringComparison.Ordinal))
+                    throw new InvalidOperationException("Source result metadata does not match the source analysis snapshot.");
+                return response;
+            }
+            response.Meta["navigationAnalysis"] = JsonSerializer.SerializeToNode(metadata, JsonOptions);
+            return response;
+        }
     }
 }

@@ -15,9 +15,19 @@ internal static class IntegrationMcpAssertions
     internal static string BodyOf(string text)
     {
         var lines = text.Split('\n');
-        var firstContentLine = lines.Length > 1 && lines[1].StartsWith("continuationToken=", StringComparison.Ordinal) ? 2 : 1;
+        var firstContentLine = lines.Length > 0 && lines[0].StartsWith("Status:", StringComparison.Ordinal) ? 1 : 0;
+        while (firstContentLine < lines.Length && IsResponseMetadata(lines[firstContentLine])) firstContentLine++;
         return string.Join("\n", lines.Skip(firstContentLine));
     }
+
+    private static bool IsResponseMetadata(string line) =>
+        line.StartsWith("snapshotId=", StringComparison.Ordinal)
+        || line.StartsWith("analyzedScope=", StringComparison.Ordinal)
+        || line.StartsWith("analysisCompleteness=", StringComparison.Ordinal)
+        || line.StartsWith("resultContinuation=", StringComparison.Ordinal)
+        || line.StartsWith("omissions=", StringComparison.Ordinal)
+        || line.StartsWith("nextAction: ", StringComparison.Ordinal)
+        || line.StartsWith("continuationToken=", StringComparison.Ordinal);
 
     internal static bool TryReadToken(string text, string name, out string token)
     {
@@ -25,6 +35,13 @@ internal static class IntegrationMcpAssertions
         var value = text.Split('\n').FirstOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal));
         token = value is null ? string.Empty : value[prefix.Length..];
         return value is not null;
+    }
+
+    internal static string ReadHeader(string text, string name)
+    {
+        var prefix = name + "=";
+        var value = text.Split('\n').FirstOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal));
+        return value is null ? throw new Xunit.Sdk.XunitException($"Missing {name} metadata.") : value[prefix.Length..];
     }
 
     internal static int ReadBudget(string text, string name)

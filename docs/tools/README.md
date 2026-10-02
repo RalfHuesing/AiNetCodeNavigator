@@ -8,7 +8,7 @@ Unless a tool row says otherwise, `maxResponseBytes` is a hard UTF-8 text limit 
 
 Navigation calls that can load a target accept `operationToken`. When a response says `operation=running`, repeat the same tool and query with that token to poll. The host waits at most 15 seconds per response window; cancellation of a poll only stops that wait, while cancellation of the first request cancels its owned work. Budgets and tokens do not change the operation's query identity. Do not combine an operation token with an outer-page token.
 
-Text too large for one response window is stored as immutable response pages. Follow the `continuationToken` shown in the response preamble by repeating the same query with that token. These outer pages are independent of any domain cursor included in the result. For `inspect_assembly` and `search_assembly`, read every outer response page first, then use the assembly result's `v1.<offset>.<binding>` domain cursor with the same target and filters. The cursor is tied to that query and assembly snapshot. Other bounded tools report domain truncation and a next action; they do not offer a domain cursor.
+Text too large for one response window is stored as immutable response pages. Follow the `continuationToken` shown in the response preamble by repeating the same query with that token. These outer pages are independent of any domain cursor included in the result. For `inspect_assembly` and `search_assembly`, read every outer response page first, then use the opaque assembly `resultCursor` with the same target and filters. It is tied to the analyzed assembly owner/reference snapshot and result section. The preamble separates `analysisCompleteness` and concrete `omissions` from `resultContinuation`; a result page can be complete for its snapshot while advertising another domain page. Other bounded tools report domain truncation and a next action; they do not offer a domain cursor.
 
 Symbol producers return opaque `h:...` handoffs when the owning source snapshot or assembly generation can be identified. Pass a handoff unchanged to its consumer; do not parse it or substitute a display name. Handoffs from a disposed host runtime are unknown. If a tool reports truncation, follow its `nextAction` or repeat the same query with the indicated domain limit changed. Body windows use one-based inclusive source/decompiled lines.
 
@@ -47,7 +47,7 @@ Find a declaration and follow its handle to the body:
 
 For `RESPONSE_BUDGET_TOO_SMALL`, repeat the identical arguments and target with the exact byte/token minima from the error. For an outer text page, repeat the query with the response preamble's `continuationToken`. Do not mix these tokens or change filters while recovering a stored operation or page.
 
-Inspect a large assembly with a small domain page, first consuming any outer pages for that response and then passing the returned `v1.` cursor back as `continuationToken` with unchanged filters:
+Inspect a large assembly with a small domain page, first consuming any outer pages for that response and then passing the opaque `resultCursor` back with unchanged filters. `continuationToken` is reserved for outer text pages; clients do not inspect cursor formats:
 
 ```json
 {"name":"inspect_assembly","arguments":{"targetPath":"C:\\work\\bin\\Product.dll","maxResults":20}}

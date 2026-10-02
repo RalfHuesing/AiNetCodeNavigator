@@ -235,7 +235,8 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
         [System.ComponentModel.Description("Response detail: compact, standard (default), or full.")] string detailLevel = "standard",
         [System.ComponentModel.Description("Optional byte cap; zero uses this tool's 24,576-byte default.")] [Range(0, 65536)] int maxResponseBytes = 24576,
         [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null, [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
-        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
+        [System.ComponentModel.Description("Opaque cursor returned for the next page of assembly results; use after reading all outer response pages.")] string? resultCursor = null, CancellationToken cancellationToken = default)
     {
         var effectiveResponseBytes = maxResponseBytes == 0 ? 24_576 : maxResponseBytes;
         var effectiveMaxResults = maxResults == 0 ? 100 : maxResults;
@@ -243,16 +244,16 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
         return NavigationToolSupport.RouteAsync(runtime, "inspect_assembly", targetPath,
             new { @namespace, typeName, memberName, publicOnly, exactTypeName, memberNames, maxResults = effectiveMaxResults, maxMembers = effectiveMaxMembers, includeReferences, detailLevel },
             operationToken, continuationToken, effectiveResponseBytes, maxResponseTokens,
-            async (target, ct) =>
+            async (target, coreCursor, ct) =>
             {
                 if (!TryDetail(detailLevel)) return Invalid("detailLevel", "Use compact, standard, or full.");
                 var result = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(target.CanonicalPath, @namespace,
                     typeName, memberName, publicOnly, effectiveMaxResults, exactTypeName, memberNames, effectiveMaxMembers, includeReferences,
-                    Cursor: continuationToken), ct).ConfigureAwait(false);
+                    Cursor: coreCursor), ct).ConfigureAwait(false);
                 return result.IsSuccess ? NavigationToolSupport.Success(result.Value!, result.Value!.Truncated,
-                    result.Value.ContinuationToken is null ? null : "Repeat the query with the returned continuationToken.")
+                    result.Value.ResultCursor is null ? null : "Repeat the query with the returned resultCursor.")
                     : NavigationToolSupport.Failure(result.Error!.Value, effectiveResponseBytes, maxResponseTokens, "$.targetPath");
-            }, AnalysisTargetType.Assembly, cancellationToken, acceptsDomainCursor: true);
+            }, AnalysisTargetType.Assembly, cancellationToken, resultCursor, "assembly.inspect.types");
     }
 
     [McpServerTool(Name = "search_assembly", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -264,27 +265,28 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
         [System.ComponentModel.Description("Maximum matching files to search; zero (default) means no matching-file limit. Positive values are capped at 2000.")] [Range(0, 2000)] int maxFiles = 0,
         [System.ComponentModel.Description("Response detail: compact, standard (default), or full.")] string detailLevel = "standard", [System.ComponentModel.Description("Optional byte cap; zero uses this tool's 24,576-byte default.")] [Range(0, 65536)] int maxResponseBytes = 24576,
         [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null, [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
-        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
+        [System.ComponentModel.Description("Opaque cursor returned for the next page of search results; use after reading all outer response pages.")] string? resultCursor = null, CancellationToken cancellationToken = default)
     {
         var effectiveResponseBytes = maxResponseBytes == 0 ? 24_576 : maxResponseBytes;
         return NavigationToolSupport.RouteAsync(runtime, "search_assembly", targetPath,
             new { searchKind, pattern, isRegex, caseSensitive, declarationOnly, kind, fileFilter, contextLines, maxResults, maxFiles, detailLevel },
             operationToken, continuationToken, effectiveResponseBytes, maxResponseTokens,
-            async (target, ct) =>
+            async (target, coreCursor, ct) =>
             {
                 if (!TryDetail(detailLevel)) return Invalid("detailLevel", "Use compact, standard, or full.");
                 if (kind is not (null or "method" or "type" or "property")) return Invalid("kind", "Use method, type, or property.");
                 var result = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(target.CanonicalPath, pattern,
                     searchKind, caseSensitive, isRegex, fileFilter, declarationOnly, contextLines, maxResults == 0 ? 50 : maxResults, maxFiles, kind,
-                    Cursor: continuationToken), ct).ConfigureAwait(false);
+                    Cursor: coreCursor), ct).ConfigureAwait(false);
                 return result.IsSuccess ? NavigationToolSupport.Success(result.Value!, result.Value!.Truncated,
-                    result.Value.ContinuationToken is not null
-                        ? "Repeat the same query with the returned continuationToken; increase maxFiles to include additional matching files."
+                    result.Value.ResultCursor is not null
+                        ? "Repeat the same query with the returned resultCursor; increase maxFiles to include additional matching files."
                         : result.Value.TruncatedBy?.Contains("maxFiles", StringComparer.Ordinal) == true
                             ? "Increase maxFiles and repeat the same query."
                             : "Increase maxResults and repeat the same query.")
                     : NavigationToolSupport.Failure(result.Error!.Value, effectiveResponseBytes, maxResponseTokens, "$.pattern");
-            }, AnalysisTargetType.Assembly, cancellationToken, acceptsDomainCursor: true);
+            }, AnalysisTargetType.Assembly, cancellationToken, resultCursor, "assembly.search.matches");
     }
 
     [McpServerTool(Name = "find_assembly_extensions", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]

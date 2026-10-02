@@ -2,6 +2,9 @@ using System.Globalization;
 using System.Numerics;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Mcp.Formatting;
 using ModelContextProtocol.Protocol;
 
@@ -11,14 +14,18 @@ internal sealed record LongRunningToolCallRequest(
     string ToolName,
     string Target,
     string ArgumentsKey,
-    Func<CancellationToken, Task<CallToolResult>> Operation,
+    Func<string?, CancellationToken, Task<CallToolResult>> Operation,
     string? OperationToken = null,
     string? ContinuationToken = null,
     int MaxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
     int? MaxResponseTokens = null,
     bool DomainTruncated = false,
     string? DomainNextAction = null,
-    string? DomainCursor = null);
+    string? DomainCursor = null,
+    string? AnalysisSnapshotId = null,
+    string? CoreDomainCursor = null,
+    string? ResultSection = null,
+    NavigationAnalysisMetadata? AnalysisMetadata = null);
 
 /// <summary>Owns bounded tool executions and their opaque operation/continuation tokens.</summary>
 internal sealed class LongRunningToolCallStore : IAsyncDisposable
@@ -75,7 +82,8 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Target);
         ArgumentNullException.ThrowIfNull(request.ArgumentsKey);
         ArgumentNullException.ThrowIfNull(request.Operation);
-        if (request.OperationToken is not null && request.ContinuationToken is not null && request.DomainCursor is null)
+        if (request.OperationToken is not null && request.ContinuationToken is not null
+            || request.ContinuationToken is not null && request.DomainCursor is not null)
         {
             return McpToolResults.InvalidArgument("Only one continuation token may be supplied.", "operationToken",
                 "Supply either operationToken or continuationToken.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
@@ -85,17 +93,19 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         await ExpireEntriesAsync().ConfigureAwait(false);
         if (request.ContinuationToken is { } continuationToken)
         {
-            if (request.DomainCursor is null)
-            {
-                return _continuations.GetPage(continuationToken, request);
-            }
-
-            request = request with { ContinuationToken = null };
+            return _continuations.GetPage(continuationToken, request);
         }
 
         if (request.OperationToken is { } operationToken)
         {
             return await PollAsync(operationToken, request, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (request.DomainCursor is { } domainCursor)
+        {
+            var resolvedCursor = _continuations.ResolveDomainCursor(domainCursor, request);
+            if (resolvedCursor.Error is not null) return resolvedCursor.Error;
+            request = request with { AnalysisSnapshotId = resolvedCursor.SnapshotId, CoreDomainCursor = resolvedCursor.CoreCursor };
         }
 
         var token = Guid.NewGuid().ToString("N");
@@ -200,7 +210,7 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         try
         {
             return await Task.Run(
-                async () => await entry.Request.Operation(entry.Cancellation.Token).ConfigureAwait(false),
+                async () => await entry.Request.Operation(entry.Request.CoreDomainCursor, entry.Cancellation.Token).ConfigureAwait(false),
                 entry.Cancellation.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (entry.Cancellation.IsCancellationRequested)
@@ -334,7 +344,7 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         internal string Token { get; } = token;
         internal LongRunningToolCallRequest Request { get; } = request;
         internal CancellationTokenSource Cancellation { get; } = CancellationTokenSource.CreateLinkedTokenSource(lifetimeToken);
-        internal string SnapshotId { get; } = McpResponseContinuationStore.CreateOpaqueToken();
+        internal string SnapshotId { get; } = request.AnalysisSnapshotId ?? McpResponseContinuationStore.CreateOpaqueToken();
         internal object ResponseGate { get; } = new();
         internal Dictionary<(int Bytes, int? Tokens), CallToolResult> FinalResponses { get; } = [];
         internal DateTimeOffset LastAccess { get; set; } = lastAccess;
@@ -387,6 +397,7 @@ internal sealed class McpResponseContinuationStore : IDisposable
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, PageEntry> _pages = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DomainCursorEntry> _domainCursors = new(StringComparer.Ordinal);
     private readonly TimeSpan _idleTtl;
     private readonly int _maxSnapshots;
     private readonly long _maxSnapshotBytes;
@@ -414,20 +425,37 @@ internal sealed class McpResponseContinuationStore : IDisposable
             if (!page.Matches(request))
                 return McpToolResults.Recoverable("CONTINUATION_ARGUMENT_MISMATCH", "The continuation token belongs to a different tool request.", "Repeat the continuation with the original target and arguments.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
             page.LastAccess = DateTimeOffset.UtcNow;
-            request = request with { DomainTruncated = page.DomainTruncated, DomainNextAction = page.DomainNextAction };
+            request = request with { DomainTruncated = page.DomainTruncated, DomainNextAction = page.DomainNextAction,
+                AnalysisMetadata = page.AnalysisMetadata, AnalysisSnapshotId = page.AnalysisMetadata?.SnapshotId };
             var budgetKey = (request.MaxResponseBytes, request.MaxResponseTokens);
             if (page.Results.TryGetValue(budgetKey, out var cached))
             {
-                if (HasLiveContinuation(cached, request)) return cached;
-                var refreshed = CreatePage(page.SnapshotId, page.Snapshot, page.Offset, request);
+                if (HasLiveOuterContinuation(cached, request)) return cached;
+                var refreshed = CreatePage(page.SnapshotId, page.Snapshot, page.Offset, request, page.CoreSnapshot);
                 if (refreshed.IsError != true) page.Results[budgetKey] = refreshed;
                 return refreshed;
             }
             if (page.Results.Count >= _maxBudgetVariants)
                 return McpToolResults.Recoverable("CONTINUATION_CAPACITY", "This continuation token reached its response-budget variant limit.", "Reuse a previously used budget pair or start a narrower query.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
-            var result = CreatePage(page.SnapshotId, page.Snapshot, page.Offset, request);
+            var result = CreatePage(page.SnapshotId, page.Snapshot, page.Offset, request, page.CoreSnapshot);
             if (result.IsError != true) page.Results.Add(budgetKey, result);
             return result;
+        }
+    }
+
+    internal (string? SnapshotId, CallToolResult? Error, string? CoreCursor) ResolveDomainCursor(string token, LongRunningToolCallRequest request)
+    {
+        lock (_gate)
+        {
+            Expire();
+            if (!_domainCursors.TryGetValue(token, out var cursor))
+                return (null, McpToolResults.Recoverable("RESULT_CURSOR_EXPIRED", "The result cursor is unknown or expired.",
+                    "Repeat the original query to create a fresh result cursor.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens), null);
+            if (!cursor.Matches(request))
+                return (null, McpToolResults.Recoverable("RESULT_CURSOR_ARGUMENT_MISMATCH", "The result cursor belongs to a different tool, target, or query.",
+                    "Repeat the result cursor with the original target and query.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens), null);
+            cursor.LastAccess = DateTimeOffset.UtcNow;
+            return (cursor.SnapshotId, null, cursor.CoreCursor);
         }
     }
 
@@ -439,14 +467,76 @@ internal sealed class McpResponseContinuationStore : IDisposable
     private bool HasLiveContinuation(CallToolResult response, LongRunningToolCallRequest request)
     {
         var text = McpToolResults.NormalizeExistingResult(response);
-        if (!text.StartsWith(McpToolResults.TruncatedSuccessStatusPrefix, StringComparison.Ordinal)) return true;
+        Expire();
+        if (!text.StartsWith(McpToolResults.TruncatedSuccessStatusPrefix, StringComparison.Ordinal))
+            return RefreshDomainCursorAccess(ExtractStatusBody(text), request);
+        var tokenLine = text.Split('\n').FirstOrDefault(static line => line.StartsWith("continuationToken=", StringComparison.Ordinal));
+        if (tokenLine is null) return RefreshDomainCursorAccess(ExtractStatusBody(text), request);
+        var token = tokenLine["continuationToken=".Length..];
+        if (!_pages.TryGetValue(token, out var page) || !page.Matches(request)) return false;
+        page.LastAccess = DateTimeOffset.UtcNow;
+        if (!RefreshDomainCursorAccess(page.Snapshot, request)) return false;
+        return true;
+    }
+
+    private bool HasLiveOuterContinuation(CallToolResult response, LongRunningToolCallRequest request)
+    {
+        var text = McpToolResults.NormalizeExistingResult(response);
+        Expire();
         var tokenLine = text.Split('\n').FirstOrDefault(static line => line.StartsWith("continuationToken=", StringComparison.Ordinal));
         if (tokenLine is null) return true;
         var token = tokenLine["continuationToken=".Length..];
-        Expire();
         if (!_pages.TryGetValue(token, out var page) || !page.Matches(request)) return false;
         page.LastAccess = DateTimeOffset.UtcNow;
         return true;
+    }
+
+    private bool RefreshDomainCursorAccess(string source, LongRunningToolCallRequest request)
+    {
+        try
+        {
+            var document = JsonNode.Parse(source);
+            if (document is null) return true;
+            var tokens = new List<string>();
+            CollectPublicDomainCursors(document, tokens);
+            foreach (var token in tokens)
+            {
+                if (!_domainCursors.TryGetValue(token, out var cursor) || !cursor.Matches(request)) return false;
+                cursor.LastAccess = DateTimeOffset.UtcNow;
+            }
+            return true;
+        }
+        catch (JsonException) { return true; }
+    }
+
+    private static string ExtractStatusBody(string text)
+    {
+        var lines = text.Split('\n');
+        var first = lines.Length > 0 && lines[0].StartsWith("Status:", StringComparison.Ordinal) ? 1 : 0;
+        while (first < lines.Length && (lines[first].StartsWith("snapshotId=", StringComparison.Ordinal)
+            || lines[first].StartsWith("analyzedScope=", StringComparison.Ordinal)
+            || lines[first].StartsWith("analysisCompleteness=", StringComparison.Ordinal)
+            || lines[first].StartsWith("omissions=", StringComparison.Ordinal)
+            || lines[first].StartsWith("nextAction: ", StringComparison.Ordinal)
+            || lines[first].StartsWith("continuationToken=", StringComparison.Ordinal))) first++;
+        return string.Join('\n', lines.Skip(first));
+    }
+
+    private static void CollectPublicDomainCursors(JsonNode? element, ICollection<string> cursors)
+    {
+        if (element is JsonObject obj)
+        {
+            foreach (var pair in obj)
+            {
+                if (string.Equals(pair.Key, "resultCursor", StringComparison.Ordinal) && pair.Value is JsonValue value
+                    && value.TryGetValue<string>(out var cursor) && !string.IsNullOrWhiteSpace(cursor)) cursors.Add(cursor);
+                else CollectPublicDomainCursors(pair.Value, cursors);
+            }
+        }
+        else if (element is JsonArray array)
+        {
+            foreach (var item in array) CollectPublicDomainCursors(item, cursors);
+        }
     }
 
     internal CallToolResult CreateFirstPage(CallToolResult result, LongRunningToolCallRequest request, string snapshotId)
@@ -504,7 +594,103 @@ internal sealed class McpResponseContinuationStore : IDisposable
                 return McpToolResults.Success(source, result.StructuredContent, request.MaxResponseBytes, request.MaxResponseTokens);
             return McpToolResults.Recoverable("STRUCTURED_RESULT_TOO_LARGE", "Structured content cannot be returned with a partial text page.", "Narrow the query or increase the response budget.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
         }
-        return CreatePage(snapshotId, source, offset: 0, request);
+        var analysis = ReadAnalysisMetadata(result, source);
+        if (analysis is not null) request = request with { AnalysisSnapshotId = analysis.SnapshotId, AnalysisMetadata = analysis };
+        var registeredCursors = RegisterDomainCursors(source, request, snapshotId);
+        if (registeredCursors.Error is not null) return registeredCursors.Error;
+        var response = CreatePage(snapshotId, registeredCursors.Source, offset: 0, request, source);
+        if (response.IsError == true) RollbackDomainCursors(registeredCursors.InsertedTokens, snapshotId);
+        return response;
+    }
+
+    private (string Source, IReadOnlyList<string> InsertedTokens, CallToolResult? Error) RegisterDomainCursors(
+        string source, LongRunningToolCallRequest request, string snapshotId)
+    {
+        try
+        {
+            var document = JsonNode.Parse(source);
+            if (document is null) return (source, Array.Empty<string>(), null);
+            var cursorProperties = new List<(JsonObject Parent, string Name, string CoreCursor, string PublicCursor)>();
+            CollectDomainCursors(document, cursorProperties);
+            if (cursorProperties.Count == 0) return (source, Array.Empty<string>(), null);
+            var insertedTokens = new List<string>();
+            lock (_gate)
+            {
+                Expire();
+                var mappedCursors = cursorProperties.Select(property =>
+                {
+                    var existing = _domainCursors.Values.FirstOrDefault(cursor => cursor.Matches(request)
+                        && string.Equals(cursor.SnapshotId, request.AnalysisSnapshotId ?? snapshotId, StringComparison.Ordinal)
+                        && string.Equals(cursor.CoreCursor, property.CoreCursor, StringComparison.Ordinal));
+                    return (Property: property, PublicToken: existing?.Token ?? property.PublicCursor, Existing: existing is not null);
+                }).ToArray();
+                var newCursors = mappedCursors.Where(static cursor => !cursor.Existing)
+                    .GroupBy(static cursor => cursor.PublicToken, StringComparer.Ordinal).Select(static group => group.First()).ToArray();
+                var storedBytes = GetStoredBytes();
+                var snapshotIds = _pages.Values.Select(static page => page.SnapshotId).Concat(_domainCursors.Values.Select(static cursor => cursor.StorageSnapshotId))
+                    .Distinct(StringComparer.Ordinal).ToHashSet(StringComparer.Ordinal);
+                var snapshotIsStored = snapshotIds.Contains(snapshotId);
+                if (_pages.Count + _domainCursors.Count + newCursors.Length > _maxPages
+                    || !snapshotIsStored && snapshotIds.Count >= _maxSnapshots
+                    || storedBytes + newCursors.Sum(cursor => (long)DomainCursorEntry.MeasureBytes(
+                        cursor.PublicToken, cursor.Property.CoreCursor, request)) > _maxSnapshotBytes)
+                    return (source, Array.Empty<string>(), McpToolResults.Recoverable("RESULT_CURSOR_CAPACITY", "The result cursor store reached its bounded retention limit.",
+                        "Retry after older result cursors expire or repeat a narrower query.",
+                        maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens));
+                foreach (var cursor in mappedCursors)
+                {
+                    if (!cursor.Existing)
+                    {
+                        _domainCursors.Add(cursor.PublicToken, new DomainCursorEntry(cursor.PublicToken, cursor.Property.CoreCursor,
+                            request.AnalysisSnapshotId ?? snapshotId, snapshotId, request, DateTimeOffset.UtcNow));
+                        insertedTokens.Add(cursor.PublicToken);
+                    }
+                    cursor.Property.Parent[cursor.Property.Name] = cursor.PublicToken;
+                }
+            }
+            return (document.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), insertedTokens, null);
+        }
+        catch (JsonException)
+        {
+            // Non-JSON text handlers do not expose domain cursors.
+            return (source, Array.Empty<string>(), null);
+        }
+    }
+
+    private static void CollectDomainCursors(JsonNode? element, ICollection<(JsonObject Parent, string Name, string CoreCursor, string PublicCursor)> cursors)
+    {
+        if (element is JsonObject obj)
+        {
+            foreach (var pair in obj.ToArray())
+            {
+                if (string.Equals(pair.Key, "resultCursor", StringComparison.Ordinal) && pair.Value is JsonValue value
+                    && value.TryGetValue<string>(out var coreCursor) && !string.IsNullOrWhiteSpace(coreCursor))
+                {
+                    cursors.Add((obj, pair.Key, coreCursor, CreateOpaqueToken()));
+                }
+                else CollectDomainCursors(pair.Value, cursors);
+            }
+        }
+        else if (element is JsonArray array)
+        {
+            foreach (var item in array) CollectDomainCursors(item, cursors);
+        }
+    }
+
+    private long GetStoredBytes() =>
+        _pages.Values.GroupBy(static page => page.SnapshotId, StringComparer.Ordinal)
+            .Sum(group => (long)group.Max(static page => page.SnapshotBytes)
+                + group.Sum(static page => (long)page.EntryBytes + page.CachedResponseBytes))
+        + _domainCursors.Values.Sum(static cursor => (long)cursor.StoredBytes);
+
+    private void RollbackDomainCursors(IReadOnlyList<string> tokens, string snapshotId)
+    {
+        lock (_gate)
+        {
+            foreach (var token in tokens)
+                if (_domainCursors.TryGetValue(token, out var cursor) && string.Equals(cursor.SnapshotId, snapshotId, StringComparison.Ordinal))
+                    _domainCursors.Remove(token);
+        }
     }
 
     private static CallToolResult CreateAtomicBudgetError(string projection, LongRunningToolCallRequest request, string description)
@@ -525,14 +711,16 @@ internal sealed class McpResponseContinuationStore : IDisposable
 
     public void Dispose()
     {
-        lock (_gate) { _disposed = true; _pages.Clear(); }
+        lock (_gate) { _disposed = true; _pages.Clear(); _domainCursors.Clear(); }
     }
 
-    private CallToolResult CreatePage(string snapshotId, string source, int offset, LongRunningToolCallRequest request)
+    private CallToolResult CreatePage(string snapshotId, string source, int offset, LongRunningToolCallRequest request, string? coreSnapshot = null)
     {
-        var completePrefix = request.DomainTruncated
+        var analysis = request.AnalysisMetadata ?? ReadAnalysisMetadata(null, source);
+        var analysisMetadata = CreateAnalysisMetadata(analysis, request);
+        var completePrefix = (request.DomainTruncated
             ? McpToolResults.TruncatedSuccessStatusPrefix + $"nextAction: {request.DomainNextAction}\n"
-            : McpToolResults.SuccessStatusPrefix;
+            : McpToolResults.SuccessStatusPrefix) + analysisMetadata;
         var complete = McpResponseFormatter.Format(source, request.MaxResponseBytes, request.MaxResponseTokens,
             startOffset: offset, responsePrefix: completePrefix);
         if (complete.ErrorCode is null && !complete.IsTruncated)
@@ -540,6 +728,7 @@ internal sealed class McpResponseContinuationStore : IDisposable
         var token = CreateOpaqueToken();
         var prefix = McpToolResults.TruncatedSuccessStatusPrefix
             + (request.DomainTruncated ? $"nextAction: {request.DomainNextAction}\n" : string.Empty)
+            + analysisMetadata
             + $"continuationToken={token}\n";
         var page = McpResponseFormatter.Format(source, request.MaxResponseBytes, request.MaxResponseTokens,
             startOffset: offset, responsePrefix: prefix);
@@ -557,18 +746,70 @@ internal sealed class McpResponseContinuationStore : IDisposable
             Expire();
             if (_disposed) return McpToolResults.Recoverable("CONTINUATION_EXPIRED", "Continuation storage is no longer available.", "Repeat the original tool call.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
             var snapshotBytes = Encoding.UTF8.GetByteCount(source);
-            var related = _pages.Values.Where(p => p.SnapshotId == snapshotId).Select(p => p.SnapshotBytes).FirstOrDefault();
-            var snapshotCount = _pages.Values.Select(static p => p.SnapshotId).Distinct(StringComparer.Ordinal).Count();
-            var storedBytes = _pages.Values.Select(static p => (p.SnapshotId, p.SnapshotBytes)).Distinct().Sum(static p => (long)p.SnapshotBytes);
-            if (related == 0 && (snapshotCount >= _maxSnapshots || storedBytes + snapshotBytes > _maxSnapshotBytes))
+            var snapshotCount = _pages.Values.Select(static page => page.SnapshotId).Concat(_domainCursors.Values.Select(static cursor => cursor.StorageSnapshotId))
+                .Distinct(StringComparer.Ordinal).Count();
+            var snapshotIsStored = _pages.Values.Any(page => page.SnapshotId == snapshotId)
+                || _domainCursors.Values.Any(cursor => cursor.StorageSnapshotId == snapshotId);
+            var storedBytes = GetStoredBytes();
+            var entryBytes = Encoding.UTF8.GetByteCount(token) + Encoding.UTF8.GetByteCount(request.ToolName)
+                + Encoding.UTF8.GetByteCount(request.Target) + Encoding.UTF8.GetByteCount(request.ArgumentsKey)
+                + Encoding.UTF8.GetByteCount(request.ResultSection ?? string.Empty);
+            var responseBytes = Encoding.UTF8.GetByteCount(text);
+            if (!snapshotIsStored && snapshotCount >= _maxSnapshots
+                || storedBytes + (snapshotIsStored ? 0 : snapshotBytes) + entryBytes + responseBytes > _maxSnapshotBytes)
                 return McpToolResults.Recoverable("CONTINUATION_CAPACITY", "The continuation store is at its snapshot limit.", "Retry with a narrower query or after older pages expire.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
-            if (_pages.Count >= _maxPages)
+            if (_pages.Count + _domainCursors.Count >= _maxPages)
                 return McpToolResults.Recoverable("CONTINUATION_CAPACITY", "The continuation store reached its page-token limit.", "Retry with a narrower query or after older pages expire.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
-            if (!_pages.TryAdd(token, new PageEntry(token, snapshotId, source, page.NextOffset.Value, request, snapshotBytes, DateTimeOffset.UtcNow)))
+            if (!_pages.TryAdd(token, new PageEntry(token, snapshotId, source, coreSnapshot ?? source, page.NextOffset.Value, request, snapshotBytes, DateTimeOffset.UtcNow)))
                 return McpToolResults.Recoverable("CONTINUATION_CAPACITY", "A continuation token collision prevented storing the next page.", "Repeat the original tool call.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
         }
         return response;
     }
+
+    private static NavigationAnalysisMetadata? ReadAnalysisMetadata(CallToolResult? result, string source)
+    {
+        if (result?.Meta is { } metadata && metadata["navigationAnalysis"] is { } typed)
+        {
+            try { return JsonSerializer.Deserialize<NavigationAnalysisMetadata>(typed.ToJsonString(), new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }); }
+            catch (JsonException) { return null; }
+        }
+        try
+        {
+            using var document = JsonDocument.Parse(source);
+            if (!document.RootElement.TryGetProperty("analysis", out var value)) return null;
+            return JsonSerializer.Deserialize<NavigationAnalysisMetadata>(value.GetRawText(), new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            });
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static int MeasureAnalysisMetadata(NavigationAnalysisMetadata? metadata) => metadata is null
+        ? 0
+        : Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(metadata));
+
+    private static string CreateAnalysisMetadata(NavigationAnalysisMetadata? analysis, LongRunningToolCallRequest request)
+    {
+        if (analysis is null) return string.Empty;
+        var omissionSummary = analysis.OmissionReasons.Count == 0
+            ? "none"
+            : string.Join(',', analysis.OmissionReasons.Select(EscapeHeaderValue));
+        return $"snapshotId={analysis.SnapshotId}\n"
+            + $"analyzedScope={EscapeHeaderValue(analysis.AnalyzedScope)}\n"
+            + $"analysisCompleteness={analysis.AnalysisCompleteness}\n"
+            + $"resultContinuation={(analysis.ResultContinuationAvailable ? "available" : "none")}\n"
+            + $"omissions={omissionSummary}\n";
+    }
+
+    private static string EscapeHeaderValue(string value) => value
+        .Replace("\\", "\\\\", StringComparison.Ordinal)
+        .Replace("\r", "\\r", StringComparison.Ordinal)
+        .Replace("\n", "\\n", StringComparison.Ordinal)
+        .Replace("\t", "\\t", StringComparison.Ordinal);
 
     internal static string CreateOpaqueToken()
     {
@@ -591,26 +832,55 @@ internal sealed class McpResponseContinuationStore : IDisposable
     {
         var cutoff = DateTimeOffset.UtcNow - _idleTtl;
         foreach (var key in _pages.Where(pair => pair.Value.LastAccess < cutoff).Select(static pair => pair.Key).ToArray()) _pages.Remove(key);
+        foreach (var key in _domainCursors.Where(pair => pair.Value.LastAccess < cutoff).Select(static pair => pair.Key).ToArray()) _domainCursors.Remove(key);
     }
 
-    private sealed class PageEntry(string token, string snapshotId, string snapshot, int offset, LongRunningToolCallRequest request, int snapshotBytes, DateTimeOffset lastAccess)
+    private sealed class DomainCursorEntry(string token, string coreCursor, string snapshotId, string storageSnapshotId, LongRunningToolCallRequest request, DateTimeOffset lastAccess)
+    {
+        internal string Token { get; } = token;
+        internal string SnapshotId { get; } = snapshotId;
+        internal string StorageSnapshotId { get; } = storageSnapshotId;
+        internal string CoreCursor { get; } = coreCursor;
+        internal int StoredBytes { get; } = MeasureBytes(token, coreCursor, request);
+        internal DateTimeOffset LastAccess { get; set; } = lastAccess;
+        internal static int MeasureBytes(string token, string coreCursor, LongRunningToolCallRequest request) =>
+            Encoding.UTF8.GetByteCount(token) + Encoding.UTF8.GetByteCount(coreCursor) + Encoding.UTF8.GetByteCount(request.ToolName)
+            + Encoding.UTF8.GetByteCount(request.Target) + Encoding.UTF8.GetByteCount(request.ArgumentsKey)
+            + Encoding.UTF8.GetByteCount(request.ResultSection ?? string.Empty) + Encoding.UTF8.GetByteCount(request.AnalysisSnapshotId ?? string.Empty)
+            + MeasureAnalysisMetadata(request.AnalysisMetadata);
+        internal bool Matches(LongRunningToolCallRequest other) =>
+            string.Equals(request.ToolName, other.ToolName, StringComparison.Ordinal)
+            && string.Equals(request.Target, other.Target, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(request.ArgumentsKey, other.ArgumentsKey, StringComparison.Ordinal)
+            && string.Equals(request.ResultSection, other.ResultSection, StringComparison.Ordinal);
+    }
+
+    private sealed class PageEntry(string token, string snapshotId, string snapshot, string coreSnapshot, int offset, LongRunningToolCallRequest request, int snapshotBytes, DateTimeOffset lastAccess)
     {
         internal string SnapshotId { get; } = snapshotId;
         internal string RootSnapshotId { get; } = snapshotId;
         internal string Tool { get; } = request.ToolName;
         internal string Target { get; } = request.Target;
         internal string Arguments { get; } = request.ArgumentsKey;
-        internal int SnapshotBytes { get; } = snapshotBytes;
+        internal string? Section { get; } = request.ResultSection;
+        internal int SnapshotBytes { get; private set; } = snapshotBytes;
+        internal int EntryBytes { get; } = Encoding.UTF8.GetByteCount(token) + Encoding.UTF8.GetByteCount(request.ToolName)
+            + Encoding.UTF8.GetByteCount(request.Target) + Encoding.UTF8.GetByteCount(request.ArgumentsKey)
+            + Encoding.UTF8.GetByteCount(request.ResultSection ?? string.Empty) + MeasureAnalysisMetadata(request.AnalysisMetadata);
+        internal int CachedResponseBytes => Results.Values.Sum(static result => Encoding.UTF8.GetByteCount(McpToolResults.NormalizeExistingResult(result)));
         internal bool DomainTruncated { get; } = request.DomainTruncated;
         internal string? DomainNextAction { get; } = request.DomainNextAction;
+        internal NavigationAnalysisMetadata? AnalysisMetadata { get; } = request.AnalysisMetadata;
         internal DateTimeOffset LastAccess { get; set; } = lastAccess;
         internal bool Matches(LongRunningToolCallRequest other) =>
             string.Equals(Tool, other.ToolName, StringComparison.Ordinal)
             && string.Equals(Target, other.Target, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(Arguments, other.ArgumentsKey, StringComparison.Ordinal);
+            && string.Equals(Arguments, other.ArgumentsKey, StringComparison.Ordinal)
+            && string.Equals(Section, other.ResultSection, StringComparison.Ordinal);
         internal Dictionary<(int Bytes, int? Tokens), CallToolResult> Results { get; } = [];
         internal string Token { get; } = token;
-        internal string Snapshot { get; } = snapshot;
+        internal string Snapshot { get; private set; } = snapshot;
+        internal string CoreSnapshot { get; } = coreSnapshot;
         internal int Offset { get; } = offset;
     }
 }

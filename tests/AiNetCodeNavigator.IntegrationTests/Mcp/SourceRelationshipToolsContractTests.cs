@@ -202,7 +202,7 @@ public sealed class SourceRelationshipToolsContractTests
         var currentBytes = responseBytes;
         var currentTokens = responseTokens;
         var result = await invoke(currentBytes, currentTokens, operation, continuation);
-        for (var request = 0; request < 200; request++)
+        for (var request = 0; request < 1_000; request++)
         {
             var text = TextOf(result);
             AssertBudget(text, currentBytes, currentTokens);

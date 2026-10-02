@@ -23,7 +23,7 @@ namespace AiNetCodeNavigator.FastTests.Assemblies;
 public sealed class InspectAssemblyScannerTests
 {
     private static readonly Regex ContinuationTokenPattern = new(
-        "continuationToken: `(?<token>[^`]+)`",
+        "resultCursor: `(?<token>[^`]+)`",
         RegexOptions.Compiled | RegexOptions.CultureInvariant,
         TimeSpan.FromSeconds(1));
 
@@ -201,7 +201,7 @@ public sealed class InspectAssemblyScannerTests
             PublicOnly: true,
             MaxResults: 1));
         Assert.True(first.IsSuccess);
-        var firstToken = first.Value!.ContinuationToken;
+        var firstToken = first.Value!.ResultCursor;
 
         var unbound = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(
             assemblyPath,
@@ -218,7 +218,7 @@ public sealed class InspectAssemblyScannerTests
             MaxResults: 1,
             Cursor: firstToken));
         Assert.False(changedQuery.IsSuccess);
-        Assert.Equal(NavigationErrorCodes.InvalidArgument, changedQuery.Error!.Value.Code);
+        Assert.Equal(NavigationErrorCodes.StaleSnapshot, changedQuery.Error!.Value.Code);
     }
 
     [Fact]
@@ -231,7 +231,7 @@ public sealed class InspectAssemblyScannerTests
 
         var first = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(target, MaxResults: 1, MaxMembers: 20));
         Assert.True(first.IsSuccess, first.Error?.ToString());
-        Assert.NotNull(first.Value!.ContinuationToken);
+        Assert.NotNull(first.Value!.ResultCursor);
         var originalGeneration = first.Value.Generation;
 
         using var replacementTemp = TestTempDirectory.Create("assembly-inspect-reference-cursor-replacement-");
@@ -242,11 +242,11 @@ public sealed class InspectAssemblyScannerTests
             target,
             MaxResults: 1,
             MaxMembers: 20,
-            Cursor: first.Value.ContinuationToken));
+            Cursor: first.Value.ResultCursor));
 
         Assert.False(stale.IsSuccess);
-        Assert.Equal(NavigationErrorCodes.InvalidArgument, stale.Error!.Value.Code);
-        Assert.True(stale.Error.Value.Message.Contains("continuationToken", StringComparison.Ordinal));
+        Assert.Equal(NavigationErrorCodes.StaleSnapshot, stale.Error!.Value.Code);
+        Assert.True(stale.Error.Value.Message.Contains("resultCursor", StringComparison.Ordinal));
         Assert.True(originalGeneration > 0);
     }
 

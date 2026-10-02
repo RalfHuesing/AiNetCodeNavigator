@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Core.Symbols;
@@ -9,7 +10,9 @@ internal sealed record AssemblyImpactClosureScanResult(
     ResultError? Error,
     string? ErrorField,
     bool IsTruncated,
-    string? NextAction);
+    string? NextAction,
+    AnalysisSymbolIdentity? AnalysisIdentity = null,
+    IReadOnlyList<string>? OmissionReasons = null);
 
 internal static class AssemblyImpactClosureScanner
 {
@@ -24,7 +27,7 @@ internal static class AssemblyImpactClosureScanner
             ClosureProjectionLimit, depth, SymbolScopeType.All, includeGenerated: false, ct,
             externalizeHandoffs: false).ConfigureAwait(false);
         if (closure.Error is { } error)
-            return new(null, error, closure.ErrorField, false, null);
+            return new(null, error, closure.ErrorField, false, null, closure.AnalysisIdentity, closure.OmissionReasons);
 
         var references = closure.References!;
         var allSites = references.References.Select(reference => new ImpactCallSiteEntry(
@@ -74,6 +77,8 @@ internal static class AssemblyImpactClosureScanner
         var nextAction = closure.NextAction ?? (truncated
             ? "Increase maxResults and repeat the query."
             : null);
-        return new(payload, null, null, truncated, nextAction);
+        var omissions = new List<string>(closure.OmissionReasons ?? []);
+        if (references.TotalCount > maxResults && !omissions.Contains("maxResults", StringComparer.Ordinal)) omissions.Add("maxResults");
+        return new(payload, null, null, truncated, nextAction, closure.AnalysisIdentity, omissions);
     }
 }

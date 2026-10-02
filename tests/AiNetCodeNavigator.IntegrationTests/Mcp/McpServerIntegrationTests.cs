@@ -1034,7 +1034,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             Assert.Contains("Status: operation=ok, completeness=truncated", firstDomainText, StringComparison.Ordinal);
             var firstDomainJson = ParsePayload(firstDomainText);
             Assert.True(firstDomainJson.GetProperty("truncated").GetBoolean());
-            var domainCursor = firstDomainJson.GetProperty("continuationToken").GetString();
+            var domainCursor = firstDomainJson.GetProperty("resultCursor").GetString();
             Assert.False(string.IsNullOrWhiteSpace(domainCursor));
 
             var domainNames = new List<string>();
@@ -1049,7 +1049,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                 await SendRequestAsync(process, 51 + domainPageCount, "tools/call", new
                 {
                     name = "inspect_assembly",
-                    arguments = new { targetPath = fixtureAssemblyPath, maxResults = 1, maxMembers = 20, includeReferences = false, continuationToken = domainCursor },
+                    arguments = new { targetPath = fixtureAssemblyPath, maxResults = 1, maxMembers = 20, includeReferences = false, resultCursor = domainCursor },
                 }, timeout.Token);
                 var domainPage = await ReadResponseAsync(process, 51 + domainPageCount, timeout.Token);
                 var domainText = GetFirstText(domainPage);
@@ -1058,7 +1058,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                 var payload = ParsePayload(domainText);
                 domainNames.AddRange(payload.GetProperty("types").EnumerateArray().Select(type => type.GetProperty("name").GetString()!));
                 domainIds.AddRange(payload.GetProperty("types").EnumerateArray().Select(type => type.GetProperty("id").GetString()!));
-                domainCursor = payload.TryGetProperty("continuationToken", out var nextCursor)
+                domainCursor = payload.TryGetProperty("resultCursor", out var nextCursor)
                     && nextCursor.ValueKind != JsonValueKind.Null
                     ? nextCursor.GetString()
                     : null;
@@ -1076,7 +1076,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             await SendRequestAsync(process, 70, "tools/call", new
             {
                 name = "inspect_assembly",
-                arguments = new { targetPath = fixtureAssemblyPath, maxResults = 1, maxMembers = 20, includeReferences = false, continuationToken = firstDomainJson.GetProperty("continuationToken").GetString() },
+                arguments = new { targetPath = fixtureAssemblyPath, maxResults = 1, maxMembers = 20, includeReferences = false, resultCursor = firstDomainJson.GetProperty("resultCursor").GetString() },
             }, timeout.Token);
             var replayedDomainPage = await ReadResponseAsync(process, 70, timeout.Token);
             Assert.False(replayedDomainPage.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(replayedDomainPage));
@@ -1088,7 +1088,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             await SendRequestAsync(process, 71, "tools/call", new
             {
                 name = "inspect_assembly",
-                arguments = new { targetPath = fixtureAssemblyPath, maxResults = 2, maxMembers = 20, includeReferences = false, continuationToken = firstDomainJson.GetProperty("continuationToken").GetString() },
+                arguments = new { targetPath = fixtureAssemblyPath, maxResults = 2, maxMembers = 20, includeReferences = false, resultCursor = firstDomainJson.GetProperty("resultCursor").GetString() },
             }, timeout.Token);
             var mismatchedDomainPage = await ReadResponseAsync(process, 71, timeout.Token);
             Assert.True(mismatchedDomainPage.GetProperty("result").GetProperty("isError").GetBoolean());
@@ -1152,7 +1152,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             Assert.Contains("maxFiles", matchedFileLimitedPayload.GetProperty("truncatedBy").EnumerateArray().Select(value => value.GetString()));
             var searchPageIdentity = limitedHits.Select(hit => (File: hit.GetProperty("filePath").GetString(),
                 Line: hit.GetProperty("lineNumber").GetInt32(), Text: hit.GetProperty("text").GetString())).ToList();
-            Assert.True(matchedFileLimitedPayload.TryGetProperty("continuationToken", out var initialSearchCursor),
+            Assert.True(matchedFileLimitedPayload.TryGetProperty("resultCursor", out var initialSearchCursor),
                 $"Expected the selected maxFiles file to have additional domain results. Payload: {matchedFileLimitedText}");
             var searchCursor = initialSearchCursor.GetString();
             Assert.False(string.IsNullOrWhiteSpace(searchCursor), matchedFileLimitedText);
@@ -1172,7 +1172,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                         fileFilter = "*.cs",
                         maxFiles = 1,
                         maxResults = 1,
-                        continuationToken = searchCursor,
+                        resultCursor = searchCursor,
                     },
                 }, timeout.Token);
                 var searchPage = await ReadResponseAsync(process, requestId, timeout.Token);
@@ -1185,7 +1185,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                 searchPageIdentity.Add((pageHits[0].GetProperty("filePath").GetString(),
                     pageHits[0].GetProperty("lineNumber").GetInt32(), pageHits[0].GetProperty("text").GetString()));
                 Assert.Contains("maxFiles", searchPagePayload.GetProperty("truncatedBy").EnumerateArray().Select(value => value.GetString()));
-                searchCursor = searchPagePayload.TryGetProperty("continuationToken", out var nextSearchCursor)
+                searchCursor = searchPagePayload.TryGetProperty("resultCursor", out var nextSearchCursor)
                     && nextSearchCursor.ValueKind != JsonValueKind.Null
                     ? nextSearchCursor.GetString()
                     : null;
@@ -2414,13 +2414,13 @@ if (Directory.Exists(fixtureRoot))
             Assert.StartsWith("h:", firstHits[0].GetProperty("handoffId").GetString(), StringComparison.Ordinal);
             Assert.True(firstPayload.GetProperty("truncated").GetBoolean());
             Assert.Contains("maxResults", firstPayload.GetProperty("truncatedBy").EnumerateArray().Select(value => value.GetString()));
-            var cursor = firstPayload.GetProperty("continuationToken").GetString();
+            var cursor = firstPayload.GetProperty("resultCursor").GetString();
             Assert.False(string.IsNullOrWhiteSpace(cursor));
 
             await SendRequestAsync(process, 3, "tools/call", new
             {
                 name = "search_assembly",
-                arguments = new { targetPath = assemblyPath, pattern = "Paged", kind = "type", isRegex = false, maxFiles = 0, maxResults = 1, continuationToken = cursor },
+                arguments = new { targetPath = assemblyPath, pattern = "Paged", kind = "type", isRegex = false, maxFiles = 0, maxResults = 1, resultCursor = cursor },
             }, timeout.Token);
             var second = await ReadResponseAsync(process, 3, timeout.Token);
             var secondText = GetFirstText(second);
@@ -2428,12 +2428,12 @@ if (Directory.Exists(fixtureRoot))
             var secondPayload = ParsePayload(secondText);
             Assert.Equal("PagedBeta", secondPayload.GetProperty("results")[0].GetProperty("symbol").GetString());
             Assert.StartsWith("h:", secondPayload.GetProperty("results")[0].GetProperty("handoffId").GetString(), StringComparison.Ordinal);
-            Assert.NotEqual(cursor, secondPayload.GetProperty("continuationToken").GetString());
+            Assert.NotEqual(cursor, secondPayload.GetProperty("resultCursor").GetString());
 
             await SendRequestAsync(process, 4, "tools/call", new
             {
                 name = "search_assembly",
-                arguments = new { targetPath = assemblyPath, pattern = "Paged", kind = "type", isRegex = false, maxFiles = 0, maxResults = 1, continuationToken = cursor },
+                arguments = new { targetPath = assemblyPath, pattern = "Paged", kind = "type", isRegex = false, maxFiles = 0, maxResults = 1, resultCursor = cursor },
             }, timeout.Token);
             var replay = await ReadResponseAsync(process, 4, timeout.Token);
             Assert.False(replay.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(replay));
@@ -2444,12 +2444,12 @@ if (Directory.Exists(fixtureRoot))
             Assert.Equal(secondHit.GetProperty("filePath").GetString(), replayHit.GetProperty("filePath").GetString());
             Assert.Equal(secondHit.GetProperty("lineNumber").GetInt32(), replayHit.GetProperty("lineNumber").GetInt32());
             Assert.Equal(secondHit.GetProperty("ownerTargetPath").GetString(), replayHit.GetProperty("ownerTargetPath").GetString());
-            Assert.Equal(secondPayload.GetProperty("continuationToken").GetString(), replayPayload.GetProperty("continuationToken").GetString());
+            Assert.Equal(secondPayload.GetProperty("resultCursor").GetString(), replayPayload.GetProperty("resultCursor").GetString());
 
             await SendRequestAsync(process, 15, "tools/call", new
             {
                 name = "search_assembly",
-                arguments = new { targetPath = assemblyPath, pattern = "Paged", kind = "type", isRegex = false, maxFiles = 0, maxResults = 1, continuationToken = secondPayload.GetProperty("continuationToken").GetString() },
+                arguments = new { targetPath = assemblyPath, pattern = "Paged", kind = "type", isRegex = false, maxFiles = 0, maxResults = 1, resultCursor = secondPayload.GetProperty("resultCursor").GetString() },
             }, timeout.Token);
             var third = await ReadResponseAsync(process, 15, timeout.Token);
             var thirdText = GetFirstText(third);
@@ -2462,7 +2462,7 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 5, "tools/call", new
             {
                 name = "search_assembly",
-                arguments = new { targetPath = assemblyPath, pattern = "Paged", kind = "type", isRegex = false, maxFiles = 0, maxResults = 2, continuationToken = cursor },
+                arguments = new { targetPath = assemblyPath, pattern = "Paged", kind = "type", isRegex = false, maxFiles = 0, maxResults = 2, resultCursor = cursor },
             }, timeout.Token);
             var wrongArguments = await ReadResponseAsync(process, 5, timeout.Token);
             Assert.True(wrongArguments.GetProperty("result").GetProperty("isError").GetBoolean());
@@ -2471,7 +2471,7 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 6, "tools/call", new
             {
                 name = "search_assembly",
-                arguments = new { targetPath = hostAssemblyPath, pattern = "Paged", kind = "type", isRegex = false, maxFiles = 0, maxResults = 1, continuationToken = cursor },
+                arguments = new { targetPath = hostAssemblyPath, pattern = "Paged", kind = "type", isRegex = false, maxFiles = 0, maxResults = 1, resultCursor = cursor },
             }, timeout.Token);
             var wrongTarget = await ReadResponseAsync(process, 6, timeout.Token);
             Assert.True(wrongTarget.GetProperty("result").GetProperty("isError").GetBoolean());
@@ -3128,7 +3128,7 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 9, "tools/call", new
             {
                 name = "search_assembly",
-                arguments = new { targetPath = assemblyPath, pattern = "Paged", kind = "type", isRegex = false, maxFiles = 0, maxResults = 1, continuationToken = cursor },
+                arguments = new { targetPath = assemblyPath, pattern = "Paged", kind = "type", isRegex = false, maxFiles = 0, maxResults = 1, resultCursor = cursor },
             }, timeout.Token);
             var staleCursor = await ReadResponseAsync(process, 9, timeout.Token);
             Assert.True(staleCursor.GetProperty("result").GetProperty("isError").GetBoolean());

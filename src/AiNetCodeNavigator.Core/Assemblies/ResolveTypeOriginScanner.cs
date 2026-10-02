@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Models;
+using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.CodeAnalysis;
 
@@ -30,6 +31,8 @@ public static class ResolveTypeOriginScanner
         if (!opened.IsSuccess) return Result<ResolveTypeOriginPayload>.Failure(opened.Error);
         await using var scope = opened.Value!;
         var context = scope.Context;
+        var identity = AnalysisSymbolIdentity.ForAssembly(context.Origin.CanonicalPath, context.Origin.ContentHash,
+            context.Generation, context.ReferenceSnapshotHash);
         var typeName = NormalizeTypeName(request.TypeName);
         var matches = new List<ITypeSymbol>();
         AddMatches(context.Assembly, typeName, matches);
@@ -69,7 +72,11 @@ public static class ResolveTypeOriginScanner
         {
             return Result<ResolveTypeOriginPayload>.Success(new ResolveTypeOriginPayload(
                 request.TypeName.Trim(), "ambiguous", null, null, null, null, true,
-                paths.Take(MaxCandidates).ToArray(), context.Diagnostics));
+                paths.Take(MaxCandidates).ToArray(), context.Diagnostics,
+                new NavigationAnalysisMetadata(NavigationAnalysisMetadata.CreateSnapshotId("assembly", identity.ContentHash),
+                    $"resolveTypeOrigin(typeName={request.TypeName.Trim()}, includeReferences={request.IncludeReferences}, maxCandidates={MaxCandidates})",
+                    matches.Count > MaxCandidates ? ["maxCandidates"] : [],
+                    matches.Count > MaxCandidates ? "partial" : "complete")));
         }
 
         var resolvedType = unique[0];
@@ -86,7 +93,11 @@ public static class ResolveTypeOriginScanner
             package.Version,
             false,
             paths,
-            context.Diagnostics));
+            context.Diagnostics,
+            new NavigationAnalysisMetadata(NavigationAnalysisMetadata.CreateSnapshotId("assembly", identity.ContentHash),
+                $"resolveTypeOrigin(typeName={request.TypeName.Trim()}, includeReferences={request.IncludeReferences}, maxCandidates={MaxCandidates})",
+                matches.Count > MaxCandidates ? ["maxCandidates"] : [],
+                matches.Count > MaxCandidates ? "partial" : "complete")));
     }
 
     private static void AddMatches(IAssemblySymbol assembly, string name, ICollection<ITypeSymbol> matches)

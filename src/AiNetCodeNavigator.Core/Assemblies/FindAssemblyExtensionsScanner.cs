@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Models;
+using AiNetCodeNavigator.Core.Symbols;
 using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.Assemblies;
@@ -73,12 +74,18 @@ public static class FindAssemblyExtensionsScanner
         }
 
         var limit = InspectAssemblyScanner.NormalizeLimit(request.MaxResults, DefaultMaxResults, MaxResults);
+        var truncated = totalCount > limit;
+        var identity = AnalysisSymbolIdentity.ForAssembly(context.Origin.CanonicalPath, context.Origin.ContentHash,
+            context.Generation, context.ReferenceSnapshotHash);
         return Result<FindAssemblyExtensionsPayload>.Success(new FindAssemblyExtensionsPayload(
             context.Origin.CanonicalPath,
             extensions.Take(limit).ToArray(),
             totalCount,
-            totalCount > limit,
-            context.Diagnostics));
+            truncated,
+            context.Diagnostics,
+            new NavigationAnalysisMetadata(NavigationAnalysisMetadata.CreateSnapshotId("assembly", identity.ContentHash),
+                $"assemblyExtensions(receiver={request.ReceiverType?.Trim() ?? "*"}, name={request.ExtensionName?.Trim() ?? "*"}, namespace={request.Namespace?.Trim() ?? "*"}, includeReferences={request.IncludeReferences}, maxResults={limit})",
+                truncated ? ["maxResults"] : [], truncated ? "partial" : "complete")));
     }
 
     private static bool Matches(string value, string? filter) =>

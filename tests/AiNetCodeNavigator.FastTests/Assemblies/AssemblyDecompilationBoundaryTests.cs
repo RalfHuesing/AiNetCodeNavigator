@@ -304,7 +304,30 @@ public sealed class AssemblyDecompilationBoundaryTests
         File.Copy(replacement, dependency, overwrite: true);
         var replacementReferences = resolver.Resolve(target);
         var replacementReferenceHash = AssemblyReferenceSnapshotFingerprint.Create(replacementReferences);
-        Assert.Equal(originalReferences.References, replacementReferences.References);
+        Assert.Equal(
+            originalReferences.References.Select(reference => new
+            {
+                reference.Name,
+                reference.Version,
+                reference.Culture,
+                reference.Resolved,
+                reference.ResolvedPath,
+                reference.ResolutionState,
+                reference.Depth,
+                reference.SourceAssemblyPath,
+            }),
+            replacementReferences.References.Select(reference => new
+            {
+                reference.Name,
+                reference.Version,
+                reference.Culture,
+                reference.Resolved,
+                reference.ResolvedPath,
+                reference.ResolutionState,
+                reference.Depth,
+                reference.SourceAssemblyPath,
+            }));
+        Assert.NotEqual(originalReferences.References[0].ContentHash, replacementReferences.References[0].ContentHash);
         Assert.NotEqual(originalReferenceHash, replacementReferenceHash);
         Assert.False(cache.TryRead(
             new AssemblyCacheReadRequest(key, fingerprint, replacementReferences),

@@ -68,7 +68,7 @@ Verifiziert mit `pwsh -File ./scripts/build.ps1` (0 Warnungen, 0 Fehler); `pwsh 
 
 ### M1-T4 — Ergebnisstatus und Fortsetzungsgrundlage vereinheitlichen
 
-- [ ] **M1-T4 abschließen**
+- [x] **M1-T4 abschließen**
 
 **Intention:** Analysestand, Analysegrenzen und Antwort-/Ergebnisfortsetzung unabhängig voneinander verständlich machen.
 
@@ -77,6 +77,10 @@ Verifiziert mit `pwsh -File ./scripts/build.ps1` (0 Warnungen, 0 Fehler); `pwsh 
 **Nicht:** Keine unbegrenzte Trefferhaltung, keine Erweiterung einer Analyse durch einen Cursor, keine globale Vollständigkeitszusage und kein Rückfall in die Stringformat-Erkennung verschiedener Tokenarten. Keine neue Refresh- oder Messroute.
 
 **Abnahme:** Transportfreie Handler-/Store-Prüfungen zeigen verschachtelte äußere/Domänenseiten, Bindung und Replay, Ablauf und Kapazitätsgrenzen, Cancellation sowie exakte Retry-Minima. Budgetwechsel ändern nicht die Query. Äußere Seiten dürfen ihren sichtbaren alten Stand fertig ausliefern; neue Domänen-/Handoff-Verwendung gegen veränderte Targets wird strukturiert abgewiesen. Leere, begrenzte und fehlgeschlagene Ergebnisse sind unterscheidbar; keine Teiltextseite steht neben scheinbar vollständigem StructuredContent.
+
+**Abschlussnachweis (2026-10-02):** Die Umsetzung ist im Commit dieses Abschlussnachweises enthalten. `pwsh -File ./scripts/build.ps1` bestand mit 0 Warnungen/Fehlern. `pwsh -File ./scripts/test-fast.ps1 -Filter "FullyQualifiedName~LongRunningToolCallStoreTests|FullyQualifiedName~McpFormattingTests|FullyQualifiedName~AssemblyNavigationScannerTests|FullyQualifiedName~InspectAssemblyScannerTests"` bestand mit 87/87. `pwsh -File ./scripts/test-integration.ps1 -Filter "FullyQualifiedName~AssemblyNavigationHandlersReturnOwnerResultsAcrossAllSixteenRoutes|FullyQualifiedName~GetImpact_OriginalSdkContractRequiresSymbolAndRoutesSourceAndAssemblySymbols|FullyQualifiedName~SourceRelationshipHandlersReturnNavigableResultsErrorsAndBoundedProjections|FullyQualifiedName~SourceChangeGetsANewSnapshotWhileStoredOuterPagesKeepTheOldSnapshot"` bestand mit 4/4. `pwsh -File ./scripts/test-integration.ps1 -IncludeExtended -Filter "FullyQualifiedName~MSBuildSolutionLoader_CustomTargetsAndScratchCleanupPreserveWorkspaceSnapshot|FullyQualifiedName~MSBuildSolutionLoader_ColdSolutionsWithSameNamedProjectsHaveIsolatedSnapshots"` bestand mit 2/2. Die neu hinzugefügte 80-/120-Token-Formatterprüfung belegt kompakte TooSmall-Fehler samt beiden exakten Minima; erfolgreiche Antwortseiten enthalten weiterhin vollständige Metadaten. Für die vollständige Impact-Rekonstruktion bei kombiniertem 512-Byte-/120-Token-Budget erreichte die 30-Caller-Fixture die begrenzte Retention von 512 äußeren Seiten nach 1.898 rekonstruierten Body-Bytes; es wurden weder Store-Caps erhöht noch vollständige Rekonstruktion behauptet. Die vollständige Rekonstruktionsprüfung besteht mit 512 Tokens; der 80-Token-Recoveryfall wird getrennt geprüft.
+
+Das vollständige `pwsh -File ./scripts/test-fast.ps1` hatte bei 572/573 Tests eine bestehende Abweichung in `tests/AiNetCodeNavigator.FastTests/Assemblies/AssemblyDecompilationBoundaryTests.cs:359`. Die T2-ergänzten Referenz-DTOs behalten gleiche Graphfelder, zeigen beim ersetzten Dependency-PE aber zu Recht einen anderen `ContentHash` und Snapshot-Hash; diese Identitätskorrektur wurde im Vergleich berücksichtigt. Die unveränderte Stale-Publish-Assertion scheitert weiterhin: der gleichzeitige Publish des alten Reference-Snapshots liefert `Succeeded=true`. Der Test wurde nicht abgeschwächt und die T2-Cache-Implementierung in T4 nicht geändert. Das bleibt ein konkreter M1-Audit-/Korrekturpunkt; der volle Routine-Gate-Scope bleibt M3-T1.
 
 ### M1-A — Audit der Analysegrundlage
 

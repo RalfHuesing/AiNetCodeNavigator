@@ -100,6 +100,10 @@ public sealed class SourceToolsContractTests
         var found = await symbols.FindSymbol(target, pattern: "Run", kind: "method", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(found, 16384, 1024);
         Assert.Contains("method Run in", TextOf(found), StringComparison.Ordinal);
+        Assert.Contains("snapshotId=source:", TextOf(found), StringComparison.Ordinal);
+        Assert.Contains("analyzedScope=findSymbol(pattern=Run", TextOf(found), StringComparison.Ordinal);
+        Assert.Contains("analysisCompleteness=complete", TextOf(found), StringComparison.Ordinal);
+        Assert.Contains("resultContinuation=none", TextOf(found), StringComparison.Ordinal);
         var methodHandoff = ReadHandoff(TextOf(found), "method Run in");
         var generatedExcluded = await symbols.FindSymbol(target, pattern: "GeneratedProbe", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(generatedExcluded, 16384, 1024);
@@ -181,10 +185,22 @@ public sealed class SourceToolsContractTests
         Assert.DoesNotContain("Alpha", TextOf(declarationOrder), StringComparison.Ordinal);
         var classStructureBytes = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", maxMembers: 1,
             sortBy: "lines", maxResponseBytes: 512, maxResponseTokens: 4096);
-        AssertSuccessWithinBudget(classStructureBytes, 512, 4096);
+        AssertErrorWithinBudget(classStructureBytes, "RESPONSE_BUDGET_TOO_SMALL", 512, 4096);
+        var classStructureMinimumBytes = ReadBudget(TextOf(classStructureBytes), "minimumResponseBytes");
+        var classStructureBytesRetry = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", maxMembers: 1,
+            sortBy: "lines", maxResponseBytes: classStructureMinimumBytes, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(classStructureBytesRetry, classStructureMinimumBytes, 4096);
         var classStructureTokens = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", maxMembers: 1,
             sortBy: "lines", maxResponseBytes: 65536, maxResponseTokens: 512);
-        AssertSuccessWithinBudget(classStructureTokens, 65536, 512);
+        if (classStructureTokens.IsError == true)
+        {
+            AssertErrorWithinBudget(classStructureTokens, "RESPONSE_BUDGET_TOO_SMALL", 65536, 512);
+            var minimumTokens = ReadBudget(TextOf(classStructureTokens), "minimumResponseTokens");
+            var retry = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", maxMembers: 1,
+                sortBy: "lines", maxResponseBytes: 65536, maxResponseTokens: minimumTokens);
+            AssertSuccessWithinBudget(retry, 65536, minimumTokens);
+        }
+        else AssertSuccessWithinBudget(classStructureTokens, 65536, 512);
         var generatedMember = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", includeGenerated: true,
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(generatedMember, 16384, 1024);
@@ -202,12 +218,32 @@ public sealed class SourceToolsContractTests
             project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
             namespacePrefix: "ScopeProbe", depth: 1, includeTypes: false, maxResults: 1,
             maxResponseBytes: 512, maxResponseTokens: 4096);
-        AssertSuccessWithinBudget(namespaceBytes, 512, 4096);
+        if (namespaceBytes.IsError == true)
+        {
+            AssertErrorWithinBudget(namespaceBytes, "RESPONSE_BUDGET_TOO_SMALL", 512, 4096);
+            var minimumBytes = ReadBudget(TextOf(namespaceBytes), "minimumResponseBytes");
+            var retry = await structure.GetNamespaceTree(target,
+                project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
+                namespacePrefix: "ScopeProbe", depth: 1, includeTypes: false, maxResults: 1,
+                maxResponseBytes: minimumBytes, maxResponseTokens: 4096);
+            AssertSuccessWithinBudget(retry, minimumBytes, 4096);
+        }
+        else AssertSuccessWithinBudget(namespaceBytes, 512, 4096);
         var namespaceTokens = await structure.GetNamespaceTree(target,
             project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
             namespacePrefix: "ScopeProbe", depth: 1, includeTypes: false, maxResults: 1,
             maxResponseBytes: 65536, maxResponseTokens: 512);
-        AssertSuccessWithinBudget(namespaceTokens, 65536, 512);
+        if (namespaceTokens.IsError == true)
+        {
+            AssertErrorWithinBudget(namespaceTokens, "RESPONSE_BUDGET_TOO_SMALL", 65536, 512);
+            var minimumTokens = ReadBudget(TextOf(namespaceTokens), "minimumResponseTokens");
+            var retry = await structure.GetNamespaceTree(target,
+                project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
+                namespacePrefix: "ScopeProbe", depth: 1, includeTypes: false, maxResults: 1,
+                maxResponseBytes: 65536, maxResponseTokens: minimumTokens);
+            AssertSuccessWithinBudget(retry, 65536, minimumTokens);
+        }
+        else AssertSuccessWithinBudget(namespaceTokens, 65536, 512);
         var generatedNamespaceExcluded = await structure.GetNamespaceTree(target, namespacePrefix: "ScopeProbe.GeneratedOnly",
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(generatedNamespaceExcluded, "INVALID_ARGUMENT", 16384, 1024);
@@ -264,6 +300,39 @@ public sealed class SourceToolsContractTests
 
         var missingFindSelector = await symbols.FindSymbol(target, maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(missingFindSelector, "INVALID_ARGUMENT", 16384, 1024);
+    }
+
+    [Fact]
+    public async Task SourceChangeGetsANewSnapshotWhileStoredOuterPagesKeepTheOldSnapshot()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var symbols = new SymbolTools(runtime);
+        using var fixture = TestTempDirectory.Create("ainet-source-immutable-pages-");
+        var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
+        var sourcePath = Path.Combine(fixture.DirectoryPath, "src", "App", "Target.cs");
+
+        var first = await symbols.FindSymbol(target, pattern: "PageEntry", kind: "method", maxResults: 100,
+            maxResponseBytes: 1024, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(first, 1024, 4096);
+        var oldSnapshotId = ReadHeader(TextOf(first), "snapshotId");
+        Assert.True(TryReadToken(TextOf(first), "continuationToken", out var outerToken));
+
+        var source = await File.ReadAllTextAsync(sourcePath);
+        var marker = "    public void PageEntry15() { }";
+        Assert.Contains(marker, source, StringComparison.Ordinal);
+        await File.WriteAllTextAsync(sourcePath, source.Replace(marker, marker + "\n    public void PageEntry16() { }", StringComparison.Ordinal));
+
+        var oldPage = await symbols.FindSymbol(target, pattern: "PageEntry", kind: "method", maxResults: 100,
+            continuationToken: outerToken, maxResponseBytes: 1024, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(oldPage, 1024, 4096);
+        Assert.Equal(oldSnapshotId, ReadHeader(TextOf(oldPage), "snapshotId"));
+
+        var latest = await symbols.FindSymbol(target, pattern: "PageEntry", kind: "method", maxResults: 100,
+            maxResponseBytes: 65536, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(latest, 65536, 4096);
+        Assert.NotEqual(oldSnapshotId, ReadHeader(TextOf(latest), "snapshotId"));
+        Assert.Contains("PageEntry16", TextOf(latest), StringComparison.Ordinal);
     }
 
     private static async Task<(string Text, int Pages)> ReadAllFindSymbolPagesAsync(

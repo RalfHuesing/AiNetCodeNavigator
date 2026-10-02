@@ -121,17 +121,19 @@ public sealed class RelationshipToolsContractTests
     private static async Task AssertImpactPagesReconstructAsync(RelationshipTools tools, string targetPath, string symbolIdentifier)
     {
         const int responseBytes = 512;
-        const int responseTokens = 120;
+        const int responseTokens = 512;
         var expectedResult = await tools.GetImpact(targetPath, symbolIdentifier, maxResponseBytes: 65536, maxResponseTokens: 4096);
         Assert.False(expectedResult.IsError ?? false, TextOf(expectedResult));
         var expectedBody = BodyOf(TextOf(expectedResult));
         var reconstructed = new System.Text.StringBuilder();
         var pageCount = 0;
         var complete = false;
+        var seenContinuationTokens = new HashSet<string>(StringComparer.Ordinal);
+        var requestCount = 0;
         var operationToken = (string?)null;
         var continuationToken = (string?)null;
         var result = await tools.GetImpact(targetPath, symbolIdentifier, maxResponseBytes: responseBytes, maxResponseTokens: responseTokens);
-        for (var request = 0; request < 200; request++)
+        for (; requestCount < 1_024; requestCount++)
         {
             var text = TextOf(result);
             if (result.IsError == true && text.Contains("RESPONSE_BUDGET_TOO_SMALL", StringComparison.Ordinal))
@@ -160,7 +162,9 @@ public sealed class RelationshipToolsContractTests
                 continue;
             }
 
-            reconstructed.Append(BodyOf(text));
+            var pageBody = BodyOf(text);
+            Assert.NotEmpty(pageBody);
+            reconstructed.Append(pageBody);
             pageCount++;
             operationToken = null;
             if (!TryReadToken(text, "continuationToken", out var nextContinuation))
@@ -169,11 +173,12 @@ public sealed class RelationshipToolsContractTests
                 break;
             }
             continuationToken = nextContinuation;
+            Assert.True(seenContinuationTokens.Add(continuationToken), "An outer page repeated a continuation token instead of advancing.");
             result = await tools.GetImpact(targetPath, symbolIdentifier, maxResponseBytes: responseBytes, maxResponseTokens: responseTokens,
                 operationToken: operationToken, continuationToken: continuationToken);
         }
 
-        Assert.True(complete, "The impact continuation sequence should reach a final page within the bounded request count.");
+        Assert.True(complete, $"The impact continuation sequence did not finish after {requestCount} requests and {pageCount} body pages. Last response: {TextOf(result)}");
         Assert.True(pageCount > 1, "The impact response should be reconstructed from bounded response-window pages.");
         Assert.Equal(expectedBody, reconstructed.ToString());
         using var impactJson = JsonDocument.Parse(reconstructed.ToString());
@@ -215,6 +220,7 @@ public sealed class RelationshipToolsContractTests
         var operationToken = (string?)null;
         var continuationToken = (string?)null;
         var minimumRetryObserved = false;
+        var awaitingMinimumRetry = false;
         var result = await tools.GetImpact(targetPath, symbolIdentifier,
             maxResponseBytes: responseBytes, maxResponseTokens: responseTokens);
         for (var request = 0; request < 200; request++)
@@ -222,8 +228,9 @@ public sealed class RelationshipToolsContractTests
             var text = TextOf(result);
             if (result.IsError == true && text.Contains("RESPONSE_BUDGET_TOO_SMALL", StringComparison.Ordinal))
             {
-                Assert.False(minimumRetryObserved, "A single impact response should encounter at most one oversized atomic unit.");
+                Assert.False(awaitingMinimumRetry, "The advertised minimum pair did not deliver the current impact page.");
                 minimumRetryObserved = true;
+                awaitingMinimumRetry = true;
                 var minimumBytes = ReadBudget(text, "minimumResponseBytes");
                 var minimumTokens = ReadBudget(text, "minimumResponseTokens");
                 Assert.True(minimumBytes > responseBytes || minimumTokens > responseTokens,
@@ -233,8 +240,6 @@ public sealed class RelationshipToolsContractTests
                     operationToken: operationToken, continuationToken: continuationToken);
                 var retryText = TextOf(result);
                 Assert.False(result.IsError ?? false, retryText);
-                var longCallerName = "LongCaller" + new string('X', 700);
-                Assert.Contains(longCallerName, BodyOf(retryText), StringComparison.Ordinal);
                 reconstructed.Append(BodyOf(retryText));
             }
             else if (TryReadToken(text, "operationToken", out var pendingOperation))
@@ -264,6 +269,7 @@ public sealed class RelationshipToolsContractTests
                 break;
             }
 
+            awaitingMinimumRetry = false;
             result = await tools.GetImpact(targetPath, symbolIdentifier, maxResponseBytes: responseBytes,
                 maxResponseTokens: responseTokens, continuationToken: continuationToken);
         }

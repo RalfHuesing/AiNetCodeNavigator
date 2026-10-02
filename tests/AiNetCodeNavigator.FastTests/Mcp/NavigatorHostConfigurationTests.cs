@@ -131,7 +131,7 @@ public sealed class NavigatorHostConfigurationTests
             }
         }
 
-        var request = new LongRunningToolCallRequest("test", "target", "args", Work);
+        var request = new LongRunningToolCallRequest("test", "target", "args", (_, token) => Work(token));
         var firstResponse = await store.RunAsync(request);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.False(firstResponse.IsError ?? false);

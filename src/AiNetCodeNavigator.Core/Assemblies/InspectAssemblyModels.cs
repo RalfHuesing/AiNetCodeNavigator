@@ -3,6 +3,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Serialization;
+using AiNetCodeNavigator.Core.Models;
 
 namespace AiNetCodeNavigator.Core.Assemblies;
 
@@ -83,8 +85,9 @@ public sealed record InspectAssemblyPayload(
     bool ReferenceDetailsIncluded = true,
     int TotalNamespaces = 0,
     string? DecompiledSourceRoot = null,
-    string? ContinuationToken = null,
-    string FormattedText = "")
+    [property: JsonPropertyName("resultCursor")] string? ResultCursor = null,
+    string FormattedText = "",
+    NavigationAnalysisMetadata? Analysis = null)
 {
     public int TotalCount => TotalTypes;
     public int ReturnedCount => ShownCount;

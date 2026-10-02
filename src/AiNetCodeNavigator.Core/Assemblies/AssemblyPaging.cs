@@ -9,6 +9,8 @@ namespace AiNetCodeNavigator.Core.Assemblies;
 
 public static class AssemblyPaging
 {
+    public enum BoundCursorStatus { Valid, InvalidFormat, StaleBinding }
+
     public static int ReadOffset(string? cursor) =>
         TryReadUnboundOffset(cursor, out var offset) ? offset : 0;
 
@@ -71,24 +73,27 @@ public static class AssemblyPaging
             arguments.Kind);
 
     public static bool TryReadBoundOffset(string? cursor, string binding, out int offset)
+        => ReadBoundOffset(cursor, binding, out offset) == BoundCursorStatus.Valid;
+
+    public static BoundCursorStatus ReadBoundOffset(string? cursor, string binding, out int offset)
     {
         offset = 0;
-        if (string.IsNullOrWhiteSpace(cursor)) return true;
+        if (string.IsNullOrWhiteSpace(cursor)) return BoundCursorStatus.Valid;
 
         var parts = cursor.Split('.', 3, StringSplitOptions.None);
         if (parts.Length != 3
             || !string.Equals(parts[0], "v1", StringComparison.Ordinal)
             || !int.TryParse(parts[1], out offset)
             || offset < 0
-            || !CryptographicOperations.FixedTimeEquals(
-                Encoding.ASCII.GetBytes(parts[2]),
-                Encoding.ASCII.GetBytes(binding)))
+            || parts[2].Length != binding.Length)
         {
             offset = 0;
-            return false;
+            return BoundCursorStatus.InvalidFormat;
         }
 
-        return true;
+        return CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(parts[2]), Encoding.ASCII.GetBytes(binding))
+            ? BoundCursorStatus.Valid
+            : BoundCursorStatus.StaleBinding;
     }
 
     public static bool TryReadUnboundOffset(string? cursor, out int offset)

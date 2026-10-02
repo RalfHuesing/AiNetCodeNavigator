@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Mcp;
 using AiNetCodeNavigator.Mcp.Formatting;
 using ModelContextProtocol.Protocol;
@@ -8,6 +9,28 @@ namespace AiNetCodeNavigator.FastTests.Mcp;
 
 public sealed class LongRunningToolCallStoreTests
 {
+    [Fact]
+    public async Task AnalysisScopeHeaderEscapesMultilineQueryWithoutCreatingExtraHeaders()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
+        var metadata = new NavigationAnalysisMetadata(
+            "source:0123456789abcdef01234567",
+            "findSymbol(pattern=Run\\n snapshotId=forged, kind=method)",
+            Array.Empty<string>());
+        var payload = JsonSerializer.Serialize(new
+        {
+            analysis = metadata,
+            items = new string('x', 1_000),
+        }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
+
+        var result = await store.RunAsync(Request("find_symbol", "target", "pattern=Run", _ =>
+            Task.FromResult(new CallToolResult { Content = [new TextContentBlock { Text = payload }] }), maxResponseBytes: 1024));
+
+        var text = TextOf(result);
+        Assert.Equal(1, text.Split('\n').Count(line => line.StartsWith("snapshotId=", StringComparison.Ordinal)));
+        Assert.Contains("analyzedScope=findSymbol(pattern=Run\\\\n snapshotId=forged, kind=method)", text, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task FastSuccessReturnsFormattedResultWithoutStartingAgain()
     {
@@ -51,17 +74,21 @@ public sealed class LongRunningToolCallStoreTests
     {
         await using var store = new LongRunningToolCallStore(TimeSpan.FromMilliseconds(20));
         var cursor = "v1.1.bound-query";
+        var cursorPage = await store.RunAsync(Request("inspect_assembly", "target", "query=maxResults:1", _ =>
+            Task.FromResult(new CallToolResult { Content = [new TextContentBlock { Text = "{\"resultCursor\":\"v1.1.bound-query\"}" }] })));
+        Assert.False(cursorPage.IsError ?? false, TextOf(cursorPage));
+        cursor = DomainCursorOf(cursorPage);
         var release = new TaskCompletionSource<CallToolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var starts = 0;
-        Task<CallToolResult> Start(CancellationToken _) { Interlocked.Increment(ref starts); return release.Task; }
+        Task<CallToolResult> Start(string? domainCursor, CancellationToken token) { Interlocked.Increment(ref starts); return release.Task; }
         var original = new LongRunningToolCallRequest("inspect_assembly", "target", "query=maxResults:1", Start,
-            ContinuationToken: cursor, DomainCursor: cursor);
+            DomainCursor: cursor);
 
         var pending = await store.RunAsync(original);
         var operationToken = TokenOf(pending, "operationToken");
         Assert.Contains("operation=running", TextOf(pending), StringComparison.Ordinal);
 
-        var wrongCursor = await store.RunAsync(original with { OperationToken = operationToken, ContinuationToken = "v1.2.other-query", DomainCursor = "v1.2.other-query" });
+        var wrongCursor = await store.RunAsync(original with { OperationToken = operationToken, DomainCursor = "v1.2.other-query" });
         Assert.True(wrongCursor.IsError);
         Assert.Contains("OPERATION_EXPIRED", TextOf(wrongCursor), StringComparison.Ordinal);
 
@@ -70,6 +97,123 @@ public sealed class LongRunningToolCallStoreTests
 
         Assert.Contains("Second domain page.", TextOf(completed), StringComparison.Ordinal);
         Assert.Equal(1, starts);
+    }
+
+    [Fact]
+    public async Task DomainCursorUsesSharedRetentionAndBindsToolTargetAndQuery()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1), maxContinuationPages: 2);
+        const string cursor = "opaque-domain-cursor";
+        var issued = await store.RunAsync(Request("find_references", "target-a", "scope=production", _ =>
+            Task.FromResult(new CallToolResult { Content = [new TextContentBlock { Text = $"{{\"resultCursor\":\"{cursor}\"}}" }] })));
+        Assert.False(issued.IsError ?? false, TextOf(issued));
+        var publicCursor = DomainCursorOf(issued);
+
+        var changedQuery = await store.RunAsync(new LongRunningToolCallRequest(
+            "find_references", "target-a", "scope=all", (_, _) => Task.FromResult(new CallToolResult()), DomainCursor: publicCursor));
+        Assert.True(changedQuery.IsError);
+        Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(changedQuery), StringComparison.Ordinal);
+
+        ExpireDomainCursor(store, publicCursor);
+        var expired = await store.RunAsync(new LongRunningToolCallRequest(
+            "find_references", "target-a", "scope=production", (_, _) => Task.FromResult(new CallToolResult()), DomainCursor: publicCursor));
+        Assert.True(expired.IsError);
+        Assert.Contains("RESULT_CURSOR_EXPIRED", TextOf(expired), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DomainCursorCapacityIsBoundedByTheSharedContinuationStore()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1), maxContinuationPages: 1);
+        const string firstCursor = "cursor-one";
+        const string secondCursor = "cursor-two";
+        var first = await store.RunAsync(Request("inspect_assembly", "target", "query=all", _ =>
+            Task.FromResult(new CallToolResult { Content = [new TextContentBlock { Text = $"{{\"resultCursor\":\"{firstCursor}\"}}" }] })));
+        Assert.False(first.IsError ?? false, TextOf(first));
+        var publicCursor = DomainCursorOf(first);
+
+        var second = await store.RunAsync(new LongRunningToolCallRequest("inspect_assembly", "target", "query=all",
+            (_, _) => Task.FromResult(new CallToolResult { Content = [new TextContentBlock { Text = $"{{\"resultCursor\":\"{secondCursor}\"}}" }] }),
+            DomainCursor: publicCursor));
+        Assert.True(second.IsError);
+        Assert.Contains("RESULT_CURSOR_CAPACITY", TextOf(second), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CachedFinalPollReissuesAnExpiredResultCursorWithoutRevivingIt()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromMilliseconds(20), maxContinuationPages: 4);
+        var release = new TaskCompletionSource<CallToolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var starts = 0;
+        Task<CallToolResult> Start(CancellationToken token)
+        {
+            Interlocked.Increment(ref starts);
+            return release.Task;
+        }
+
+        var pending = await store.RunAsync(Request("search_assembly", "target", "query=x", Start));
+        var operationToken = TokenOf(pending, "operationToken");
+        release.SetResult(new CallToolResult { Content = [new TextContentBlock { Text = "{\"resultCursor\":\"core-cursor\"}" }] });
+        var first = await store.RunAsync(Request("search_assembly", "target", "query=x", Start, operationToken: operationToken));
+        var expiredPublicCursor = DomainCursorOf(first);
+        ExpireDomainCursor(store, expiredPublicCursor);
+
+        var replay = await store.RunAsync(Request("search_assembly", "target", "query=x", Start, operationToken: operationToken));
+        var refreshedPublicCursor = DomainCursorOf(replay);
+        Assert.NotEqual(expiredPublicCursor, refreshedPublicCursor);
+        Assert.Equal(1, starts);
+
+        var stale = await store.RunAsync(new LongRunningToolCallRequest("search_assembly", "target", "query=x",
+            (_, _) => Task.FromResult(new CallToolResult()), DomainCursor: expiredPublicCursor));
+        Assert.True(stale.IsError);
+        Assert.Contains("RESULT_CURSOR_EXPIRED", TextOf(stale), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task OuterPageReplayKeepsItsExpiredDomainCursorImmutable()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1), maxContinuationPages: 64);
+        var rows = string.Join(",\n", Enumerable.Range(0, 40).Select(index => index == 12
+            ? $"{{\"resultCursor\":\"core-cursor\",\"value\":\"row-{index:D3}-{new string('x', 180)}\"}}"
+            : $"{{\"value\":\"row-{index:D3}-{new string('x', 180)}\"}}"));
+        var source = $"{{\n  \"rows\": [\n{rows}\n  ]\n}}";
+        Task<CallToolResult> Produce(CancellationToken _) => Task.FromResult(new CallToolResult
+        {
+            Content = [new TextContentBlock { Text = source }],
+        });
+        var request = Request("search_assembly", "target", "query=x", Produce, maxResponseBytes: 512, maxResponseTokens: 300);
+        string? incomingOuterToken = null;
+        var page = await store.RunAsync(request);
+        for (var index = 0; index < 40; index++)
+        {
+            Assert.False(page.IsError ?? false, TextOf(page));
+            var pageText = TextOf(page);
+            const string cursorMarker = "\"resultCursor\": \"";
+            var cursorStart = pageText.IndexOf(cursorMarker, StringComparison.Ordinal);
+            if (cursorStart >= 0)
+            {
+                cursorStart += cursorMarker.Length;
+                var cursorEnd = pageText.IndexOf('"', cursorStart);
+                Assert.True(cursorEnd > cursorStart, pageText);
+                var publicCursor = pageText[cursorStart..cursorEnd];
+                Assert.Equal(39, publicCursor.Length);
+                Assert.All(publicCursor, character => Assert.True(char.IsAsciiDigit(character)));
+                var pageOuterToken = incomingOuterToken ?? throw new Xunit.Sdk.XunitException("The cursor page must be an outer continuation page.");
+                ExpireDomainCursor(store, publicCursor);
+
+                var replay = await store.RunAsync(request with { ContinuationToken = pageOuterToken });
+                Assert.Equal(pageText, TextOf(replay));
+                var stale = await store.RunAsync(new LongRunningToolCallRequest("search_assembly", "target", "query=x",
+                    (_, _) => Task.FromResult(new CallToolResult()), DomainCursor: publicCursor));
+                Assert.True(stale.IsError);
+                Assert.Contains("RESULT_CURSOR_EXPIRED", TextOf(stale), StringComparison.Ordinal);
+                return;
+            }
+
+            incomingOuterToken = TokenOf(page, "continuationToken");
+            page = await store.RunAsync(request with { ContinuationToken = incomingOuterToken });
+        }
+        Assert.Fail("The stored outer pages did not reach the domain cursor.");
     }
 
     [Fact]
@@ -940,13 +1084,20 @@ public sealed class LongRunningToolCallStoreTests
         string? continuationToken = null,
         int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
         int? maxResponseTokens = null) =>
-        new(tool, target, arguments, operation, operationToken, continuationToken, maxResponseBytes, maxResponseTokens);
+        new(tool, target, arguments, (_, token) => operation(token), operationToken, continuationToken, maxResponseBytes, maxResponseTokens);
 
     private static string TextOf(CallToolResult result) =>
         Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
 
     private static string TokenOf(CallToolResult result, string field) =>
         TryTokenOf(result, field) ?? throw new Xunit.Sdk.XunitException($"Missing {field}.");
+
+    private static string DomainCursorOf(CallToolResult result)
+    {
+        var text = TextOf(result);
+        using var document = JsonDocument.Parse(text[text.IndexOf('{')..]);
+        return document.RootElement.GetProperty("resultCursor").GetString()!;
+    }
 
     private static string? TryTokenOf(CallToolResult result, string field)
     {
@@ -973,6 +1124,15 @@ public sealed class LongRunningToolCallStoreTests
         var pages = (System.Collections.IDictionary)continuationStore.GetType().GetField("_pages", flags)!.GetValue(continuationStore)!;
         var page = pages[token] ?? throw new Xunit.Sdk.XunitException("Continuation page was not stored.");
         page.GetType().GetProperty("LastAccess", flags)!.SetValue(page, DateTimeOffset.UtcNow - TimeSpan.FromHours(1));
+    }
+
+    private static void ExpireDomainCursor(LongRunningToolCallStore store, string token)
+    {
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var continuationStore = typeof(LongRunningToolCallStore).GetField("_continuations", flags)!.GetValue(store)!;
+        var cursors = (System.Collections.IDictionary)continuationStore.GetType().GetField("_domainCursors", flags)!.GetValue(continuationStore)!;
+        var cursor = cursors[token] ?? throw new Xunit.Sdk.XunitException("Domain cursor was not stored.");
+        cursor.GetType().GetProperty("LastAccess", flags)!.SetValue(cursor, DateTimeOffset.UtcNow - TimeSpan.FromHours(1));
     }
 
     private static int RunningCount(LongRunningToolCallStore store) =>
@@ -1008,7 +1168,13 @@ public sealed class LongRunningToolCallStoreTests
     private static string BodyOf(CallToolResult result)
     {
         var lines = TextOf(result).Split('\n');
-        var firstContentLine = lines[1].StartsWith("continuationToken=", StringComparison.Ordinal) ? 2 : 1;
+        var firstContentLine = lines.Length > 0 && lines[0].StartsWith("Status:", StringComparison.Ordinal) ? 1 : 0;
+        while (firstContentLine < lines.Length && (lines[firstContentLine].StartsWith("snapshotId=", StringComparison.Ordinal)
+            || lines[firstContentLine].StartsWith("analyzedScope=", StringComparison.Ordinal)
+            || lines[firstContentLine].StartsWith("analysisCompleteness=", StringComparison.Ordinal)
+            || lines[firstContentLine].StartsWith("omissions=", StringComparison.Ordinal)
+            || lines[firstContentLine].StartsWith("nextAction: ", StringComparison.Ordinal)
+            || lines[firstContentLine].StartsWith("continuationToken=", StringComparison.Ordinal))) firstContentLine++;
         return string.Join("\n", lines.Skip(firstContentLine));
     }
 }

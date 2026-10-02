@@ -227,6 +227,8 @@ public sealed class AssemblyToolsContractTests
         var sourceStructure = await structureTools.GetClassStructure(sourceSolution, "StructureOrderProbe.OrderProbe", maxMembers: 50,
             maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(sourceStructure, 32768, 4096);
+        Assert.Contains("snapshotId=source:", TextOf(sourceStructure), StringComparison.Ordinal);
+        Assert.Contains("analyzedScope=classStructure(symbol=StructureOrderProbe.OrderProbe, scope=all", TextOf(sourceStructure), StringComparison.Ordinal);
         AssertDeclarationOrder(TextOf(sourceStructure));
         Assert.Equal(ReadMemberNames(TextOf(sourceStructure)), ReadMemberNames(TextOf(complete)));
         var sourceNamespaceTree = await structureTools.GetNamespaceTree(sourceSolution,
@@ -583,18 +585,29 @@ public sealed class AssemblyToolsContractTests
         var inspectFirst = await assemblies.InspectAssembly(assemblyPath, maxResults: 1, maxMembers: 20,
             includeReferences: false, maxResponseBytes: 65536, maxResponseTokens: 16000);
         AssertOwnerResultWithinBudget(inspectFirst, "Probe0", 65536, 16000);
+        using (var inspectJson = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(inspectFirst))))
+        {
+            Assert.True(inspectJson.RootElement.TryGetProperty("resultCursor", out _),
+                "Domain continuation belongs in resultCursor, separate from outer continuationToken pages.");
+            Assert.False(inspectJson.RootElement.TryGetProperty("continuationToken", out _));
+        }
         var inspectCursor = ReadDomainCursor(TextOf(inspectFirst));
-        Assert.StartsWith("v1.", inspectCursor, StringComparison.Ordinal);
+        var snapshotId = ReadHeader(TextOf(inspectFirst), "snapshotId");
+        Assert.StartsWith("types(namespace=*", ReadHeader(TextOf(inspectFirst), "analyzedScope"), StringComparison.Ordinal);
+        Assert.Contains("analysisCompleteness=complete", TextOf(inspectFirst), StringComparison.Ordinal);
+        Assert.Contains("resultContinuation=available", TextOf(inspectFirst), StringComparison.Ordinal);
+        Assert.Contains("omissions=none", TextOf(inspectFirst), StringComparison.Ordinal);
         var inspectNext = await assemblies.InspectAssembly(assemblyPath, maxResults: 1, maxMembers: 20,
-            includeReferences: false, continuationToken: inspectCursor, maxResponseBytes: 65536, maxResponseTokens: 16000);
+            includeReferences: false, resultCursor: inspectCursor, maxResponseBytes: 65536, maxResponseTokens: 16000);
         AssertOwnerResultWithinBudget(inspectNext, "Probe1", 65536, 16000);
+        Assert.Equal(snapshotId, ReadHeader(TextOf(inspectNext), "snapshotId"));
         var inspectReplay = await assemblies.InspectAssembly(assemblyPath, maxResults: 1, maxMembers: 20,
-            includeReferences: false, continuationToken: inspectCursor, maxResponseBytes: 65536, maxResponseTokens: 16000);
+            includeReferences: false, resultCursor: inspectCursor, maxResponseBytes: 65536, maxResponseTokens: 16000);
         Assert.Equal(TextOf(inspectNext), TextOf(inspectReplay));
         AssertError(await assemblies.InspectAssembly(assemblyPath, typeName: "Changed", maxResults: 1, maxMembers: 20,
-            includeReferences: false, continuationToken: inspectCursor, maxResponseBytes: 16384), "INVALID_ARGUMENT");
+            includeReferences: false, resultCursor: inspectCursor, maxResponseBytes: 16384), "RESULT_CURSOR_ARGUMENT_MISMATCH");
         AssertError(await assemblies.InspectAssembly(foreignPath, maxResults: 1, maxMembers: 20,
-            includeReferences: false, continuationToken: inspectCursor, maxResponseBytes: 16384), "INVALID_ARGUMENT");
+            includeReferences: false, resultCursor: inspectCursor, maxResponseBytes: 16384), "RESULT_CURSOR_ARGUMENT_MISMATCH");
         var inspectNames = new List<string>();
         string? fullInspectCursor = null;
         var inspectDomains = 0;
@@ -603,12 +616,12 @@ public sealed class AssemblyToolsContractTests
             var inspectDomainCursor = fullInspectCursor;
             var broadPage = await ReadOuterPagesAsync((bytes, tokens, continuation) => assemblies.InspectAssembly(
                 assemblyPath, maxResults: 1, maxMembers: 100, includeReferences: false,
-                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 65536, 16000,
-                inspectDomainCursor);
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation, resultCursor: continuation is null ? inspectDomainCursor : null), 65536, 16000,
+                initialContinuation: null);
             var smallPage = await ReadOuterPagesAsync((bytes, tokens, continuation) => assemblies.InspectAssembly(
                 assemblyPath, maxResults: 1, maxMembers: 100, includeReferences: false,
-                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 4096, 1600,
-                inspectDomainCursor);
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation, resultCursor: continuation is null ? inspectDomainCursor : null), 4096, 1600,
+                initialContinuation: null);
             Assert.Equal(broadPage.Text, smallPage.Text);
             Assert.True(smallPage.Pages > 1, "This inspect domain page must itself require outer response pages.");
             using var pageJson = System.Text.Json.JsonDocument.Parse(broadPage.Text);
@@ -623,19 +636,18 @@ public sealed class AssemblyToolsContractTests
             kind: "method", maxResults: 100, maxFiles: 0, maxResponseBytes: 65536, maxResponseTokens: 50000);
         AssertOwnerResultWithinBudget(searchFirst, "Needle0", 65536, 50000);
         var searchCursor = ReadDomainCursor(TextOf(searchFirst));
-        Assert.StartsWith("v1.", searchCursor, StringComparison.Ordinal);
         var searchNext = await assemblies.SearchAssembly(assemblyPath, pattern: "Needle", declarationOnly: true,
-            kind: "method", maxResults: 100, maxFiles: 0, continuationToken: searchCursor,
+            kind: "method", maxResults: 100, maxFiles: 0, resultCursor: searchCursor,
             maxResponseBytes: 65536, maxResponseTokens: 50000);
         AssertOwnerPage(TextOf(searchNext));
         Assert.Contains("Probe", TextOf(searchNext), StringComparison.Ordinal);
         Assert.Equal(TextOf(searchNext), TextOf(await assemblies.SearchAssembly(assemblyPath, pattern: "Needle",
-            declarationOnly: true, kind: "method", maxResults: 100, maxFiles: 0, continuationToken: searchCursor,
+            declarationOnly: true, kind: "method", maxResults: 100, maxFiles: 0, resultCursor: searchCursor,
             maxResponseBytes: 65536, maxResponseTokens: 50000)));
         AssertError(await assemblies.SearchAssembly(assemblyPath, pattern: "Needle", declarationOnly: true,
-            kind: "type", maxResults: 1, maxFiles: 0, continuationToken: searchCursor, maxResponseBytes: 16384), "INVALID_ARGUMENT");
+            kind: "type", maxResults: 1, maxFiles: 0, resultCursor: searchCursor, maxResponseBytes: 16384), "RESULT_CURSOR_ARGUMENT_MISMATCH");
         AssertError(await assemblies.SearchAssembly(foreignPath, pattern: "Needle", declarationOnly: true,
-            kind: "method", maxResults: 1, maxFiles: 0, continuationToken: searchCursor, maxResponseBytes: 16384), "INVALID_ARGUMENT");
+            kind: "method", maxResults: 1, maxFiles: 0, resultCursor: searchCursor, maxResponseBytes: 16384), "RESULT_CURSOR_ARGUMENT_MISMATCH");
         var searchNames = new List<string>();
         string? fullSearchCursor = null;
         var searchDomains = 0;
@@ -644,12 +656,12 @@ public sealed class AssemblyToolsContractTests
             var searchDomainCursor = fullSearchCursor;
             var broadPage = await ReadOuterPagesAsync((bytes, tokens, continuation) => assemblies.SearchAssembly(
                 assemblyPath, pattern: "Needle", declarationOnly: true, kind: "method", maxResults: 100, maxFiles: 0,
-                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 65536, 16000,
-                searchDomainCursor);
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation, resultCursor: continuation is null ? searchDomainCursor : null), 65536, 16000,
+                initialContinuation: null);
             var smallPage = await ReadOuterPagesAsync((bytes, tokens, continuation) => assemblies.SearchAssembly(
                 assemblyPath, pattern: "Needle", declarationOnly: true, kind: "method", maxResults: 100, maxFiles: 0,
-                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 4096, 1600,
-                searchDomainCursor);
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation, resultCursor: continuation is null ? searchDomainCursor : null), 4096, 1600,
+                initialContinuation: null);
             Assert.Equal(broadPage.Text, smallPage.Text);
             Assert.True(smallPage.Pages > 1, "This search domain page must itself require outer response pages.");
             using var pageJson = System.Text.Json.JsonDocument.Parse(broadPage.Text);
@@ -667,8 +679,36 @@ public sealed class AssemblyToolsContractTests
         var filesLimitedText = TextOf(filesLimited);
         AssertOwnerPage(filesLimitedText);
         Assert.Contains("maxFiles", filesLimitedText, StringComparison.Ordinal);
+        Assert.Contains("analysisCompleteness=partial", filesLimitedText, StringComparison.Ordinal);
+        Assert.Contains("omissions=maxFiles", filesLimitedText, StringComparison.Ordinal);
         Assert.DoesNotContain("\"continuationToken\": \"v1.", filesLimitedText, StringComparison.Ordinal);
         Assert.DoesNotContain("Needle7", filesLimitedText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task OuterContinuationReadsItsImmutablePageAfterTargetFileIsDeleted()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var assemblies = new AssemblyTools(runtime);
+        using var fixture = TestTempDirectory.Create("ainet-assembly-outer-snapshot-");
+        var source = string.Join("\n", Enumerable.Range(0, 24).Select(index =>
+            $"public sealed class SnapshotProbe{index} {{ public int Read() => {index}; }}"));
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "OuterSnapshotProbe", source);
+
+        var first = await assemblies.InspectAssembly(assemblyPath, maxResults: 24, maxMembers: 10,
+            includeReferences: false, maxResponseBytes: 1024, maxResponseTokens: 300);
+        var outerToken = ReadOuterContinuation(TextOf(first));
+        Assert.False(first.IsError ?? false, TextOf(first));
+        Assert.NotNull(outerToken);
+
+        File.Delete(assemblyPath);
+        var next = await assemblies.InspectAssembly(assemblyPath, maxResults: 24, maxMembers: 10,
+            includeReferences: false, continuationToken: outerToken, maxResponseBytes: 1024, maxResponseTokens: 300);
+
+        Assert.False(next.IsError ?? false, TextOf(next));
+        Assert.Contains("Status: operation=ok, completeness=truncated", TextOf(next), StringComparison.Ordinal);
+        Assert.DoesNotContain("Assembly file not found", TextOf(next), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -763,7 +803,8 @@ public sealed class AssemblyToolsContractTests
 
     private static string ReadHandoff(string text, string memberName)
     {
-        var line = text.Split('\n').First(line => line.Contains(memberName, StringComparison.Ordinal));
+        var line = text.Split('\n').First(line => line.Contains(memberName, StringComparison.Ordinal)
+            && line.Contains("[handoff: ", StringComparison.Ordinal));
         var start = line.IndexOf("[handoff: ", StringComparison.Ordinal);
         var end = line.IndexOf(']', start + 10);
         Assert.True(start >= 0 && end > start, line);
@@ -884,7 +925,7 @@ public sealed class AssemblyToolsContractTests
 
     private static string ReadDomainCursor(string text)
     {
-        return ReadOptionalDomainCursor(text) ?? throw new Xunit.Sdk.XunitException("The domain page omitted its continuationToken.");
+        return ReadOptionalDomainCursor(text) ?? throw new Xunit.Sdk.XunitException("The domain page omitted its resultCursor.");
     }
 
     private static string? ReadOptionalDomainCursor(string text)
@@ -893,7 +934,7 @@ public sealed class AssemblyToolsContractTests
         var jsonStart = body.IndexOf('{');
         Assert.True(jsonStart >= 0, body);
         using var document = System.Text.Json.JsonDocument.Parse(body[jsonStart..]);
-        return document.RootElement.TryGetProperty("continuationToken", out var cursor) ? cursor.GetString() : null;
+        return document.RootElement.TryGetProperty("resultCursor", out var cursor) ? cursor.GetString() : null;
     }
 
     private static async Task<(string Text, int Pages, string FirstPage)> ReadOuterPagesAsync(
@@ -910,7 +951,7 @@ public sealed class AssemblyToolsContractTests
             var result = await invoke(bytes, tokens, continuation);
             var text = TextOf(result);
             firstPage ??= text;
-            Assert.False(result.IsError ?? false, text);
+            Assert.False(result.IsError ?? false, $"Outer page {pageNumber} failed: {text}");
             Assert.InRange(Encoding.UTF8.GetByteCount(text), 0, bytes);
             Assert.InRange(TokenCount(text), 0, tokens);
             Assert.DoesNotContain("operation=running", text, StringComparison.Ordinal);
@@ -979,10 +1020,13 @@ public sealed class AssemblyToolsContractTests
     {
         var lines = text.Split('\n');
         var firstContentLine = lines.Length > 0 && lines[0].StartsWith("Status:", StringComparison.Ordinal) ? 1 : 0;
-        if (firstContentLine < lines.Length && lines[firstContentLine].StartsWith("nextAction: ", StringComparison.Ordinal))
-            firstContentLine++;
-        if (firstContentLine < lines.Length && lines[firstContentLine].StartsWith("continuationToken=", StringComparison.Ordinal))
-            firstContentLine++;
+        while (firstContentLine < lines.Length && (lines[firstContentLine].StartsWith("snapshotId=", StringComparison.Ordinal)
+            || lines[firstContentLine].StartsWith("analyzedScope=", StringComparison.Ordinal)
+            || lines[firstContentLine].StartsWith("analysisCompleteness=", StringComparison.Ordinal)
+            || lines[firstContentLine].StartsWith("resultContinuation=", StringComparison.Ordinal)
+            || lines[firstContentLine].StartsWith("omissions=", StringComparison.Ordinal)
+            || lines[firstContentLine].StartsWith("nextAction: ", StringComparison.Ordinal)
+            || lines[firstContentLine].StartsWith("continuationToken=", StringComparison.Ordinal))) firstContentLine++;
         return string.Join("\n", lines.Skip(firstContentLine));
     }
 
@@ -990,6 +1034,13 @@ public sealed class AssemblyToolsContractTests
     {
         var line = text.Split('\n').FirstOrDefault(value => value.StartsWith("continuationToken=", StringComparison.Ordinal));
         return line?[("continuationToken=".Length)..];
+    }
+
+    private static string ReadHeader(string text, string name)
+    {
+        var prefix = name + "=";
+        var line = text.Split('\n').FirstOrDefault(value => value.StartsWith(prefix, StringComparison.Ordinal));
+        return line is null ? throw new Xunit.Sdk.XunitException($"Missing {name} metadata.") : line[prefix.Length..];
     }
 
     private static async Task<CallToolResult> PollAssemblyOwnerAsync(Func<string?, Task<CallToolResult>> invoke)

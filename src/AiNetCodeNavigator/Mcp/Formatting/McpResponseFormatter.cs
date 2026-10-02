@@ -95,10 +95,18 @@ internal static class McpResponseFormatter
             var errorTokenCount = TokenEncoding.CountTokens(errorText);
             if (maxResponseTokens is { } errorTokenBudget && errorTokenCount > errorTokenBudget)
             {
-                throw new ArgumentOutOfRangeException(
-                    nameof(maxResponseTokens),
-                    maxResponseTokens,
-                    $"The token budget cannot represent the recoverable error response; at least {errorTokenCount} tokens are required.");
+                // Preserve exact retry minima when the full explanatory hint does not fit.
+                // Failure metadata can itself consume the caller's entire token allowance.
+                // Keep the recovery code and exact minima; the larger retry restores full metadata.
+                errorText = $"RESPONSE_BUDGET_TOO_SMALL\nminimumResponseBytes: {minimumBytes}\nminimumResponseTokens: {minimumTokens}";
+                errorTokenCount = TokenEncoding.CountTokens(errorText);
+                if (errorTokenCount > errorTokenBudget)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(maxResponseTokens),
+                        maxResponseTokens,
+                        $"The token budget cannot represent RESPONSE_BUDGET_TOO_SMALL with exact retry minima; at least {errorTokenCount} tokens are required.");
+                }
             }
 
             return new McpResponseFormatResult(

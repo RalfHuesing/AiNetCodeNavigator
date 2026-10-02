@@ -84,10 +84,13 @@ public static class AssemblySearchScanner
             context.ReferenceSnapshotHash, request);
         var handoffIdentity = AnalysisSymbolIdentity.ForAssembly(context.Origin.CanonicalPath, context.Origin.ContentHash,
             context.Generation, context.ReferenceSnapshotHash);
-        if (!AssemblyPaging.TryReadBoundOffset(request.Cursor, binding, out var offset))
-            return Result<AssemblySearchPayload>.Failure(NavigationErrorCodes.InvalidArgument,
-                "continuationToken is not bound to this target snapshot and search query.",
-                "Repeat the same search against the same assembly snapshot using its most recent continuationToken.");
+        var cursorStatus = AssemblyPaging.ReadBoundOffset(request.Cursor, binding, out var offset);
+        if (cursorStatus != AssemblyPaging.BoundCursorStatus.Valid)
+            return Result<AssemblySearchPayload>.Failure(cursorStatus == AssemblyPaging.BoundCursorStatus.StaleBinding
+                    ? NavigationErrorCodes.StaleSnapshot
+                    : NavigationErrorCodes.InvalidArgument,
+                "resultCursor is not bound to this target snapshot and search query.",
+                "Repeat the same search against the same assembly snapshot using its most recent resultCursor.");
         Regex? fileMatcher = null;
         var negateFileMatcher = false;
         if (!RegexAutoDetector.TryCreateFilterRegex(request.FileFilter, out fileMatcher, out negateFileMatcher, out var filterError))
@@ -130,9 +133,9 @@ public static class AssemblySearchScanner
             if (promoted.TotalCount > 0) scan = promoted;
         }
         if (request.Cursor is not null && offset >= scan.TotalCount)
-            return Result<AssemblySearchPayload>.Failure(NavigationErrorCodes.InvalidArgument,
-                "continuationToken is beyond the remaining search results.",
-                "Use a continuationToken from a nonfinal result page.");
+            return Result<AssemblySearchPayload>.Failure(NavigationErrorCodes.StaleSnapshot,
+                "resultCursor is beyond the remaining search results.",
+                "Use a resultCursor from a nonfinal result page.");
 
         async Task<(List<SearchHitCandidate> Results, int TotalCount, int HitFileCount, ResultError? Error)> ScanAsync(bool useRegex, string? overridePattern = null)
         {
@@ -208,7 +211,7 @@ public static class AssemblySearchScanner
         }).ToList();
         var hasMorePages = offset + pageResults.Count < scan.TotalCount;
         if (hasMorePages) truncatedBy.Add("maxResults");
-        var continuationToken = hasMorePages ? AssemblyPaging.CreateToken(offset + pageResults.Count, binding) : null;
+        var resultCursor = hasMorePages ? AssemblyPaging.CreateToken(offset + pageResults.Count, binding) : null;
         return Result<AssemblySearchPayload>.Success(new AssemblySearchPayload(
             context.Origin.CanonicalPath,
             kind,
@@ -218,7 +221,13 @@ public static class AssemblySearchScanner
             truncatedBy.Count > 0,
             context.Diagnostics,
             truncatedBy,
-            continuationToken));
+            resultCursor,
+            new NavigationAnalysisMetadata(
+                NavigationAnalysisMetadata.CreateSnapshotId("assembly", handoffIdentity.ContentHash),
+                $"search(kind={kind}, query={request.Query ?? request.SearchKind}, fileFilter={request.FileFilter ?? "*"}, declarationOnly={declarationOnly}, kindFilter={request.Kind ?? "*"}, maxFiles={maxFiles}, maxResults={limit})",
+                truncatedBy.Where(static reason => reason != "maxResults").ToArray(),
+                truncatedBy.Contains("maxFiles", StringComparer.Ordinal) ? "partial" : "complete",
+                hasMorePages)));
     }
 
     internal static IEnumerable<SearchLineMatch> FindTextLines(

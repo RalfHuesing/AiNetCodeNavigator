@@ -17,7 +17,9 @@ internal sealed record AssemblyReferencesClosureScanResult(
     int DirectCount = 0,
     int MaxDepthReached = 0,
     IReadOnlyList<string>? AffectedProjects = null,
-    IReadOnlyList<string>? AffectedFiles = null);
+    IReadOnlyList<string>? AffectedFiles = null,
+    AnalysisSymbolIdentity? AnalysisIdentity = null,
+    IReadOnlyList<string>? OmissionReasons = null);
 
 internal static class AssemblyReferencesClosureScanner
 {
@@ -167,10 +169,19 @@ internal static class AssemblyReferencesClosureScanner
                 : nodeLimited || depthClamped || traversalLimited
                     ? "Cross-assembly traversal reached an owner, result, or graph bound before completing the requested depth."
                     : "Increase maxResults and repeat the query.";
+        var omissions = new List<string>();
+        if (totalCount > maxResults) omissions.Add("maxResults");
+        if (nodeLimited) omissions.Add("nodeLimit");
+        if (depthClamped) omissions.Add("depthLimit");
+        if (traversalLimited) omissions.Add("traversalLimit");
+        if (ownerLimit) omissions.Add("referenceOwnerLimit");
+        if (unresolved) omissions.Add("unresolvedReferences");
         return new(result, null, null, truncated, nextAction, directCount,
             maxDepthReached,
             ordered.Select(entry => entry.ProjectName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
-            ordered.Select(entry => entry.FilePath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+            ordered.Select(entry => entry.FilePath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            session.RootAnalysisIdentity,
+            omissions);
     }
 
     private static AssemblyReferencesClosureScanResult Failure(ResultError error, string field) => new(null, error, field, false, null);

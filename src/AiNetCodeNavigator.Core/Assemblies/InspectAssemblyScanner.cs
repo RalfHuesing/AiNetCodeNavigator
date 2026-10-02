@@ -48,12 +48,15 @@ public static class InspectAssemblyScanner
             context.Origin.ContentHash,
             context.ReferenceSnapshotHash,
             request);
-        if (!AssemblyPaging.TryReadBoundOffset(request.Cursor, binding, out var offset))
+        var cursorStatus = AssemblyPaging.ReadBoundOffset(request.Cursor, binding, out var offset);
+        if (cursorStatus != AssemblyPaging.BoundCursorStatus.Valid)
         {
             return Result<InspectAssemblyPayload>.Failure(
-                NavigationErrorCodes.InvalidArgument,
-                "continuationToken is not bound to the target, assembly hash and query, or has expired.",
-                "reuse the most recently returned continuationToken unchanged with the same query.");
+                cursorStatus == AssemblyPaging.BoundCursorStatus.StaleBinding
+                    ? NavigationErrorCodes.StaleSnapshot
+                    : NavigationErrorCodes.InvalidArgument,
+                "resultCursor is not bound to the target, assembly hash and query, or has expired.",
+                "Reuse the most recently returned resultCursor unchanged with the same query.");
         }
 
         var maxResults = NormalizeLimit(request.MaxResults, DefaultMaxResults, MaxResults);
@@ -86,7 +89,7 @@ public static class InspectAssemblyScanner
             .ToList();
 
         var isTruncated = Math.Max(0, offset) + limitedTypes.Count < allTypes.Count;
-        var continuationToken = isTruncated
+        var resultCursor = isTruncated
             ? AssemblyPaging.CreateToken(Math.Max(0, offset) + limitedTypes.Count, binding)
             : null;
 
@@ -119,7 +122,13 @@ public static class InspectAssemblyScanner
             includeReferences,
             namespaces.Count,
             context.DecompiledProjectPaths?.DecompiledSourceRoot,
-            continuationToken);
+            resultCursor,
+            Analysis: new NavigationAnalysisMetadata(
+                NavigationAnalysisMetadata.CreateSnapshotId("assembly", handoffIdentity.ContentHash),
+                $"types(namespace={request.Namespace ?? "*"}, typeName={request.TypeName ?? "*"}, memberName={request.MemberName ?? "*"}, publicOnly={request.PublicOnly}, includeReferences={includeReferences}, maxResults={maxResults}, maxMembers={maxMembers})",
+                referenceSummary.ReferencesTruncated && includeReferences ? ["referenceDetailsLimit"] : [],
+                referenceSummary.ReferencesTruncated && includeReferences ? "partial" : "complete",
+                isTruncated));
 
         var formattedText = InspectAssemblyFormatter.FormatText(payload, request.PublicOnly);
         return Result<InspectAssemblyPayload>.Success(payload with { FormattedText = formattedText });

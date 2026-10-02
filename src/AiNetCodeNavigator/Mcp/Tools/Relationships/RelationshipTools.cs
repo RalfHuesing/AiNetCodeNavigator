@@ -63,19 +63,32 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     if (!diagnosticScope.IsSuccess)
                         return NavigationToolSupport.Failure(diagnosticScope.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
                     IReadOnlyList<string> sessionDiagnostics;
-                    await using (var scopeAccess = diagnosticScope.Value!) sessionDiagnostics = scopeAccess.Context.Diagnostics;
+                    AnalysisSymbolIdentity identity;
+                    await using (var scopeAccess = diagnosticScope.Value!)
+                    {
+                        sessionDiagnostics = scopeAccess.Context.Diagnostics;
+                        identity = AnalysisSymbolIdentity.ForAssembly(scopeAccess.Context.Origin.CanonicalPath,
+                            scopeAccess.Context.Origin.ContentHash, scopeAccess.Context.Generation,
+                            scopeAccess.Context.ReferenceSnapshotHash);
+                    }
                     body = AppendCallTreeDiagnostics(body, graph, sessionDiagnostics, includeDiagnostics);
-                    return NavigationToolSupport.SuccessText(body, graph.Truncated,
+                    var response = NavigationToolSupport.SuccessText(body, graph.Truncated,
                         graph.Truncated ? "Increase depth or topN and repeat the query." : null);
+                    return NavigationToolSupport.WithAssemblyMetadata(response, identity,
+                        $"callTree(symbol={symbolIdentifier.Trim()}, depth={depth}, topN={topN}, direction={parsedDirection}, includeBcl={includeBcl}, scope={scope}, includeGenerated={includeGenerated}, format={format}, includeReferences=false)",
+                        graph.Truncated ? ["graphLimit"] : []);
                 }
-                return await WithSource(target, async solution =>
+                return await WithSource(target, async (solution, source) =>
                 {
-                var symbol = await Resolve(solution, symbolIdentifier, ct).ConfigureAwait(false);
+                var symbol = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
                 if (symbol.Error is not null) return Fail(symbol.Error.Value, "$.symbolIdentifier");
                 var graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(solution, symbol.Symbol!, depth, topN, parsedDirection, includeBcl, scope, includeGenerated), ct).ConfigureAwait(false);
                 var body = format == "mermaid" ? CallTreeMermaidRenderer.RenderMermaid(graph) : CallGraphTextRenderer.RenderAscii(graph);
-                return NavigationToolSupport.SuccessText(body, graph.Truncated,
+                var response = NavigationToolSupport.SuccessText(body, graph.Truncated,
                     graph.Truncated ? "Increase depth or topN and repeat the query." : null);
+                return source.WithMetadata(response,
+                    $"callTree(symbol={symbolIdentifier.Trim()}, depth={depth}, topN={topN}, direction={parsedDirection}, includeBcl={includeBcl}, scope={scope}, includeGenerated={includeGenerated}, format={format})",
+                    graph.Truncated ? ["depthOrTopN"] : []);
                 }, maxResponseBytes, maxResponseTokens, ct);
             }, null, cancellationToken);
 
@@ -106,7 +119,10 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                             symbolIdentifier, maxResults, depth, scope, includeGenerated, ct).ConfigureAwait(false);
                         if (closure.Error is { } error)
                             return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, closure.ErrorField);
-                        return NavigationToolSupport.Success(closure.References!, closure.IsTruncated, closure.NextAction);
+                        var closureResponse = NavigationToolSupport.Success(closure.References!, closure.IsTruncated, closure.NextAction);
+                        return NavigationToolSupport.WithAssemblyMetadata(closureResponse, closure.AnalysisIdentity!,
+                            $"findReferences(symbol={symbolIdentifier.Trim()}, depth={depth}, maxResults={maxResults}, scope={scope}, includeGenerated={includeGenerated}, includeReferences=true)",
+                            closure.OmissionReasons);
                     }
                     var accessResult = await ResolveAssemblySymbolAsync(target, symbolIdentifier, ct).ConfigureAwait(false);
                     if (!accessResult.IsSuccess) return NavigationToolSupport.Failure(accessResult.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
@@ -114,18 +130,33 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     var result = await FindReferencesResolver.FindReferencesAsync(access.Symbol, access.Solution,
                         maxResults, depth, ct, scope: scope, includeGenerated: includeGenerated,
                         handoffFormatter: CreateAssemblyHandoffFormatter(access), ownerTargetPath: access.Origin.CanonicalPath).ConfigureAwait(false);
-                    return NavigationToolSupport.Success(result,
+                    var response = NavigationToolSupport.Success(result,
                         result.IsTruncated || result.IsTruncatedByNodeLimit || result.IsDepthClamped,
                         "Increase depth or maxResults and repeat the query.");
+                    var omissions = new List<string>();
+                    if (result.IsTruncated) omissions.Add("maxResults");
+                    if (result.IsTruncatedByNodeLimit) omissions.Add("nodeLimit");
+                    if (result.IsDepthClamped) omissions.Add("depthLimit");
+                    var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
+                        access.Generation, access.ReferenceSnapshotHash);
+                    return NavigationToolSupport.WithAssemblyMetadata(response, identity,
+                        $"findReferences(symbol={symbolIdentifier.Trim()}, depth={depth}, maxResults={maxResults}, scope={scope}, includeGenerated={includeGenerated}, includeReferences=false)", omissions);
                 }
-                return await WithSource(target, async solution =>
+                return await WithSource(target, async (solution, source) =>
                 {
-                var symbol = await Resolve(solution, symbolIdentifier, ct).ConfigureAwait(false);
+                var symbol = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
                 if (symbol.Error is not null) return Fail(symbol.Error.Value, "$.symbolIdentifier");
                 var result = await FindReferencesResolver.FindReferencesAsync(symbol.Symbol!, solution, maxResults, depth, ct,
                     scope: scope, includeGenerated: includeGenerated).ConfigureAwait(false);
-                return NavigationToolSupport.Success(result, result.IsTruncated || result.IsTruncatedByNodeLimit || result.IsDepthClamped,
+                var response = NavigationToolSupport.Success(result, result.IsTruncated || result.IsTruncatedByNodeLimit || result.IsDepthClamped,
                     "Increase depth or maxResults and repeat the query.");
+                var omissions = new List<string>();
+                if (result.IsTruncated) omissions.Add("maxResults");
+                if (result.IsTruncatedByNodeLimit) omissions.Add("nodeLimit");
+                if (result.IsDepthClamped) omissions.Add("depthLimit");
+                return source.WithMetadata(response,
+                    $"findReferences(symbol={symbolIdentifier.Trim()}, depth={depth}, maxResults={maxResults}, scope={scope}, includeGenerated={includeGenerated})",
+                    omissions.ToArray());
                 }, maxResponseBytes, maxResponseTokens, ct);
             }, null, cancellationToken);
 
@@ -160,17 +191,25 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     if (!assemblyResult.IsSuccess)
                         return McpToolResults.InvalidArgument(assemblyResult.ErrorMessage!, "$.symbolIdentifier", "Choose a supported named type.",
                             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-                    return NavigationToolSupport.Success(assemblyResult, assemblyResult.IsTruncated,
+                    var response = NavigationToolSupport.Success(assemblyResult, assemblyResult.IsTruncated,
                         "Increase maxResults and repeat the query.");
+                    var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
+                        access.Generation, access.ReferenceSnapshotHash);
+                    return NavigationToolSupport.WithAssemblyMetadata(response, identity,
+                        $"typeHierarchy(symbol={symbolIdentifier.Trim()}, maxResults={maxResults}, scope={scope}, includeGenerated={includeGenerated})",
+                        assemblyResult.IsTruncated ? ["maxResults"] : []);
                 }
-                return await WithSource(target, async solution =>
+                return await WithSource(target, async (solution, source) =>
                 {
-                var symbol = await Resolve(solution, symbolIdentifier, ct).ConfigureAwait(false);
+                var symbol = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
                 if (symbol.Error is not null) return Fail(symbol.Error.Value, "$.symbolIdentifier");
                 if (symbol.Symbol is not INamedTypeSymbol named) return Invalid("symbolIdentifier", "Resolve a named class, interface, or struct.");
                 var result = await TypeHierarchyScanner.ScanAsync(named, solution, maxResults, ct, scope, includeGenerated).ConfigureAwait(false);
                 if (!result.IsSuccess) return McpToolResults.InvalidArgument(result.ErrorMessage!, "$.symbolIdentifier", "Choose a supported named type.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-                return NavigationToolSupport.Success(result, result.IsTruncated, "Increase maxResults and repeat the query.");
+                var response = NavigationToolSupport.Success(result, result.IsTruncated, "Increase maxResults and repeat the query.");
+                return source.WithMetadata(response,
+                    $"typeHierarchy(symbol={symbolIdentifier.Trim()}, maxResults={maxResults}, scope={scope}, includeGenerated={includeGenerated})",
+                    result.IsTruncated ? ["maxResults"] : []);
                 }, maxResponseBytes, maxResponseTokens, ct);
             }, null, cancellationToken);
 
@@ -204,16 +243,24 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         return McpToolResults.InvalidArgument(assemblyResult.ErrorMessage, "$.symbolIdentifier",
                             "Use an interface, abstract/virtual member, or overridable class.",
                             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-                    return NavigationToolSupport.Success(assemblyResult, assemblyResult.IsTruncated,
+                    var response = NavigationToolSupport.Success(assemblyResult, assemblyResult.IsTruncated,
                         "Increase maxResults and repeat the query.");
+                    var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
+                        access.Generation, access.ReferenceSnapshotHash);
+                    return NavigationToolSupport.WithAssemblyMetadata(response, identity,
+                        $"findImplementations(symbol={symbolIdentifier.Trim()}, maxResults={maxResults}, scope={scope}, includeGenerated={includeGenerated})",
+                        assemblyResult.IsTruncated ? ["maxResults"] : []);
                 }
-                return await WithSource(target, async solution =>
+                return await WithSource(target, async (solution, source) =>
                 {
-                var symbol = await Resolve(solution, symbolIdentifier, ct).ConfigureAwait(false);
+                var symbol = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
                 if (symbol.Error is not null) return Fail(symbol.Error.Value, "$.symbolIdentifier");
                 var result = await FindReferencesResolver.FindImplementationsAsync(symbol.Symbol!, solution, maxResults, ct, scope, includeGenerated).ConfigureAwait(false);
                 if (result.ErrorMessage is not null) return McpToolResults.InvalidArgument(result.ErrorMessage, "$.symbolIdentifier", "Use an interface, abstract/virtual member, or overridable class.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-                return NavigationToolSupport.Success(result, result.IsTruncated, "Increase maxResults and repeat the query.");
+                var response = NavigationToolSupport.Success(result, result.IsTruncated, "Increase maxResults and repeat the query.");
+                return source.WithMetadata(response,
+                    $"findImplementations(symbol={symbolIdentifier.Trim()}, maxResults={maxResults}, scope={scope}, includeGenerated={includeGenerated})",
+                    result.IsTruncated ? ["maxResults"] : []);
                 }, maxResponseBytes, maxResponseTokens, ct);
             }, null, cancellationToken);
 
@@ -243,7 +290,10 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                             symbolIdentifier, depth, maxResults, ct).ConfigureAwait(false);
                         if (closureImpact.Error is { } error)
                             return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, closureImpact.ErrorField);
-                        return NavigationToolSupport.Success(closureImpact.Impact!, closureImpact.IsTruncated, closureImpact.NextAction);
+                        var closureResponse = NavigationToolSupport.Success(closureImpact.Impact!, closureImpact.IsTruncated, closureImpact.NextAction);
+                        return NavigationToolSupport.WithAssemblyMetadata(closureResponse, closureImpact.AnalysisIdentity!,
+                            $"impact(symbol={closureImpact.Impact!.TargetSymbol}, depth={depth}, maxResults={maxResults}, includeReferences=true)",
+                            closureImpact.OmissionReasons);
                     }
                     var access = await ResolveAssemblySymbolAsync(target, symbolIdentifier, ct).ConfigureAwait(false);
                     if (!access.IsSuccess) return NavigationToolSupport.Failure(access.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
@@ -253,14 +303,28 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(lease.Symbol, lease.Solution, depth, maxResults, ct,
                         handoffFormatter: CreateAssemblyHandoffFormatter(access.Value!)).ConfigureAwait(false);
                     var incomplete = impact.IsTruncated || impact.IsTruncatedByNodeLimit || impact.IsDepthClamped;
-                    return NavigationToolSupport.Success(impact, incomplete, "Increase depth or maxResults and repeat the query.");
+                    var response = NavigationToolSupport.Success(impact, incomplete, "Increase depth or maxResults and repeat the query.");
+                    var identity = AnalysisSymbolIdentity.ForAssembly(lease.Origin.CanonicalPath, lease.Origin.ContentHash,
+                        lease.Generation, lease.ReferenceSnapshotHash);
+                    var omissions = new List<string>();
+                    if (impact.IsTruncated) omissions.Add("maxResults");
+                    if (impact.IsTruncatedByNodeLimit) omissions.Add("nodeLimit");
+                    if (impact.IsDepthClamped) omissions.Add("depthLimit");
+                    return NavigationToolSupport.WithAssemblyMetadata(response, identity,
+                        $"impact(symbol={lease.Symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)}, depth={depth}, maxResults={maxResults}, includeReferences=false)", omissions);
                 }
-                return await WithSource(target, async solution =>
+                return await WithSource(target, async (solution, source) =>
                 {
-                    var symbol = await Resolve(solution, symbolIdentifier, ct).ConfigureAwait(false);
+                    var symbol = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
                     if (symbol.Error is not null) return NavigationToolSupport.Failure(symbol.Error.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                     var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(symbol.Symbol!, solution, depth, maxResults, ct).ConfigureAwait(false);
-                    return NavigationToolSupport.Success(impact, impact.IsTruncated || impact.IsTruncatedByNodeLimit || impact.IsDepthClamped, "Increase depth or maxResults and repeat the query.");
+                    var response = NavigationToolSupport.Success(impact, impact.IsTruncated || impact.IsTruncatedByNodeLimit || impact.IsDepthClamped, "Increase depth or maxResults and repeat the query.");
+                    var omissions = new List<string>();
+                    if (impact.IsTruncated) omissions.Add("maxResults");
+                    if (impact.IsTruncatedByNodeLimit) omissions.Add("nodeLimit");
+                    if (impact.IsDepthClamped) omissions.Add("depthLimit");
+                    return source.WithMetadata(response,
+                        $"impact(symbol={symbolIdentifier.Trim()}, depth={depth}, maxResults={maxResults})", omissions.ToArray());
                 }, maxResponseBytes, maxResponseTokens, ct);
             }, null, cancellationToken);
 
@@ -308,8 +372,13 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                             new DependencyGraphScanOptions(PageSize: maxResults, TargetTypeName: targetSymbol.ToDisplayString(),
                                 TargetTypeId: targetTypeId, Direction: parsedDirection, Depth: depth, ScopeType: parsedScope,
                                 IncludeGenerated: includeGenerated), CreateAssemblyHandoffFormatter(access)).ConfigureAwait(false);
-                        return NavigationToolSupport.Success(scan, scan.IsTruncated,
+                        var response = NavigationToolSupport.Success(scan, scan.IsTruncated,
                             "Increase maxResults, depth, or document coverage and repeat the query.");
+                        var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
+                            access.Generation, access.ReferenceSnapshotHash);
+                        return NavigationToolSupport.WithAssemblyMetadata(response, identity,
+                            $"dependencyGraph(symbol={targetSymbol.ToDisplayString()}, direction={parsedDirection}, depth={depth}, maxResults={maxResults}, scope={parsedScope}, includeGenerated={includeGenerated})",
+                            DependencyGraphOmissions(scan));
                     }
 
                     var opened = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
@@ -332,18 +401,23 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         new DependencyGraphScanOptions(PageSize: maxResults, TargetFilePath: filePath,
                             TargetTypeIds: fileTypeIds, Direction: parsedDirection, Depth: depth, ScopeType: parsedScope,
                             IncludeGenerated: includeGenerated), CreateAssemblyHandoffFormatter(scope.Solution, scope.Context)).ConfigureAwait(false);
-                    return NavigationToolSupport.Success(fileScan, fileScan.IsTruncated,
+                    var fileResponse = NavigationToolSupport.Success(fileScan, fileScan.IsTruncated,
                         "Increase maxResults, depth, or document coverage and repeat the query.");
+                    var fileIdentity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath,
+                        scope.Context.Origin.ContentHash, scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
+                    return NavigationToolSupport.WithAssemblyMetadata(fileResponse, fileIdentity,
+                        $"dependencyGraph(file={selectedDocument.Document.FilePath}, direction={parsedDirection}, depth={depth}, maxResults={maxResults}, scope={parsedScope}, includeGenerated={includeGenerated})",
+                        DependencyGraphOmissions(fileScan));
                 }
 
-                return await WithSource(target, async solution =>
+                return await WithSource(target, async (solution, source) =>
                 {
                 string? typeName = null;
                 string? typeId = null;
                 IReadOnlyCollection<string>? fileTypeIds = null;
                 if (symbolIdentifier is not null)
                 {
-                    var resolved = await Resolve(solution, symbolIdentifier, ct).ConfigureAwait(false);
+                    var resolved = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
                     if (resolved.Error is not null) return NavigationToolSupport.Failure(resolved.Error.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                     var type = resolved.Symbol is INamedTypeSymbol namedType ? namedType : resolved.Symbol!.ContainingType;
                     typeName = type?.ToDisplayString();
@@ -357,14 +431,23 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         return McpToolResults.InvalidArgument("The requested source file could not be selected.", "$.filePath", selectedDocument.Error!, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                     fileTypeIds = await DependencyGraphScanner.GetDocumentTypeIdsAsync(selectedDocument.Document, ct).ConfigureAwait(false);
                 }
-                var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
+                var identity = source.Identity;
                 var scan = await ScanSourceDependencyGraphAcrossDocumentsAsync(solution,
                     new DependencyGraphTraversalOptions(TargetFilePath: filePath,
                         TargetTypeName: typeName, Direction: parsedDirection, Depth: depth,
                         PageSize: maxResults, TargetTypeId: typeId, TargetTypeIds: fileTypeIds),
                     new DependencyGraphScanOptions(ScopeType: parsedScope, IncludeGenerated: includeGenerated),
                     CreateSourceHandoffFormatter(solution, identity), ct).ConfigureAwait(false);
-                return NavigationToolSupport.Success(scan, scan.IsTruncated, "Increase maxResults, depth, or document coverage and repeat the query.");
+                var response = NavigationToolSupport.Success(scan, scan.IsTruncated, "Increase maxResults, depth, or document coverage and repeat the query.");
+                var omissions = new List<string>();
+                if (scan.IsDepthClamped) omissions.Add("depthLimit");
+                if (scan.NodeLimitReached) omissions.Add("nodeLimit");
+                if (scan.DocumentLimitReached) omissions.Add("documentLimit");
+                if (scan.ContinuationInputIncomplete) omissions.Add("continuationInputIncomplete");
+                if (scan.Errors is { Count: > 0 }) omissions.Add("scannerErrors");
+                return source.WithMetadata(response,
+                    $"dependencyGraph(file={filePath?.Trim() ?? "*"}, symbol={symbolIdentifier?.Trim() ?? "*"}, direction={parsedDirection}, depth={depth}, maxResults={maxResults}, scope={parsedScope}, includeGenerated={includeGenerated})",
+                    omissions.ToArray());
                 }, maxResponseBytes, maxResponseTokens, ct);
             }, null, cancellationToken);
 
@@ -535,21 +618,27 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 if (target.TargetType == AnalysisTargetType.Assembly)
                 {
                     var input = symbolIdentifier ?? typeName!;
+                    AnalysisSymbolIdentity? assemblyIdentity = null;
                     if (symbolIdentifier is not null)
                     {
                         var access = await ResolveAssemblySymbolAsync(target, symbolIdentifier, ct).ConfigureAwait(false);
                         if (!access.IsSuccess) return NavigationToolSupport.Failure(access.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                         await using var lease = access.Value!;
+                        assemblyIdentity = AnalysisSymbolIdentity.ForAssembly(lease.Origin.CanonicalPath, lease.Origin.ContentHash,
+                            lease.Generation, lease.ReferenceSnapshotHash);
                         input = lease.Symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
                     }
                     var result = await ResolveTypeOriginScanner.ResolveAsync(new ResolveTypeOriginRequest(target.CanonicalPath, input), ct).ConfigureAwait(false);
-                    return result.IsSuccess ? NavigationToolSupport.Success(result.Value!) : NavigationToolSupport.Failure(result.Error!.Value, maxResponseBytes, maxResponseTokens,
+                    if (!result.IsSuccess) return NavigationToolSupport.Failure(result.Error!.Value, maxResponseBytes, maxResponseTokens,
                         symbolIdentifier is null ? "$.typeName" : "$.symbolIdentifier");
+                    if (assemblyIdentity is null) return NavigationToolSupport.Success(result.Value!);
+                    return NavigationToolSupport.WithAssemblyMetadata(NavigationToolSupport.Success(result.Value!), assemblyIdentity,
+                        $"resolveTypeOrigin(input={input.Trim()})");
                 }
-                return await WithSource(target, async solution =>
+                return await WithSource(target, async (solution, source) =>
                 {
                     var identifier = symbolIdentifier ?? typeName!;
-                    var resolved = await Resolve(solution, identifier, ct).ConfigureAwait(false);
+                    var resolved = await Resolve(solution, identifier, source.Identity, ct).ConfigureAwait(false);
                     if (resolved.Error is { } resolutionError && resolutionError.Code != NavigationErrorCodes.SymbolNotFound)
                         return NavigationToolSupport.Failure(resolutionError, maxResponseBytes, maxResponseTokens,
                             symbolIdentifier is null ? "$.typeName" : "$.symbolIdentifier");
@@ -557,7 +646,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         resolved.Error is null ? resolved.Symbol : null,
                         resolved.Error is null ? null : identifier, ct).ConfigureAwait(false);
                     return result.IsSuccess
-                        ? NavigationToolSupport.Success(result.Value!)
+                        ? source.WithMetadata(NavigationToolSupport.Success(result.Value!),
+                            $"resolveTypeOrigin(input={identifier.Trim()})")
                         : NavigationToolSupport.Failure(result.Error!.Value, maxResponseBytes, maxResponseTokens,
                             symbolIdentifier is null ? "$.typeName" : "$.symbolIdentifier");
                 }, maxResponseBytes, maxResponseTokens, ct);
@@ -583,13 +673,19 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         return await NavigationToolSupport.RouteAsync(runtime, "get_feature_context", targetPath,
             new { symbolIdentifier, scopeType, includeGenerated, maxCallers, maxTests }, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens,
-            async (target, ct) => await WithSource(target, async solution =>
+            async (target, ct) => await WithSource(target, async (solution, source) =>
             {
-                var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
+                var identity = source.Identity;
                 var payload = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(solution, symbolIdentifier, maxCallers, maxTests, scope, identity, includeGenerated), ct).ConfigureAwait(false);
                 if (payload?.Error is { } error) return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
-                return NavigationToolSupport.Success(payload!, payload!.CallersTruncated || payload.TestsTruncated,
+                var response = NavigationToolSupport.Success(payload!, payload!.CallersTruncated || payload.TestsTruncated,
                     "Increase maxCallers or maxTests and repeat the query.");
+                var omissions = new List<string>();
+                if (payload.CallersTruncated) omissions.Add("maxCallers");
+                if (payload.TestsTruncated) omissions.Add("maxTests");
+                return source.WithMetadata(response,
+                    $"featureContext(symbol={symbolIdentifier.Trim()}, scope={scope}, includeGenerated={includeGenerated}, maxCallers={maxCallers}, maxTests={maxTests})",
+                    omissions.ToArray());
             }, maxResponseBytes, maxResponseTokens, ct), AnalysisTargetType.Project, cancellationToken).ConfigureAwait(false);
     }
 
@@ -608,21 +704,25 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         return await NavigationToolSupport.RouteAsync(runtime, "get_test_context", targetPath,
             new { symbolIdentifier, scopeType, includeGenerated, maxResults }, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens,
-            async (target, ct) => await WithSource(target, async solution =>
+            async (target, ct) => await WithSource(target, async (solution, source) =>
             {
-                var resolved = await Resolve(solution, symbolIdentifier, ct).ConfigureAwait(false);
+                var resolved = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
                 if (resolved.Error is not null) return NavigationToolSupport.Failure(resolved.Error.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                 var payload = await TestRecommendationBuilder.BuildAsync(resolved.Symbol!, solution, ct, includeGenerated, scope).ConfigureAwait(false);
                 var fixtures = payload.TestFixtures.Take(maxResults).ToArray();
                 var shown = payload with { TestFixtures = fixtures };
                 var truncated = fixtures.Length < payload.TestFixtures.Count;
-                return NavigationToolSupport.Success(shown, truncated, "Increase maxResults and repeat the query.");
+                var response = NavigationToolSupport.Success(shown, truncated, "Increase maxResults and repeat the query.");
+                return source.WithMetadata(response,
+                    $"testContext(symbol={symbolIdentifier.Trim()}, scope={scope}, includeGenerated={includeGenerated}, maxResults={maxResults})",
+                    truncated ? ["maxResults"] : []);
             }, maxResponseBytes, maxResponseTokens, ct), AnalysisTargetType.Project, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<CallToolResult> WithSource(AnalysisTarget target, Func<Solution, Task<CallToolResult>> operation,
+    private async Task<CallToolResult> WithSource(AnalysisTarget target,
+        Func<Solution, NavigationToolSupport.SourceAnalysisContext, Task<CallToolResult>> operation,
         int bytes, int? tokens, CancellationToken ct) => await NavigationToolSupport.WithSourceSolutionAsync(runtime, target,
-        (solution, _) => operation(solution), bytes, tokens, ct).ConfigureAwait(false);
+        (solution, source, _) => operation(solution, source), bytes, tokens, ct).ConfigureAwait(false);
 
     private static async Task<Result<AssemblySymbolHandoffAccess>> ResolveAssemblySymbolAsync(
         AnalysisTarget target, string identifier, CancellationToken ct)
@@ -695,7 +795,27 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 : build.ClosureIncomplete
                     ? "The bounded reference-source closure is incomplete; inspect unresolved or unsupported references, then repeat the query."
                     : build.Graph.Truncated ? "Increase topN or reduce the graph scope and repeat the query." : null;
-        return NavigationToolSupport.SuccessText(body, build.Graph.Truncated, nextAction);
+        var response = NavigationToolSupport.SuccessText(body, build.Graph.Truncated, nextAction);
+        var omissions = new List<string>();
+        if (build.TraversalLimited) omissions.Add("traversalLimit");
+        if (build.ClosureIncomplete) omissions.Add("referenceClosureIncomplete");
+        if (build.Graph.Truncated && omissions.Count == 0) omissions.Add("graphLimit");
+        return NavigationToolSupport.WithAssemblyMetadata(response, session.RootAnalysisIdentity,
+            $"callTree(symbol={identifier.Trim()}, depth={depth}, topN={topN}, direction={direction}, includeBcl={includeBcl}, scope={scope}, includeGenerated={includeGenerated}, format={format}, includeReferences=true)",
+            omissions);
+    }
+
+    private static IReadOnlyList<string> DependencyGraphOmissions(DependencyGraphPayload payload)
+    {
+        var omissions = new List<string>();
+        if (payload.IsDepthClamped) omissions.Add("depthLimit");
+        if (payload.NodeLimitReached) omissions.Add("nodeLimit");
+        if (payload.DocumentLimitReached) omissions.Add("documentLimit");
+        if (payload.ContinuationInputIncomplete) omissions.Add("continuationInputIncomplete");
+        if (payload.Errors is { Count: > 0 }) omissions.Add("scannerErrors");
+        if (payload.HasMoreProjectDependencies || payload.HasMoreNamespaceDependencies
+            || payload.HasMoreFileDependencies || payload.HasMoreTypeDependencies) omissions.Add("maxResults");
+        return omissions;
     }
 
     private static Func<ISymbol, string?> CreateAssemblyHandoffFormatter(AssemblySymbolHandoffAccess access)
@@ -743,10 +863,10 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         }
     }
 
-    private static async Task<(ISymbol? Symbol, ResultError? Error)> Resolve(Solution solution, string identifier, CancellationToken ct)
+    private static async Task<(ISymbol? Symbol, ResultError? Error)> Resolve(Solution solution, string identifier,
+        AnalysisSymbolIdentity sourceIdentity, CancellationToken ct)
     {
-        var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
-        var result = await SourceSymbolResolver.ResolveAsync(solution, identifier, identity, ct).ConfigureAwait(false);
+        var result = await SourceSymbolResolver.ResolveAsync(solution, identifier, sourceIdentity, ct).ConfigureAwait(false);
         return result.IsSuccess ? (result.Symbol, null) : (null, result.Error);
     }
 

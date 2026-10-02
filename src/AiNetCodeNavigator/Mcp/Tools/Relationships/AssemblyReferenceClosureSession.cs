@@ -67,6 +67,9 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
     }
 
     internal IReadOnlyList<AssemblyReferenceClosureOwner> Owners { get; }
+    internal AnalysisSymbolIdentity RootAnalysisIdentity => AnalysisSymbolIdentity.ForAssembly(
+        rootScope.Context.Origin.CanonicalPath, rootScope.Context.Origin.ContentHash,
+        rootScope.Context.Generation, rootScope.Context.ReferenceSnapshotHash);
     internal string RootPath { get; }
     internal string HandoffOwnerPath { get; }
     internal string DeclarationCommentId { get; }

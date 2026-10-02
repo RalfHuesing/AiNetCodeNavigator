@@ -133,7 +133,7 @@ public sealed class AssemblyNavigationScannerTests
             target, Query: "Alpha|Beta", UseRegex: true, Kind: "type", MaxResults: 1));
         Assert.True(first.IsSuccess, first.Error?.ToString());
         Assert.Single(first.Value!.Results);
-        Assert.NotNull(first.Value.ContinuationToken);
+        Assert.NotNull(first.Value.ResultCursor);
 
         using var replacementTemp = TestTempDirectory.Create("assembly-search-reference-cursor-replacement-");
         var replacement = AssemblyTestHelper.EmitAssembly(replacementTemp, "SearchCursorLeaf", "namespace Probe.Leaf; public sealed class Leaf { public int Version => 2; public int Added => 3; }");
@@ -141,11 +141,11 @@ public sealed class AssemblyNavigationScannerTests
 
         var stale = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(
             target, Query: "Alpha|Beta", UseRegex: true, Kind: "type", MaxResults: 1,
-            Cursor: first.Value.ContinuationToken));
+            Cursor: first.Value.ResultCursor));
 
         Assert.False(stale.IsSuccess);
-        Assert.Equal(AiNetCodeNavigator.Core.Workspace.NavigationErrorCodes.InvalidArgument, stale.Error!.Value.Code);
-        Assert.Contains("continuationToken", stale.Error.Value.Message, StringComparison.Ordinal);
+        Assert.Equal(AiNetCodeNavigator.Core.Workspace.NavigationErrorCodes.StaleSnapshot, stale.Error!.Value.Code);
+        Assert.Contains("resultCursor", stale.Error.Value.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -168,7 +168,7 @@ public sealed class AssemblyNavigationScannerTests
         Assert.Equal("Alpha", hit.Symbol);
         Assert.StartsWith("h:", hit.HandoffId, StringComparison.Ordinal);
         Assert.Equal(1, isolatedRegistry.Count);
-        Assert.NotNull(first.Value.ContinuationToken);
+        Assert.NotNull(first.Value.ResultCursor);
     }
 
     [Fact]

@@ -114,8 +114,13 @@ public sealed class McpFormattingTests
         Assert.Equal("RESPONSE_BUDGET_TOO_SMALL", exact.ErrorCode);
         Assert.Equal(error.TokenCount, exact.TokenCount);
         Assert.True(exact.TokenCount <= error.TokenCount);
+        var compact = McpResponseFormatter.Format(text, 512, maxResponseTokens: 80);
+        Assert.Equal("RESPONSE_BUDGET_TOO_SMALL", compact.ErrorCode);
+        Assert.Contains("minimumResponseBytes:", compact.Text, StringComparison.Ordinal);
+        Assert.Contains("minimumResponseTokens:", compact.Text, StringComparison.Ordinal);
+        Assert.InRange(compact.TokenCount, 0, 80);
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            McpResponseFormatter.Format(text, 512, error.TokenCount - 1));
+            McpResponseFormatter.Format(text, 512, maxResponseTokens: 1));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             McpResponseFormatter.Format("hello world from the navigator", 512, maxResponseTokens: 1));
     }
@@ -135,6 +140,32 @@ public sealed class McpFormattingTests
         Assert.True(retry.IsTruncated);
         Assert.InRange(retry.Utf8Bytes, 0, recovery.MinimumResponseBytes.Value);
         Assert.InRange(retry.TokenCount, 0, recovery.MinimumResponseTokens.Value);
+    }
+
+    [Fact]
+    public void Format_CompactBudgetErrorKeepsExactMetadataAwareMinimaAtEightyAndOneHundredTwentyTokens()
+    {
+        var text = "{\n  \"items\": [\n" + string.Join(",\n", Enumerable.Range(0, 20).Select(index => $"    \"item-{index:D2}\"")) + "\n  ]\n}";
+        var responsePrefix = "Status: operation=ok\nsnapshotId=source:0123456789abcdef01234567\n"
+            + $"analyzedScope=findSymbol(pattern={new string('s', 600)})\nanalysisCompleteness=complete\n"
+            + "resultContinuation=none\nomissions=none\n";
+
+        foreach (var tokenBudget in new[] { 80, 120 })
+        {
+            var failure = McpResponseFormatter.Format(text, 65_536, tokenBudget, responsePrefix: responsePrefix);
+
+            Assert.Equal("RESPONSE_BUDGET_TOO_SMALL", failure.ErrorCode);
+            Assert.Contains("minimumResponseBytes:", failure.Text, StringComparison.Ordinal);
+            Assert.Contains("minimumResponseTokens:", failure.Text, StringComparison.Ordinal);
+            Assert.InRange(failure.TokenCount, 0, tokenBudget);
+
+            var retry = McpResponseFormatter.Format(text, failure.MinimumResponseBytes!.Value,
+                failure.MinimumResponseTokens!.Value, responsePrefix: responsePrefix);
+            Assert.Null(retry.ErrorCode);
+            Assert.True(retry.IsTruncated);
+            Assert.InRange(retry.Utf8Bytes, 0, failure.MinimumResponseBytes.Value);
+            Assert.InRange(retry.TokenCount, 0, failure.MinimumResponseTokens.Value);
+        }
     }
 
     [Fact]

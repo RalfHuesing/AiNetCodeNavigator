@@ -1,6 +1,8 @@
 #nullable enable
 
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
+using AiNetCodeNavigator.Core.Models;
 
 namespace AiNetCodeNavigator.Core.Assemblies;
 
@@ -54,7 +56,8 @@ public sealed record AssemblySearchPayload(
     bool Truncated,
     IReadOnlyList<string> Diagnostics,
     IReadOnlyList<string>? TruncatedBy = null,
-    string? ContinuationToken = null);
+    [property: JsonPropertyName("resultCursor")] string? ResultCursor = null,
+    NavigationAnalysisMetadata? Analysis = null);
 
 public sealed record FindAssemblyExtensionsRequest(
     string AssemblyPath,
@@ -78,7 +81,8 @@ public sealed record FindAssemblyExtensionsPayload(
     IReadOnlyList<AssemblyExtensionDto> Extensions,
     int TotalCount,
     bool Truncated,
-    IReadOnlyList<string> Diagnostics);
+    IReadOnlyList<string> Diagnostics,
+    NavigationAnalysisMetadata? Analysis = null);
 
 public sealed record ResolveTypeOriginRequest(
     string AssemblyPath,
@@ -94,7 +98,8 @@ public sealed record ResolveTypeOriginPayload(
     string? PackageVersion,
     bool IsAmbiguous,
     IReadOnlyList<string> CandidatePaths,
-    IReadOnlyList<string> Diagnostics);
+    IReadOnlyList<string> Diagnostics,
+    AiNetCodeNavigator.Core.Models.NavigationAnalysisMetadata? Analysis = null);
 
 public sealed record SourceTypeOriginLocation(string FilePath, int Line, int Column);
 

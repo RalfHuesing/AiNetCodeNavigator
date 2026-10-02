@@ -41,7 +41,7 @@ public static partial class InspectAssemblyFormatter
         AppendHeader(builder, payload);
         AppendNamespaces(builder, payload.Namespaces, payload.TotalNamespaces, publicOnly);
         AppendTypes(builder, payload, publicOnly);
-        AppendContinuation(builder, payload.ContinuationToken);
+        AppendContinuation(builder, payload.ResultCursor);
         AppendReferences(builder, payload.References, payload.ReferenceSummary);
         AppendDiagnostics(builder, payload.Diagnostics);
 
@@ -118,7 +118,7 @@ public static partial class InspectAssemblyFormatter
     {
         if (!string.IsNullOrWhiteSpace(continuationToken))
         {
-            builder.AppendLine($"Continuation: continuationToken: `{continuationToken}` reuse unchanged with the same query.");
+            builder.AppendLine($"Continuation: resultCursor: `{continuationToken}` reuse unchanged with the same query.");
         }
     }
 
