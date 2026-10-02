@@ -5,6 +5,8 @@ using AiNetCodeNavigator.Mcp.Tools;
 using AiNetCodeNavigator.Mcp.Tools.Relationships;
 using AiNetCodeNavigator.Mcp.Tools.Symbols;
 using AiNetCodeNavigator.TestKit;
+using AiNetCodeNavigator.Core.Workspace;
+using AiNetCodeNavigator.TestKit.Builders;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Protocol;
@@ -15,6 +17,44 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 [Trait("Category", "Integration")]
 public sealed class SourceToolsContractTests
 {
+    [Fact]
+    public async Task FindSymbolPatternBatch_UsesOneSnapshotAcrossPatternParts()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        using var fixture = TestTempDirectory.Create("ainet-source-pattern-batch-snapshot-");
+        var solutionPath = fixture.CreateFile("Workspace.slnx", string.Empty);
+        var sourcePath = fixture.CreateFile("Target.cs", "public sealed class BeforeVersion { }");
+        var workspace = TestWorkspaceBuilder.Create()
+            .WithProject("App", (sourcePath, "public sealed class BeforeVersion { }"))
+            .Build();
+        using (workspace)
+        {
+            var editCount = 0;
+            await using var registry = new ProjectRegistry(new ProjectRegistryOptions(
+                _ => ResidentSolutionCreation.Resident(new ResidentSolution(workspace.Solution)),
+                TimeProvider.System)
+            {
+                BeforeLeaseRelease = () =>
+                {
+                    if (Interlocked.Exchange(ref editCount, 1) == 0)
+                        File.WriteAllText(sourcePath, "public sealed class AfterVersion { }");
+                },
+            });
+            await using var runtime = new NavigatorHostRuntime(
+                host.Services.GetRequiredService<IHostApplicationLifetime>(),
+                projectRegistry: registry);
+            var tools = new SymbolTools(runtime);
+
+            var result = await tools.FindSymbol(solutionPath,
+                namePatterns: ["BeforeVersion", "AfterVersion"], kind: "class", maxResponseBytes: 16384);
+
+            AssertSuccessWithinBudget(result, 16384, 1024);
+            Assert.Contains("class BeforeVersion", TextOf(result), StringComparison.Ordinal);
+            Assert.DoesNotContain("class AfterVersion", TextOf(result), StringComparison.Ordinal);
+            Assert.Equal(1, editCount);
+        }
+    }
+
     [Fact]
     public async Task DisposedRuntimeHandoffsAreUnknownToFreshRuntimeConsumers()
     {

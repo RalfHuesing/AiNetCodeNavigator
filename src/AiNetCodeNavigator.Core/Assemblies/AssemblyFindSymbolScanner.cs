@@ -17,29 +17,49 @@ public static class AssemblyFindSymbolScanner
         SymbolScopeType scope = SymbolScopeType.All,
         int maxResults = 50,
         bool includeReferences = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        AssemblyNavigationSessionScope? pinnedRootScope = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(assemblyPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(namePattern);
-        var opened = await AssemblyNavigationSessionScope.OpenAsync(assemblyPath, cancellationToken).ConfigureAwait(false);
-        if (!opened.IsSuccess)
+        AssemblyNavigationSessionScope? ownedRootScope = null;
+        if (pinnedRootScope is null)
         {
-            return Failure(opened.Error!.Value);
+            var opened = await AssemblyNavigationSessionScope.OpenAsync(assemblyPath, cancellationToken).ConfigureAwait(false);
+            if (!opened.IsSuccess)
+            {
+                return Failure(opened.Error!.Value);
+            }
+
+            ownedRootScope = opened.Value!;
         }
 
-        var candidates = new List<string> { opened.Value!.Context.Origin.CanonicalPath };
+        await using var ownedRootLease = ownedRootScope;
+        var rootScope = pinnedRootScope ?? ownedRootScope!;
+        if (!string.Equals(
+                Path.GetFullPath(rootScope.Context.Origin.CanonicalPath),
+                Path.GetFullPath(assemblyPath),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return Failure(new ResultError(
+                NavigationErrorCodes.TargetMismatch,
+                "The pinned assembly scope belongs to a different root target.",
+                "Acquire the analysis scope for the requested assembly path."));
+        }
+
+        var rootContext = rootScope.Context;
+        var candidates = new List<string> { rootContext.Origin.CanonicalPath };
         var incompleteReferences = false;
         if (includeReferences)
         {
-            incompleteReferences = opened.Value.Context.References.Any(reference =>
+            incompleteReferences = rootContext.References.Any(reference =>
                 !reference.Resolved || string.IsNullOrWhiteSpace(reference.ResolvedPath)
                 || reference.ResolutionState is "depth_limit" or "invalid");
-            candidates.AddRange(opened.Value.Context.References
+            candidates.AddRange(rootContext.References
                 .Where(reference => reference.Resolved && !string.IsNullOrWhiteSpace(reference.ResolvedPath))
                 .Select(reference => Path.GetFullPath(reference.ResolvedPath!))
                 .Distinct(StringComparer.OrdinalIgnoreCase));
         }
-        await opened.Value.DisposeAsync().ConfigureAwait(false);
 
         var entries = new List<SymbolLocationEntry>();
         var kindAlternatives = new SortedSet<string>(StringComparer.Ordinal);
@@ -47,6 +67,18 @@ public static class AssemblyFindSymbolScanner
         foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (string.Equals(candidate, rootContext.Origin.CanonicalPath, StringComparison.OrdinalIgnoreCase))
+            {
+                var rootProject = rootScope.Solution.Projects.FirstOrDefault();
+                var rootIsTest = rootProject is not null && TestDetector.IsTestProject(rootProject);
+                if (!(scope == SymbolScopeType.Tests && !rootIsTest || scope == SymbolScopeType.Production && rootIsTest))
+                {
+                    ScanContext(rootContext, candidate);
+                }
+
+                continue;
+            }
+
             var result = await AssemblyNavigationSessionScope.OpenAsync(candidate, cancellationToken).ConfigureAwait(false);
             if (!result.IsSuccess)
             {
@@ -58,9 +90,80 @@ public static class AssemblyFindSymbolScanner
             }
             await using var scopeAccess = result.Value!;
             var context = scopeAccess.Context;
+            var expectedReference = rootContext.References.FirstOrDefault(reference =>
+                reference.ResolvedPath is not null
+                && string.Equals(Path.GetFullPath(reference.ResolvedPath), Path.GetFullPath(candidate), StringComparison.OrdinalIgnoreCase));
+            if (expectedReference is null
+                || !AssemblyReferenceResolver.IdentityMatches(expectedReference, context.Identity!)
+                || !string.Equals(expectedReference.ContentHash, context.Origin.ContentHash, StringComparison.OrdinalIgnoreCase))
+            {
+                return Failure(new ResultError(
+                    NavigationErrorCodes.StaleSnapshot,
+                    $"Referenced assembly '{Path.GetFileName(candidate)}' changed after the root assembly snapshot was captured.",
+                    "Repeat the query so the root and referenced assembly snapshots can be acquired together."));
+            }
+
+            var subgraphMatch = ReferenceSubgraphMatches(rootContext.References, candidate, context.References);
+            if (!subgraphMatch.Matches)
+            {
+                if (subgraphMatch.RootHasBoundary)
+                {
+                    incompleteReferences = true;
+                    continue;
+                }
+
+                return Failure(new ResultError(
+                    NavigationErrorCodes.StaleSnapshot,
+                    $"Referenced assembly '{Path.GetFileName(candidate)}' has a different transitive reference snapshot than the root assembly.",
+                    "Repeat the query so the root and referenced assembly snapshots can be acquired together."));
+            }
+
             var project = scopeAccess.Solution.Projects.FirstOrDefault();
             var isTest = project is not null && TestDetector.IsTestProject(project);
             if (scope == SymbolScopeType.Tests && !isTest || scope == SymbolScopeType.Production && isTest) continue;
+
+            ScanContext(context, candidate);
+        }
+
+        static (bool Matches, bool RootHasBoundary) ReferenceSubgraphMatches(
+            IReadOnlyList<AssemblyReferenceDto> rootReferences,
+            string ownerPath,
+            IReadOnlyList<AssemblyReferenceDto> ownerReferences)
+        {
+            static (HashSet<string> Edges, bool HasBoundary) GetEdges(
+                IReadOnlyList<AssemblyReferenceDto> references,
+                string rootPath)
+            {
+                var reachable = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Path.GetFullPath(rootPath) };
+                var edges = new HashSet<string>(StringComparer.Ordinal);
+                var hasBoundary = false;
+                var changed = true;
+                while (changed)
+                {
+                    changed = false;
+                    foreach (var reference in references)
+                    {
+                        if (reference.SourceAssemblyPath is null
+                            || !reachable.Contains(Path.GetFullPath(reference.SourceAssemblyPath))) continue;
+                        var source = Path.GetFullPath(reference.SourceAssemblyPath);
+                        var resolvedPath = reference.ResolvedPath is null ? string.Empty : Path.GetFullPath(reference.ResolvedPath);
+                        edges.Add(string.Join("|", source, reference.Name, reference.Version, reference.Culture,
+                            reference.PublicKeyToken, reference.ResolutionState, resolvedPath, reference.ContentHash ?? string.Empty));
+                        hasBoundary |= reference.ResolutionState is "depth_limit" or "invalid";
+                        if (reference.ResolvedPath is not null && reachable.Add(resolvedPath)) changed = true;
+                    }
+                }
+
+                return (edges, hasBoundary);
+            }
+
+            var root = GetEdges(rootReferences, ownerPath);
+            var owner = GetEdges(ownerReferences, ownerPath);
+            return (root.Edges.SetEquals(owner.Edges), root.HasBoundary);
+        }
+
+        void ScanContext(AssemblyContext context, string candidatePath)
+        {
 
             var identity = AnalysisSymbolIdentity.ForAssembly(
                 context.Origin.CanonicalPath,
@@ -84,8 +187,8 @@ public static class AssemblyFindSymbolScanner
                     .Select(location =>
                     {
                         var span = location.GetLineSpan();
-                        var path = PathNormalizer.ToRelative(Path.GetDirectoryName(context.Origin.CanonicalPath) ?? string.Empty, span.Path);
-                        return new SymbolLocationItem(path, span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1, context.Identity?.Name ?? Path.GetFileNameWithoutExtension(candidate));
+                        var relativePath = PathNormalizer.ToRelative(Path.GetDirectoryName(context.Origin.CanonicalPath) ?? string.Empty, span.Path);
+                        return new SymbolLocationItem(relativePath, span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1, context.Identity?.Name ?? Path.GetFileNameWithoutExtension(candidatePath));
                     })
                     .Distinct()
                     .OrderBy(location => location.FilePath, StringComparer.OrdinalIgnoreCase)

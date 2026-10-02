@@ -87,6 +87,61 @@ public sealed class AssemblyFingerprintAndReferenceTests
     }
 
     [Fact]
+    public void Resolve_DoesNotAcceptSameNamedAssemblyWithDifferentVersion()
+    {
+        using var versionOne = TestTempDirectory.Create("assembly-reference-version-one-");
+        using var versionTwo = TestTempDirectory.Create("assembly-reference-version-two-");
+        using var consumerDirectory = TestTempDirectory.Create("assembly-reference-version-consumer-");
+        var expected = AssemblyTestHelper.EmitAssembly(versionOne, "VersionedDependency", """
+            [assembly: System.Reflection.AssemblyVersion("1.0.0.0")]
+            namespace Versioned; public sealed class Api { }
+            """);
+        var unexpected = AssemblyTestHelper.EmitAssembly(versionTwo, "VersionedDependency", """
+            [assembly: System.Reflection.AssemblyVersion("2.0.0.0")]
+            namespace Versioned; public sealed class Api { }
+            """);
+        var root = AssemblyTestHelper.EmitAssembly(consumerDirectory, "VersionedConsumer",
+            "public sealed class Consumer { public Versioned.Api? Value; }", expected);
+        File.Copy(unexpected, consumerDirectory.GetPath("VersionedDependency.dll"));
+
+        var result = new AssemblyReferenceResolver().Resolve(root);
+
+        var dependency = Assert.Single(result.References.Where(reference => reference.Name == "VersionedDependency"));
+        Assert.False(dependency.Resolved);
+        Assert.Equal("version_mismatch", dependency.ResolutionState);
+        Assert.Null(dependency.ResolvedPath);
+    }
+
+    [Fact]
+    public void IdentityMatches_RejectsDifferentPublicKeyToken()
+    {
+        var expected = new AssemblyReferenceDto("SignedDependency", "1.2.3.4", "neutral", true)
+        {
+            PublicKeyToken = "0011223344556677",
+        };
+        var actual = new AssemblyIdentityDto("SignedDependency", "1.2.3.4", "neutral", "8899AABBCCDDEEFF");
+
+        Assert.False(AssemblyReferenceResolver.IdentityMatches(expected, actual));
+    }
+
+    [Fact]
+    public void Resolve_ReportsReferenceDepthBoundary()
+    {
+        using var temp = TestTempDirectory.Create("assembly-reference-depth-boundary-");
+        var dependency = AssemblyTestHelper.EmitAssembly(temp, "DepthNode00", "namespace Depth; public sealed class Node00 { }");
+        for (var index = 1; index <= AssemblyReferenceResolver.MaxReferenceDepth + 2; index++)
+        {
+            dependency = AssemblyTestHelper.EmitAssembly(temp, $"DepthNode{index:D2}",
+                $"namespace Depth; public sealed class Node{index:D2} {{ public Node{index - 1:D2}? Value; }}", dependency);
+        }
+
+        var result = new AssemblyReferenceResolver().Resolve(dependency);
+
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == AssemblyReferenceResolver.BoundaryDiagnosticCode);
+        Assert.Contains(result.References, reference => reference.ResolutionState == "depth_limit");
+    }
+
+    [Fact]
     public void Resolve_MissingFile_ReturnsErrorDiagnostic()
     {
         var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".dll");

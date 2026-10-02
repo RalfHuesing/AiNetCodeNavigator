@@ -14,10 +14,11 @@ public sealed class NavigatorHostRuntime : IAsyncDisposable, IDisposable
     // Internal override keeps routing and polling tests deterministic; hosts retain the production default.
     internal NavigatorHostRuntime(
         IHostApplicationLifetime lifetime,
-        TimeSpan? operationResponseWindow = null)
+        TimeSpan? operationResponseWindow = null,
+        ProjectRegistry? projectRegistry = null)
     {
         ArgumentNullException.ThrowIfNull(lifetime);
-        ProjectRegistry = new ProjectRegistry(ProjectRegistryOptions.ForMSBuild());
+        ProjectRegistry = projectRegistry ?? new ProjectRegistry(ProjectRegistryOptions.ForMSBuild());
         AssemblyRegistry = AssemblyAnalysisSessionRegistry.Default;
         HandoffHandles = HandoffHandleRegistry.Default;
         Operations = new LongRunningToolCallStore(operationResponseWindow ?? ResponseWindow, lifetime.ApplicationStopping);

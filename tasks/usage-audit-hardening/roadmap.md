@@ -38,7 +38,7 @@ Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept 
 
 ### M1-T2 — Snapshot, Referenzidentität und Owner-Leases härten
 
-- [ ] **M1-T2 abschließen**
+- [x] **M1-T2 abschließen**
 
 **Intention:** Innerhalb einer Analyse einen verlässlichen Stand verwenden und dessen Owner während der Analyse schützen.
 
@@ -47,6 +47,8 @@ Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept 
 **Nicht:** Keine globale atomare Dateisystemaufnahme, kein Refresh-Tool, keine dauerhaften Handles und keine pauschale Erhöhung der 128-/32-Grenzen. Keine geratenen DLL-Ersatzidentitäten.
 
 **Abnahme:** Deterministische Änderungen zwischen Batchteilen liefern keine gemischten Symbolstände; gesperrte Dateien ergeben einen wiederholbaren Fehler statt scheinbar aktueller alter Bodies. Hash/Text stimmen überein. Falsche Referenzversionen werden nicht erfolgreich aufgelöst. Aktive Owner bleiben geleast; legitime Closure-/Residency-Grenzen ergeben explizite Grenzen oder ausführbare Recovery. Entsprechende Source-/Assembly-Fixtures und relevante bestehende Snapshot-/Lifecycle-Prüfungen bestehen.
+
+**Abschlussnachweis (2026-10-02):** `pwsh -File ./scripts/build.ps1` bestand mit 0 Warnungen und 0 Fehlern. Die Fast-Auswahl `ResidentSolutionStalenessTests|AssemblyFingerprintAndReferenceTests|AssemblySymbolHandoffResolverTests.SessionRegistry|AssemblyNavigationScannerTests.FindSymbol_RejectsOwner|AssemblyDecompilationCacheTests` bestand mit 26/26; sie deckt atomaren Refresh samt wiederholbarem Lese-Fehler, Hash/Text-Bytes, PublicKeyToken-Identität, aktive Owner-Leases unter 32-Session-Druck, Closure-/transitive-Referenzgrenzen und Cache-Schema v5 ab. Die Integrationsauswahl für `FindSymbolPatternBatch_UsesOneSnapshotAcrossPatternParts` und `AssemblyToolsContractTests` bestand mit 9/9; deterministischer Dateiwechsel zwischen Patternteilen lieferte einen einheitlichen Source-Stand. Die Workspace-Refresh-/Retry-Integration bestand mit 2/2; die Extended-Auswahl `MSBuildSolutionLoader_CustomTargetsAndScratchCleanupPreserveWorkspaceSnapshot|MSBuildSolutionLoader_ColdSolutionsWithSameNamedProjectsHaveIsolatedSnapshots` bestand mit 2/2. Gesperrte Refresh-Datei und falscher PublicKeyToken wurden jeweils vor der Korrektur mit einer fehlschlagenden Regression nachgewiesen; die Transitivitätsregression wurde zusätzlich mit deaktivierter Subgraph-Prüfung als Negativkontrolle fehlschlagend ausgeführt und danach mit aktiver Prüfung bestanden. Die vollständige Routine-Suite bleibt gemäß Prüfplan bis M3-T1 ausstehend.
 
 ### M1-T3 — Statische Beziehungen korrekt belegen
 

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
@@ -42,7 +43,7 @@ internal sealed class AssemblyReferenceResolver
                 return FailedResolution(AssemblyDiagnosticCodes.For(nameof(AssemblyReferenceResolver), nameof(Resolve)), NativeMetadataFailureMessage);
             }
             var diagnostics = new List<AssemblySessionDiagnostic>();
-            var metadata = ReadMetadata(peReader.GetMetadataReader());
+            var metadata = ReadMetadata(peReader.GetMetadataReader(), canonicalPath);
             var graph = BuildReferenceGraph(canonicalPath, metadata, diagnostics);
             var metadataResult = CreateMetadataReferences(graph.Paths, diagnostics);
             var references = graph.References.Select(reference => NormalizeReference(reference, metadataResult.SuccessfulPaths)).ToList();
@@ -140,13 +141,28 @@ internal sealed class AssemblyReferenceResolver
             diagnostics.Add(new(state == "cycle" ? "assembly-reference-cycle" : BoundaryDiagnosticCode, diagnostic!, AssemblyDiagnosticSeverity.Warning));
         }
 
+        string? contentHash = null;
+        AssemblySessionDiagnostic? fingerprintDiagnostic = null;
+        if (resolution.Path is not null
+            && AssemblyFingerprintCalculator.TryCreate(resolution.Path, out var fingerprint, out fingerprintDiagnostic))
+        {
+            contentHash = fingerprint?.Sha256;
+        }
+        if (resolution.Path is not null && contentHash is null)
+        {
+            diagnostic ??= fingerprintDiagnostic?.Message ?? $"Reference candidate could not be fingerprinted: {resolution.Path}.";
+            diagnostics.Add(new(AssemblyDiagnosticCodes.For(nameof(AssemblyReferenceResolver), nameof(AssemblyFingerprintCalculator)), diagnostic, AssemblyDiagnosticSeverity.Warning));
+            state = "invalid";
+        }
+
         return reference with
         {
-            Resolved = resolution.Path is not null && state is ("resolved" or "cycle" or "deduplicated"),
-            ResolvedPath = resolution.Path,
+            Resolved = resolution.Path is not null && contentHash is not null && state is ("resolved" or "cycle" or "deduplicated"),
+            ResolvedPath = contentHash is null ? null : resolution.Path,
             ResolutionState = state,
             Depth = node.Depth + 1,
             Diagnostic = diagnostic,
+            ContentHash = contentHash,
         };
     }
 
@@ -166,8 +182,8 @@ internal sealed class AssemblyReferenceResolver
         IReadOnlySet<string> successfulPaths) =>
         reference with
         {
-            Resolved = reference.Resolved && reference.ResolvedPath is not null && successfulPaths.Contains(reference.ResolvedPath),
-            ResolvedPath = reference.Resolved && reference.ResolvedPath is not null && successfulPaths.Contains(reference.ResolvedPath)
+            Resolved = reference.Resolved && reference.ResolvedPath is not null && reference.ContentHash is not null && successfulPaths.Contains(reference.ResolvedPath),
+            ResolvedPath = reference.Resolved && reference.ResolvedPath is not null && reference.ContentHash is not null && successfulPaths.Contains(reference.ResolvedPath)
                 ? reference.ResolvedPath
                 : null,
         };
@@ -215,7 +231,7 @@ internal sealed class AssemblyReferenceResolver
             using var stream = OpenReadShared(path);
             using var peReader = new PEReader(stream);
             if (!peReader.HasMetadata) throw new BadImageFormatException("No .NET metadata present.");
-            metadata = ReadMetadata(peReader.GetMetadataReader());
+            metadata = ReadMetadata(peReader.GetMetadataReader(), Path.GetFullPath(path));
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException or ArgumentException)
@@ -303,7 +319,7 @@ internal sealed class AssemblyReferenceResolver
         }
     }
 
-    private static AssemblyMetadata ReadMetadata(MetadataReader reader)
+    private static AssemblyMetadata ReadMetadata(MetadataReader reader, string assemblyPath)
     {
         var identity = ReadIdentity(reader);
         var references = reader.AssemblyReferences
@@ -312,7 +328,9 @@ internal sealed class AssemblyReferenceResolver
                 reader.GetString(reference.Name),
                 reference.Version.ToString(),
                 NormalizeCulture(reference.Culture.IsNil ? "neutral" : reader.GetString(reference.Culture)),
-                false))
+                false,
+                PublicKeyToken: GetPublicKeyToken(reader, reference.PublicKeyOrToken, (reference.Flags & AssemblyFlags.PublicKey) != 0),
+                SourceAssemblyPath: assemblyPath))
             .OrderBy(reference => reference.Name, StringComparer.Ordinal)
             .ThenBy(reference => reference.Version, StringComparer.Ordinal)
             .ToList();
@@ -332,7 +350,15 @@ internal sealed class AssemblyReferenceResolver
     private static string GetPublicKeyToken(MetadataReader reader, AssemblyDefinition definition)
     {
         if (definition.PublicKey.IsNil) return string.Empty;
-        var hash = SHA1.HashData(reader.GetBlobBytes(definition.PublicKey));
+        return GetPublicKeyToken(reader, definition.PublicKey, hasFullPublicKey: true);
+    }
+
+    private static string GetPublicKeyToken(MetadataReader reader, BlobHandle publicKeyOrToken, bool hasFullPublicKey)
+    {
+        if (publicKeyOrToken.IsNil) return string.Empty;
+        var publicKey = reader.GetBlobBytes(publicKeyOrToken);
+        if (!hasFullPublicKey) return Convert.ToHexString(publicKey);
+        var hash = SHA1.HashData(publicKey);
         var token = hash[^8..].Reverse().ToArray();
         return Convert.ToHexString(token);
     }
@@ -341,7 +367,8 @@ internal sealed class AssemblyReferenceResolver
         string.Equals(expected.Name, actual.Name, StringComparison.OrdinalIgnoreCase)
         && (IsVersionTolerantFrameworkAssembly(expected.Name)
             || string.Equals(expected.Version, actual.Version, StringComparison.Ordinal))
-        && string.Equals(NormalizeCulture(expected.Culture), NormalizeCulture(actual.Culture), StringComparison.OrdinalIgnoreCase);
+        && string.Equals(NormalizeCulture(expected.Culture), NormalizeCulture(actual.Culture), StringComparison.OrdinalIgnoreCase)
+        && string.Equals(expected.PublicKeyToken, actual.PublicKeyToken, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsVersionTolerantFrameworkAssembly(string name) =>
         string.Equals(name, CoreLibraryName, StringComparison.OrdinalIgnoreCase)
@@ -398,7 +425,8 @@ internal sealed class AssemblyReferenceResolver
 
         internal bool TryAdd(AssemblyReferenceDto candidate)
         {
-            var key = string.Join("|", candidate.Name, candidate.Version, candidate.Culture, candidate.ResolvedPath ?? candidate.ResolutionState);
+            var key = string.Join("|", candidate.SourceAssemblyPath, candidate.Name, candidate.Version,
+                candidate.Culture, candidate.ResolvedPath ?? candidate.ResolutionState);
             if (!edgeKeys.Add(key)) return false;
             References.Add(candidate);
             return true;

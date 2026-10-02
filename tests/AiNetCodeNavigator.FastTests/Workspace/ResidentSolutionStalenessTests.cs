@@ -143,4 +143,98 @@ public sealed class ResidentSolutionStalenessTests
             Assert.Equal(file1, docs[0].FilePath);
         }
     }
+
+    [Fact]
+    public async Task GetCurrentSnapshot_WhenRefreshCannotReadFile_ReturnsRetryableError()
+    {
+        using var tempDir = TestTempDirectory.Create("staleness-locked-");
+        const string originalContent = "public class Greeter { public string V => \"1\"; }";
+        var filePath = tempDir.CreateFile("Greeter.cs", originalContent);
+        var solutionHandle = TestWorkspaceBuilder.Create()
+            .WithProject("App", (filePath, originalContent))
+            .Build();
+
+        using (solutionHandle)
+        {
+            await using var resident = new ResidentSolution(solutionHandle.Solution);
+            var initial = await resident.GetCurrentSnapshotAsync();
+            Assert.True(initial.Succeeded);
+
+            await File.WriteAllTextAsync(filePath, "public class Greeter { public string V => \"2\"; }");
+            ResidentSolutionSnapshot refreshed;
+            await using (var fileLock = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                refreshed = await resident.GetCurrentSnapshotAsync();
+                Assert.False(refreshed.Succeeded);
+                Assert.Equal("PROJECT_LOAD_FAILED", refreshed.Error?.ErrorCode);
+                Assert.True(refreshed.Error?.Retryable);
+            }
+
+            var retried = await resident.GetCurrentSnapshotAsync();
+            Assert.True(retried.Succeeded);
+            Assert.Null(retried.Error);
+            var text = await Assert.Single(retried.Solution!.Projects.Single().Documents).GetTextAsync();
+            Assert.Contains("\"2\"", text.ToString(), StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task GetCurrentSnapshot_WhenLaterFileRefreshFails_DoesNotPublishPartialState()
+    {
+        using var tempDir = TestTempDirectory.Create("staleness-atomic-");
+        const string originalA = "public class A { public int Value => 1; }";
+        const string originalB = "public class B { public int Value => 1; }";
+        const string changedA = "public class A { public int Value => 2; }";
+        const string changedB = "public class B { public int Value => 2; }";
+        var pathA = tempDir.CreateFile("A.cs", originalA);
+        var pathB = tempDir.CreateFile("B.cs", originalB);
+        var solutionHandle = TestWorkspaceBuilder.Create()
+            .WithProject("App", (pathA, originalA), (pathB, originalB))
+            .Build();
+
+        using (solutionHandle)
+        {
+            await using var resident = new ResidentSolution(solutionHandle.Solution);
+            Assert.True((await resident.GetCurrentSnapshotAsync()).Succeeded);
+            await File.WriteAllTextAsync(pathA, changedA);
+            await File.WriteAllTextAsync(pathB, changedB);
+
+            ResidentSolutionSnapshot failed;
+            await using (var fileLock = new FileStream(pathB, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                failed = await resident.GetCurrentSnapshotAsync();
+            }
+
+            Assert.False(failed.Succeeded);
+            var retried = await resident.GetCurrentSnapshotAsync();
+            Assert.True(retried.Succeeded);
+            var contents = await Task.WhenAll(retried.Solution!.Projects.Single().Documents
+                .OrderBy(document => document.FilePath, StringComparer.Ordinal)
+                .Select(async document => (await document.GetTextAsync()).ToString()));
+            Assert.Equal(new[] { changedA, changedB }, contents);
+        }
+    }
+
+    [Fact]
+    public async Task Constructor_UsesTextFromSameBytesAsInitialFileHash()
+    {
+        using var tempDir = TestTempDirectory.Create("staleness-initial-bytes-");
+        const string workspaceText = "public class Greeter { public string V => \"workspace\"; }";
+        const string diskText = "public class Greeter { public string V => \"disk\"; }";
+        var filePath = tempDir.CreateFile("Greeter.cs", workspaceText);
+        var solutionHandle = TestWorkspaceBuilder.Create()
+            .WithProject("App", (filePath, workspaceText))
+            .Build();
+
+        using (solutionHandle)
+        {
+            await File.WriteAllTextAsync(filePath, diskText);
+            await using var resident = new ResidentSolution(solutionHandle.Solution);
+
+            var snapshot = await resident.GetCurrentSnapshotAsync();
+            Assert.True(snapshot.Succeeded);
+            var text = await Assert.Single(snapshot.Solution!.Projects.Single().Documents).GetTextAsync();
+            Assert.Equal(diskText, text.ToString());
+        }
+    }
 }

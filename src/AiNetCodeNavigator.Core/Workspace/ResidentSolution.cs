@@ -55,7 +55,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
         currentSolution = solution;
         currentWorkspace = workspace;
         this.solutionPath = solutionPath;
-        InitializeFileStates(solution);
+        currentSolution = InitializeFileStates(solution);
         if (!string.IsNullOrEmpty(solutionPath))
         {
             structureFingerprint = SolutionStructureFingerprint.Create(solution, solutionPath);
@@ -90,10 +90,9 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
                 {
                     lock (syncLock)
                     {
-                        currentSolution = result.Solution;
+                        currentSolution = InitializeFileStates(result.Solution);
                         currentWorkspace = result.Workspace;
                         structureInputs = result.StructureInputs;
-                        InitializeFileStates(result.Solution);
                         if (!string.IsNullOrEmpty(this.solutionPath))
                         {
                             structureFingerprint = SolutionStructureFingerprint.Create(result.Solution, this.solutionPath, structureInputs);
@@ -220,7 +219,17 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
             {
                 lock (syncLock)
                 {
-                    RefreshStalenessUnderLock();
+                    try
+                    {
+                        RefreshStalenessUnderLock();
+                        loadFailure = null;
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                    {
+                        loadFailure = CreateLoadError(exception);
+                        return new ResidentSolutionSnapshot(null, loadFailure);
+                    }
+
                     return new ResidentSolutionSnapshot(currentSolution, loadFailure);
                 }
             }
@@ -259,7 +268,17 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
 
             lock (syncLock)
             {
-                RefreshStalenessUnderLock();
+                try
+                {
+                    RefreshStalenessUnderLock();
+                    loadFailure = null;
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    loadFailure = CreateLoadError(exception);
+                    return new ResidentSolutionSnapshot(null, loadFailure);
+                }
+
                 return new ResidentSolutionSnapshot(currentSolution, loadFailure);
             }
         }
@@ -283,12 +302,10 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
             lock (syncLock)
             {
                 oldWorkspace = currentWorkspace;
-                currentSolution = newSolution;
+                currentSolution = InitializeFileStates(newSolution);
                 currentWorkspace = newWorkspace;
                 structureInputs = loadedState.StructureInputs;
                 newlyLoadedWorkspace = null;
-                fileStates.Clear();
-                InitializeFileStates(newSolution);
                 structureFingerprint = newStructureFingerprint;
                 loadFailure = null;
             }
@@ -322,27 +339,36 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
         }
     }
 
-    private void InitializeFileStates(Solution solution)
+    private Solution InitializeFileStates(Solution solution)
     {
-        foreach (var project in solution.Projects)
+        var initializedFileStates = new Dictionary<string, DocumentFileState>(StringComparer.OrdinalIgnoreCase);
+        var initialized = solution;
+        var documentsByPath = solution.Projects
+            .SelectMany(project => project.Documents)
+            .Where(document => !string.IsNullOrEmpty(document.FilePath))
+            .GroupBy(document => document.FilePath!, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var documents in documentsByPath)
         {
-            foreach (var document in project.Documents)
+            var path = documents.Key;
+            if (File.Exists(path))
             {
-                var path = document.FilePath;
-                if (!string.IsNullOrEmpty(path) && File.Exists(path) && !fileStates.ContainsKey(path))
+                var file = ReadFileSnapshot(path);
+                initializedFileStates[path] = new DocumentFileState(file.MtimeUtc, file.Hash);
+                foreach (var document in documents)
                 {
-                    try
-                    {
-                        var mtime = File.GetLastWriteTimeUtc(path);
-                        var hash = ComputeFileHash(path);
-                        fileStates[path] = new DocumentFileState(mtime, hash);
-                    }
-                    catch (IOException)
-                    {
-                    }
+                    initialized = initialized.WithDocumentText(document.Id, file.Text);
                 }
             }
         }
+
+        fileStates.Clear();
+        foreach (var (path, state) in initializedFileStates)
+        {
+            fileStates[path] = state;
+        }
+
+        return initialized;
     }
 
     private void RefreshStalenessUnderLock()
@@ -353,6 +379,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
         }
 
         var updated = currentSolution;
+        var updatedFileStates = new Dictionary<string, DocumentFileState>(fileStates, StringComparer.OrdinalIgnoreCase);
 
         var documentsByPath = updated.Projects
             .SelectMany(project => project.Documents)
@@ -369,46 +396,52 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
                     updated = updated.RemoveDocument(document.Id);
                 }
 
-                fileStates.Remove(path);
+                updatedFileStates.Remove(path);
                 continue;
             }
 
-            try
+            var file = ReadFileSnapshot(path);
+            var hasPreviousState = updatedFileStates.TryGetValue(path, out var state);
+            if (hasPreviousState && state.Hash == file.Hash)
             {
-                var currentMtime = File.GetLastWriteTimeUtc(path);
-                var hasPreviousState = fileStates.TryGetValue(path, out var state);
-                var currentHash = ComputeFileHash(path);
-                if (hasPreviousState && state.Hash == currentHash)
+                if (state.MtimeUtc != file.MtimeUtc)
                 {
-                    if (state.MtimeUtc != currentMtime)
-                    {
-                        fileStates[path] = state with { MtimeUtc = currentMtime };
-                    }
-
-                    continue;
+                    updatedFileStates[path] = state with { MtimeUtc = file.MtimeUtc };
                 }
 
-                var text = SourceText.From(File.ReadAllText(path));
-                foreach (var document in documents)
-                {
-                    updated = updated.WithDocumentText(document.Id, text);
-                }
+                continue;
+            }
 
-                fileStates[path] = new DocumentFileState(currentMtime, currentHash);
-            }
-            catch (IOException)
+            foreach (var document in documents)
             {
+                updated = updated.WithDocumentText(document.Id, file.Text);
             }
+
+            updatedFileStates[path] = new DocumentFileState(file.MtimeUtc, file.Hash);
         }
 
         currentSolution = updated;
+        fileStates.Clear();
+        foreach (var (path, state) in updatedFileStates)
+        {
+            fileStates[path] = state;
+        }
     }
 
-    private static string ComputeFileHash(string path)
+    private static FileSnapshot ReadFileSnapshot(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        return Convert.ToHexString(SHA256.HashData(stream));
+        using var buffer = new MemoryStream();
+        stream.CopyTo(buffer);
+        var bytes = buffer.ToArray();
+        var hash = Convert.ToHexString(SHA256.HashData(bytes));
+        using var textStream = new MemoryStream(bytes, writable: false);
+        var text = SourceText.From(textStream);
+        var mtime = File.GetLastWriteTimeUtc(path);
+        return new FileSnapshot(mtime, hash, text);
     }
+
+    private sealed record FileSnapshot(DateTime MtimeUtc, string Hash, SourceText Text);
 
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "Workspace is managed by this class")]
     public void Dispose()

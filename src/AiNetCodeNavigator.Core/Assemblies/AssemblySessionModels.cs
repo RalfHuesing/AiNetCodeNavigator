@@ -27,7 +27,10 @@ public sealed record AssemblyReferenceDto(
     string ResolutionState = "resolved",
     int Depth = 1,
     string? Diagnostic = null,
-    string? SourceProjectPath = null);
+    string? SourceProjectPath = null,
+    string PublicKeyToken = "",
+    string? ContentHash = null,
+    string? SourceAssemblyPath = null);
 
 // ---------------------------------------------------------------------------
 // Session status

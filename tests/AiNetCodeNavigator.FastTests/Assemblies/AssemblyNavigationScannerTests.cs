@@ -431,6 +431,62 @@ public sealed class AssemblyNavigationScannerTests
     }
 
     [Fact]
+    public async Task FindSymbol_RejectsOwnerWhoseClosureExceedsRootSnapshotBoundary()
+    {
+        using var temp = TestTempDirectory.Create("assembly-find-batch-reference-boundary-");
+        var root = AssemblyTestHelper.EmitAssembly(temp, "DepthNode00", "namespace Depth; public sealed class Node00 { }");
+        for (var index = 1; index <= AssemblyReferenceResolver.MaxReferenceDepth + 2; index++)
+        {
+            root = AssemblyTestHelper.EmitAssembly(temp, $"DepthNode{index:D2}",
+                $"namespace Depth; public sealed class Node{index:D2} {{ public Node{index - 1:D2}? Value; }}", root);
+        }
+
+        var opened = await AssemblyNavigationSessionScope.OpenAsync(root, default);
+        Assert.True(opened.IsSuccess, opened.Error?.ToString());
+        await using var pinnedRoot = opened.Value!;
+        Assert.Contains(pinnedRoot.Context.References, reference =>
+            reference.SourceAssemblyPath is not null
+            && Path.GetFileNameWithoutExtension(reference.SourceAssemblyPath) == "DepthNode02"
+            && reference.ResolutionState == "depth_limit");
+
+        var result = await AssemblyFindSymbolScanner.FindAsync(root, "Depth", maxResults: 100,
+            includeReferences: true, pinnedRootScope: pinnedRoot);
+
+        Assert.Null(result.Error);
+        Assert.True(result.IsTruncated);
+        Assert.Contains("unresolvedReferences", result.TruncatedBy);
+        Assert.DoesNotContain(result.Entries, entry =>
+            entry.OwnerTargetPath is not null
+            && Path.GetFileNameWithoutExtension(entry.OwnerTargetPath) is "DepthNode00" or "DepthNode01");
+    }
+
+    [Fact]
+    public async Task FindSymbol_RejectsOwnerWithChangedTransitiveDependency()
+    {
+        using var temp = TestTempDirectory.Create("assembly-find-transitive-owner-snapshot-");
+        using var replacementTemp = TestTempDirectory.Create("assembly-find-transitive-owner-replacement-");
+        var leaf = AssemblyTestHelper.EmitAssembly(temp, "BatchLeaf", "namespace Batch; public sealed class Leaf { public int Old => 1; }");
+        var middle = AssemblyTestHelper.EmitAssembly(temp, "BatchMiddle",
+            "namespace Batch; public sealed class Middle { public Leaf? Value; }", leaf);
+        var root = AssemblyTestHelper.EmitAssembly(temp, "BatchRoot",
+            "namespace Batch; public sealed class Root { public Middle? Value; }", middle);
+        var replacement = AssemblyTestHelper.EmitAssembly(replacementTemp, "BatchLeaf",
+            "namespace Batch; public sealed class Leaf { public int New => 2; }");
+
+        var opened = await AssemblyNavigationSessionScope.OpenAsync(root, default);
+        Assert.True(opened.IsSuccess, opened.Error?.ToString());
+        await using var pinnedRoot = opened.Value!;
+        File.Copy(replacement, leaf, overwrite: true);
+
+        var result = await AssemblyFindSymbolScanner.FindAsync(root, "Batch", maxResults: 100,
+            includeReferences: true, pinnedRootScope: pinnedRoot);
+
+        Assert.NotNull(result.Error);
+        Assert.Equal("STALE_SNAPSHOT", result.Error?.Code);
+        Assert.Contains("transitive reference snapshot", result.Error?.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PreCanceledNavigationRequestPropagatesCancellation()
     {
         using var temp = TestTempDirectory.Create("assembly-navigation-canceled-");

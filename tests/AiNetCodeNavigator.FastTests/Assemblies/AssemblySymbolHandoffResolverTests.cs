@@ -344,4 +344,27 @@ public sealed class AssemblySymbolHandoffResolverTests
             foreach (var lease in leases) await lease.DisposeAsync();
         }
     }
+
+    [Fact]
+    public async Task SessionRegistry_DoesNotExpireAnActiveOwnerLeaseUnderSessionPressure()
+    {
+        using var temp = TestTempDirectory.Create("assembly-session-active-owner-");
+        var path = AssemblyTestHelper.EmitAssembly(temp, "ActiveOwner", "public sealed class Owner { public int Value => 1; }");
+        await using var registry = new AssemblyAnalysisSessionRegistry();
+
+        var first = await registry.AcquireAsync(path, default);
+        Assert.True(first.IsSuccess, first.Error?.ToString());
+        var pinnedGeneration = first.Value!.Generation.Number;
+        await registry.ExpireIdleSessionsAsync(DateTime.UtcNow.AddMinutes(11));
+
+        Assert.Equal(1, registry.GetActiveAccessCount(path));
+        var second = await registry.AcquireAsync(path, default);
+        Assert.True(second.IsSuccess, second.Error?.ToString());
+        Assert.Equal(pinnedGeneration, second.Value!.Generation.Number);
+        Assert.Equal(2, registry.GetActiveAccessCount(path));
+
+        await second.Value.DisposeAsync();
+        await first.Value.DisposeAsync();
+        Assert.Equal(0, registry.GetActiveAccessCount(path));
+    }
 }

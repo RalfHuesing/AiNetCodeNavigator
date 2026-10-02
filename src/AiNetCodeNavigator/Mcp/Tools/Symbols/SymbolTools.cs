@@ -67,37 +67,42 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
             async (target, ct) =>
             {
                 var results = new List<FindSymbolScanResult>();
+                if (target.TargetType == AnalysisTargetType.Project)
+                {
+                    return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, token) =>
+                    {
+                        var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, token).ConfigureAwait(false);
+                        foreach (var searchPattern in effectivePatterns)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            results.Add(await FindSymbolScanner.FindMatchesWithDetailsAsync(
+                                new FindSymbolScanRequest(solution, searchPattern, symbolKind, scope, maxResults,
+                                    SourceIdentity: identity, IncludeGenerated: includeGenerated), token).ConfigureAwait(false));
+                        }
+
+                        return FormatFindResults(results, effectivePatterns, target.TargetType, maxResponseBytes, maxResponseTokens);
+                    }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
+                }
+
+                var openedAssemblyScope = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
+                if (!openedAssemblyScope.IsSuccess)
+                {
+                    return NavigationToolSupport.Failure(openedAssemblyScope.Error!.Value,
+                        maxResponseBytes, maxResponseTokens, "$.targetPath");
+                }
+
+                await using var assemblyScope = openedAssemblyScope.Value!;
                 foreach (var searchPattern in effectivePatterns)
                 {
                     ct.ThrowIfCancellationRequested();
-                    FindSymbolScanResult result;
-                    if (target.TargetType == AnalysisTargetType.Assembly)
-                    {
-                        result = await AssemblyFindSymbolScanner.FindAsync(target.CanonicalPath, searchPattern,
-                            symbolKind, scope, maxResults, includeReferences, ct).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        var scanned = await ScanSourceAsync(target, searchPattern, symbolKind, scope,
-                            includeGenerated, maxResults, ct, maxResponseBytes, maxResponseTokens).ConfigureAwait(false);
-                        if (scanned.Result is null) return scanned.Response!;
-                        result = scanned.Result;
-                    }
+                    var result = await AssemblyFindSymbolScanner.FindAsync(target.CanonicalPath, searchPattern,
+                        symbolKind, scope, maxResults, includeReferences, ct, assemblyScope).ConfigureAwait(false);
                     if (result.Error is { } error)
                         return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.targetPath");
                     results.Add(result);
                 }
 
-                var truncated = results.Any(result => result.IsTruncated);
-                var text = string.Join("\n\n", results.Select((result, index) =>
-                {
-                    var resultText = target.TargetType == AnalysisTargetType.Assembly
-                        ? FormatAssemblyFindResult(result)
-                        : result.Text;
-                    return results.Count == 1 ? resultText : $"Pattern: {effectivePatterns[index]}\n{resultText}";
-                }));
-                return NavigationToolSupport.SuccessText(text, truncated,
-                    truncated ? "Increase maxResults up to 1000 and repeat the same pattern query." : null);
+                return FormatFindResults(results, effectivePatterns, target.TargetType, maxResponseBytes, maxResponseTokens);
             }, null, cancellationToken);
     }
 
@@ -203,27 +208,26 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
             }, null, cancellationToken);
     }
 
-    private async Task<(FindSymbolScanResult? Result, CallToolResult? Response)> ScanSourceAsync(
-        AnalysisTarget target,
-        string pattern,
-        SymbolKindFilter kind,
-        SymbolScopeType scope,
-        bool includeGenerated,
-        int maxResults,
-        CancellationToken cancellationToken,
+    private static CallToolResult FormatFindResults(
+        IReadOnlyList<FindSymbolScanResult> results,
+        IReadOnlyList<string> patterns,
+        AnalysisTargetType targetType,
         int maxResponseBytes,
         int? maxResponseTokens)
     {
-        FindSymbolScanResult? result = null;
-        var response = await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, token) =>
+        if (results.FirstOrDefault(result => result.Error is not null)?.Error is { } error)
         {
-            var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, token).ConfigureAwait(false);
-            result = await FindSymbolScanner.FindMatchesWithDetailsAsync(
-                new FindSymbolScanRequest(solution, pattern, kind, scope, maxResults,
-                    SourceIdentity: identity, IncludeGenerated: includeGenerated), token).ConfigureAwait(false);
-            return NavigationToolSupport.Success(result);
-        }, maxResponseBytes, maxResponseTokens, cancellationToken).ConfigureAwait(false);
-        return (result, response);
+            return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.targetPath");
+        }
+
+        var truncated = results.Any(result => result.IsTruncated);
+        var text = string.Join("\n\n", results.Select((result, index) =>
+        {
+            var resultText = targetType == AnalysisTargetType.Assembly ? FormatAssemblyFindResult(result) : result.Text;
+            return results.Count == 1 ? resultText : $"Pattern: {patterns[index]}\n{resultText}";
+        }));
+        return NavigationToolSupport.SuccessText(text, truncated,
+            truncated ? "Increase maxResults up to 1000 and repeat the same pattern query." : null);
     }
 
     private static bool TryScope(string value, out SymbolScopeType scope)

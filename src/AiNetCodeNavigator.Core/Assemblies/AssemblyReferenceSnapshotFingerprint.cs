@@ -21,12 +21,20 @@ internal static class AssemblyReferenceSnapshotFingerprint
             Append(hash, reference.Name);
             Append(hash, reference.Version);
             Append(hash, reference.Culture);
+            Append(hash, reference.PublicKeyToken);
+            Append(hash, reference.SourceAssemblyPath ?? string.Empty);
             Append(hash, reference.Resolved.ToString());
             Append(hash, reference.ResolutionState);
             Append(hash, reference.ResolvedPath ?? string.Empty);
             Append(hash, reference.Diagnostic ?? string.Empty);
 
             if (reference.ResolvedPath is null) continue;
+            if (reference.ContentHash is { Length: > 0 } contentHash)
+            {
+                Append(hash, contentHash);
+                continue;
+            }
+
             if (AssemblyFingerprintCalculator.TryCreate(reference.ResolvedPath, out var fingerprint, out var diagnostic)
                 && fingerprint is not null)
             {

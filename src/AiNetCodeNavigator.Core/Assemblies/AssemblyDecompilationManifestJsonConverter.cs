@@ -287,6 +287,9 @@ internal sealed class AssemblyDecompilationManifestJsonConverter : JsonConverter
                 JsonPropertyName(nameof(AssemblyReferenceDto.ResolutionState)),
                 JsonPropertyName(nameof(AssemblyReferenceDto.Depth)),
                 JsonPropertyName(nameof(AssemblyReferenceDto.Diagnostic)),
+                JsonPropertyName(nameof(AssemblyReferenceDto.PublicKeyToken)),
+                JsonPropertyName(nameof(AssemblyReferenceDto.ContentHash)),
+                JsonPropertyName(nameof(AssemblyReferenceDto.SourceAssemblyPath)),
             };
             var reference = ReadProperties(
                 item,
@@ -314,16 +317,22 @@ internal sealed class AssemblyDecompilationManifestJsonConverter : JsonConverter
                 resolvedPath,
                 ReadOptionalString(reference, JsonPropertyName(nameof(AssemblyReferenceDto.ResolutionState))) ?? (resolvedPath is null ? "missing" : "resolved"),
                 ReadOptionalInt32(reference, JsonPropertyName(nameof(AssemblyReferenceDto.Depth))),
-                ReadOptionalString(reference, JsonPropertyName(nameof(AssemblyReferenceDto.Diagnostic)))));
+                ReadOptionalString(reference, JsonPropertyName(nameof(AssemblyReferenceDto.Diagnostic)), allowNull: true),
+                PublicKeyToken: ReadOptionalString(reference, JsonPropertyName(nameof(AssemblyReferenceDto.PublicKeyToken))) ?? string.Empty,
+                ContentHash: ReadOptionalString(reference, JsonPropertyName(nameof(AssemblyReferenceDto.ContentHash)), allowNull: true),
+                SourceAssemblyPath: ReadOptionalString(reference, JsonPropertyName(nameof(AssemblyReferenceDto.SourceAssemblyPath)), allowNull: true)));
         }
 
         return result;
     }
 
-    private static string? ReadOptionalString(IReadOnlyDictionary<string, JsonElement> properties, string name)
+    private static string? ReadOptionalString(IReadOnlyDictionary<string, JsonElement> properties, string name, bool allowNull = false)
     {
         if (!properties.TryGetValue(name, out var value)) return null;
-        if (value.ValueKind == JsonValueKind.Null) return null;
+        if (value.ValueKind == JsonValueKind.Null)
+        {
+            return allowNull ? null : throw new JsonException($"Optional manifest field '{name}' must be a string.");
+        }
         return value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : throw new JsonException($"Optional manifest field '{name}' must be a string or null.");
@@ -381,6 +390,23 @@ internal sealed class AssemblyDecompilationManifestJsonConverter : JsonConverter
             else
             {
                 writer.WriteString(JsonPropertyName(nameof(AssemblyReferenceDto.Diagnostic)), reference.Diagnostic);
+            }
+            writer.WriteString(JsonPropertyName(nameof(AssemblyReferenceDto.PublicKeyToken)), reference.PublicKeyToken);
+            if (reference.ContentHash is null)
+            {
+                writer.WriteNull(JsonPropertyName(nameof(AssemblyReferenceDto.ContentHash)));
+            }
+            else
+            {
+                writer.WriteString(JsonPropertyName(nameof(AssemblyReferenceDto.ContentHash)), reference.ContentHash);
+            }
+            if (reference.SourceAssemblyPath is null)
+            {
+                writer.WriteNull(JsonPropertyName(nameof(AssemblyReferenceDto.SourceAssemblyPath)));
+            }
+            else
+            {
+                writer.WriteString(JsonPropertyName(nameof(AssemblyReferenceDto.SourceAssemblyPath)), reference.SourceAssemblyPath);
             }
             writer.WriteEndObject();
         }
