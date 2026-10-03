@@ -2,15 +2,15 @@
 
 ## User decision, 2026-10-03
 
-The user has approved reuse of collected dependency relationships across navigation requests against the same immutable snapshot. Another graph query on the same target, snapshot, scope and generated inclusion should reuse the collection and apply its own traversal/projection. Targeted outgoing traversal is also approved in topic 02. Implementation is pending. Source-identity reuse and incremental updates across snapshots remain unapproved proposals.
+The user has approved reuse of collected dependency relationships across navigation requests against the same immutable snapshot. Another graph query on the same target, snapshot, scope and generated inclusion should reuse the collection and apply its own traversal/projection. Targeted outgoing traversal is also approved in topic 02. The user has now also approved computing source identity once per immutable unchanged snapshot and reusing it. Implementation is pending. Incremental updates across snapshots remain an unapproved proposal.
 
 Retain a fresh workspace check at the analysis boundary. When relevant content or project/reference context changes, old collected relationships must not be used as current analysis. Bound cache retention and memory; a cache miss, expiry or eviction recomputes rather than degrading correctness.
 
-## Next discussion: source identity once per immutable snapshot
+## Approved source identity once per immutable snapshot
 
-Recommend reusing the computed source identity across navigation calls against the same immutable Roslyn Solution snapshot instead of repeatedly hashing its complete document texts. Fresh disk/structure checks still select the current snapshot; any relevant content or project/reference context change requires identity computation for the new snapshot. Do not substitute timestamp-only detection or reuse identity across changed semantic inputs. Preserve the separate configured-framework binding of index-scope metadata until its contract is separately decided.
+The user has approved reusing the computed source identity across navigation calls against the same immutable Roslyn Solution snapshot instead of repeatedly hashing its complete document texts. Fresh disk/structure checks still select the current snapshot; any relevant content or project/reference context change requires identity computation for the new snapshot. Do not substitute timestamp-only detection or reuse identity across changed semantic inputs. Preserve the separate configured-framework binding of index-scope metadata until its contract is separately decided.
 
-This proposal is not yet approved. During implementation, inspect remaining identity call sites after the approved handle removal so superseded handoff validation is not optimized or retained unnecessarily. Verify equal identity/results for unchanged inputs, changed-text detection with unchanged timestamps, project/reference changes, shared-file behavior, cancellation and bounded cache lifetime. Potential latency savings require measurement; no speedup is claimed from source inspection alone.
+Implementation is pending. During implementation, inspect remaining identity call sites after the approved handle removal so superseded handoff validation is not optimized or retained unnecessarily. Verify equal identity/results for unchanged inputs, changed-text detection with unchanged timestamps, project/reference changes, shared-file behavior, cancellation and bounded cache lifetime. Potential latency savings require measurement; no speedup is claimed from source inspection alone.
 
 ## Verified current behavior
 
@@ -24,7 +24,7 @@ This proposal is not yet approved. During implementation, inspect remaining iden
 
 ## Proposed direction
 
-- Reuse an identity computation for the same immutable Roslyn solution snapshot, with correct cancellation and lifetime behavior.
+- Approved: reuse an identity computation for the same immutable Roslyn solution snapshot, with correct cancellation and lifetime behavior.
 - Measure file refresh, structure checks, identity creation, compilation and scanner stages independently.
 - Approved: reuse dependency collection within an immutable snapshot. Incremental cache updates across snapshots are not covered by this approval.
 - For cross-snapshot caches, account for referenced declaration and project changes that affect semantics in unchanged documents. Hashing only the query root or changed file is insufficient.

@@ -11,8 +11,8 @@ Created: 2026-10-03. Initial source inspection: HEAD `a670e57d02654c04c833c61fcc
 | Symbol identity, snapshot binding and recovery | Approved direction; implementation pending | [01](01-symbol-identity-and-recovery.md) |
 | Dependency graph collection and targeted traversal | Collection, reuse and targeted outgoing analysis approved | [02](02-dependency-graph-analysis.md) |
 | Long-running operations, polling and transport failure | Approved; actual-client verification required | [03](03-long-running-operations-and-transport.md) |
-| Snapshot refresh, hashing and reusable analysis | Dependency reuse approved; next discussion: source-identity reuse | [04](04-snapshot-refresh-and-analysis-cache.md) |
-| Reproduction and complete agent workflows | P0 baseline | [05](05-agent-workflow-verification.md) |
+| Snapshot refresh, hashing and reusable analysis | Dependency and source-identity reuse approved | [04](04-snapshot-refresh-and-analysis-cache.md) |
+| Reproduction and complete agent workflows | Next discussion: automated complete development workflows | [05](05-agent-workflow-verification.md) |
 | Optional analysis sessions | Exploration | [06](06-analysis-sessions.md) |
 | Output selection, JSON/Markdown and token efficiency | Closed: preserve current output | [07](07-output-format-and-token-efficiency.md) |
 
@@ -25,9 +25,10 @@ The source evidence is the local [360-degree audit](../../temp/mcp-test-360/summ
 - The user has decided to preserve current output formats and presentation. Markdown conversion, JSON compaction and broader presentation optimization are not selected for this work.
 - The user has approved eliminating repeated semantic scans in dependency-graph collection: collect each document batch once and derive all internal relationship pages from that result.
 - The user has approved reliable status retrieval for long analyses on the condition that agents can handle it. The existing operationToken polling route and observed agent polls support this in principle. Diagnose the transport failure and implement shorter polls with real progress and an explicit next action; verify the intended clients. Do not rely exclusively on out-of-band notifications or claim universal agent compatibility.
-- The user has approved bounded reuse of dependency collection across requests against the same immutable snapshot and analysis scope. Changed analysis inputs require fresh collection. Source-identity caching and incremental updates across snapshots remain separate unapproved proposals.
+- The user has approved bounded reuse of dependency collection across requests against the same immutable snapshot and analysis scope. Changed analysis inputs require fresh collection. Incremental updates across snapshots remain an unapproved proposal.
 - The user has approved targeted outgoing dependency analysis, starting from the selected type's declaration documents and expanding only as needed for the requested depth. This addresses initial queries when no reusable full graph exists. Full incoming/both coverage and completeness must be preserved; implementation is pending.
-- The next recommended discussion point is computing source analysis identity once per unchanged immutable Roslyn snapshot and reusing it across navigation calls. Fresh workspace/content checks remain required; this identity-cache proposal is not yet approved.
+- The user has approved computing source analysis identity once per unchanged immutable Roslyn snapshot and reusing it across navigation calls. Fresh workspace/content checks remain required; implementation is pending.
+- The next recommended discussion point is automated verification of complete development workflows, including edits, server restart and long graph calls, with full result retrieval and bounded client verification. This discussion proposal is not yet approved; existing repository-required regression checks remain mandatory regardless.
 - Keep chat responses short and discuss one priority at a time; the user explicitly finds long explanations overwhelming.
 
 See topics 01 and 07 for the decisions and supporting evidence. Current-state `docs/` remain unchanged because this work only records discussion and decisions under `tasks/`; no production behavior has changed.

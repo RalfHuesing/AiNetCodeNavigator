@@ -1,5 +1,13 @@
 # Reproduction and agent workflow verification
 
+## Current discussion priority, 2026-10-03
+
+After approval of the identity and dependency optimizations, recommend automated checks of complete development sequences, not only isolated tool results. The core sequence is discovery, an external source edit, and navigation through the returned stable symbol reference against current analysis. Add unrelated edits, server restart and a large dependency query that follows running controls through to its actual final result.
+
+This proposal is not yet approved. Existing required regressions for observable production changes are mandatory independently; the proposed addition is an explicit workflow-level acceptance set. Use deterministic fixtures, correct scope/owner selection, full paging/window reconstruction and a finite run plan. Record total elapsed time and tool requests for equivalent successful outcomes. Verify the selected polling behavior in the intended clients separately from transport-free tests. Do not infer that a tool-sequence replay establishes reliability across all LLMs.
+
+Source edits in these scenarios belong to the external test harness; navigation tools remain read-only. Reuse existing fixture/test infrastructure and the official verification scripts. This point does not authorize an unbounded benchmark campaign, modifications to external audited repositories or the optional agent workflow.
+
 ## Existing evidence
 
 The local 360-degree audit contains 55 request files and 55 response files covering the declared navigation tools and selected edge cases. Several responses are partial, and complete follow-up sequences are not retained for all body windows and cursors. It is useful exploratory evidence, not a complete production-readiness gate.
