@@ -1,0 +1,64 @@
+---
+description: Efficient C# source and managed assembly navigation with AiNetCodeNavigator MCP.
+globs: '*'
+alwaysApply: true
+---
+
+# AiNetCodeNavigator MCP navigation
+
+Use AiNetCodeNavigator as the primary tool for C# declarations and static relationships when available. Query only the context needed to answer the current question; reuse discoveries and deepen selectively.
+
+## Targets and entry points
+
+- Discover exposed tools as needed; client prefixes vary. Their current schemas define arguments, defaults and limits. Never invent tools or parameters.
+- `targetPath`: absolute existing `.sln` / `.slnx` for source, managed `.dll` / `.exe` for assemblies. Choose the owning solution; clarify only unresolved ownership. Directories, `.csproj` and `.cs` files are unsupported targets.
+- Known physical source path and line: read that bounded file range directly. Known declaration: use its identifier or current handoff. Otherwise select an entry below.
+
+| Need | Tool / selection |
+|---|---|
+| Uncertain indexed scope | `get_index_scope` (source only); physical files: `rg --files`. |
+| Project / namespace entry | `get_namespace_tree`; narrow project or namespace. |
+| Declaration discovery | `find_symbol`: exactly one of `pattern` or `namePatterns` (1–10); optional `kind`. |
+| File / type outline | `get_file_skeleton.filePaths` / `get_class_structure.symbolIdentifier`. |
+| Declaration text | `get_symbol_body.symbolIdentifiers`; bounded window, batch related symbols. |
+| Selected symbol context | `get_context`: explicit `sections` from `body`, `members`, `callers`, `tests`. |
+| Calls / other usages | `get_call_tree.direction`: `incoming`, `outgoing`, `both` / `find_references` (start `depth: 1`). |
+| Inheritance / implementations | `get_type_hierarchy` / `find_implementations`. |
+| Caller impact | `get_impact` (start `depth: 1`); symbol input, no Git refs or changed-file lists. |
+| Dependencies / type owner | `dependency_graph`: exactly one of `filePath`, `symbolIdentifier` / `resolve_type_origin`: exactly one of `symbolIdentifier`, `typeName`. |
+| Compiled API / text / extensions | `inspect_assembly` with filters / `search_assembly` with literal `pattern` (`isRegex: true` for regex) / `find_assembly_extensions` with receiver, name or namespace filters. Assembly targets only. |
+
+## Bound requests
+
+- Batch related discovery, bodies or skeletons; start with shallow traversal, filters and small pages. Expand only for unanswered questions or reported limits; skip redundant inventories and graphs.
+- Reuse public `handoffId` (`h:...`) unchanged in supported identifier/file inputs. Retain its returned owner `targetPath` / `ownerTargetPath`, including referenced DLL owners. Never parse, fabricate or replace handles with display names or internal IDs.
+- Source scope, where supported: `all`, `production`, `tests`; generated declarations default to excluded. Before claiming absence, check scope and filters. Assembly `includeReferences` is tool-specific and defaults to false; request supported referenced owners only when needed.
+- `includeDiagnostics` defaults to false where supported; enable for detailed navigation/reference diagnosis. Analysis omissions remain visible without it.
+- `get_symbol_body.startLine` / `endLine` and `get_context.startLine` are one-based declaration-relative positions. Follow the returned next window; for `get_symbol_body`, reuse that item's handoff and next `startLine` / `maxBodyLines`, omitting `endLine`. Read outer pages before advancing a window.
+- `get_context.sections` must be non-empty and duplicate-free. `members` requires a type; `callers` is direct; `tests` is source-only and independent of caller scope. Supply `callerScope` only for source callers, `includeGenerated` only for source, `includeReferences` only for assembly callers, body-window arguments only with `body`, and `maxResults` only for list sections. Explicit ineffective arguments fail even when set to defaults.
+- Before changing shared behavior or a public contract, inspect relevant consumers and runtime wiring. Use direct file reads for current editing context; rediscover affected handles after changes.
+
+## Control responses and continuation
+
+Preserve the same tool, target and query for polling/paging, including options and page size. Treat tokens as opaque. Response budgets may change independently of query identity.
+
+| Response / next step | Request |
+|---|---|
+| `operation=running` | Poll with returned `operationToken`; preserve active `resultCursor` if present; omit `continuationToken`. Running is not a result. |
+| `operation=retry`, `completeness=not_applicable` | Wait briefly; repeat as instructed. Persistent failure: diagnose or fall back; avoid busy loops. |
+| Outer response page | Use returned `continuationToken`; omit `operationToken` and `resultCursor`. Reconstruct all outer pages first. |
+| Next known-result page | Use returned `resultCursor`; omit `continuationToken` and the previous `operationToken`. Poll if running. |
+| `RESPONSE_BUDGET_TOO_SMALL` | Retry unchanged request, retaining its active token, with exact offered `minimumResponseBytes` and `minimumResponseTokens` as `maxResponseBytes` / `maxResponseTokens`. If unsupported, narrow a fresh query. |
+
+- Outer pages deliver one immutable response; result cursors page known results without expanding analysis. For `get_context`, each cursor continues exactly one section; preserve the original full section selection, options, explicit argument presence and page size. Another section needs its own cursor or a fresh query.
+- Separate outer `completeness`, `resultContinuation` and `analysisCompleteness` / `omissions`; inspect section status too. A fully delivered page can represent partial analysis. Without a cursor, follow `nextAction` to narrow or change a supported traversal/scanner limit in a fresh query. Larger response budgets do not expand analysis.
+
+## Recovery and evidence
+
+- Ambiguity: select by signature, project, file and owner; follow the selected handoff. Never choose the first name match.
+- `TARGET_MISMATCH`: use the original result's owner and same handoff as instructed. `HANDOFF_OWNER_UNRESIDENT`: repeat original discovery on the owner target; use its current owner and new handoff. `STALE_SNAPSHOT` / `HANDOFF_UNKNOWN` (including restart): rediscover on the current target. Expired pages/cursors: restart the query. Follow reported recovery; never guess a replacement name.
+- Mixed body batches and section failures retain useful partial results. Inspect each item/section's status, availability and recovery; never report partial success as complete.
+- Prefer semantic navigation for declarations and relationships. Use focused text searches/file reads for literals, comments, configuration, non-C# or unindexed content, unsupported questions, or unavailable/persistently failing navigation. Text matches are leads, not semantic proof; state material fallback limitations.
+- Conclusions apply only to the reported snapshot, indexed scope, filters, depth, owner/reference closure and omissions. `get_index_scope` is neither a disk inventory nor proof that all configured TFMs were analyzed. Static evidence distinguishes exact, possible and unresolved relationships; inspect evidence kinds before claiming calls or impact. Reflection, DI/runtime dispatch and external consumers require separate evidence.
+- `tests` returns static candidates with usage/implementation/heuristic evidence; inspect and run tests separately. Assembly bodies are decompiled text. Stored response pages do not verify later edits.
+- Navigation is read-only; use external tools for edits, builds and tests. Host configuration is read at startup; restart the server after configuration changes.

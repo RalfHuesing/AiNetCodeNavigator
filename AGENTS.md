@@ -18,6 +18,6 @@ This repository contains product specifications, an autonomous MCP server for ag
 - [Git and automatic commits](.agents/rules/05-git.mdc)
 - [Dependencies and NuGet packages](.agents/rules/06-dependencies.mdc)
 - [Code quality](.agents/rules/07-code-quality.mdc)
-- [MCP navigation workflow](.agents/rules/08-mcp-navigation.mdc)
+- [AiNetCodeNavigator MCP navigation](.agents/rules/08-ainetcodenavigator-mcp-navigation.mdc)
 
 Read the relevant specification and rules before changing files. Ask when a decision is missing or sources conflict.
