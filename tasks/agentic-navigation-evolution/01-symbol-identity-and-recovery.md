@@ -1,6 +1,6 @@
 # Stable symbol references
 
-Status: specified for implementation. Execution: [R01](roadmap/R01-reference-primitives.md) and [R02](roadmap/R02-public-reference-migration.md).
+Status: implemented and verified through R01 and R02; see their recorded gates and independent audits. Execution: [R01](roadmap/R01-reference-primitives.md) and [R02](roadmap/R02-public-reference-migration.md).
 
 ## Required behavior
 
@@ -115,4 +115,4 @@ Run existing consumer contracts under byte/token budgets, body/result/outer pagi
 
 ## Inspected entry points
 
-[Registry](../../src/AiNetCodeNavigator.Core/Symbols/HandoffHandleRegistry.cs), [old source resolver](../../src/AiNetCodeNavigator.Core/Symbols/SourceHandoffResolver.cs), [raw resolver](../../src/AiNetCodeNavigator.Core/Symbols/SourceSymbolResolver.cs), [analysis identity](../../src/AiNetCodeNavigator.Core/Symbols/AnalysisSymbolIdentity.cs), [assembly resolver](../../src/AiNetCodeNavigator.Core/Assemblies/AssemblySymbolHandoffResolver.cs), [structure consumers](../../src/AiNetCodeNavigator/Mcp/Tools/StructureTools.cs) and [relationship consumers](../../src/AiNetCodeNavigator/Mcp/Tools/Relationships/RelationshipTools.cs). These links describe pre-implementation owners and must be updated if those files are removed.
+[Reference codec](../../src/AiNetCodeNavigator.Core/Symbols/StableSymbolReferenceCodec.cs), [exact source resolver](../../src/AiNetCodeNavigator.Core/Symbols/ExactSourceSymbolResolver.cs), [raw resolver](../../src/AiNetCodeNavigator.Core/Symbols/SourceSymbolResolver.cs), [independent analysis identity](../../src/AiNetCodeNavigator.Core/Symbols/AnalysisSymbolIdentity.cs), [assembly reference resolver](../../src/AiNetCodeNavigator.Core/Assemblies/AssemblySymbolReferenceResolver.cs), [structure consumers](../../src/AiNetCodeNavigator/Mcp/Tools/StructureTools.cs) and [relationship consumers](../../src/AiNetCodeNavigator/Mcp/Tools/Relationships/RelationshipTools.cs). The R01 inventory retains the historical removal map; these links identify the verified current owners, with R02 verification recorded separately in its point file.

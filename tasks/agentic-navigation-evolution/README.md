@@ -1,6 +1,6 @@
 # Agentic navigation evolution
 
-This directory is the implementation basis and maintained knowledge store for the improvements approved on 2026-10-03. The user authorized consolidation, a sequential roadmap and its complete execution. R01 is verified complete; see the roadmap for the authoritative completion state and subsequent work.
+This directory is the implementation basis and maintained knowledge store for the improvements approved on 2026-10-03. The user authorized consolidation, a sequential roadmap and its complete execution. R01 and R02 are verified complete; see the roadmap for the authoritative completion state and subsequent work.
 
 Start at [roadmap.md](roadmap.md). This compact index owns execution order and the eight completion checkboxes. Read the [shared execution rules](roadmap/execution.md); each linked point file under `roadmap/` owns its detailed checklist and implementation evidence. The four specifications below own their contracts; the roadmap links to them instead of duplicating them.
 

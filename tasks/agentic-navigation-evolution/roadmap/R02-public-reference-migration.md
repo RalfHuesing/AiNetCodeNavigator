@@ -18,10 +18,10 @@ Update affected current-state docs, tool descriptions, navigation rule 08 and te
 
 Completion checklist:
 
-- [ ] R02.1 — Every R01 inventory route emits/consumes the new references; handle-only runtime/configuration/persistence paths are removed.
-- [ ] R02.2 — Edit/restart/error/owner/budget/paging acceptance and required build/test selections passed; remaining legacy literals are classified.
-- [ ] R02.3 — Current-state docs, schemas/descriptions, navigation rule 08 and test helpers match the public switch.
-- [ ] R02.4 — Inventory disposition, executed evidence and implementation commit(s) are recorded; the orchestrator reviewed R02.1–R02.3.
+- [x] R02.1 — Every R01 inventory route emits/consumes the new references; handle-only runtime/configuration/persistence paths are removed.
+- [x] R02.2 — Edit/restart/error/owner/budget/paging acceptance and required build/test selections passed; remaining legacy literals are classified.
+- [x] R02.3 — Current-state docs, schemas/descriptions, navigation rule 08 and test helpers match the public switch.
+- [x] R02.4 — Inventory disposition, executed evidence and implementation commit(s) are recorded; the orchestrator reviewed R02.1–R02.3.
 
 ## Execution evidence
 
@@ -29,11 +29,11 @@ The orchestrator records this point's implementation evidence here under the [sh
 
 | Field | Recorded evidence |
 | --- | --- |
-| Working state | In progress; started from clean verified R01 HEAD `19e9dd128375d13cea4bf15cd13d9f1916a91e75` |
-| Implementation commit(s) | — |
-| Executed verification | Official build passed (0 warnings/errors); six focused regressions, exact owner closure, 532 affected FastTests, all 56 mandatory/focused Integration cases and both required narrow Extended cases passed; independent complete-candidate audit round 1 FAIL with three confirmed P2 findings |
-| Measurements / artifacts | — |
-| Blocker / next action | Execute newly assigned focused failing regressions for R02-A01/A02/A03, correct through Luna, repeat affected gates and independent audit; no external blocker established |
+| Working state | Complete; started from clean verified R01 HEAD `19e9dd128375d13cea4bf15cd13d9f1916a91e75` |
+| Implementation commit(s) | `9c1c3951649a16fbdb1b5a065bd8d2a00a79aa44` (product, tests, current-state docs and rule 08) |
+| Executed verification | Official build passed (0 warnings/errors); six initial regressions, owner closure and 532 affected FastTests passed; after audit fixes, 142 affected Host FastTests, all 61 mandatory/focused Integration cases and both narrow Extended cases passed; independent re-audit round 2 PASS |
+| Measurements / artifacts | Per-run elapsed times and failing/passing logs/TRX below; final artifacts `temp/roadmap-evidence/R02/audit-final-gates-run1/` and `extended-run2/`; 64 legacy-prefix lines classified; 26 changed documents / 111 local file links / zero missing; diff checks passed |
+| Blocker / next action | None; all four detailed acceptance items reviewed and checked by root after audit PASS and product commit; continue R03 after this evidence commit |
 
 ### Assignment and prerequisite evidence
 
@@ -332,3 +332,41 @@ pwsh -File ./scripts/test-integration.ps1 -IncludeExtended -Filter 'FullyQualifi
 ### All audit findings reproduced / D01 closed
 
 Root-reviewed [D01](R02-D01-audit-regression-diagnosis.md) is closed after actual narrow isolation, finite fixture cleanup and exact orphan attribution. Analyzer-clean official build PASS. The corrected Context singleton fails because the closure Target omits `handoffId`; the final five-fact baseline completes in approximately 3.314 seconds with all five actual required-invariant failures (exit 1, no skips). Logs/TRX: `temp/roadmap-evidence/R02/audit-regression-run4/`. Both A03 facts execute normal raw absence and raw/stable success/released-count checks before failing the captured pre-cleanup count 1 versus 0. Root now authorizes Luna's shared Skeleton failure formatting, closure Target formatter wiring and exception-safe Scope ownership transfer. All three audit findings remain open until corrected gates and independent re-audit pass.
+
+### Audit correction gate 1
+
+- Luna's production corrections are confined to `StructureTools` and `RelationshipTools`. Semantic Skeleton failures use the existing shared item failure formatter and Hint; closure Context passes its already proven/formatted exact owner reference into declaration projection; acquired Scope transfer is protected by `finally`, including hooks, returned errors, exceptions and cancellation. A method-local CA2000 ownership-transfer explanation matches the existing factory convention; no analyzer configuration changes.
+- `pwsh -File ./scripts/build.ps1`: PASS, exit 0, 0 warnings/errors, approximately 4.49 seconds.
+- `pwsh -File ./scripts/test-integration.ps1 -Filter 'FullyQualifiedName~StableReferenceResolutionContractTests' --logger 'console;verbosity=normal'`: PASS, exit 0, 5 passed / 0 failed / 0 skipped, approximately 4.191 seconds. All previously reproduced invariants pass, including mixed/all-failed semantic recovery, direct/Leaf-closure/Root-raw-Leaf Target/body follow-ups and pre-cleanup count zero on injected cancelled-task/exception paths. Saved build/log/TRX: `temp/roadmap-evidence/R02/audit-fix-run1/`.
+- `pwsh -File ./scripts/test-fast.ps1 -Filter 'FullyQualifiedName~AiNetCodeNavigator.FastTests.Mcp' --logger 'console;verbosity=normal'`: PASS, exit 0, 142 passed / 0 failed / 0 skipped, approximately 12.223 seconds. Host cancellation, schema, response budgets, operation/continuation retention, errors and shutdown remain intact. Saved log/TRX in the same directory. The unchanged Core families retain their earlier 532-case affected selection PASS; the new production changes are Host handlers.
+- Evidence correction: the executed existing `InitialRequestCancellationStopsWorkButPollingCancellationDoesNot` contract and `WaitForResultAsync` source show that initial-request cancellation does cancel owned work. The early D01 waiter-mismatch hypothesis was incorrect for the original initial request; its documentation is corrected. The confirmed nonfinite teardown cause was the uncollected deliberately leaked scope. The new deterministic cancelled-task case proves ownership cleanup on cancellation exceptions; it does not claim new transport/job cancellation behavior.
+- Expanded mandatory Integration selection now includes `StableReferenceResolutionContractTests`, for 61 cases. Full selection and narrow Extended repeat remain in progress/pending before independent audit round 2.
+
+### Post-fix mandatory gates / independent re-audit round 2
+
+Executed expanded command:
+
+```powershell
+pwsh -File ./scripts/test-integration.ps1 -Filter 'FullyQualifiedName~AiNetCodeNavigator.IntegrationTests.Mcp.SourceToolsContractTests|FullyQualifiedName~AiNetCodeNavigator.IntegrationTests.Mcp.SourceRelationshipToolsContractTests|FullyQualifiedName~AiNetCodeNavigator.IntegrationTests.Mcp.RelationshipToolsContractTests|FullyQualifiedName~AiNetCodeNavigator.IntegrationTests.Mcp.AssemblyToolsContractTests|FullyQualifiedName~AiNetCodeNavigator.IntegrationTests.Mcp.IndexScopeContractTests|FullyQualifiedName~AiNetCodeNavigator.IntegrationTests.Mcp.StableReferenceExtractionTests|FullyQualifiedName~AiNetCodeNavigator.IntegrationTests.Mcp.AssemblyCallTreeOwnerContractTests|FullyQualifiedName~AiNetCodeNavigator.IntegrationTests.Mcp.StableReferenceResolutionContractTests' --logger 'console;verbosity=normal'
+```
+
+- PASS, exit 0, 61 passed / 0 failed / 0 skipped, approximately 3.1033 minutes. Longest observed individual test approximately 45 seconds; continuous progress, no stall. Saved build/log/TRX: `temp/roadmap-evidence/R02/audit-final-gates-run1/`.
+- Repeated the exact narrow Extended command recorded above after the Host corrections: PASS, exit 0, 2 passed / 0 failed / 0 skipped, approximately 3.0635 seconds; no stall. Saved log/TRX: `temp/roadmap-evidence/R02/extended-run2/`.
+- No active IntegrationTests apphost or verification remains; all workers frozen. Separate Sol/medium complete-candidate re-audit round 2 is assigned against the actual code, all requirements and closed-regression evidence. D01 and ongoing audit evidence were persisted in documentation-only commit `dc65054448f547dd4d3e3a43e0cb1bc4b3862f2c`; it is not the R02 implementation commit.
+- All three audit corrections have passing actual regressions; their final audit disposition and R02 acceptance boxes remain pending independent round 2 and root review. E2E remains excluded/compile-only, and the one full routine solution gate remains R08's obligation.
+
+### Independent re-audit round 2 and root acceptance — verified checkpoint
+
+- Separate `gpt-6.1-sol` / `medium` auditor reviewed actual complete production/tests/docs and archived logs read-only, independently of the Luna implementation/fix workers: PASS, no open actionable findings. A01 shared Skeleton recovery, A02 exact closure Context Target projection and A03 exception/cancellation-safe lease transfer are closed. The five-test finite failing baseline and passing regression remain distinct from the initial aborted zero-result run. Initial-request cancellation and polling-waiter cancellation retain their existing different contracts.
+- Root reviewed the inventory disposition, exact input/owner handling, transient source formatting, successful/error ownership transfer, preserved independent identity/cursor boundaries and actual verification evidence. R02.1–R02.3 are satisfied. Source/config/tests/docs have no active legacy registry/counter/Base62/old resolver/error machinery. Remaining legacy prefixes are classified rejection tests/code, physical drive cases or negative documentation; an unrelated format-specifier match is not a symbol route. No external counter file was modified.
+- Required gates are build (zero warnings/errors), 532 affected Fast tests before Host-only audit fixes, 142 affected Host Fast tests after them, all 61 mandatory/focused Integration tests, and the repeated two narrowly relevant Extended workspace tests. No E2E execution is claimed. Full routine solution verification remains R08.
+
+### Structure assessment at the verified R02 checkpoint
+
+`RelationshipTools` (1,571 lines at this checkpoint) still owns several independent duties: SDK registration and argument contracts, source/assembly routing, dependency selection/collection/projection, context-section composition, metadata/cursor binding and recovery rendering. Existing assembly closure owners retain their lease and provenance duties. R03 must place snapshot identity single-flight and scalar memoization in a runtime-owned service, keeping exact source-reference projection request-owned. R04 must centralize collection for a complete document batch; R05 must separate typed scalar facts, coverage and cache lifetime; R06 must own targeted traversal; R07 must keep operation progress and polling in the existing host operation owner. Host methods retain selection, metadata and cursor integration. Shared semantics must have one owner, rather than parallel source/assembly or host implementations.
+
+The large `AssemblyToolsContractTests` (2,404 lines) and source/relationship contract classes mix ownership/lifetime, batches, body windows, budgets, domain/outer paging and cross-owner closure fixtures. Their cohesive behavioral families matter more than their line counts. R02 introduced independently selectable `StableReferenceExtractionTests`, `AssemblyCallTreeOwnerContractTests` and `StableReferenceResolutionContractTests` (the latter 319 lines), with shared exact-reference extraction and outer-page reconstruction where semantics match. R03–R07 must add similarly focused contract tests and reuse helpers without hiding independent assertions.
+
+Explicitly outside this task: blanket reorganization of every RelationshipTools handler or SDK signature/registration; splitting classes merely by line count; replacement of the test framework; global rewrite of existing fixture/parser helpers or all large contract classes; and restructuring the excluded E2E suite. A narrowly required extraction or confirmed regression in one of those owners remains in scope when its roadmap contract needs it. No blanket cleanup is a prerequisite for the next point, and no structural debt excuses an omitted gate.
+
+- Final root closure: product commit `9c1c3951649a16fbdb1b5a065bd8d2a00a79aa44` established the verified slice. Root deliberately checked R02.1 (full route inventory/removal), R02.2 (actual acceptance/gates/literal disposition), R02.3 (docs/schema/rules/helpers) and R02.4 (inventory/commands/audit/fix/commit evidence), then the index R02 checkbox. Final documentation file-link and diff checks passed. Historical pending statements above describe their original execution stage, not current status.
