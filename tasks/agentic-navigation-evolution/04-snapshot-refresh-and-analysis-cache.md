@@ -1,8 +1,8 @@
 # Snapshot refresh and reusable analysis
 
-## Current discussion priority, 2026-10-03
+## User decision, 2026-10-03
 
-After approval of handle removal, single collection per document batch and shorter progress-bearing polls, the next recommended point is reuse across navigation requests against the same immutable snapshot. Start with collected dependency relationships: another graph query on the same target, snapshot, scope and generated inclusion should reuse the collection and apply its own traversal/projection. This proposal is not yet approved. Source-identity reuse is a related optimization to evaluate separately; targeted traversal and incremental updates across snapshots remain later proposals.
+The user has approved reuse of collected dependency relationships across navigation requests against the same immutable snapshot. Another graph query on the same target, snapshot, scope and generated inclusion should reuse the collection and apply its own traversal/projection. Implementation is pending. Source-identity reuse is a related optimization to evaluate separately; targeted traversal and incremental updates across snapshots remain unapproved proposals.
 
 Retain a fresh workspace check at the analysis boundary. When relevant content or project/reference context changes, old collected relationships must not be used as current analysis. Bound cache retention and memory; a cache miss, expiry or eviction recomputes rather than degrading correctness.
 
@@ -20,7 +20,7 @@ Retain a fresh workspace check at the analysis boundary. When relevant content o
 
 - Reuse an identity computation for the same immutable Roslyn solution snapshot, with correct cancellation and lifetime behavior.
 - Measure file refresh, structure checks, identity creation, compilation and scanner stages independently.
-- Reuse dependency collection within an immutable snapshot before attempting incremental cache updates across snapshots.
+- Approved: reuse dependency collection within an immutable snapshot. Incremental cache updates across snapshots are not covered by this approval.
 - For cross-snapshot caches, account for referenced declaration and project changes that affect semantics in unchanged documents. Hashing only the query root or changed file is insufficient.
 - Define whether a common analysis snapshot ID and separate inventory/configuration identity would make cross-tool evidence clearer.
 
