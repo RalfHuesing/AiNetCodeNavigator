@@ -2,9 +2,15 @@
 
 ## User decision, 2026-10-03
 
-The user has approved reuse of collected dependency relationships across navigation requests against the same immutable snapshot. Another graph query on the same target, snapshot, scope and generated inclusion should reuse the collection and apply its own traversal/projection. Implementation is pending. Source-identity reuse is a related optimization to evaluate separately; targeted traversal and incremental updates across snapshots remain unapproved proposals.
+The user has approved reuse of collected dependency relationships across navigation requests against the same immutable snapshot. Another graph query on the same target, snapshot, scope and generated inclusion should reuse the collection and apply its own traversal/projection. Targeted outgoing traversal is also approved in topic 02. Implementation is pending. Source-identity reuse and incremental updates across snapshots remain unapproved proposals.
 
 Retain a fresh workspace check at the analysis boundary. When relevant content or project/reference context changes, old collected relationships must not be used as current analysis. Bound cache retention and memory; a cache miss, expiry or eviction recomputes rather than degrading correctness.
+
+## Next discussion: source identity once per immutable snapshot
+
+Recommend reusing the computed source identity across navigation calls against the same immutable Roslyn Solution snapshot instead of repeatedly hashing its complete document texts. Fresh disk/structure checks still select the current snapshot; any relevant content or project/reference context change requires identity computation for the new snapshot. Do not substitute timestamp-only detection or reuse identity across changed semantic inputs. Preserve the separate configured-framework binding of index-scope metadata until its contract is separately decided.
+
+This proposal is not yet approved. During implementation, inspect remaining identity call sites after the approved handle removal so superseded handoff validation is not optimized or retained unnecessarily. Verify equal identity/results for unchanged inputs, changed-text detection with unchanged timestamps, project/reference changes, shared-file behavior, cancellation and bounded cache lifetime. Potential latency savings require measurement; no speedup is claimed from source inspection alone.
 
 ## Verified current behavior
 

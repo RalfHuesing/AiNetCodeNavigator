@@ -2,11 +2,11 @@
 
 ## User decision, 2026-10-03
 
-The user has approved eliminating repeated semantic collection for internal relationship pages: analyze each document batch once and derive all needed pages from that collected result. They have subsequently approved reuse of collected relationships across requests against the same unchanged analysis snapshot and scope. Implementation is pending. First establish a focused reproduction and verify one collection per document batch. These approvals cover steps 1 and 2 below; targeted traversal and an incoming-edge index remain proposals for later discussion. Preserve the output presentation selected in [topic 07](07-output-format-and-token-efficiency.md).
+The user has approved eliminating repeated semantic collection for internal relationship pages: analyze each document batch once and derive all needed pages from that collected result. They have subsequently approved reuse of collected relationships across requests against the same unchanged analysis snapshot and scope, and targeted outgoing analysis limited to the requested traversal. Implementation is pending. First establish a focused reproduction and verify one collection per document batch. These approvals cover steps 1 through 3 below; a separate incoming-edge index remains a proposal for later discussion. Preserve the output presentation selected in [topic 07](07-output-format-and-token-efficiency.md).
 
-## Next discussion: targeted outgoing analysis
+## Approved targeted outgoing analysis
 
-Recommend a demand-driven collection path for outgoing queries, especially an initial query without a cached full graph. Start with all declaration documents of the selected source type, including partial declarations and the exact owning project. Collect its outgoing edges and expand into the next frontier only when required by requested depth. File-root queries must include all selected root types. Scope, generated filtering, exact ownership, node limits and analysis completeness remain binding. Do not populate a supposedly complete incoming/full-solution index from this partial collection. Incoming and both-direction queries retain their necessary broader coverage. This proposal is not yet approved; equal relationship evidence must be verified before claiming a performance improvement.
+The user has approved a demand-driven collection path for outgoing queries, especially an initial query without a cached full graph. Start with all declaration documents of the selected source type, including partial declarations and the exact owning project. Collect its outgoing edges and expand into the next frontier only when required by requested depth. File-root queries must include all selected root types. Scope, generated filtering, exact ownership, node limits and analysis completeness remain binding. Do not populate a supposedly complete incoming/full-solution index from this partial collection. Incoming and both-direction queries retain their necessary broader coverage. Implementation is pending; equal relationship evidence must be verified before claiming a performance improvement.
 
 ## Verified current behavior
 
@@ -24,7 +24,7 @@ The large-target request was already `depth: 1` and `maxResults: 20`. It returne
 
 1. Approved: collect each document batch once and project all needed relationship pages from that collected result.
 2. Approved: reuse collected relationships for subsequent queries against the same immutable snapshot and scope; see topic 04 for cache boundaries.
-3. Next discussion proposal, not yet approved: add a targeted outgoing path using all relevant declaration documents, including partial declarations. Only expand to further declarations when the requested depth requires them.
+3. Approved: add a targeted outgoing path using all relevant declaration documents, including partial declarations. Only expand to further declarations when the requested depth requires them.
 4. Evaluate a reusable incoming-edge index with explicit coverage and invalidation rules.
 
 Cache design is shared with [topic 04](04-snapshot-refresh-and-analysis-cache.md). Transport diagnosis remains [topic 03](03-long-running-operations-and-transport.md).
