@@ -1,5 +1,7 @@
 using System.Text;
 using System.Reflection;
+using AiNetCodeNavigator.Core.Assemblies;
+using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Mcp;
 using AiNetCodeNavigator.Mcp.Tools;
 using AiNetCodeNavigator.Mcp.Tools.Assemblies;
@@ -16,6 +18,145 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 [Trait("Category", "Integration")]
 public sealed class AssemblyToolsContractTests
 {
+    [Fact]
+    public async Task FindSymbolResultCursor_PagesAssemblyBatchAndPreservesReferenceOwners()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var symbols = new SymbolTools(runtime);
+        using var fixture = TestTempDirectory.Create("ainet-assembly-symbol-pages-");
+        var dependencySource = "namespace SymbolPageDependency; public sealed class Dependency { "
+            + string.Join(" ", Enumerable.Range(0, 16).Select(index => $"public int PageEntry{index:D2}() => {index};"))
+            + " }";
+        var dependencyPath = AssemblyTestHelper.EmitAssembly(fixture, "SymbolPageDependency", dependencySource);
+        var rootPath = AssemblyTestHelper.EmitAssembly(fixture, "SymbolPageRoot.Tests",
+            "namespace SymbolPageRoot; public sealed class Root { private readonly SymbolPageDependency.Dependency _dependency = new(); "
+            + "public int PageEntryRoot() => _dependency.PageEntry00(); public int Run() => PageEntryRoot(); }", dependencyPath);
+
+        var dependencyScopeResult = await AssemblyNavigationSessionScope.OpenAsync(dependencyPath, default);
+        Assert.True(dependencyScopeResult.IsSuccess, dependencyScopeResult.Error?.ToString());
+        await using (var dependencyScope = dependencyScopeResult.Value!)
+        {
+            var project = Assert.Single(dependencyScope.Solution.Projects);
+            Assert.False(TestDetector.IsTestProject(project, classificationPath: dependencyPath),
+                $"The assembly owner should be classified by its path: {project.Name}; {dependencyPath}");
+        }
+
+        var matches = new List<(string Pattern, string Name, string Owner, string Handoff)>();
+        var pageBodies = new List<string>();
+        string? cursor = null;
+        string? firstCursor = null;
+        var pages = 0;
+        do
+        {
+            var result = await symbols.FindSymbol(rootPath, namePatterns: ["PageEntry", "PageEntryRoot"], kind: "method",
+                includeReferences: true, maxResults: 5, resultCursor: cursor,
+                maxResponseBytes: 65536, maxResponseTokens: 8192);
+            AssertSuccessWithinBudget(result, 65536, 8192);
+            var jsonBody = BodyOf(TextOf(result));
+            var jsonStart = jsonBody.IndexOf('{');
+            Assert.True(jsonStart >= 0, TextOf(result));
+            pageBodies.Add(jsonBody[jsonStart..]);
+            using var document = System.Text.Json.JsonDocument.Parse(pageBodies[^1]);
+            var response = document.RootElement;
+            foreach (var patternResult in response.GetProperty("results").EnumerateArray())
+            foreach (var entry in patternResult.GetProperty("entries").EnumerateArray())
+            {
+                var pattern = patternResult.GetProperty("pattern").GetString()!;
+                var handoff = entry.GetProperty("handoffId").GetString()!;
+                var owner = entry.GetProperty("ownerTargetPath").GetString()!;
+                matches.Add((pattern, entry.GetProperty("name").GetString()!, owner, handoff));
+            }
+            cursor = response.TryGetProperty("resultCursor", out var value)
+                && value.ValueKind == System.Text.Json.JsonValueKind.String ? value.GetString() : null;
+            firstCursor ??= cursor;
+            pages++;
+            Assert.True(pages <= 10, $"Assembly find_symbol paging exceeded the finite request cap. cursor={cursor}; page={pageBodies[^1]}");
+        } while (cursor is not null);
+
+        Assert.Equal(4, pages);
+        var expectedMatches = Enumerable.Range(0, 16)
+            .Select(index => (Pattern: "PageEntry", Name: $"PageEntry{index:D2}", Owner: Path.GetFullPath(dependencyPath)))
+            .Append(("PageEntry", "PageEntryRoot", Path.GetFullPath(rootPath)))
+            .Append(("PageEntryRoot", "PageEntryRoot", Path.GetFullPath(rootPath)))
+            .ToArray();
+        Assert.Equal(expectedMatches, matches.Select(match => (match.Pattern, match.Name, Path.GetFullPath(match.Owner))).ToArray());
+        Assert.Equal(expectedMatches.Length, matches.Select(match => (match.Pattern, match.Name, match.Owner)).Distinct().Count());
+        Assert.NotNull(firstCursor);
+
+        var dependencyProductionScope = await symbols.FindSymbol(dependencyPath, pattern: "PageEntry", kind: "method", scopeType: "production",
+            maxResults: 5, maxResponseBytes: 65536, maxResponseTokens: 8192);
+        AssertSuccessWithinBudget(dependencyProductionScope, 65536, 8192);
+        using (var scopeDocument = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(dependencyProductionScope))))
+        {
+            var patternResult = Assert.Single(scopeDocument.RootElement.GetProperty("results").EnumerateArray());
+            Assert.Equal(16, patternResult.GetProperty("totalMatches").GetInt32());
+        }
+        var productionScope = await symbols.FindSymbol(rootPath, pattern: "PageEntry", kind: "method", scopeType: "production",
+            includeReferences: true, maxResults: 5, maxResponseBytes: 65536, maxResponseTokens: 8192);
+        AssertSuccessWithinBudget(productionScope, 65536, 8192);
+        using (var scopeDocument = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(productionScope))))
+        {
+            var patternResult = Assert.Single(scopeDocument.RootElement.GetProperty("results").EnumerateArray());
+            Assert.True(patternResult.GetProperty("totalMatches").GetInt32() == 16, TextOf(productionScope));
+            Assert.Equal(5, patternResult.GetProperty("returnedMatches").GetInt32());
+            Assert.Equal("maxResults", Assert.Single(patternResult.GetProperty("truncatedBy").EnumerateArray()).GetString());
+            Assert.True(scopeDocument.RootElement.GetProperty("resultCursor").ValueKind == System.Text.Json.JsonValueKind.String);
+        }
+        var testScope = await symbols.FindSymbol(rootPath, pattern: "PageEntry", kind: "method", scopeType: "tests",
+            includeReferences: true, maxResults: 5, maxResponseBytes: 65536, maxResponseTokens: 8192);
+        AssertSuccessWithinBudget(testScope, 65536, 8192);
+        using (var scopeDocument = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(testScope))))
+        {
+            var patternResult = Assert.Single(scopeDocument.RootElement.GetProperty("results").EnumerateArray());
+            Assert.Equal(1, patternResult.GetProperty("totalMatches").GetInt32());
+            Assert.Equal("PageEntryRoot", Assert.Single(patternResult.GetProperty("entries").EnumerateArray()).GetProperty("name").GetString());
+            Assert.False(scopeDocument.RootElement.TryGetProperty("resultCursor", out var scopeCursor)
+                && scopeCursor.ValueKind == System.Text.Json.JsonValueKind.String);
+        }
+
+        var replay = await ReadOuterPagesAsync((bytes, tokens, continuation) => symbols.FindSymbol(rootPath,
+            namePatterns: ["PageEntry", "PageEntryRoot"], kind: "method", includeReferences: true, maxResults: 5,
+            resultCursor: continuation is null ? firstCursor : null, continuationToken: continuation,
+            maxResponseBytes: bytes, maxResponseTokens: tokens), 1024, 4096);
+        Assert.True(replay.Pages > 1);
+        Assert.Equal(pageBodies[1], replay.Text);
+
+        AssertErrorWithinBudget(await symbols.FindSymbol(rootPath, pattern: "PageEntry", kind: "method",
+            includeReferences: true, maxResults: 5, resultCursor: firstCursor,
+            maxResponseBytes: 65536, maxResponseTokens: 8192), "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 8192);
+        AssertErrorWithinBudget(await symbols.FindSymbol(rootPath, namePatterns: ["PageEntry", "PageEntryRoot"], kind: "method",
+            includeReferences: true, maxResults: 5, resultCursor: "malformed-cursor",
+            maxResponseBytes: 16384, maxResponseTokens: 2048), "RESULT_CURSOR_EXPIRED", 16384, 2048);
+
+        var identicalTarget = fixture.GetPath("SymbolPageRoot-copy.dll");
+        File.Copy(rootPath, identicalTarget);
+        AssertErrorWithinBudget(await symbols.FindSymbol(identicalTarget, namePatterns: ["PageEntry", "PageEntryRoot"], kind: "method",
+            includeReferences: true, maxResults: 5, resultCursor: firstCursor,
+            maxResponseBytes: 65536, maxResponseTokens: 8192), "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 8192);
+
+        var changedAssembly = AssemblyTestHelper.EmitAssembly(fixture, "SymbolPageRootChanged",
+            "namespace SymbolPageRoot; public sealed class Root { public int Different() => 1; }");
+        File.Copy(changedAssembly, rootPath, overwrite: true);
+        AssertErrorWithinBudget(await symbols.FindSymbol(rootPath, namePatterns: ["PageEntry", "PageEntryRoot"], kind: "method",
+            includeReferences: true, maxResults: 5, resultCursor: firstCursor,
+            maxResponseBytes: 65536, maxResponseTokens: 8192), "STALE_SNAPSHOT", 65536, 8192);
+
+        var broad = await symbols.FindSymbol(identicalTarget, pattern: "PageEntry", kind: "method", includeReferences: true,
+            maxResults: 100, maxResponseBytes: 65536, maxResponseTokens: 8192);
+        AssertSuccessWithinBudget(broad, 65536, 8192);
+        var outerPages = await ReadOuterPagesAsync((bytes, tokens, continuation) => symbols.FindSymbol(
+            identicalTarget, pattern: "PageEntry", kind: "method", includeReferences: true,
+            maxResults: 100, continuationToken: continuation, maxResponseBytes: bytes, maxResponseTokens: tokens), 1024, 4096);
+        Assert.True(outerPages.Pages > 1);
+        Assert.Equal(BodyOf(TextOf(broad)), outerPages.Text);
+
+        var dependencyMatch = matches.First(match => string.Equals(match.Owner, dependencyPath, StringComparison.OrdinalIgnoreCase));
+        var body = await symbols.GetSymbolBody(dependencyPath, [dependencyMatch.Handoff], maxResponseBytes: 16384, maxResponseTokens: 2048);
+        AssertSuccessWithinBudget(body, 16384, 2048);
+        Assert.Contains(dependencyMatch.Name, TextOf(body), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task AssemblyImpact_ResultCursorReconstructsAllCallSitesAcrossPages()
     {

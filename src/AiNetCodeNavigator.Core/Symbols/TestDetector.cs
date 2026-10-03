@@ -69,7 +69,10 @@ public static class TestDetector
         "/Component/", ".ComponentTests/", "/ComponentTests/"
     ];
 
-    public static bool IsTestProject(Project project, IReadOnlyList<string>? testProjectNameSuffixes = null)
+    public static bool IsTestProject(
+        Project project,
+        IReadOnlyList<string>? testProjectNameSuffixes = null,
+        string? classificationPath = null)
     {
         foreach (var reference in project.MetadataReferences)
         {
@@ -85,7 +88,8 @@ public static class TestDetector
             return true;
         }
 
-        if (project.FilePath is { } path)
+        var path = classificationPath ?? project.FilePath;
+        if (path is not null)
         {
             var fileName = Path.GetFileName(path);
             if (IsTestFile(fileName) || IsTestFile(path))

@@ -113,6 +113,7 @@ public sealed class SourceToolsContractTests
         var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
         var names = new List<(string Pattern, string Name)>();
         string? cursor = null;
+        string? firstCursor = null;
 
         for (var request = 0; request < 20; request++)
         {
@@ -126,6 +127,7 @@ public sealed class SourceToolsContractTests
                 names.Add((patternResult.GetProperty("pattern").GetString()!, entry.GetProperty("name").GetString()!));
             cursor = response.TryGetProperty("resultCursor", out var cursorProperty)
                 && cursorProperty.ValueKind != JsonValueKind.Null ? cursorProperty.GetString() : null;
+            firstCursor ??= cursor;
             if (cursor is null) break;
         }
 
@@ -133,6 +135,10 @@ public sealed class SourceToolsContractTests
         Assert.Equal(18, names.Distinct().Count());
         Assert.Contains(names, item => item == ("PageEntry", "PageEntry15"));
         Assert.Contains(names, item => item == ("Run", "RunTest"));
+        Assert.NotNull(firstCursor);
+        AssertErrorWithinBudget(await tools.FindSymbol(target, namePatterns: ["PageEntry", "Run"], kind: "method",
+            scopeType: "tests", maxResults: 3, resultCursor: firstCursor,
+            maxResponseBytes: 65536, maxResponseTokens: 8192), "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 8192);
     }
 
     [Fact]

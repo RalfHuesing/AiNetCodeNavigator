@@ -70,7 +70,8 @@ public static class AssemblyFindSymbolScanner
             if (string.Equals(candidate, rootContext.Origin.CanonicalPath, StringComparison.OrdinalIgnoreCase))
             {
                 var rootProject = rootScope.Solution.Projects.FirstOrDefault();
-                var rootIsTest = rootProject is not null && TestDetector.IsTestProject(rootProject);
+                var rootIsTest = rootProject is not null
+                    && TestDetector.IsTestProject(rootProject, classificationPath: rootContext.Origin.CanonicalPath);
                 if (!(scope == SymbolScopeType.Tests && !rootIsTest || scope == SymbolScopeType.Production && rootIsTest))
                 {
                     ScanContext(rootContext, candidate);
@@ -101,7 +102,8 @@ public static class AssemblyFindSymbolScanner
             }
 
             var project = scopeAccess.Solution.Projects.FirstOrDefault();
-            var isTest = project is not null && TestDetector.IsTestProject(project);
+            var isTest = project is not null
+                && TestDetector.IsTestProject(project, classificationPath: context.Origin.CanonicalPath);
             if (scope == SymbolScopeType.Tests && !isTest || scope == SymbolScopeType.Production && isTest) continue;
 
             ScanContext(context, candidate);

@@ -25,7 +25,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
         string? pattern = null,
         [System.ComponentModel.Description("Optional C# symbol kind filter: class, interface, record, record class, record struct, struct, enum, delegate, method, property, or field.")]
         string? kind = null,
-        [System.ComponentModel.Description("Source scope: all (default), production, or tests.")]
+        [System.ComponentModel.Description("Scope: all (default), production, or tests. Source searches classify documents; assembly searches classify each owner assembly.")]
         string scopeType = "all",
         [System.ComponentModel.Description("Include declarations from generated source files.")] bool includeGenerated = false,
         [Range(1, 1000), System.ComponentModel.Description("Maximum matching symbols to return in this result page across all selected patterns.")] int maxResults = 50,
