@@ -1,8 +1,14 @@
 # Long-running operations and transport failures
 
-## Current discussion priority, 2026-10-03
+## User decision and agent compatibility, 2026-10-03
 
-This is the next recommended discussion point after approval of the one-scan-per-document-batch optimization. Recommend diagnosing the observed EOF/timeout and evaluating short status polls with genuine progress information for long analyses. The observed 15-second poll wait is current behavior, not a proven cause of the disconnection. No polling/progress contract change has yet been approved; rendering redesign remains excluded by topic 07.
+The user conditionally approved this point if agents can handle it. The existing result-based polling route supports that condition in principle: the audit agent already issued two polls, current schemas expose operationToken, and the repository navigation instructions tell agents to repeat the same tool/target/query with the returned token. Record diagnosis of the EOF/timeout, shorter status polls and concrete progress as approved, with implementation and actual-client verification pending. The observed 15-second poll wait is not a proven cause of disconnection. Rendering redesign remains excluded by topic 07.
+
+Keep the existing ordinary tool-result route: operation=running, the same operationToken, useful progress when measurable, and an explicit next action including a bounded suggested wait. Agents must preserve query identity; a running result is not a successful analysis. Short response time must not create uncontrolled tight polling loops. The exact wait/progress fields remain contract design work.
+
+The inspected PendingOperationReturnsFinalResultBySameTokenWithoutRestarting test covers completion through the same token without restarting work. It was read, not run during this discussion. This establishes an implemented protocol route and test intent, not universal compatibility across clients or models. Verification must include the actual clients intended for use, correct final-result retrieval, bounded retries and no premature success report.
+
+Native MCP progress notifications are a separate optional integration path: the [official schema](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/2025-11-25/schema.json) describes a caller-supplied progressToken and does not require the receiver to provide notifications. Do not make agent-visible status depend exclusively on out-of-band notifications or introduce native task support as part of this approval.
 
 ## Evidence and limits
 
@@ -14,9 +20,9 @@ The [large-target graph response](../../temp/mcp-test-360/raw_calls/02_source_sa
 
 - Reproduce through a known server build and a client with explicit timeout settings, recording process lifetime, request identifiers, complete frames and stderr/file logs.
 - Correlate the existing uncommitted traffic-capture work with server lifecycle and actual analysis progress. Its presence in the working tree is not proof that the audited or live process uses it.
-- Consider a short polling wait distinct from the initial response window, with elapsed time, analysis phase and a suggested polling interval.
+- Approved: use a short polling wait distinct from the initial response window, with elapsed time, analysis phase and a suggested polling interval; specify the exact bounds during contract design.
 - Report concrete progress such as scanned documents when available. Do not manufacture percentage completion or ETA from elapsed time.
-- Decide how explicit operation cancellation is exposed if needed; avoid introducing an additional asynchronous subsystem merely because this audit contains a timeout.
+- Still open: decide how explicit operation cancellation is exposed if needed; avoid introducing an additional asynchronous subsystem merely because this audit contains a timeout.
 
 ## Proposed acceptance evidence
 

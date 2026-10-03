@@ -1,5 +1,11 @@
 # Snapshot refresh and reusable analysis
 
+## Current discussion priority, 2026-10-03
+
+After approval of handle removal, single collection per document batch and shorter progress-bearing polls, the next recommended point is reuse across navigation requests against the same immutable snapshot. Start with collected dependency relationships: another graph query on the same target, snapshot, scope and generated inclusion should reuse the collection and apply its own traversal/projection. This proposal is not yet approved. Source-identity reuse is a related optimization to evaluate separately; targeted traversal and incremental updates across snapshots remain later proposals.
+
+Retain a fresh workspace check at the analysis boundary. When relevant content or project/reference context changes, old collected relationships must not be used as current analysis. Bound cache retention and memory; a cache miss, expiry or eviction recomputes rather than degrading correctness.
+
 ## Verified current behavior
 
 [ResidentSolution](../../src/AiNetCodeNavigator.Core/Workspace/ResidentSolution.cs) performs lazy refresh when a snapshot is requested. Refresh reads and hashes loaded source files, updates all linked documents sharing a path, and publishes changed text after collection. It preserves detection of edits with unchanged timestamps. Structure checks can trigger a full MSBuild reload.

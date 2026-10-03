@@ -19,7 +19,7 @@ The large-target request was already `depth: 1` and `maxResults: 20`. It returne
 ## Implementation direction and remaining proposals
 
 1. Approved: collect each document batch once and project all needed relationship pages from that collected result.
-2. Reuse collected relationships for subsequent queries against the same immutable snapshot and scope.
+2. Next discussion proposal, not yet approved: reuse collected relationships for subsequent queries against the same immutable snapshot and scope; see topic 04 for cache boundaries.
 3. Add a targeted outgoing path using all relevant declaration documents, including partial declarations. Only expand to further declarations when the requested depth requires them.
 4. Evaluate a reusable incoming-edge index with explicit coverage and invalidation rules.
 
