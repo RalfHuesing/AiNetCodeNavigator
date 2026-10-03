@@ -139,6 +139,26 @@ public sealed class SourceToolsContractTests
         AssertErrorWithinBudget(await tools.FindSymbol(target, namePatterns: ["PageEntry", "Run"], kind: "method",
             scopeType: "tests", maxResults: 3, resultCursor: firstCursor,
             maxResponseBytes: 65536, maxResponseTokens: 8192), "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 8192);
+
+        var productionScope = await tools.FindSymbol(target, pattern: "Run", kind: "method", scopeType: "production",
+            maxResults: 1, maxResponseBytes: 65536, maxResponseTokens: 8192);
+        AssertSuccessWithinBudget(productionScope, 65536, 8192);
+        using (var document = JsonDocument.Parse(BodyOf(TextOf(productionScope))))
+        {
+            var patternResult = Assert.Single(document.RootElement.GetProperty("results").EnumerateArray());
+            Assert.Equal(1, patternResult.GetProperty("totalMatches").GetInt32());
+            Assert.Equal("Run", Assert.Single(patternResult.GetProperty("entries").EnumerateArray()).GetProperty("name").GetString());
+        }
+
+        var testsScope = await tools.FindSymbol(target, pattern: "Run", kind: "method", scopeType: "tests",
+            maxResults: 1, maxResponseBytes: 65536, maxResponseTokens: 8192);
+        AssertSuccessWithinBudget(testsScope, 65536, 8192);
+        using (var document = JsonDocument.Parse(BodyOf(TextOf(testsScope))))
+        {
+            var patternResult = Assert.Single(document.RootElement.GetProperty("results").EnumerateArray());
+            Assert.Equal(1, patternResult.GetProperty("totalMatches").GetInt32());
+            Assert.Equal("RunTest", Assert.Single(patternResult.GetProperty("entries").EnumerateArray()).GetProperty("name").GetString());
+        }
     }
 
     [Fact]
