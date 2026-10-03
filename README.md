@@ -18,7 +18,7 @@ The server runs locally over stdio. Source navigation uses Roslyn; assembly navi
 
 The server exposes **17 read-only navigation tools**. The [tool reference](docs/tools/README.md) lists their supported targets, parameters, result limits, and examples.
 
-Navigation results provide opaque symbol handles (`h:...`) for follow-up calls. Byte and optional token budgets bound responses; polling and continuation tokens let clients retrieve long-running or paged results. See the [tool reference's shared response rules](docs/tools/README.md#shared-request-and-response-behavior).
+Navigation results provide stable source (`src:<project-path>|<declaration-id>`) or assembly (`asm:<simple-name>|<declaration-id>`) references for follow-up calls in the existing handoff fields. Keep the returned owner target with assembly references. Byte and optional token budgets bound responses; polling and continuation tokens let clients retrieve long-running or paged results. See the [tool reference](docs/tools/README.md#shared-request-and-response-behavior) and [reference contract](docs/navigation/symbol-resolution.md).
 
 ## Quick start on Windows
 
@@ -55,12 +55,12 @@ Replace the example path with your installation path. The client starts the serv
 For example, ask your agent to find `OrderService.Save`, read its implementation, and identify its callers. The corresponding MCP tool requests are:
 
 ```json
-{"name":"find_symbol","arguments":{"targetPath":"C:\\work\\App.slnx","pattern":"OrderService.Save","kind":"method"}}
-{"name":"get_symbol_body","arguments":{"targetPath":"C:\\work\\App.slnx","symbolIdentifiers":["h:..."]}}
-{"name":"get_call_tree","arguments":{"targetPath":"C:\\work\\App.slnx","symbolIdentifier":"h:...","direction":"incoming"}}
+{"name":"find_symbol","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","pattern":"StableSymbolReference"}}
+{"name":"get_symbol_body","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","symbolIdentifiers":["src:src/AiNetCodeNavigator.Core/AiNetCodeNavigator.Core.csproj|T:AiNetCodeNavigator.Core.Symbols.StableSymbolReference"]}}
+{"name":"get_call_tree","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","symbolIdentifier":"src:src/AiNetCodeNavigator.Core/AiNetCodeNavigator.Core.csproj|T:AiNetCodeNavigator.Core.Symbols.StableSymbolReference","direction":"incoming"}}
 ```
 
-Replace `h:...` with the exact handle returned by `find_symbol`. For a compiled library, start with `inspect_assembly` and its absolute DLL path, then follow a returned type or member handle to structure or body tools.
+Pass the exact reference returned by `find_symbol`. For a compiled library, start with `inspect_assembly` and its absolute DLL path, then pass a returned type or member reference together with its owner target to structure or body tools. An unchanged source declaration reference remains usable after body or unrelated edits and a server restart; rediscover after a rename, signature change or project move. The sample reference identifies `StableSymbolReference` in the Core project when the repository solution is selected. See [symbol resolution](docs/navigation/symbol-resolution.md) for the wire and recovery contract.
 
 ## Scope and limitations
 
@@ -69,7 +69,7 @@ Replace `h:...` with the exact handle returned by `find_symbol`. For a compiled 
 - Assembly navigation requires managed .NET binaries with IL. Native binaries are unsupported; the server does not execute analyzed assemblies.
 - Test context identifies static test candidates, including heuristic name matches. It does not measure test coverage.
 - Tools differ in source and assembly support. `get_index_scope` is source-only; `get_context` supports source and assembly targets, with static test candidates available only for source solutions. Indexed scope is not a complete physical-file inventory.
-- Current verification covers SDK contracts and transport-free source/assembly handlers. The documented client configurations are not handshake-tested compatibility claims; retained stdio/client end-to-end tests are excluded from the official test scripts. See [MCP Host](docs/mcp-host.md) and [Build and Tests](docs/development/build-and-tests.md).
+- The navigation verification selection uses SDK contracts and transport-free source/assembly handlers. The documented client configurations are not handshake-tested compatibility claims; retained stdio/client end-to-end tests are excluded from the official test scripts. See [MCP Host](docs/mcp-host.md) and [Build and Tests](docs/development/build-and-tests.md).
 
 ## Development and documentation
 

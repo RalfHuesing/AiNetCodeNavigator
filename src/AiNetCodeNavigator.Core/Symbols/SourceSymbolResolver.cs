@@ -41,8 +41,9 @@ public sealed record SourceSymbolResolution(
 }
 
 /// <summary>
-/// Resolves source symbols by source handoff, documentation comment ID, file position, or an
-/// exact simple/qualified name. Ambiguous names return candidate metadata with reusable handoffs.
+/// Resolves source symbols by stable reference, documentation comment ID, file position, or an
+/// exact simple/qualified name. Ambiguous names return candidate metadata with stable references
+/// where exact round-trip proof is available, and raw locations otherwise.
 /// </summary>
 public static class SourceSymbolResolver
 {
@@ -76,52 +77,65 @@ public static class SourceSymbolResolver
         ArgumentException.ThrowIfNullOrWhiteSpace(identifier);
 
         var clean = InputNormalizer.NormalizeSymbolIdentifier(identifier);
-        AnalysisSymbolIdentity? effectiveIdentity;
-        if (identity is null)
+        if (StableSymbolReferenceCodec.TryParseReferenceInput(identifier, clean, out var stableReference, out var referenceError))
         {
-            effectiveIdentity = createSourceIdentity
-                ? await AnalysisSymbolIdentity.ForSourceAsync(solution, cancellationToken).ConfigureAwait(false)
-                : null;
-        }
-        else
-        {
-            var validatedIdentity = await SourceHandoffResolver.ValidateIdentityAsync(solution, identity, cancellationToken).ConfigureAwait(false);
-            if (!validatedIdentity.IsSuccess) return Failure(validatedIdentity.Error!.Value);
-            effectiveIdentity = validatedIdentity.Value;
-        }
-
-        if (InputNormalizer.HasOpaqueHandoffPrefix(clean) || clean.StartsWith("i:", StringComparison.OrdinalIgnoreCase))
-        {
-            if (effectiveIdentity is null)
+            if (referenceError is not null) return Failure(referenceError.Value);
+            if (stableReference is not StableSymbolReference.Source sourceReference)
             {
-                return Failure(NavigationErrorCodes.InvalidHandoff, "A canonical source identity could not be created for this solution.");
+                return Failure(new ResultError(
+                    NavigationErrorCodes.TargetMismatch,
+                    "An assembly reference cannot be resolved in a source solution.",
+                    "Open the returned assembly owner targetPath and use that target's assembly reference.") );
             }
 
-            var handoff = await SourceHandoffResolver.ResolveAsync(solution, clean, effectiveIdentity, cancellationToken).ConfigureAwait(false);
-            if (!handoff.IsSuccess) return Failure(handoff.Error!.Value);
-            return Success(handoff.Value, solution, effectiveIdentity);
+            var resolvedReference = await ExactSourceSymbolResolver.ResolveAsync(solution, sourceReference, cancellationToken).ConfigureAwait(false);
+            if (!resolvedReference.IsSuccess) return Failure(resolvedReference.Error!.Value);
+            var (validatedIdentity, identityError) = await ValidateProvidedIdentityAsync(solution, identity, cancellationToken).ConfigureAwait(false);
+            if (identityError is { } invalidIdentity) return Failure(invalidIdentity);
+            var referenceIdentity = createSourceIdentity
+                ? validatedIdentity ?? await AnalysisSymbolIdentity.ForSourceAsync(solution, cancellationToken).ConfigureAwait(false)
+                : null;
+            var referenceOutputIdentity = referenceIdentity ?? validatedIdentity;
+            return Success(resolvedReference.Value, solution, referenceOutputIdentity);
         }
+
+        var (effectiveIdentity, providedIdentityError) = await ValidateProvidedIdentityAsync(solution, identity, cancellationToken).ConfigureAwait(false);
+        if (providedIdentityError is { } invalidProvidedIdentity) return Failure(invalidProvidedIdentity);
 
         if (IsDocumentationId(clean))
         {
             var stableMatches = await ResolveDocumentationIdAsync(solution, clean, cancellationToken).ConfigureAwait(false);
-            return ResolveCandidates(stableMatches, solution, effectiveIdentity, identifier);
+            return await ResolveCandidatesAsync(stableMatches, solution, effectiveIdentity, createSourceIdentity, identifier,
+                cancellationToken).ConfigureAwait(false);
         }
 
         if (TryParsePosition(clean, out var path, out var line, out var column))
         {
             var positioned = await ResolvePositionAsync(solution, path, line, column, cancellationToken).ConfigureAwait(false);
-            return ResolveCandidates(positioned.Symbols, solution, effectiveIdentity, identifier, positioned.Error);
+            return await ResolveCandidatesAsync(positioned.Symbols, solution, effectiveIdentity, createSourceIdentity,
+                identifier, cancellationToken, positioned.Error).ConfigureAwait(false);
         }
 
         if (TryParseLineOnlyPosition(clean, out path, out line))
         {
             var positioned = await ResolveLineAsync(solution, path, line, cancellationToken).ConfigureAwait(false);
-            return ResolveCandidates(positioned.Symbols, solution, effectiveIdentity, identifier, positioned.Error);
+            return await ResolveCandidatesAsync(positioned.Symbols, solution, effectiveIdentity, createSourceIdentity,
+                identifier, cancellationToken, positioned.Error).ConfigureAwait(false);
         }
 
         var names = await ResolveByNameAsync(solution, clean, cancellationToken).ConfigureAwait(false);
-        return ResolveCandidates(names, solution, effectiveIdentity, identifier);
+        return await ResolveCandidatesAsync(names, solution, effectiveIdentity, createSourceIdentity, identifier,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<(AnalysisSymbolIdentity? Identity, ResultError? Error)> ValidateProvidedIdentityAsync(
+        Solution solution, AnalysisSymbolIdentity? suppliedIdentity, CancellationToken cancellationToken)
+    {
+        if (suppliedIdentity is null) return (null, null);
+        var currentIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, cancellationToken).ConfigureAwait(false);
+        var mismatch = AnalysisSymbolIdentity.SourceMismatch(suppliedIdentity, currentIdentity);
+        if (mismatch is { } error) return (null, error);
+        return (currentIdentity, null);
     }
 
     private static SourceSymbolResolution Success(ISymbol? symbol, Solution solution, AnalysisSymbolIdentity? identity)
@@ -135,11 +149,13 @@ public static class SourceSymbolResolver
             [symbol]);
     }
 
-    private static SourceSymbolResolution ResolveCandidates(
+    private static async Task<SourceSymbolResolution> ResolveCandidatesAsync(
         IReadOnlyList<ISymbol> symbols,
         Solution solution,
         AnalysisSymbolIdentity? identity,
+        bool createSourceIdentity,
         string identifier,
+        CancellationToken cancellationToken,
         ResultError? resolutionError = null)
     {
         if (resolutionError is { } error) return Failure(error);
@@ -150,6 +166,9 @@ public static class SourceSymbolResolver
             .Cast<ISymbol>()
             .Distinct(SymbolEqualityComparer.Default)
             .ToList();
+
+        if (distinct.Count > 0 && identity is null && createSourceIdentity)
+            identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, cancellationToken).ConfigureAwait(false);
         var candidates = distinct
             .Select(symbol => CreateCandidate(symbol, solution, identity))
             .Where(candidate => candidate is not null)
@@ -168,14 +187,15 @@ public static class SourceSymbolResolver
                 $"No source symbol matched '{identifier}'.");
         }
 
-        var choices = string.Join(", ", candidates.Select(candidate =>
-            $"{candidate.Signature} at {candidate.FilePath}:{candidate.Line} ({candidate.ProjectName}; {candidate.HandoffId ?? "no handoff"})"));
+        var choices = string.Join(", ", candidates.Select(candidate => candidate.HandoffId is { Length: > 0 } reference
+            ? $"{candidate.Signature} at {candidate.FilePath}:{candidate.Line} ({candidate.ProjectName}; reference: {reference})"
+            : $"{candidate.Signature} at {candidate.FilePath}:{candidate.Line} ({candidate.ProjectName}; no stable reference, use this raw source location)"));
         return new SourceSymbolResolution(
             null,
             candidates,
             new ResultError(
                 NavigationErrorCodes.AmbiguousSymbol,
-                $"'{identifier}' matches multiple source symbols. Select a candidate using its handoff ID. {choices}"),
+                $"'{identifier}' matches multiple source symbols. Select a stable candidate by its returned src: reference; when a reference is unavailable, select by the displayed source path and line. {choices}"),
             distinct);
     }
 
@@ -512,7 +532,7 @@ public static class SourceSymbolResolver
             EndLine: lineSpan.EndLinePosition.Line + 1,
             ProjectName: document?.Project.Name ?? symbol.ContainingAssembly?.Name ?? string.Empty,
             DocCommentId: symbol.GetDocumentationCommentId(),
-            HandoffId: SourceHandoffFormatter.Format(symbol, solution, identity));
+            HandoffId: StableSourceReferenceFormatter.Format(symbol, solution, identity));
     }
 
     private static string StripGlobalQualifier(string value) =>

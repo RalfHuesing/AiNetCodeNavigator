@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,13 +26,17 @@ public static class AssemblySymbolInputResolver
         ArgumentException.ThrowIfNullOrWhiteSpace(identifier);
 
         var normalized = InputNormalizer.NormalizeSymbolIdentifier(identifier);
-        if (InputNormalizer.HasOpaqueHandoffPrefix(normalized)
-            || normalized.StartsWith("i:", StringComparison.OrdinalIgnoreCase))
+        if (TryRouteIdentifier(identifier, normalized, out var reference, out var referenceError))
         {
-            return Failure(new ResultError(
-                NavigationErrorCodes.InvalidHandoff,
-                "Opaque handoffs must be resolved by the assembly handoff resolver.",
-                "Use the h: value returned for this target, or provide a raw declaration ID, position, or name."));
+            if (referenceError is not null) return Failure(referenceError.Value);
+            if (reference is not StableSymbolReference.Assembly assemblyReference)
+                return Failure(new ResultError(
+                    NavigationErrorCodes.TargetMismatch,
+                    "A source reference cannot be resolved in an assembly target.",
+                    "Open the returned source solution target and use the same source reference there."));
+            var exact = ExactAssemblySymbolResolver.Resolve(scope, assemblyReference);
+            if (!exact.IsSuccess) return Failure(exact.Error!.Value);
+            return FromOwnedSymbol(scope, exact.Value!, SourceSymbolResolver.DescribeCandidate(exact.Value!, scope.Solution));
         }
 
         var resolved = await SourceSymbolResolver.ResolveRawWithoutHandoffsAsync(
@@ -57,7 +62,7 @@ public static class AssemblySymbolInputResolver
         }
 
         candidates = candidates
-            .DistinctBy(candidate => candidate.HandoffId, StringComparer.Ordinal)
+            .DistinctBy(candidate => candidate.HandoffId ?? $"{candidate.OwnerTargetPath}|{candidate.FilePath}|{candidate.Line}|{candidate.Signature}", StringComparer.Ordinal)
             .OrderBy(candidate => candidate.FilePath, StringComparer.OrdinalIgnoreCase)
             .ThenBy(candidate => candidate.Line)
             .ThenBy(candidate => candidate.Name, StringComparer.Ordinal)
@@ -69,11 +74,16 @@ public static class AssemblySymbolInputResolver
         }
         if (candidates.Count > 1)
         {
-            var choices = string.Join("; ", candidates.Select(candidate =>
-                $"{candidate.Signature} at {candidate.FilePath}:{candidate.Line} [targetPath: '{candidate.OwnerTargetPath}', handoffId: `{candidate.HandoffId}`]"));
+            var choices = string.Join("; ", candidates.Select(candidate => candidate.HandoffId is { Length: > 0 } reference
+                ? $"{candidate.Signature} at {candidate.FilePath}:{candidate.Line} [reference: `{reference}`, ownerTargetPath: '{candidate.OwnerTargetPath}']"
+                : $"{candidate.Signature} at {candidate.FilePath}:{candidate.Line} [raw location: `{candidate.FilePath}:{candidate.Line}`, ownerTargetPath: '{candidate.OwnerTargetPath}', no stable reference available]"));
+            var hasRawOnlyCandidates = candidates.Any(static candidate => string.IsNullOrWhiteSpace(candidate.HandoffId));
             return new AssemblySymbolInputResolution(null, null, candidates, new ResultError(
                 NavigationErrorCodes.AmbiguousSymbol,
-                $"'{identifier}' matches multiple declarations in this assembly. Select a candidate by its owner targetPath and handoffId. {choices}"));
+                $"'{identifier}' matches multiple declarations in this assembly. {choices}",
+                hasRawOnlyCandidates
+                    ? "Select a candidate with its exact asm: reference and ownerTargetPath when available. For a declaration without a stable reference, repeat the raw file:line location shown above with the same ownerTargetPath."
+                    : "Select a candidate with its exact asm: reference and ownerTargetPath, then open that owner target for follow-up tools."));
         }
 
         return Failure(new ResultError(
@@ -88,6 +98,11 @@ public static class AssemblySymbolInputResolver
             scope.Context.Generation,
             scope.Context.ReferenceSnapshotHash);
 
+    public static bool TryRouteIdentifier(string identifier, string? discoveryNormalizedIdentifier,
+        out StableSymbolReference? reference, out ResultError? error) =>
+        StableSymbolReferenceCodec.TryParseReferenceInput(identifier, discoveryNormalizedIdentifier,
+            out reference, out error);
+
     private static AssemblySymbolInputResolution FromOwnedSymbol(
         AssemblyNavigationSessionScope scope,
         ISymbol symbol,
@@ -99,11 +114,7 @@ public static class AssemblySymbolInputResolver
                 "The identifier did not resolve to a declaration in this assembly's decompiled source."));
 
         var candidate = CreateCandidate(scope, symbol, sourceCandidate);
-        if (candidate is null)
-            return Failure(new ResultError(
-                NavigationErrorCodes.InvalidArgument,
-                "The selected declaration has no canonical assembly handoff identity."));
-        return new(symbol, candidate.HandoffId, [candidate], null);
+        return new(symbol, candidate?.HandoffId, candidate is null ? Array.Empty<AssemblySymbolInputCandidate>() : [candidate], null);
     }
 
     internal static AssemblySymbolInputCandidate? CreateCandidate(
@@ -112,10 +123,8 @@ public static class AssemblySymbolInputResolver
         SymbolResolutionCandidate? sourceCandidate)
     {
         if (sourceCandidate is null) return null;
-        var identity = CreateIdentity(scope);
-        var internalHandoff = identity.FormatHandoff(symbol);
-        if (string.IsNullOrWhiteSpace(internalHandoff)) return null;
-        var handoff = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalHandoff);
+        var reference = ExactAssemblySymbolResolver.CreateReference(scope, symbol);
+        var handoff = reference.IsSuccess ? StableSymbolReferenceCodec.Format(reference.Value!) : null;
         return new AssemblySymbolInputCandidate(
             symbol,
             handoff,
@@ -132,28 +141,38 @@ public static class AssemblySymbolInputResolver
 
     internal static bool IsOwnedSourceSymbol(AssemblyNavigationSessionScope scope, ISymbol symbol)
     {
-        if (!symbol.Locations.Any(location => location.IsInSource
-            && location.SourceTree is not null
-            && scope.Solution.GetDocument(location.SourceTree) is not null)) return false;
-        var declarationId = DocumentationCommentId.CreateDeclarationId(symbol);
-        if (string.IsNullOrWhiteSpace(declarationId)) return false;
-        var owned = DocumentationCommentId.GetSymbolsForDeclarationId(declarationId, scope.Context.Compilation)
-            .Where(candidate => SymbolEqualityComparer.Default.Equals(candidate.ContainingAssembly, scope.Context.Assembly)
-                && candidate.Locations.Any(location => location.IsInSource && location.SourceTree is not null
-                    && scope.Solution.GetDocument(location.SourceTree) is not null))
-            .Distinct(SymbolEqualityComparer.Default)
-            .Take(2)
-            .ToArray();
-        return owned.Length == 1 && SymbolEqualityComparer.Default.Equals(owned[0], symbol);
+        if (!SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, scope.Context.Assembly)) return false;
+        var decompiledRoot = scope.Context.DecompiledProjectPaths?.DecompiledSourceRoot;
+        var ownerTrees = scope.Context.Compilation.SyntaxTrees.ToHashSet();
+        return symbol.DeclaringSyntaxReferences.Any(reference => ownerTrees.Contains(reference.SyntaxTree)
+            && scope.Solution.GetDocument(reference.SyntaxTree)?.FilePath is { } filePath
+            && IsWithin(decompiledRoot, filePath));
     }
 
     private static AssemblySymbolInputResolution Failure(ResultError error) =>
         new(null, null, Array.Empty<AssemblySymbolInputCandidate>(), error);
+
+    private static bool IsWithin(string? rootPath, string candidatePath)
+    {
+        if (string.IsNullOrWhiteSpace(rootPath)) return false;
+        try
+        {
+            var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var candidate = Path.GetFullPath(candidatePath);
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            return candidate.StartsWith(root + Path.DirectorySeparatorChar, comparison)
+                || string.Equals(candidate, root, comparison);
+        }
+        catch (Exception exception) when (exception is ArgumentException or IOException or NotSupportedException)
+        {
+            return false;
+        }
+    }
 }
 
 public sealed record AssemblySymbolInputCandidate(
     ISymbol Symbol,
-    string HandoffId,
+    string? HandoffId,
     string OwnerTargetPath,
     string Name,
     string Kind,
@@ -170,5 +189,5 @@ public sealed record AssemblySymbolInputResolution(
     IReadOnlyList<AssemblySymbolInputCandidate> Candidates,
     ResultError? Error)
 {
-    public bool IsSuccess => Symbol is not null && HandoffId is not null && Error is null;
+    public bool IsSuccess => Symbol is not null && Error is null;
 }

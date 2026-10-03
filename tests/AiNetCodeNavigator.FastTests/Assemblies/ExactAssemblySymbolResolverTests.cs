@@ -109,6 +109,8 @@ public sealed class ExactAssemblySymbolResolverTests
         StableSymbolReference.Assembly reference;
         var firstAccess = await registry.AcquireAsync(path, default);
         Assert.True(firstAccess.IsSuccess, firstAccess.Error?.Message);
+        var originalGeneration = firstAccess.Value!.Generation;
+        var originalWorkspace = originalGeneration.Snapshot.Workspace;
         await using (var firstScope = AssemblyNavigationSessionScope.Create(firstAccess.Value!))
         {
             var symbol = Assert.IsAssignableFrom<ISymbol>(firstScope.Context.Assembly.GetTypeByMetadataName("Eviction.Target"));
@@ -118,10 +120,10 @@ public sealed class ExactAssemblySymbolResolverTests
         }
 
         await registry.ExpireIdleSessionsAsync(DateTime.UtcNow.AddMinutes(11), path);
-        var expiredResident = await registry.AcquireResidentAsync(path, default);
-        Assert.False(expiredResident.IsSuccess);
         var reopenedAccess = await registry.AcquireAsync(path, default);
         Assert.True(reopenedAccess.IsSuccess, reopenedAccess.Error?.Message);
+        Assert.NotSame(originalGeneration, reopenedAccess.Value!.Generation);
+        Assert.NotSame(originalWorkspace, reopenedAccess.Value.Generation.Snapshot.Workspace);
         await using var reopenedScope = AssemblyNavigationSessionScope.Create(reopenedAccess.Value!);
         var resolved = ExactAssemblySymbolResolver.Resolve(reopenedScope, reference);
         Assert.True(resolved.IsSuccess, resolved.Error?.Message);

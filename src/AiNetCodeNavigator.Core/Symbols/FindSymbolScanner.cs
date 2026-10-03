@@ -27,28 +27,17 @@ public static class FindSymbolScanner
     {
         var currentSourceIdentity = await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
         if (request.SourceIdentity is not null
-            && (currentSourceIdentity is null || !request.SourceIdentity.Matches(currentSourceIdentity)))
+            && AnalysisSymbolIdentity.SourceMismatch(request.SourceIdentity, currentSourceIdentity) is { } identityError)
         {
-            var sameTarget = currentSourceIdentity is not null
-                && !request.SourceIdentity.IsAssembly
-                && SymbolHandoffToken.TryCreateTarget(request.SourceIdentity.CanonicalPath, out var suppliedTarget)
-                && SymbolHandoffToken.TryCreateTarget(request.Solution.FilePath ?? string.Empty, out var actualTarget)
-                && string.Equals(suppliedTarget, actualTarget, StringComparison.Ordinal);
-            var sameContent = currentSourceIdentity is not null
-                && string.Equals(request.SourceIdentity.ContentHash, currentSourceIdentity.ContentHash, StringComparison.OrdinalIgnoreCase);
-            var code = sameTarget && !sameContent ? NavigationErrorCodes.StaleSnapshot : NavigationErrorCodes.TargetMismatch;
-            var message = code == NavigationErrorCodes.StaleSnapshot
-                ? "The supplied source identity does not match the current solution snapshot."
-                : "The supplied source identity does not match this target and project context.";
             return new FindSymbolScanResult(
-                message,
+                identityError.Message,
                 Array.Empty<SymbolLocationEntry>(),
                 0,
                 0,
                 false,
                 Array.Empty<string>(),
                 Array.Empty<string>(),
-                new AiNetCodeNavigator.Core.Models.ResultError(code, message));
+                identityError);
         }
 
         var nameFilter = SymbolNameMatcher.CreateDeclarationNameFilter(request.NamePattern);
@@ -166,10 +155,7 @@ public static class FindSymbolScanner
 
             var primaryLoc = locations[0];
             var docCommentId = symbol.GetDocumentationCommentId();
-            var internalHandoffId = sourceIdentity?.FormatHandoff(symbol, request.Solution);
-            var handoffId = internalHandoffId is null
-                ? null
-                : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalHandoffId);
+            var handoffId = sourceIdentity?.FormatHandoff(symbol, request.Solution);
 
             var kindName = DescribeKind(symbol);
             var signature = symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);

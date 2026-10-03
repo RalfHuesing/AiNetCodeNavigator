@@ -39,8 +39,8 @@ public static class SourceSymbolBodyResolver
             maxBodyLines,
             startLine,
             candidate?.HandoffId,
-            handoffIdentity,
-            solution);
+            handoffIdentity: null,
+            solution: solution);
         return new SymbolBodyResolutionResult(body, resolution.Candidates, null);
     }
 
@@ -87,7 +87,7 @@ public static class SourceSymbolBodyResolver
         var unavailable = HasUnavailableBody(symbol, hasSyntax);
         var hint = GetHint(symbol, hasSyntax, unavailable);
         var docCommentId = symbol.GetDocumentationCommentId();
-        handoffId ??= solution is null ? null : SourceHandoffFormatter.Format(symbol, solution, handoffIdentity);
+        handoffId ??= solution is null ? null : StableSourceReferenceFormatter.Format(symbol, solution, handoffIdentity);
 
         var (body, totalLines, displayedStart, displayedEnd, hasMore) = Extract(symbol, maxBodyLines, startLine,
             declarationReference);

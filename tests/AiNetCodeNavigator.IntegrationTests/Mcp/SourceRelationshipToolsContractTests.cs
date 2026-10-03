@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -143,9 +144,9 @@ public sealed class SourceRelationshipToolsContractTests
         }
 
         var references = await ReadRelationshipPagesAsync(
-            (cursor, pageSize, scope, bytes, tokens) => relationships.FindReferences(target, "M:RelationshipProbe.Target.Read",
+            (cursor, pageSize, scope, bytes, tokens, continuation) => relationships.FindReferences(target, "M:RelationshipProbe.Target.Read",
                 maxResults: pageSize, scopeType: scope, resultCursor: cursor,
-                maxResponseBytes: bytes, maxResponseTokens: tokens),
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation),
             "references", "enclosingSymbolName", pageSize: 4, scope: "all");
         Assert.Equal(17, references.TotalCount);
         Assert.Equal(17, references.Items.Count);
@@ -172,9 +173,9 @@ public sealed class SourceRelationshipToolsContractTests
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 2048);
 
         var productionReferences = await ReadRelationshipPagesAsync(
-            (cursor, pageSize, scope, bytes, tokens) => relationships.FindReferences(target, "M:RelationshipProbe.Target.Read",
+            (cursor, pageSize, scope, bytes, tokens, continuation) => relationships.FindReferences(target, "M:RelationshipProbe.Target.Read",
                 maxResults: pageSize, scopeType: scope, resultCursor: cursor,
-                maxResponseBytes: bytes, maxResponseTokens: tokens),
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation),
             "references", "enclosingSymbolName", pageSize: 4, scope: "production");
         Assert.Equal(16, productionReferences.TotalCount);
         Assert.Equal(16, productionReferences.Items.Count);
@@ -182,17 +183,17 @@ public sealed class SourceRelationshipToolsContractTests
         Assert.DoesNotContain(productionReferences.Items, item => item.Contains("TargetTests", StringComparison.Ordinal));
 
         var testReferences = await ReadRelationshipPagesAsync(
-            (cursor, pageSize, scope, bytes, tokens) => relationships.FindReferences(target, "M:RelationshipProbe.Target.Read",
+            (cursor, pageSize, scope, bytes, tokens, continuation) => relationships.FindReferences(target, "M:RelationshipProbe.Target.Read",
                 maxResults: pageSize, scopeType: scope, resultCursor: cursor,
-                maxResponseBytes: bytes, maxResponseTokens: tokens),
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation),
             "references", "enclosingSymbolName", pageSize: 4, scope: "tests");
         Assert.Equal(1, testReferences.TotalCount);
         Assert.EndsWith(":TargetTests.Invoke", Assert.Single(testReferences.Items), StringComparison.Ordinal);
 
         var implementations = await ReadRelationshipPagesAsync(
-            (cursor, pageSize, scope, bytes, tokens) => relationships.FindImplementations(target, "M:RelationshipProbe.Base.Run",
+            (cursor, pageSize, scope, bytes, tokens, continuation) => relationships.FindImplementations(target, "M:RelationshipProbe.Base.Run",
                 maxResults: pageSize, scopeType: scope, resultCursor: cursor,
-                maxResponseBytes: bytes, maxResponseTokens: tokens),
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation),
             "implementations", "symbolName", pageSize: 2, scope: "all");
         Assert.Equal(5, implementations.TotalCount);
         Assert.Equal(5, implementations.Items.Count);
@@ -203,17 +204,17 @@ public sealed class SourceRelationshipToolsContractTests
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 2048);
 
         var productionImplementations = await ReadRelationshipPagesAsync(
-            (cursor, pageSize, scope, bytes, tokens) => relationships.FindImplementations(target, "M:RelationshipProbe.Base.Run",
+            (cursor, pageSize, scope, bytes, tokens, continuation) => relationships.FindImplementations(target, "M:RelationshipProbe.Base.Run",
                 maxResults: pageSize, scopeType: scope, resultCursor: cursor,
-                maxResponseBytes: bytes, maxResponseTokens: tokens),
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation),
             "implementations", "symbolName", pageSize: 2, scope: "production");
         Assert.Equal(4, productionImplementations.TotalCount);
         Assert.DoesNotContain(productionImplementations.Items, item => item.Contains("RelationshipProbe.Tests.cs", StringComparison.Ordinal));
 
         var testImplementations = await ReadRelationshipPagesAsync(
-            (cursor, pageSize, scope, bytes, tokens) => relationships.FindImplementations(target, "M:RelationshipProbe.Base.Run",
+            (cursor, pageSize, scope, bytes, tokens, continuation) => relationships.FindImplementations(target, "M:RelationshipProbe.Base.Run",
                 maxResults: pageSize, scopeType: scope, resultCursor: cursor,
-                maxResponseBytes: bytes, maxResponseTokens: tokens),
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation),
             "implementations", "symbolName", pageSize: 2, scope: "tests");
         Assert.Equal(1, testImplementations.TotalCount);
         Assert.Contains("RelationshipProbe.Tests.cs", Assert.Single(testImplementations.Items), StringComparison.Ordinal);
@@ -358,7 +359,7 @@ public sealed class SourceRelationshipToolsContractTests
     }
 
     [Fact]
-    public async Task DependencyGraph_UsesHandoffProjectIdentityForEqualGenericTypeNames()
+    public async Task DependencyGraph_UsesStableReferenceProjectOwnerForEqualGenericTypeNames()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
@@ -380,7 +381,10 @@ public sealed class SourceRelationshipToolsContractTests
         Assert.Contains("src/First/Box.cs", TextOf(graph), StringComparison.Ordinal);
         Assert.Contains("FirstDependency", TextOf(graph), StringComparison.Ordinal);
         Assert.DoesNotContain("src/Second/Box.cs", TextOf(graph), StringComparison.Ordinal);
-        await AssertHandoffReachesBodyAsync(symbols, target, graph, "FirstDependency");
+        await AssertHandoffReachesBodyAsync(symbols, target, graph, "FirstDependency",
+            (bytes, tokens, continuation) => relationships.DependencyGraph(target, symbolIdentifier: firstHandoff,
+                direction: "outgoing", depth: 1, maxResponseBytes: bytes, maxResponseTokens: tokens,
+                continuationToken: continuation));
     }
 
     [Fact]
@@ -404,38 +408,50 @@ public sealed class SourceRelationshipToolsContractTests
             maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(tree, 65536, 4096);
         Assert.Contains("Target.Read", TextOf(tree), StringComparison.Ordinal);
-        await AssertHandoffReachesBodyAsync(symbols, target, tree, "public int Read");
+        await AssertHandoffReachesBodyAsync(symbols, target, tree, "public int Read",
+            (bytes, tokens, continuation) => relationships.GetCallTree(target, runId, direction: "outgoing", depth: 1,
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation));
 
         var references = await relationships.FindReferences(target, targetId,
             maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(references, 65536, 4096);
         Assert.Contains("Entry.Run", TextOf(references), StringComparison.Ordinal);
         Assert.Contains("column", TextOf(references), StringComparison.OrdinalIgnoreCase);
-        await AssertHandoffReachesBodyAsync(symbols, target, references, "target.Read");
+        await AssertHandoffReachesBodyAsync(symbols, target, references, "target.Read",
+            (bytes, tokens, continuation) => relationships.FindReferences(target, targetId,
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation));
 
         var hierarchy = await relationships.GetTypeHierarchy(target, baseId,
             maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(hierarchy, 65536, 4096);
         Assert.Contains("Derived", TextOf(hierarchy), StringComparison.Ordinal);
-        await AssertHandoffReachesBodyAsync(symbols, target, hierarchy, "Derived");
+        await AssertHandoffReachesBodyAsync(symbols, target, hierarchy, "Derived",
+            (bytes, tokens, continuation) => relationships.GetTypeHierarchy(target, baseId,
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation));
 
         var implementations = await relationships.FindImplementations(target, contractMethodId,
             maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(implementations, 65536, 4096);
         Assert.Contains("Derived.Work", TextOf(implementations), StringComparison.Ordinal);
-        await AssertHandoffReachesBodyAsync(symbols, target, implementations, "public int Work");
+        await AssertHandoffReachesBodyAsync(symbols, target, implementations, "public int Work",
+            (bytes, tokens, continuation) => relationships.FindImplementations(target, contractMethodId,
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation));
 
         var dependencies = await relationships.DependencyGraph(target, symbolIdentifier: genericId,
             maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(dependencies, 65536, 4096);
         Assert.Contains("GenericBox", TextOf(dependencies), StringComparison.Ordinal);
-        await AssertHandoffReachesBodyAsync(symbols, target, dependencies, "GenericBox");
+        await AssertHandoffReachesBodyAsync(symbols, target, dependencies, "GenericBox",
+            (bytes, tokens, continuation) => relationships.DependencyGraph(target, symbolIdentifier: genericId,
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation));
         var fileDependencies = await relationships.DependencyGraph(target, filePath: "src/App/Relationships.cs",
             maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(fileDependencies, 65536, 4096);
         Assert.Contains("Entry", TextOf(fileDependencies), StringComparison.Ordinal);
         Assert.Contains("Derived", TextOf(fileDependencies), StringComparison.Ordinal);
-        await AssertHandoffReachesBodyAsync(symbols, target, fileDependencies, "public static int Invoke");
+        await AssertHandoffReachesBodyAsync(symbols, target, fileDependencies, "public static int Invoke",
+            (bytes, tokens, continuation) => relationships.DependencyGraph(target, filePath: "src/App/Relationships.cs",
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation));
 
         var origin = await relationships.ResolveTypeOrigin(target, typeName: "RelationshipProbe.Derived",
             maxResponseBytes: 65536, maxResponseTokens: 4096);
@@ -454,7 +470,7 @@ public sealed class SourceRelationshipToolsContractTests
         Assert.Contains("direction", TextOf(invalidDirection), StringComparison.Ordinal);
         var unknownReference = await relationships.FindReferences(target, "h:unknown",
             maxResponseBytes: 16384, maxResponseTokens: 2048);
-        AssertErrorWithinBudget(unknownReference, "HANDOFF_UNKNOWN", 16384, 2048);
+        AssertErrorWithinBudget(unknownReference, "INVALID_SYMBOL_REFERENCE", 16384, 2048);
         var missingDependencySelection = await relationships.DependencyGraph(target,
             maxResponseBytes: 16384, maxResponseTokens: 2048);
         AssertErrorWithinBudget(missingDependencySelection, "INVALID_ARGUMENT", 16384, 2048);
@@ -581,9 +597,16 @@ public sealed class SourceRelationshipToolsContractTests
         throw new Xunit.Sdk.XunitException($"{label} did not reach a final response page.");
     }
 
-    private static async Task AssertHandoffReachesBodyAsync(SymbolTools symbols, string target, CallToolResult result, string expectedFragment)
+    private static async Task AssertHandoffReachesBodyAsync(
+        SymbolTools symbols,
+        string target,
+        CallToolResult result,
+        string expectedFragment,
+        Func<int, int?, string?, Task<CallToolResult>> readContinuation)
     {
-        var handoffs = FindHandoffs(BodyOf(TextOf(result)));
+        var pages = await ReadOuterResponsePagesAsync(readContinuation, 65536, 4096);
+        Assert.Equal(BodyOf(TextOf(result)), BodyOf(pages.FirstPage));
+        var handoffs = FindHandoffs(pages.Text);
         Assert.NotEmpty(handoffs);
         var bodies = new List<string>();
         foreach (var handoff in handoffs)
@@ -599,17 +622,7 @@ public sealed class SourceRelationshipToolsContractTests
     }
 
     private static string[] FindHandoffs(string text)
-    {
-        var handoffs = new List<string>();
-        for (var position = 0; (position = text.IndexOf("h:", position, StringComparison.Ordinal)) >= 0;)
-        {
-            var start = position;
-            position += 2;
-            while (position < text.Length && (char.IsAsciiLetterOrDigit(text[position]) || text[position] is '_' or '-')) position++;
-            if (position > start + 2) handoffs.Add(text[start..position]);
-        }
-        return handoffs.Distinct(StringComparer.Ordinal).ToArray();
-    }
+        => IntegrationMcpAssertions.ReadStableReferences(text);
 
     private static string ReadHandoffFromLine(string line)
     {
@@ -683,7 +696,7 @@ public sealed class SourceRelationshipToolsContractTests
     }
 
     private static async Task<(int TotalCount, List<string> Items, int Pages, string? FirstCursor)> ReadRelationshipPagesAsync(
-        Func<string?, int, string, int, int?, Task<CallToolResult>> invoke,
+        Func<string?, int, string, int, int?, string?, Task<CallToolResult>> invoke,
         string collectionName,
         string identityField,
         int pageSize,
@@ -696,9 +709,14 @@ public sealed class SourceRelationshipToolsContractTests
         var pages = 0;
         do
         {
-            var response = await invoke(cursor, pageSize, scope, cursor is null ? 16384 : 32768, cursor is null ? 2048 : 4096);
-            AssertSuccessWithinBudget(response, cursor is null ? 16384 : 32768, cursor is null ? 2048 : 4096);
-            using var document = JsonDocument.Parse(JsonBody(TextOf(response)));
+            var pageBytes = cursor is null ? 16384 : 32768;
+            var pageTokens = cursor is null ? 2048 : 4096;
+            var responsePages = await ReadOuterResponsePagesAsync(
+                (bytes, tokens, continuation) => invoke(continuation is null ? cursor : null,
+                    pageSize, scope, bytes, tokens, continuation),
+                pageBytes, pageTokens);
+            using var document = ParseJsonWithDiagnostics(JsonBody(responsePages.Text),
+                $"Relationship {collectionName} page (scope={scope}, pageSize={pageSize}, domainCursor={cursor ?? "<first>"}, outerPages={responsePages.Pages}, budgets={pageBytes}/{pageTokens})");
             var root = document.RootElement;
             totalCount ??= root.GetProperty("totalCount").GetInt32();
             foreach (var item in root.GetProperty(collectionName).EnumerateArray())
@@ -709,9 +727,10 @@ public sealed class SourceRelationshipToolsContractTests
             pages++;
             Assert.InRange(pages, 1, 20);
         } while (cursor is not null);
-        var broadResponse = await invoke(null, 100, scope, 65536, 4096);
-        AssertSuccessWithinBudget(broadResponse, 65536, 4096);
-        using var broadDocument = JsonDocument.Parse(JsonBody(TextOf(broadResponse)));
+        var broadPages = await ReadOuterResponsePagesAsync(
+            (bytes, tokens, continuation) => invoke(null, 100, scope, bytes, tokens, continuation), 65536, 4096);
+        using var broadDocument = ParseJsonWithDiagnostics(JsonBody(broadPages.Text),
+            $"Relationship {collectionName} broad page (scope={scope}, pageSize=100, outerPages={broadPages.Pages}, budgets=65536/4096)");
         var broadRoot = broadDocument.RootElement;
         var broadItems = broadRoot.GetProperty(collectionName).EnumerateArray()
             .Select(item => $"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty(identityField).GetString()}")

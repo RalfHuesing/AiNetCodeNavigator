@@ -334,7 +334,7 @@ public static class TestRecommendationBuilder
         var lineSpan = location.GetLineSpan();
         var path = PathNormalizer.ToRelative(solutionDir, lineSpan.Path);
         var projectIdentity = ProjectIdentity(document.Project);
-        var handoff = identity is null ? null : SourceHandoffFormatter.Format(sourceSymbol, solution, identity);
+        var handoff = identity is null ? null : StableSourceReferenceFormatter.Format(sourceSymbol, solution, identity);
         return new TestCandidateEvidence(
             evidenceType,
             sourceSymbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
@@ -396,7 +396,7 @@ public static class TestRecommendationBuilder
                 if (!useAllAttributedMethods && !_methodEvidence.ContainsKey(method)) continue;
                 var methodLocation = method.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax().GetLocation();
                 var methodLine = methodLocation?.GetLineSpan().StartLinePosition.Line + 1 ?? 0;
-                var methodHandoff = SourceHandoffFormatter.Format(method, solution, identity);
+                var methodHandoff = StableSourceReferenceFormatter.Format(method, solution, identity);
                 _methodEvidence.TryGetValue(method, out var evidence);
                 methods.Add(new TestMethodMatch(method.Name, methodLine, methodHandoff,
                     evidence?.OrderBy(item => item.EvidenceType, StringComparer.Ordinal)
@@ -405,7 +405,7 @@ public static class TestRecommendationBuilder
             }
             methods = methods.OrderBy(method => method.Line).ThenBy(method => method.MethodName, StringComparer.Ordinal).ToList();
             var framework = DetectFramework(symbol);
-            var classHandoff = SourceHandoffFormatter.Format(symbol, solution, identity);
+            var classHandoff = StableSourceReferenceFormatter.Format(symbol, solution, identity);
             var evidenceItems = _fixtureEvidence
                 .OrderBy(item => item.EvidenceType, StringComparer.Ordinal)
                 .ThenBy(item => item.ProjectIdentity, StringComparer.Ordinal)

@@ -32,8 +32,7 @@ public static class FileSkeletonBuilder
             {
                 formatSymbol = symbol =>
                 {
-                    var internalId = identity.FormatHandoff(symbol, document.Project.Solution);
-                    return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
+                    return identity.FormatHandoff(symbol, document.Project.Solution);
                 };
             }
         }

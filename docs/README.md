@@ -19,18 +19,18 @@ The binding product references are these current-state pages and local Navigator
 
 - [Index Scope](navigation/get-index-scope.md): Roslyn solution and project document inventory, bounds, completeness, errors, and read-only behavior.
 - [Namespace Tree Core Scanner](navigation/get-namespace-tree.md): Source namespace hierarchy, project aggregation, depth and result bounds, truncation, and read-only behavior.
-- [Shared Symbol Resolution](navigation/symbol-resolution.md): Identifier forms, ambiguity candidates, handoff roundtrips, and recoverable errors for follow-up scanners.
+- [Shared Symbol Resolution](navigation/symbol-resolution.md): Stable source and assembly references, exact owner resolution, unsupported declarations, and recovery errors.
 - [Find Symbol](navigation/find-symbol.md): Name and pattern matching, kind filters, and source scope behavior for the Core symbol scanner.
 - [Get Symbol Body](navigation/get-symbol-body.md): AST declaration extraction, batching, line windows, and unavailable-source cases.
-- [Get File Skeleton](navigation/get-file-skeleton.md): Top-level declarations without method bodies, structured Core results, Markdown rendering, and handoff IDs.
-- [Get Class Structure](navigation/get-class-structure.md): Declared members, visibility, records and interfaces, filters, truncation, and handoffs.
-- [Call Tree Core Engine](navigation/get-call-tree.md): Bounded Roslyn call graph traversal, source handoffs, and ASCII/Mermaid rendering.
-- [Find References and Implementations Core Engines](navigation/find-references-and-implementations.md): Solution-wide reference locations, implementation and override discovery, result limits, and project-bound handoffs.
-- [Symbol Impact Core Engine](navigation/impact-analysis.md): Transitive caller traversal, affected project summaries, limits, completeness, and handoffs.
-- [Get Type Hierarchy Core Engine](navigation/get-type-hierarchy.md): Base chains, interfaces, transitive cross-project subtypes, source handoffs, and subtype limits.
+- [Get File Skeleton](navigation/get-file-skeleton.md): Top-level declarations without method bodies, structured Core results, and Markdown rendering.
+- [Get Class Structure](navigation/get-class-structure.md): Declared members, visibility, records and interfaces, filters, and truncation.
+- [Call Tree Core Engine](navigation/get-call-tree.md): Bounded Roslyn call graph traversal and ASCII/Mermaid rendering.
+- [Find References and Implementations Core Engines](navigation/find-references-and-implementations.md): Solution-wide reference locations, implementation and override discovery, and result limits.
+- [Symbol Impact Core Engine](navigation/impact-analysis.md): Transitive caller traversal, affected project summaries, limits, and completeness.
+- [Get Type Hierarchy Core Engine](navigation/get-type-hierarchy.md): Base chains, interfaces, transitive cross-project subtypes, and subtype limits.
 - [Dependency Graph Core Scanner](navigation/dependency-graph.md): Project and source type dependencies, project-qualified edges, paging, scan bounds, and recoverable document errors.
 - [Resolve Type Origin](navigation/resolve-type-origin.md): Source and metadata type origin results, exact source project ownership, and assembly-reference lookup.
-- [Cross-Feature Relationship Contract](navigation/relationship-contracts.md): Shared source handoffs, caller-site identity, cross-project relationship behavior, and per-engine result limits.
+- [Cross-Feature Relationship Contract](navigation/relationship-contracts.md): Caller-site identity, cross-project relationship behavior, and per-engine result limits.
 - [Shared Navigation Context](navigation/get-context.md): Explicit Source and Assembly sections, shared symbol resolution, per-section paging, and partial errors.
 - [Static Test Candidates](navigation/test-context.md): Test project/file/class detection and heuristic fixture and method recommendations.
 - [Assembly Decompilation Core](navigation/assembly-decompilation.md): Read-only binary fingerprinting, decompilation cache generations, native/invalid image handling, and the virtual Roslyn snapshot.

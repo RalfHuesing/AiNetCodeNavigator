@@ -1,6 +1,5 @@
 #nullable enable
 
-using System;
 using System.Text.RegularExpressions;
 
 namespace AiNetCodeNavigator.Core.Common;
@@ -46,19 +45,5 @@ public static class InputNormalizer
         }
 
         return cleaned;
-    }
-
-    /// <summary>
-    /// Identifies opaque handoff handles without mistaking a Windows drive path for one.
-    /// The registry recognizes the handle prefix without regard to case, while the wire format
-    /// itself remains lowercase; routing uppercase variants to the registry preserves its
-    /// typed malformed-handoff error.
-    /// </summary>
-    public static bool HasOpaqueHandoffPrefix(string? identifier)
-    {
-        if (string.IsNullOrEmpty(identifier) || !identifier.StartsWith("h:", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        return identifier.Length < 3 || identifier[2] is not ('\\' or '/');
     }
 }

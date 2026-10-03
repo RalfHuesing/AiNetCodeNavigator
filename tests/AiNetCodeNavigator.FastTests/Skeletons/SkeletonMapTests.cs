@@ -141,7 +141,7 @@ public sealed class SkeletonMapTests
         Assert.DoesNotContain("BODY_MARKER", markdown, System.StringComparison.Ordinal);
 
         var handoffIds = memberLines
-            .Select(line => Regex.Match(line, @"handoffId: `(?<id>h:[A-Za-z0-9_-]+)`", RegexOptions.CultureInvariant, System.TimeSpan.FromSeconds(1)))
+            .Select(line => Regex.Match(line, @"handoffId: `(?<id>src:[^`]+)`", RegexOptions.CultureInvariant, System.TimeSpan.FromSeconds(1)))
             .ToList();
         Assert.All(handoffIds, match => Assert.True(match.Success));
         Assert.Equal(4, handoffIds.Select(match => match.Groups["id"].Value).Distinct().Count());
@@ -243,7 +243,7 @@ public sealed class SkeletonMapTests
         var doc = project.Documents.Single(d => d.Name == "Greeter.cs");
         var markdown = await FileSkeletonBuilder.BuildMarkdownForDocumentAsync(doc, fixture.Solution.FilePath ?? "");
         var match = new Regex(
-            @"handoffId: `(?<id>h:[A-Za-z0-9_-]+)`",
+            @"handoffId: `(?<id>src:[^`]+)`",
             RegexOptions.CultureInvariant,
             System.TimeSpan.FromSeconds(1)).Match(markdown);
         Assert.True(match.Success, markdown);
@@ -262,7 +262,7 @@ public sealed class SkeletonMapTests
         var markdown = await FileSkeletonBuilder.BuildMarkdownForDocumentAsync(document, fixture.Solution.FilePath ?? "");
         var match = Regex.Match(
             markdown,
-            @"public string Greet\(string name\).*handoffId: `(?<id>h:[A-Za-z0-9_-]+)`",
+            @"public string Greet\(string name\).*handoffId: `(?<id>src:[^`]+)`",
             RegexOptions.CultureInvariant,
             System.TimeSpan.FromSeconds(1));
         Assert.True(match.Success, markdown);

@@ -102,7 +102,7 @@ internal static class AssemblyReferencesClosureScanner
                         locations.Add(entry);
 
                     if (nextDepth >= requestedDepth) continue;
-                    var caller = session.ResolveInternalSourceHandoff(entry.EnclosingSymbolHandoffId);
+                    var caller = session.ResolveInternalSourceHandoff(entry.EnclosingSymbolHandoffId, entry.OwnerTargetPath);
                     if (caller is null)
                     {
                         traversalLimited = true;

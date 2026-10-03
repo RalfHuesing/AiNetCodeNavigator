@@ -37,24 +37,8 @@ public static class ClassStructureScanner
         ArgumentNullException.ThrowIfNull(request.Solution);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.SymbolIdentifier);
 
-        AnalysisSymbolIdentity? identity;
-        if (request.HandoffIdentity is not null)
-        {
-            var identityResult = await SourceHandoffResolver.ValidateIdentityAsync(request.Solution, request.HandoffIdentity, ct).ConfigureAwait(false);
-            if (!identityResult.IsSuccess)
-            {
-                return new ClassStructurePayload(
-                    string.Empty, string.Empty, Array.Empty<string>(), 0, 0, 0, false,
-                    Array.Empty<ClassStructureMemberEntry>(), Array.Empty<string>(), identityResult.Error);
-            }
-            identity = identityResult.Value;
-        }
-        else
-        {
-            identity = await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
-        }
-
-        var resolution = await SourceSymbolResolver.ResolveAsync(request.Solution, request.SymbolIdentifier, identity, ct).ConfigureAwait(false);
+        var resolution = await SourceSymbolResolver.ResolveAsync(request.Solution, request.SymbolIdentifier,
+            request.HandoffIdentity, ct).ConfigureAwait(false);
         if (!resolution.IsSuccess)
         {
             return new ClassStructurePayload(
@@ -66,6 +50,8 @@ public static class ClassStructureScanner
         }
         var namedType = resolution.Symbol as INamedTypeSymbol ?? resolution.Symbol?.ContainingType as INamedTypeSymbol;
         if (namedType is null) return null;
+
+        var identity = await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
 
         var solutionDir = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
         var typeDeclarations = await GetEligibleDeclarationsAsync(namedType, request.Solution, request.ScopeType,
@@ -102,8 +88,7 @@ public static class ClassStructureScanner
         ArgumentNullException.ThrowIfNull(solution);
         ArgumentException.ThrowIfNullOrWhiteSpace(symbolIdentifier);
 
-        var identity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
-        var result = await ResolveTypeSymbolResultAsync(solution, symbolIdentifier, identity, ct).ConfigureAwait(false);
+        var result = await ResolveTypeSymbolResultAsync(solution, symbolIdentifier, identity: null, ct: ct).ConfigureAwait(false);
         return result.IsSuccess ? result.Value : null;
     }
 
@@ -339,8 +324,7 @@ public static class ClassStructureScanner
             return null;
         }
 
-        var internalId = handoffIdentity?.FormatHandoff(symbol, solution);
-        return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
+        return handoffIdentity?.FormatHandoff(symbol, solution);
     }
 
     private static string ResolveMemberKind(ISymbol m)

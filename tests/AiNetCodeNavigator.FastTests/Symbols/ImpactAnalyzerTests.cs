@@ -57,7 +57,7 @@ public sealed class ImpactAnalyzerTests
         Assert.Contains(impact.CallSites, site => site.Depth == 2 && site.ProjectName == "App");
         foreach (var site in impact.CallSites)
         {
-            Assert.StartsWith("h:", site.CallingMemberHandoffId);
+            Assert.StartsWith("src:", site.CallingMemberHandoffId);
             var resolved = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.CallingMemberHandoffId!);
             Assert.True(resolved.IsSuccess);
             Assert.Equal(site.ProjectName, resolved.Symbol!.ContainingAssembly!.Name);
@@ -85,7 +85,7 @@ public sealed class ImpactAnalyzerTests
         Assert.Equal(ImpactAnalyzer.MaxNodes, impact.EffectiveNodeLimit);
         foreach (var site in impact.CallSites)
         {
-            Assert.StartsWith("h:", site.CallingMemberHandoffId);
+            Assert.StartsWith("src:", site.CallingMemberHandoffId);
             var resolved = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.CallingMemberHandoffId!);
             Assert.True(resolved.IsSuccess);
             Assert.Equal(site.ProjectName, resolved.Symbol!.ContainingAssembly!.Name);
@@ -212,11 +212,11 @@ public sealed class ImpactAnalyzerTests
         foreach (var site in convergedSites)
         {
             Assert.NotEmpty(site.ReachedFromSymbolId);
-            Assert.StartsWith("h:", site.ReachedFromSymbolHandoffId);
+            Assert.StartsWith("src:", site.ReachedFromSymbolHandoffId);
             var resolvedReachedFrom = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.ReachedFromSymbolHandoffId!);
             Assert.True(resolvedReachedFrom.IsSuccess);
             Assert.Contains(resolvedReachedFrom.Symbol!.ContainingAssembly!.Name, new[] { "BranchB", "BranchC" });
-            Assert.StartsWith("h:", site.CallingMemberHandoffId);
+            Assert.StartsWith("src:", site.CallingMemberHandoffId);
             var resolvedCaller = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.CallingMemberHandoffId!);
             Assert.True(resolvedCaller.IsSuccess);
             Assert.Equal("Top", resolvedCaller.Symbol!.ContainingAssembly!.Name);

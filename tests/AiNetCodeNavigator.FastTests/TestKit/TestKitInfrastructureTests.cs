@@ -264,9 +264,8 @@ public sealed class TestKitInfrastructureTests
     }
 
     [Theory]
-    [InlineData("h:gwtQ")]
-    [InlineData("h:ABC123")]
-    [InlineData("h:abc123XYZ")]
+    [InlineData("src:src/App/App.csproj|T:Sample.Widget")]
+    [InlineData("asm:Sample.Library|M:Sample.Widget.Run(System.String)")]
     public void NavigationAssertions_ValidHandoffPasses(string handoffId)
     {
         NavigationAssertions.AssertValidHandoffId(handoffId);
@@ -275,7 +274,9 @@ public sealed class TestKitInfrastructureTests
     [Theory]
     [InlineData("gwtQ")]
     [InlineData("")]
-    [InlineData("h:")]
+    [InlineData("h:gwtQ")]
+    [InlineData("i:0:identifier")]
+    [InlineData("src:src/App.csproj|T:")]
     [InlineData("x:123")]
     [InlineData("h:foo-bar")]
     [InlineData("h:foo_bar")]

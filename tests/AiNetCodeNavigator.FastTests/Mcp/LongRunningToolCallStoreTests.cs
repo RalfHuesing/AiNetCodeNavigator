@@ -431,7 +431,7 @@ public sealed class LongRunningToolCallStoreTests
     public async Task DomainTruncationRemainsTruncatedAcrossEveryBudgetPageAndReplay()
     {
         await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
-        var source = string.Join("\n", Enumerable.Range(0, 120).Select(index => $"symbol-{index:D3}: [handoff: h:00000000000000000000000000000000]"));
+        var source = string.Join("\n", Enumerable.Range(0, 120).Select(index => $"symbol-{index:D3}: [handoff: src:src/App/App.csproj|M:Run{index:D3}]"));
         var calls = 0;
         Task<CallToolResult> Work(CancellationToken _)
         {

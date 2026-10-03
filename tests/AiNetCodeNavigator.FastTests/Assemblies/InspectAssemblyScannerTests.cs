@@ -51,57 +51,18 @@ public sealed class InspectAssemblyScannerTests
         Assert.Equal("complete", payload.Completeness);
         var apiType = Assert.Single(payload.Types);
         Assert.True(apiType.Handoff);
-        Assert.NotNull(apiType.Id);
-        Assert.StartsWith("h:", apiType.HandoffId, StringComparison.Ordinal);
+        Assert.StartsWith("asm:", apiType.HandoffId, StringComparison.Ordinal);
         Assert.Equal(Path.GetFullPath(assemblyPath), apiType.OwnerTargetPath);
-        Assert.DoesNotContain("i:", apiType.HandoffId, StringComparison.Ordinal);
-        var exposedHandle = apiType.HandoffId!;
-        var restored = AiNetCodeNavigator.Core.Symbols.HandoffHandleRegistry.Default.RestoreInternalHandoffForInput(exposedHandle);
-        Assert.True(restored.IsSuccess);
-        Assert.Equal(apiType.Id, restored.Value);
-        Assert.True(AiNetCodeNavigator.Core.Symbols.SymbolHandoffIdentifier.TryParse(restored.Value!, out var parsedHandoff));
-        Assert.Equal(AiNetCodeNavigator.Core.Symbols.SymbolHandoffOrigin.Assembly, parsedHandoff.Origin);
-        Assert.True(AiNetCodeNavigator.Core.Symbols.SymbolHandoffToken.TryCreateTarget(assemblyPath, out var expectedTarget));
-        Assert.Equal(expectedTarget, parsedHandoff.TargetToken);
+        Assert.True(AiNetCodeNavigator.Core.Symbols.StableSymbolReferenceCodec.TryParse(apiType.HandoffId!, out var parsed, out var parseError), parseError?.Message);
+        var assemblyReference = Assert.IsType<AiNetCodeNavigator.Core.Symbols.StableSymbolReference.Assembly>(parsed);
+        Assert.Equal(payload.Identity!.Name, assemblyReference.SimpleName);
+        Assert.Equal("T:Probe.Api.PublicApi", assemblyReference.DeclarationId);
         Assert.Contains(apiType.Members, member => member.Name == "Name");
         Assert.Contains(apiType.Members, member => member.Name == "Changed");
         Assert.Contains(apiType.Members, member => member.Signature.Contains("Convert(string value)", StringComparison.Ordinal));
         Assert.Contains(apiType.Members, member => member.Signature.Contains("Convert(int value)", StringComparison.Ordinal));
         Assert.Contains(apiType.Members, member => member.Signature.Contains("Echo<T>(T value)", StringComparison.Ordinal));
         Assert.DoesNotContain(apiType.Members, member => member.Name is "get_Name" or "set_Name" or "add_Changed" or "Hidden");
-    }
-
-    [Fact]
-    public async Task StableId_InvalidAssemblyIdentityDoesNotExposeRawSymbolIdAsHandoff()
-    {
-        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
-        var compilation = await fixture.Solution.Projects.First().GetCompilationAsync();
-        Assert.NotNull(compilation);
-        var symbol = compilation.GetTypeByMetadataName("SampleNamespace.Greeter");
-        Assert.NotNull(symbol);
-
-        var stableId = typeof(InspectAssemblyScanner).GetMethod(
-            "StableId",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-        Assert.NotNull(stableId);
-        var id = (string?)stableId!.Invoke(null, [symbol, AnalysisSymbolIdentity.ForAssembly(string.Empty, "invalid")]);
-
-        Assert.Null(id);
-
-        var toTypeDto = typeof(InspectAssemblyScanner).GetMethod(
-            "ToTypeDto",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-        Assert.NotNull(toTypeDto);
-        var dto = Assert.IsType<AssemblyTypeDto>(toTypeDto!.Invoke(null,
-        [
-            symbol,
-            new InspectAssemblyRequest(@"C:\invalid.dll", PublicOnly: false),
-            AnalysisSymbolIdentity.ForAssembly(string.Empty, "invalid"),
-            @"C:\invalid.dll",
-        ]));
-        Assert.False(dto.Handoff);
-        Assert.Null(dto.Id);
-        Assert.Empty(dto.AllowedFollowUpTools!);
     }
 
     [Fact]

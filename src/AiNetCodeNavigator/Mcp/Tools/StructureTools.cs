@@ -77,10 +77,10 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "get_file_skeleton", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [System.ComponentModel.Description("Show declarations in selected source files and provide navigable handles for their symbols.")]
+    [System.ComponentModel.Description("Show declarations in selected source files and provide stable src:/asm: references when declarations support them.")]
     public Task<CallToolResult> GetFileSkeleton(
         [Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
-        [Required, System.ComponentModel.Description("One or more indexed relative or absolute source paths, or current symbol handoffs that identify a declaration file.")] string[] filePaths,
+        [Required, System.ComponentModel.Description("One or more indexed relative or absolute source paths, or stable src:/asm: references that identify declaring documents.")] string[] filePaths,
         [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
         [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
         [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 24576).") ] int maxResponseBytes = 24 * 1024,
@@ -88,38 +88,44 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         CancellationToken cancellationToken = default)
     {
         if (filePaths.Length == 0 || filePaths.Any(string.IsNullOrWhiteSpace))
-            return Task.FromResult(McpToolResults.InvalidArgument("filePaths must contain one or more non-empty paths or symbol handoffs.", "$.filePaths",
-                "Provide an indexed source path or a source/assembly symbol handoff.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
+            return Task.FromResult(McpToolResults.InvalidArgument("filePaths must contain one or more non-empty paths or stable references.", "$.filePaths",
+                "Provide an indexed source path or canonical src:/asm: reference.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
         return NavigationToolSupport.RouteAsync(runtime, "get_file_skeleton", targetPath, new { filePaths }, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens, async (target, coreCursor, ct) =>
             {
+                var referenceRouteErrors = GetFileReferenceRouteErrors(filePaths, target.TargetType);
+                if (referenceRouteErrors.All(static error => error is not null))
+                    return NavigationToolSupport.Failure(AggregateFileSkeletonFailures(filePaths, referenceRouteErrors),
+                        maxResponseBytes, maxResponseTokens, "$.filePaths");
                 if (target.TargetType == AnalysisTargetType.Project)
                     return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target,
                         async (solution, source, token) =>
                         {
                             var omissions = new List<string>();
                             var response = await BuildSkeletonsAsync(solution, target.CanonicalPath, filePaths,
-                                source.Identity, token, maxResponseBytes, maxResponseTokens, omissionReasons: omissions).ConfigureAwait(false);
+                                source.Identity, token, maxResponseBytes, maxResponseTokens,
+                                preflightErrors: referenceRouteErrors, omissionReasons: omissions).ConfigureAwait(false);
                             return source.WithMetadata(response,
-                                $"fileSkeleton(paths={string.Join('|', filePaths.Select(Path.GetFullPath))})", omissions.ToArray());
+                                FormatFileSkeletonAnalyzedScope(filePaths, Path.GetDirectoryName(target.CanonicalPath)!), omissions.ToArray());
                         },
                         maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
 
                 var opened = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
                 if (!opened.IsSuccess) return NavigationToolSupport.Failure(opened.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
                 await using var scope = opened.Value!;
-                    var sourceRoot = scope.Context.DecompiledProjectPaths?.DecompiledSourceRoot;
-                    if (string.IsNullOrWhiteSpace(sourceRoot))
-                        return McpToolResults.Recoverable(NavigationErrorCodes.AssemblyTargetUnsupported,
-                            "The assembly has no materialized decompiled source tree.",
-                            "Use inspect_assembly for metadata-only navigation.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                var sourceRoot = scope.Context.DecompiledProjectPaths?.DecompiledSourceRoot;
+                if (string.IsNullOrWhiteSpace(sourceRoot))
+                    return McpToolResults.Recoverable(NavigationErrorCodes.AssemblyTargetUnsupported,
+                        "The assembly has no materialized decompiled source tree.",
+                        "Use inspect_assembly for metadata-only navigation.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                 var identity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash,
                     scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
-                    var omissions = new List<string>();
-                    var response = await BuildSkeletonsAsync(scope.Solution, target.CanonicalPath, filePaths, identity, ct,
-                        maxResponseBytes, maxResponseTokens, sourceRoot, scope, BeforeAssemblySkeletonItemForTesting, omissions).ConfigureAwait(false);
-                    return NavigationToolSupport.WithAssemblyMetadata(response, identity,
-                        $"fileSkeleton(paths={string.Join('|', filePaths.Select(Path.GetFullPath))})", omissions);
+                var omissions = new List<string>();
+                var response = await BuildSkeletonsAsync(scope.Solution, target.CanonicalPath, filePaths, identity, ct,
+                    maxResponseBytes, maxResponseTokens, sourceRoot, scope, BeforeAssemblySkeletonItemForTesting, omissions,
+                    referenceRouteErrors).ConfigureAwait(false);
+                return NavigationToolSupport.WithAssemblyMetadata(response, identity,
+                    FormatFileSkeletonAnalyzedScope(filePaths, sourceRoot), omissions);
             }, null, cancellationToken);
     }
 
@@ -127,7 +133,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     [System.ComponentModel.Description("Inspect the members and declaration structure of a source or decompiled type.")]
     public Task<CallToolResult> GetClassStructure(
         [Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
-        [Required, System.ComponentModel.Description("Type name, documentation ID, or current symbol handoff identifying the type.")] string symbolIdentifier,
+        [Required, System.ComponentModel.Description("Type name, documentation ID, or stable src:/asm: reference identifying the type.")] string symbolIdentifier,
         [System.ComponentModel.Description("Member ordering: lines (default), kind, or name.")] string sortBy = "lines",
         [Range(1, 200), System.ComponentModel.Description("Page size for type members (maximum 200 entries per page). All filtered members remain reachable across resultCursor pages.")] int maxMembers = 50,
         [System.ComponentModel.Description("Optional member-kind filter, such as method, property, field, event, or constructor.")] string? kindFilter = null,
@@ -142,7 +148,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(symbolIdentifier))
-            return Task.FromResult(McpToolResults.InvalidArgument("symbolIdentifier is required.", "$.symbolIdentifier", "Use a type name, declaration ID, or type handoff.",
+            return Task.FromResult(McpToolResults.InvalidArgument("symbolIdentifier is required.", "$.symbolIdentifier", "Use a type name, declaration ID, or stable src:/asm: reference.",
                 maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
         if (scopeType is not ("all" or "production" or "tests"))
             return Task.FromResult(McpToolResults.InvalidArgument("scopeType must be all, production, or tests.", "$.scopeType", "Choose a supported source scope.",
@@ -158,12 +164,24 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             maxResponseBytes, maxResponseTokens, async (target, coreCursor, ct) =>
             {
                 if (target.TargetType == AnalysisTargetType.Project)
+                {
+                    var sourceProbe = InputNormalizer.NormalizeSymbolIdentifier(symbolIdentifier);
+                    if (StableSymbolReferenceCodec.TryParseReferenceInput(symbolIdentifier, sourceProbe,
+                        out var sourceReference, out var sourceReferenceError))
+                    {
+                        if (sourceReferenceError is not null)
+                            return NavigationToolSupport.Failure(sourceReferenceError.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
+                        if (sourceReference is not StableSymbolReference.Source)
+                            return NavigationToolSupport.Failure(new ResultError(NavigationErrorCodes.TargetMismatch,
+                                "An assembly reference cannot be resolved in a source solution.",
+                                "Open the assembly owner targetPath and use the asm: reference."), maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
+                    }
                     return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, source, token) =>
                     {
                         var result = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(
                             solution, symbolIdentifier, sortBy, maxMembers, kindFilter, nameFilter, source.Identity, parsedScope, includeGenerated,
                             CollectAllMembers: true), token).ConfigureAwait(false);
-                        if (result is null) return McpToolResults.InvalidArgument("The identifier did not resolve to a type.", "$.symbolIdentifier", "Use a type name or type handoff.",
+                        if (result is null) return McpToolResults.InvalidArgument("The identifier did not resolve to a type.", "$.symbolIdentifier", "Use a type name or stable src: reference.",
                             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                         if (result.Error is { } error) return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                         var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
@@ -176,45 +194,31 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                             $"classStructure(symbol={symbolIdentifier.Trim()}, scope={scopeType}, includeGenerated={includeGenerated}, kind={kindFilter?.Trim() ?? "*"}, name={nameFilter?.Trim() ?? "*"}, sortBy={sortBy.Trim().ToLowerInvariant()}, pageSize={maxMembers})",
                             [], HasResultCursor(response));
                     }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
-
-                var normalizedIdentifier = InputNormalizer.NormalizeSymbolIdentifier(symbolIdentifier);
-                if (!InputNormalizer.HasOpaqueHandoffPrefix(normalizedIdentifier)
-                    && !normalizedIdentifier.StartsWith("i:", StringComparison.OrdinalIgnoreCase))
-                {
-                    var openedRaw = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
-                    if (!openedRaw.IsSuccess) return NavigationToolSupport.Failure(openedRaw.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
-                    await using var rawScope = openedRaw.Value!;
-                    var raw = await AssemblySymbolInputResolver.ResolveAsync(rawScope, normalizedIdentifier, ct).ConfigureAwait(false);
-                    if (!raw.IsSuccess) return NavigationToolSupport.Failure(raw.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
-                    var rawType = raw.Symbol as INamedTypeSymbol ?? raw.Symbol!.ContainingType;
-                    if (rawType is null) return McpToolResults.InvalidArgument("The assembly identifier did not resolve to a type.", "$.symbolIdentifier", "Use a type or member declared in a type.",
-                        maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-                    var rawIdentity = AssemblySymbolInputResolver.CreateIdentity(rawScope);
-                    var rawStructure = BuildAssemblyClassStructure(rawType, target.CanonicalPath, rawIdentity, sortBy, maxMembers, kindFilter, nameFilter, collectAll: true);
-                    var rawBinding = BoundResultCursor.CreateBinding(target.CanonicalPath, rawIdentity.ContentHash + "|" + rawScope.Context.ReferenceSnapshotHash,
-                        "get_class_structure.members", normalizedIdentifier, scopeType, includeGenerated.ToString(), kindFilter?.Trim(), nameFilter?.Trim(), sortBy.Trim().ToLowerInvariant(),
-                        maxMembers.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                    var rawResponse = CreateClassStructurePage(rawStructure, target.CanonicalPath, maxMembers, coreCursor, rawBinding,
-                        maxResponseBytes, maxResponseTokens);
-                    if (rawResponse.IsError == true) return rawResponse;
-                    return NavigationToolSupport.WithAssemblyMetadata(rawResponse, rawIdentity,
-                        $"classStructure(symbol={normalizedIdentifier}, pageSize={maxMembers}, kind={kindFilter?.Trim() ?? "*"}, name={nameFilter?.Trim() ?? "*"}, sortBy={sortBy.Trim().ToLowerInvariant()})",
-                        [], HasResultCursor(rawResponse));
                 }
 
-                var assembly = await AssemblySymbolHandoffResolver.ResolveAsync(symbolIdentifier, ct).ConfigureAwait(false);
+                var normalizedAssemblyIdentifier = InputNormalizer.NormalizeSymbolIdentifier(symbolIdentifier);
+                if (AssemblySymbolInputResolver.TryRouteIdentifier(symbolIdentifier, normalizedAssemblyIdentifier,
+                    out var assemblyReference, out var assemblyReferenceError))
+                {
+                    if (assemblyReferenceError is not null)
+                        return NavigationToolSupport.Failure(assemblyReferenceError.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
+                    if (assemblyReference is not StableSymbolReference.Assembly)
+                        return NavigationToolSupport.Failure(new ResultError(NavigationErrorCodes.TargetMismatch,
+                            "A source reference cannot be resolved in an assembly target.",
+                            "Open the source solution target and use the src: reference."), maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
+                }
+                var opened = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
+                if (!opened.IsSuccess) return NavigationToolSupport.Failure(opened.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
+                await using var assemblyScope = opened.Value!;
+                var assembly = await AssemblySymbolInputResolver.ResolveAsync(assemblyScope, symbolIdentifier, ct).ConfigureAwait(false);
                 if (!assembly.IsSuccess) return NavigationToolSupport.Failure(assembly.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
-                await using var access = assembly.Value!;
-                if (!string.Equals(Path.GetFullPath(access.Origin.CanonicalPath), target.CanonicalPath, StringComparison.OrdinalIgnoreCase))
-                    return McpToolResults.InvalidArgument("The symbol handoff belongs to another assembly.", "$.symbolIdentifier",
-                        "Use a handoff produced by this targetPath.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-                var type = access.Symbol as INamedTypeSymbol ?? access.Symbol.ContainingType;
-                if (type is null) return McpToolResults.InvalidArgument("The assembly handle did not resolve to a type.", "$.symbolIdentifier", "Use a type handoff from an assembly navigation result.",
+                var type = assembly.Symbol as INamedTypeSymbol ?? assembly.Symbol!.ContainingType;
+                if (type is null) return McpToolResults.InvalidArgument("The assembly identifier did not resolve to a type.", "$.symbolIdentifier", "Use a type or member declared in a type.",
                     maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-                var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
-                    access.Generation, access.ReferenceSnapshotHash);
-                var result = BuildAssemblyClassStructure(type, access.Origin.CanonicalPath, identity, sortBy, maxMembers, kindFilter, nameFilter, collectAll: true);
-                var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, identity.ContentHash + "|" + access.ReferenceSnapshotHash,
+                var identity = AssemblySymbolInputResolver.CreateIdentity(assemblyScope);
+                var result = BuildAssemblyClassStructure(type, target.CanonicalPath, identity, sortBy, maxMembers, kindFilter, nameFilter,
+                    collectAll: true, formatReference: symbol => FormatAssemblyReference(symbol, assemblyScope));
+                var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, identity.ContentHash + "|" + assemblyScope.Context.ReferenceSnapshotHash,
                     "get_class_structure.members", symbolIdentifier.Trim(), scopeType, includeGenerated.ToString(), kindFilter?.Trim(), nameFilter?.Trim(), sortBy.Trim().ToLowerInvariant(),
                     maxMembers.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 var response = CreateClassStructurePage(result, target.CanonicalPath, maxMembers, coreCursor, binding,
@@ -267,7 +271,8 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                     scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
                 var response = await ScanNamespaceTreeAsync(scope.Solution, target.CanonicalPath, project, namespacePrefix, depth, includeTypes, kind, maxResults, includeGenerated, identity,
                     identity.ContentHash + "|" + scope.Context.ReferenceSnapshotHash, coreCursor, ct,
-                    maxResponseBytes, maxResponseTokens, includeProjectOverview: false).ConfigureAwait(false);
+                    maxResponseBytes, maxResponseTokens, includeProjectOverview: false,
+                    formatTypeReference: type => FormatAssemblyReference(type, scope)).ConfigureAwait(false);
                 var omissions = ReadStringArrayFromResult(response, "truncatedBy");
                 return NavigationToolSupport.WithAssemblyMetadata(response, identity,
                     $"namespaceTree(project={project?.Trim() ?? "*"}, prefix={namespacePrefix?.Trim() ?? "*"}, depth={depth}, includeTypes={includeTypes}, kind={kind.Trim().ToLowerInvariant()}, pageSize={maxResults}, includeGenerated={includeGenerated})",
@@ -275,10 +280,64 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             }, null, cancellationToken, resultCursor, "get_namespace_tree.inventory");
     }
 
+    private static ResultError?[] GetFileReferenceRouteErrors(string[] filePaths, AnalysisTargetType targetType)
+    {
+        var errors = new ResultError?[filePaths.Length];
+        for (var index = 0; index < filePaths.Length; index++)
+        {
+            var path = filePaths[index];
+            var discoveryProbe = InputNormalizer.NormalizeSymbolIdentifier(path);
+            if (!StableSymbolReferenceCodec.TryParseReferenceInput(path, discoveryProbe,
+                out var reference, out var referenceError)) continue;
+            if (referenceError is { } invalidReference)
+            {
+                errors[index] = invalidReference;
+                continue;
+            }
+
+            if (targetType == AnalysisTargetType.Project && reference is not StableSymbolReference.Source
+                || targetType == AnalysisTargetType.Assembly && reference is not StableSymbolReference.Assembly)
+                errors[index] = new ResultError(NavigationErrorCodes.TargetMismatch,
+                    "The stable reference belongs to a different target kind.",
+                    "Use the src: reference with its source solution or the asm: reference with its owner targetPath.");
+        }
+        return errors;
+    }
+
+    private static ResultError AggregateFileSkeletonFailures(string[] filePaths, IReadOnlyList<ResultError?> errors)
+    {
+        var primary = errors.First(static error => error is not null)!.Value;
+        var itemResults = filePaths.Select((path, index) => FormatFileSkeletonFailure(path, errors[index]!.Value));
+        return new ResultError(primary.Code,
+            $"Every requested file skeleton item failed reference validation. Item results:{Environment.NewLine}{string.Join(Environment.NewLine + Environment.NewLine, itemResults)}",
+            "Use each item's next action, then repeat get_file_skeleton with the same targetPath and corrected reference.");
+    }
+
+    private static string FormatFileSkeletonAnalyzedScope(IEnumerable<string> filePaths, string baseDirectory)
+    {
+        var selectors = filePaths.Select(path =>
+        {
+            var probe = InputNormalizer.NormalizeSymbolIdentifier(path);
+            if (StableSymbolReferenceCodec.TryParseReferenceInput(path, probe, out _, out _)) return path;
+            try
+            {
+                return Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(baseDirectory, path));
+            }
+            catch (Exception exception) when (exception is ArgumentException or IOException or NotSupportedException)
+            {
+                return path;
+            }
+        });
+        return $"fileSkeleton(paths={string.Join('|', selectors)})";
+    }
+
+    private static string FormatFileSkeletonFailure(string selector, ResultError error) =>
+        $"## {selector}\nResolution status: failed ({error.Code})\nError: {error.Message}\nNext action: {error.Hint ?? "Rediscover the declaration and use the reference returned by that discovery."}";
+
     private static async Task<CallToolResult> BuildSkeletonsAsync(Solution solution, string targetPath, string[] filePaths,
         AnalysisSymbolIdentity? identity, CancellationToken ct, int maxResponseBytes, int? maxResponseTokens,
         string? selectedRoot = null, AssemblyNavigationSessionScope? assemblyScope = null, Action<int>? beforeAssemblyItem = null,
-        List<string>? omissionReasons = null)
+        List<string>? omissionReasons = null, IReadOnlyList<ResultError?>? preflightErrors = null)
     {
         var targetDirectory = Path.GetFullPath(selectedRoot ?? Path.GetDirectoryName(targetPath)!);
         var chunks = new List<string>();
@@ -289,31 +348,56 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         {
             ct.ThrowIfCancellationRequested();
             var path = filePaths[index];
-            if (path.StartsWith("h:", StringComparison.Ordinal))
+            if (preflightErrors?[index] is { } preflightError)
+            {
+                var routeDiscoveryProbe = InputNormalizer.NormalizeSymbolIdentifier(path);
+                if (assemblyScope is not null && StableSymbolReferenceCodec.TryParseReferenceInput(path, routeDiscoveryProbe, out _, out _))
+                    beforeAssemblyItem?.Invoke(index);
+                chunks.Add(FormatFileSkeletonFailure(path, preflightError));
+                firstHandoffError ??= preflightError;
+                hasMissing = true;
+                continue;
+            }
+            var discoveryProbe = InputNormalizer.NormalizeSymbolIdentifier(path);
+            if (StableSymbolReferenceCodec.TryParseReferenceInput(path, discoveryProbe, out var reference, out var referenceError))
             {
                 if (assemblyScope is not null) beforeAssemblyItem?.Invoke(index);
-                var resolved = await ResolveSkeletonHandoffAsync(path, solution, targetPath, identity, assemblyScope, ct).ConfigureAwait(false);
+                if (referenceError is { } invalidReference)
+                {
+                    chunks.Add(FormatFileSkeletonFailure(path, invalidReference));
+                    firstHandoffError ??= invalidReference;
+                    hasMissing = true;
+                    continue;
+                }
+                var resolved = await ResolveSkeletonReferenceAsync(reference!, solution, targetPath, identity, assemblyScope, ct).ConfigureAwait(false);
                 if (resolved.Error is { } handoffError)
                 {
-                    chunks.Add($"## {path}\n{handoffError.Code}: {handoffError.Message}");
+                    chunks.Add(FormatFileSkeletonFailure(path, handoffError));
                     firstHandoffError ??= handoffError;
                     hasMissing = true;
                     continue;
                 }
                 var handleDocuments = resolved.Documents!;
-                if (handleDocuments.Length != 1)
+                if (handleDocuments.Length == 0)
                 {
-                    chunks.Add($"## {path}\nThe handoff resolves to {handleDocuments.Length} declaration files and cannot select one file skeleton.");
+                    chunks.Add($"## {path}\nThe reference resolves to no declaring documents in the current owner.");
                     hasMissing = true;
                     continue;
                 }
-                var handleMarkdown = await FileSkeletonBuilder.BuildMarkdownForDocumentAsync(handleDocuments[0], targetPath,
-                    formatSymbolId: null, formatSymbol: symbol =>
-                    {
-                        var internalId = identity?.FormatHandoff(symbol, solution);
-                        return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
-                    }, ct: ct).ConfigureAwait(false);
-                chunks.Add(handleMarkdown);
+                var declarationMarkdown = new List<string>();
+                foreach (var declarationDocument in handleDocuments)
+                {
+                    var handleMarkdown = await FileSkeletonBuilder.BuildMarkdownForDocumentAsync(declarationDocument, targetPath,
+                        formatSymbolId: null,
+                        formatSymbol: symbol => assemblyScope is not null
+                            ? FormatAssemblyReference(symbol, assemblyScope)
+                            : identity is { IsAssembly: false } sourceIdentity
+                                ? sourceIdentity.FormatHandoff(symbol, solution)
+                                : null,
+                        ct: ct).ConfigureAwait(false);
+                    declarationMarkdown.Add(handleMarkdown);
+                }
+                chunks.Add(string.Join("\n\n", declarationMarkdown));
                 successfulFiles++;
                 continue;
             }
@@ -365,20 +449,23 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             }
             var document = documents[0];
             var markdown = await FileSkeletonBuilder.BuildMarkdownForDocumentAsync(document, targetPath,
-                formatSymbolId: null, formatSymbol: symbol =>
-                {
-                    var internalId = identity?.FormatHandoff(symbol, solution);
-                    return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
-                }, ct: ct).ConfigureAwait(false);
+                formatSymbolId: null, formatSymbol: symbol => assemblyScope is not null
+                    ? FormatAssemblyReference(symbol, assemblyScope)
+                    : identity?.FormatHandoff(symbol, solution), ct: ct).ConfigureAwait(false);
             chunks.Add(markdown);
             successfulFiles++;
         }
         if (successfulFiles == 0)
         {
             if (firstHandoffError is { } error)
-                return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.filePaths");
-            return McpToolResults.InvalidArgument(chunks.FirstOrDefault() ?? "No source file could be selected.", "$.filePaths",
-                "Use an indexed source path present in exactly one loaded project, or a current handoff that identifies one declaration file.",
+                return NavigationToolSupport.Failure(new ResultError(error.Code,
+                    $"Every requested file skeleton item failed. Item results:{Environment.NewLine}{string.Join(Environment.NewLine + Environment.NewLine, chunks)}",
+                    "Use each item's next action, then repeat get_file_skeleton with the same targetPath and corrected selector."),
+                    maxResponseBytes, maxResponseTokens, "$.filePaths");
+            return McpToolResults.InvalidArgument(
+                $"Every requested file skeleton item failed:{Environment.NewLine}{string.Join(Environment.NewLine + Environment.NewLine, chunks)}",
+                "$.filePaths",
+                "Use an indexed source path present in exactly one loaded project, or a stable src:/asm: reference that identifies declaring documents.",
                 maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         }
         if (hasMissing) omissionReasons?.Add("unresolvedOrMissingFiles");
@@ -410,61 +497,72 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         catch (JsonException) { return false; }
     }
 
-    private static async Task<(Document[]? Documents, ResultError? Error)> ResolveSkeletonHandoffAsync(
-        string handoff, Solution solution, string targetPath, AnalysisSymbolIdentity? identity,
+    private static async Task<(Document[]? Documents, ResultError? Error)> ResolveSkeletonReferenceAsync(
+        StableSymbolReference reference, Solution solution, string targetPath, AnalysisSymbolIdentity? identity,
         AssemblyNavigationSessionScope? assemblyScope, CancellationToken ct)
     {
-        if (identity is null)
-            return (null, new ResultError(NavigationErrorCodes.InvalidHandoff, "A canonical target identity could not be created."));
-        if (!identity.IsAssembly)
+        if (reference is StableSymbolReference.Source sourceReference)
         {
-            var resolved = await SourceHandoffResolver.ResolveAsync(solution, handoff, identity, ct).ConfigureAwait(false);
+            if (identity?.IsAssembly == true)
+                return (null, new ResultError(NavigationErrorCodes.TargetMismatch,
+                    "A source reference cannot be resolved in an assembly target.",
+                    "Open its source solution target and use the same reference there."));
+            var resolved = await ExactSourceSymbolResolver.ResolveAsync(solution, sourceReference, ct).ConfigureAwait(false);
             if (!resolved.IsSuccess) return (null, resolved.Error);
-            var documents = resolved.Value?.DeclaringSyntaxReferences
-                .Select(reference => solution.GetDocument(reference.SyntaxTree))
-                .Where(document => document is not null)
-                .Cast<Document>()
-                .DistinctBy(document => document.Id)
-                .ToArray() ?? [];
+            var documents = await GetDeclaringDocumentsAsync(solution, resolved.Value!, ct).ConfigureAwait(false);
             return (documents, null);
         }
 
         if (assemblyScope is null)
-            return (null, new ResultError(NavigationErrorCodes.InvalidHandoff, "The assembly handoff has no pinned target scope."));
+            return (null, new ResultError(NavigationErrorCodes.TargetMismatch,
+                "An assembly reference requires its owner target.",
+                "Open the exact ownerTargetPath returned by discovery and use this reference there."));
         if (!string.Equals(Path.GetFullPath(assemblyScope.Context.Origin.CanonicalPath), Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
             return (null, new ResultError(NavigationErrorCodes.TargetMismatch, "The pinned assembly scope belongs to another target."));
-        var assembly = AssemblySymbolHandoffResolver.ResolveWithinScope(handoff, assemblyScope);
+        if (reference is not StableSymbolReference.Assembly assemblyReference)
+            return (null, new ResultError(NavigationErrorCodes.TargetMismatch,
+                "An assembly reference cannot be resolved in a source target.",
+                "Open the returned assembly ownerTargetPath and use that target's reference."));
+        var assembly = ExactAssemblySymbolResolver.Resolve(assemblyScope, assemblyReference);
         if (!assembly.IsSuccess) return (null, assembly.Error);
-
-        var rootPath = assemblyScope.Context.DecompiledProjectPaths?.DecompiledSourceRoot;
-        if (string.IsNullOrWhiteSpace(rootPath))
-            return (null, new ResultError(NavigationErrorCodes.AssemblyTargetUnsupported, "The assembly has no materialized decompiled source tree."));
-        var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var assemblyDocuments = assembly.Value!.DeclaringSyntaxReferences
-            .Select(reference => assemblyScope.Solution.GetDocument(reference.SyntaxTree))
-            .Where(document => document?.FilePath is { } filePath
-                && (Path.GetFullPath(filePath).StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(Path.GetFullPath(filePath), root, StringComparison.OrdinalIgnoreCase)))
-            .Cast<Document>()
-            .DistinctBy(document => document.Id)
-            .ToArray();
+        var assemblyDocuments = await GetDeclaringDocumentsAsync(assemblyScope.Solution, assembly.Value!, ct).ConfigureAwait(false);
         return (assemblyDocuments, null);
+    }
+
+    private static async Task<Document[]> GetDeclaringDocumentsAsync(Solution solution, ISymbol symbol, CancellationToken ct)
+    {
+        var trees = symbol.DeclaringSyntaxReferences.Select(reference => reference.SyntaxTree).ToHashSet();
+        var documents = new List<Document>();
+        foreach (var project in solution.Projects)
+        {
+            foreach (var document in project.Documents)
+            {
+                ct.ThrowIfCancellationRequested();
+                var tree = await document.GetSyntaxTreeAsync(ct).ConfigureAwait(false);
+                if (tree is not null && trees.Contains(tree)) documents.Add(document);
+            }
+            foreach (var generated in await project.GetSourceGeneratedDocumentsAsync(ct).ConfigureAwait(false))
+            {
+                ct.ThrowIfCancellationRequested();
+                var tree = await generated.GetSyntaxTreeAsync(ct).ConfigureAwait(false);
+                if (tree is not null && trees.Contains(tree)) documents.Add(generated);
+            }
+        }
+        return documents.DistinctBy(document => document.Id).ToArray();
     }
 
     private static async Task<CallToolResult> ScanNamespaceTreeAsync(Solution solution, string targetPath, string? project, string? prefix, int depth,
         bool includeTypes, string kind, int pageSize, bool includeGenerated, AnalysisSymbolIdentity? identity, string snapshotBinding,
-        string? coreCursor, CancellationToken ct, int bytes, int? tokens, bool includeProjectOverview)
+        string? coreCursor, CancellationToken ct, int bytes, int? tokens, bool includeProjectOverview,
+        Func<INamedTypeSymbol, string?>? formatTypeReference = null)
     {
         if (kind is not ("all" or "class" or "record" or "struct" or "interface" or "enum" or "delegate"))
             return McpToolResults.InvalidArgument("kind is not supported.", "$.kind", "Choose all, class, record, struct, interface, enum, or delegate.", maxResponseBytes: bytes, maxResponseTokens: tokens);
         var payload = await NamespaceTreeScanner.ScanSolutionAsync(solution, project, ct,
             new NamespaceTreeScanOptions(Math.Clamp(depth, 1, 3), NamespaceTreeScanner.MaxResultsCap, includeGenerated, prefix, kind, includeTypes,
                 IncludeProjectOverview: includeProjectOverview,
-                FormatTypeHandoff: identity is null ? null : symbol =>
-                {
-                    var internalId = identity.FormatHandoff(symbol, solution);
-                    return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
-                }, CollectAllInventory: true, AllowProjectSelectionRecovery: includeProjectOverview)).ConfigureAwait(false);
+                FormatTypeHandoff: formatTypeReference ?? (identity is null ? null : symbol => identity.FormatHandoff(symbol, solution)),
+                CollectAllInventory: true, AllowProjectSelectionRecovery: includeProjectOverview)).ConfigureAwait(false);
         if (payload.Error is not null)
             return payload.ErrorCode == NavigationErrorCodes.AmbiguousSymbol
                 ? McpToolResults.Recoverable(NavigationErrorCodes.AmbiguousSymbol, payload.Error,
@@ -554,7 +652,8 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     }
 
     internal static ClassStructurePayload BuildAssemblyClassStructure(INamedTypeSymbol type, string assemblyPath, AnalysisSymbolIdentity identity,
-        string sortBy, int maxMembers, string? kindFilter, string? nameFilter, bool collectAll = false)
+        string sortBy, int maxMembers, string? kindFilter, string? nameFilter, bool collectAll = false,
+        Func<ISymbol, string?>? formatReference = null)
     {
         var directory = Path.GetDirectoryName(assemblyPath)!;
         var members = type.GetMembers().Where(member => !member.IsImplicitlyDeclared)
@@ -562,8 +661,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             {
                 var location = member.Locations.FirstOrDefault(item => item.IsInSource);
                 var span = location?.GetLineSpan();
-                var internalId = identity.FormatHandoff(member);
-                var handoff = internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
+                var handoff = formatReference?.Invoke(member);
                 var relative = span?.Path is { } file ? Path.GetRelativePath(directory, file) : string.Empty;
                 var kind = member switch
                 {
@@ -597,6 +695,12 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         var typeKind = type.IsRecord ? type.TypeKind == TypeKind.Struct ? "Record Struct" : "Record Class" : type.TypeKind.ToString();
         return new ClassStructurePayload(type.ToDisplayString(), typeKind, [], shown.Sum(item => item.LineCount), members.Count, shown.Length,
             members.Count > shown.Length, shown, members.Count > shown.Length ? ["maxMembers"] : []);
+    }
+
+    private static string? FormatAssemblyReference(ISymbol symbol, AssemblyNavigationSessionScope scope)
+    {
+        var reference = ExactAssemblySymbolResolver.CreateReference(scope, symbol);
+        return reference.IsSuccess ? StableSymbolReferenceCodec.Format(reference.Value!) : null;
     }
 
     private static bool IsWithin(string root, string path)

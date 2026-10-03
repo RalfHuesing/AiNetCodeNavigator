@@ -17,7 +17,7 @@ namespace AiNetCodeNavigator.FastTests.Symbols;
 public sealed class AnalysisSymbolIdentityTests
 {
     [Fact]
-    public async Task FormatHandoff_SourceSymbol_FormatsCorrectIdentifier()
+    public async Task ExactProducer_FormatsSourceReferenceForExactOwner()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
         var compilation = await fixture.Solution.Projects.Single(p => p.Name == "Sample.Core").GetCompilationAsync();
@@ -26,19 +26,16 @@ public sealed class AnalysisSymbolIdentityTests
         var greeterType = compilation.GetTypeByMetadataName("SampleNamespace.Greeter");
         Assert.NotNull(greeterType);
 
-        var identity = AnalysisSymbolIdentity.ForSource(
-            @"C:\app\sample.sln",
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            fixture.Solution);
+        var project = fixture.Solution.Projects.Single(p => p.Name == "Sample.Core");
+        var reference = await ExactSourceSymbolResolver.CreateReferenceAsync(fixture.Solution, project, greeterType);
 
-        var handoffId = identity.FormatHandoff(greeterType, fixture.Solution);
-        Assert.NotNull(handoffId);
-        Assert.StartsWith("i:0:", handoffId, System.StringComparison.Ordinal);
-        Assert.Contains("T:SampleNamespace.Greeter", handoffId, System.StringComparison.Ordinal);
+        Assert.True(reference.IsSuccess, reference.Error?.Message);
+        Assert.StartsWith("src:src/Sample.Core/", StableSymbolReferenceCodec.Format(reference.Value!), System.StringComparison.Ordinal);
+        Assert.EndsWith("|T:SampleNamespace.Greeter", StableSymbolReferenceCodec.Format(reference.Value!), System.StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task FormatHandoff_SameDocumentationIdInDifferentProjects_UsesDifferentProjectIdentity()
+    public async Task ExactProducer_UsesProjectPathWhenDocumentationIdsRepeatAcrossProjects()
     {
         using var solutionHandle = TestWorkspaceBuilder.CreateSolution(
             @"C:\VirtualRepo\Identity.slnx",
@@ -53,130 +50,80 @@ public sealed class AnalysisSymbolIdentityTests
         }));
         var first = Assert.IsAssignableFrom<ISymbol>(symbols[0].Symbol);
         var second = Assert.IsAssignableFrom<ISymbol>(symbols[1].Symbol);
-        var identity = AnalysisSymbolIdentity.ForSource(
-            @"C:\VirtualRepo\Identity.slnx",
-            new string('a', 64),
-            solution);
-
         Assert.Equal(
             DocumentationCommentId.CreateDeclarationId(first),
             DocumentationCommentId.CreateDeclarationId(second));
-        var firstId = identity.FormatHandoff(first, solution);
-        var secondId = identity.FormatHandoff(second, solution);
+        var firstReference = await ExactSourceSymbolResolver.CreateReferenceAsync(solution, solution.GetProject(symbols[0].Id)!, first);
+        var secondReference = await ExactSourceSymbolResolver.CreateReferenceAsync(solution, solution.GetProject(symbols[1].Id)!, second);
 
-        Assert.NotNull(firstId);
-        Assert.NotNull(secondId);
-        Assert.NotEqual(firstId, secondId);
-        Assert.Contains("~p:", firstId, System.StringComparison.Ordinal);
-        Assert.Contains("~p:", secondId, System.StringComparison.Ordinal);
+        Assert.True(firstReference.IsSuccess, firstReference.Error?.Message);
+        Assert.True(secondReference.IsSuccess, secondReference.Error?.Message);
+        Assert.NotEqual(StableSymbolReferenceCodec.Format(firstReference.Value!), StableSymbolReferenceCodec.Format(secondReference.Value!));
     }
 
     [Fact]
-    public async Task FormatHandoff_SameProjectPathAndDocumentationId_DistinguishesTargetFrameworksStably()
+    public async Task SnapshotContextMarkers_DistinguishTargetFrameworksStably()
     {
         using var firstSnapshot = CreateMultiTargetSolution();
         using var reloadedSnapshot = CreateMultiTargetSolution();
-        var firstIdentity = AnalysisSymbolIdentity.ForSource(
-            @"C:\VirtualRepo\Multi.slnx",
-            new string('e', 64),
-            firstSnapshot.Solution);
-        var reloadedIdentity = AnalysisSymbolIdentity.ForSource(
-            @"C:\VirtualRepo\Multi.slnx",
-            new string('e', 64),
-            reloadedSnapshot.Solution);
-
-        var firstIds = await GetMultiTargetHandoffsAsync(firstSnapshot.Solution, firstIdentity);
-        var reloadedIds = await GetMultiTargetHandoffsAsync(reloadedSnapshot.Solution, reloadedIdentity);
+        var firstIds = await GetMultiTargetProjectMarkersAsync(firstSnapshot.Solution);
+        var reloadedIds = await GetMultiTargetProjectMarkersAsync(reloadedSnapshot.Solution);
 
         Assert.Equal(firstIds[0].DocumentationId, firstIds[1].DocumentationId);
-        Assert.NotEqual(firstIds[0].Handoff, firstIds[1].Handoff);
+        Assert.NotEqual(firstIds[0].ProjectMarker, firstIds[1].ProjectMarker);
         Assert.Equal(firstIds, reloadedIds);
     }
 
     [Fact]
-    public async Task FormatHandoff_SameProjectPathAndOptions_DistinguishesMetadataReferencesStably()
+    public async Task SnapshotContextMarkers_DistinguishMetadataReferencesStably()
     {
         using var firstSnapshot = CreateReferenceContextSolution(varyMetadataReferences: true, varyProjectReferences: false);
         using var reloadedSnapshot = CreateReferenceContextSolution(varyMetadataReferences: true, varyProjectReferences: false);
-        var firstIds = await GetRootHandoffsAsync(firstSnapshot.Solution);
-        var reloadedIds = await GetRootHandoffsAsync(reloadedSnapshot.Solution);
+        var firstIds = await GetRootProjectMarkersAsync(firstSnapshot.Solution);
+        var reloadedIds = await GetRootProjectMarkersAsync(reloadedSnapshot.Solution);
 
         Assert.Equal(firstIds[0].DocumentationId, firstIds[1].DocumentationId);
-        Assert.NotEqual(firstIds[0].Handoff, firstIds[1].Handoff);
+        Assert.NotEqual(firstIds[0].ProjectMarker, firstIds[1].ProjectMarker);
         Assert.Equal(firstIds, reloadedIds);
     }
 
     [Fact]
-    public async Task FormatHandoff_SameProjectPathAndOptions_DistinguishesProjectReferencesStably()
+    public async Task SnapshotContextMarkers_DistinguishProjectReferencesStably()
     {
         using var firstSnapshot = CreateReferenceContextSolution(varyMetadataReferences: false, varyProjectReferences: true);
         using var reloadedSnapshot = CreateReferenceContextSolution(varyMetadataReferences: false, varyProjectReferences: true);
-        var firstIds = await GetRootHandoffsAsync(firstSnapshot.Solution);
-        var reloadedIds = await GetRootHandoffsAsync(reloadedSnapshot.Solution);
+        var firstIds = await GetRootProjectMarkersAsync(firstSnapshot.Solution);
+        var reloadedIds = await GetRootProjectMarkersAsync(reloadedSnapshot.Solution);
 
         Assert.Equal(firstIds[0].DocumentationId, firstIds[1].DocumentationId);
-        Assert.NotEqual(firstIds[0].Handoff, firstIds[1].Handoff);
+        Assert.NotEqual(firstIds[0].ProjectMarker, firstIds[1].ProjectMarker);
         Assert.Equal(firstIds, reloadedIds);
     }
 
     [Fact]
-    public async Task FormatHandoff_IndistinguishableProjectContexts_SuppressesAmbiguousHandoffs()
+    public async Task SnapshotContext_IndistinguishableProjectContextsRemainInSnapshotEvidence()
     {
         using var snapshot = CreateReferenceContextSolution(varyMetadataReferences: false, varyProjectReferences: false);
 
-        var handoffs = await GetRootHandoffsAsync(snapshot.Solution);
-
-        Assert.All(handoffs, result => Assert.Null(result.Handoff));
-    }
-
-    [Fact]
-    public Task FormatHandoff_CaseVariantSourceTargetPaths_UseTheSameHandoffId() =>
-        AssertCaseVariantTargetPathsAsync(SymbolHandoffOrigin.Source);
-
-    [Fact]
-    public Task FormatHandoff_CaseVariantAssemblyTargetPaths_UseTheSameHandoffId() =>
-        AssertCaseVariantTargetPathsAsync(SymbolHandoffOrigin.Assembly);
-
-    private static async Task AssertCaseVariantTargetPathsAsync(SymbolHandoffOrigin origin)
-    {
-        if (!OperatingSystem.IsWindows())
+        var markers = await GetRootProjectMarkersAsync(snapshot.Solution);
+        Assert.Equal(markers[0].ProjectMarker, markers[1].ProjectMarker);
+        var identity = await AnalysisSymbolIdentity.ForSourceAsync(snapshot.Solution);
+        Assert.NotNull(identity);
+        var expectedMarkers = snapshot.Solution.Projects
+            .Where(project => project.Name is "LibraryOne" or "LibraryTwo")
+            .Select(AnalysisSymbolIdentity.GetStableProjectMarker)
+            .OrderBy(marker => marker, System.StringComparer.Ordinal)
+            .ToArray();
+        var sourceProjectMarkers = identity!.SourceProjectMarkers!;
+        Assert.Equal(expectedMarkers, sourceProjectMarkers.Values.OrderBy(marker => marker, System.StringComparer.Ordinal));
+        Assert.Equal(2, sourceProjectMarkers.Count);
+        foreach (var project in snapshot.Solution.Projects.Where(project => project.Name == "Root"))
         {
-            return;
+            var compilation = await project.GetCompilationAsync();
+            Assert.NotNull(compilation);
+            var symbol = Assert.IsAssignableFrom<ISymbol>(compilation.GetTypeByMetadataName("Shared.Worker"));
+            Assert.Null(identity.FormatHandoff(symbol, snapshot.Solution));
         }
-
-        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
-        var project = fixture.Solution.Projects.Single(p => p.Name == "Sample.Core");
-        var compilation = await project.GetCompilationAsync();
-        Assert.NotNull(compilation);
-        var symbol = Assert.IsAssignableFrom<ISymbol>(compilation.GetTypeByMetadataName("SampleNamespace.Greeter"));
-        const string contentHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-
-        var mixedCasePath = origin == SymbolHandoffOrigin.Source
-            ? @"C:\VirtualRepo\SampleSolution.slnx"
-            : @"C:\VirtualRepo\Sample.dll";
-        var lowerCasePath = origin == SymbolHandoffOrigin.Source
-            ? @"c:\virtualrepo\samplesolution.slnx"
-            : @"c:\virtualrepo\sample.dll";
-        var mixedCaseIdentity = origin == SymbolHandoffOrigin.Source
-            ? AnalysisSymbolIdentity.ForSource(mixedCasePath, contentHash, fixture.Solution)
-            : AnalysisSymbolIdentity.ForAssembly(mixedCasePath, contentHash);
-        var lowerCaseIdentity = origin == SymbolHandoffOrigin.Source
-            ? AnalysisSymbolIdentity.ForSource(lowerCasePath, contentHash, fixture.Solution)
-            : AnalysisSymbolIdentity.ForAssembly(lowerCasePath, contentHash);
-        var mixedCaseHandoff = origin == SymbolHandoffOrigin.Source
-            ? mixedCaseIdentity.FormatHandoff(symbol, fixture.Solution)
-            : mixedCaseIdentity.FormatHandoff(symbol);
-        var lowerCaseHandoff = origin == SymbolHandoffOrigin.Source
-            ? lowerCaseIdentity.FormatHandoff(symbol, fixture.Solution)
-            : lowerCaseIdentity.FormatHandoff(symbol);
-
-        Assert.NotNull(mixedCaseHandoff);
-        Assert.NotNull(lowerCaseHandoff);
-        Assert.True(SymbolHandoffIdentifier.TryParse(mixedCaseHandoff, out var parsedMixedCase));
-        Assert.True(SymbolHandoffIdentifier.TryParse(lowerCaseHandoff, out var parsedLowerCase));
-        Assert.Equal(origin, parsedMixedCase.Origin);
-        Assert.Equal(origin, parsedLowerCase.Origin);
-        Assert.Equal(mixedCaseHandoff, lowerCaseHandoff);
     }
 
     [Fact]
@@ -200,71 +147,7 @@ public sealed class AnalysisSymbolIdentityTests
     }
 
     [Fact]
-    public async Task FormatHandoff_ForeignSolutionSymbol_DoesNotCreateAnUnboundIdentity()
-    {
-        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
-        var project = fixture.Solution.Projects.Single(p => p.Name == "Sample.Core");
-        var compilation = await project.GetCompilationAsync();
-        Assert.NotNull(compilation);
-        var symbol = Assert.IsAssignableFrom<ISymbol>(compilation.GetTypeByMetadataName("SampleNamespace.Greeter"));
-        var identity = AnalysisSymbolIdentity.ForSource(
-            @"C:\VirtualRepo\SampleSolution.slnx",
-            new string('b', 64),
-            fixture.Solution);
-
-        using var foreignSolution = TestWorkspaceBuilder.CreateSolution(
-            @"C:\VirtualRepo\Foreign.slnx",
-            new ProjectSpec("Foreign", [("Greeter.cs", SampleCodeFixtures.GreeterSource)]));
-        var foreignProject = Assert.Single(foreignSolution.Solution.Projects);
-        var foreignCompilation = await foreignProject.GetCompilationAsync();
-        Assert.NotNull(foreignCompilation);
-        var foreignSymbol = Assert.IsAssignableFrom<ISymbol>(foreignCompilation.GetTypeByMetadataName("SampleNamespace.Greeter"));
-        Assert.Null(identity.FormatHandoff(foreignSymbol, fixture.Solution));
-
-        var withoutProjectMap = AnalysisSymbolIdentity.ForSource(
-            @"C:\VirtualRepo\SampleSolution.slnx",
-            new string('b', 64));
-        Assert.Null(withoutProjectMap.FormatHandoff(symbol));
-    }
-
-    [Fact]
-    public async Task FormatHandoff_ProjectWithoutStablePath_DoesNotUseTransientProjectId()
-    {
-        using var workspace = TestWorkspaceBuilder.CreateSolution(
-            "namespace Sample; public class Worker { public void Run() {} }");
-        var project = Assert.Single(workspace.Solution.Projects);
-        var compilation = await project.GetCompilationAsync();
-        Assert.NotNull(compilation);
-        var symbol = Assert.IsAssignableFrom<ISymbol>(compilation.GetTypeByMetadataName("Sample.Worker"));
-        var identity = AnalysisSymbolIdentity.ForSource(
-            @"C:\VirtualRepo\Snapshot.slnx",
-            new string('c', 64),
-            workspace.Solution);
-
-        Assert.Null(identity.FormatHandoff(symbol, workspace.Solution));
-    }
-
-    [Fact]
-    public async Task CreateCanonicalSymbolIdentifier_UsesDocumentationIdsForOverloads()
-    {
-        using var workspace = TestWorkspaceBuilder.CreateSolution(
-            "namespace Names; public class Worker { public void Run(int value) {} public void Run(string value) {} }");
-        var project = Assert.Single(workspace.Solution.Projects);
-        var compilation = await project.GetCompilationAsync();
-        Assert.NotNull(compilation);
-        var worker = compilation.GetTypeByMetadataName("Names.Worker");
-        Assert.NotNull(worker);
-        var overloads = worker.GetMembers("Run").OfType<IMethodSymbol>().ToArray();
-
-        var identifiers = overloads.Select(AnalysisSymbolIdentity.CreateCanonicalSymbolIdentifier).ToArray();
-
-        Assert.Equal(2, identifiers.Length);
-        Assert.All(identifiers, identifier => Assert.StartsWith("M:Names.Worker.Run(", identifier, System.StringComparison.Ordinal));
-        Assert.NotEqual(identifiers[0], identifiers[1]);
-    }
-
-    [Fact]
-    public async Task CreateCanonicalSymbolIdentifier_UsesFileAndLineForLocalFunctions()
+    public async Task RelationshipSymbolIdentity_UsesContainerAndLocationForDistinctLocalFunctions()
     {
         const string source = "public class Worker\n{\n    public void Run()\n    {\n        int First() => 1;\n        int Second() => 2;\n    }\n}";
         using var workspace = TestWorkspaceBuilder.CreateSolution(
@@ -280,14 +163,16 @@ public sealed class AnalysisSymbolIdentityTests
         var localFunctions = root.DescendantNodes().OfType<LocalFunctionStatementSyntax>().ToArray();
 
         var identifiers = localFunctions
-            .Select(node => AnalysisSymbolIdentity.CreateCanonicalSymbolIdentifier(model.GetDeclaredSymbol(node)!))
+            .Select(node => RelationshipSymbolIdentity.GetStableId(model.GetDeclaredSymbol(node)!))
             .ToArray();
 
         Assert.Equal(2, identifiers.Length);
-        Assert.All(identifiers, identifier => Assert.StartsWith("L:C:\\VIRTUALREPO\\LINES\\WORKER.CS:", identifier, System.StringComparison.Ordinal));
+        Assert.All(identifiers, identifier => Assert.Contains("#lf:", identifier, System.StringComparison.Ordinal));
         Assert.NotEqual(identifiers[0], identifiers[1]);
-        Assert.EndsWith(":5:13", identifiers[0], System.StringComparison.Ordinal);
-        Assert.EndsWith(":6:13", identifiers[1], System.StringComparison.Ordinal);
+        Assert.StartsWith("M:Worker.Run#lf:First@", identifiers[0], System.StringComparison.Ordinal);
+        Assert.EndsWith("@5:13", identifiers[0], System.StringComparison.Ordinal);
+        Assert.StartsWith("M:Worker.Run#lf:Second@", identifiers[1], System.StringComparison.Ordinal);
+        Assert.EndsWith("@6:13", identifiers[1], System.StringComparison.Ordinal);
     }
 
     [Fact]
@@ -364,17 +249,15 @@ public sealed class AnalysisSymbolIdentityTests
         }
     }
 
-    private static async Task<(string? DocumentationId, string? Handoff)[]> GetMultiTargetHandoffsAsync(
-        Solution solution,
-        AnalysisSymbolIdentity identity)
+    private static async Task<(string? DocumentationId, string ProjectMarker)[]> GetMultiTargetProjectMarkersAsync(Solution solution)
     {
-        var results = new System.Collections.Generic.List<(string? DocumentationId, string? Handoff)>();
+        var results = new System.Collections.Generic.List<(string? DocumentationId, string ProjectMarker)>();
         foreach (var project in solution.Projects)
         {
             var compilation = await project.GetCompilationAsync();
             Assert.NotNull(compilation);
             var symbol = Assert.IsAssignableFrom<ISymbol>(compilation.GetTypeByMetadataName("Shared.Worker"));
-            results.Add((DocumentationCommentId.CreateDeclarationId(symbol), identity.FormatHandoff(symbol, solution)));
+            results.Add((DocumentationCommentId.CreateDeclarationId(symbol), AnalysisSymbolIdentity.GetStableProjectMarker(project)));
         }
 
         return results.ToArray();
@@ -477,19 +360,15 @@ public sealed class AnalysisSymbolIdentityTests
             filePath: sourcePath ?? System.IO.Path.ChangeExtension(projectPath, ".cs"));
     }
 
-    private static async Task<(string? DocumentationId, string? Handoff)[]> GetRootHandoffsAsync(Solution solution)
+    private static async Task<(string? DocumentationId, string ProjectMarker)[]> GetRootProjectMarkersAsync(Solution solution)
     {
-        var identity = AnalysisSymbolIdentity.ForSource(
-            @"C:\VirtualRepo\References.slnx",
-            new string('f', 64),
-            solution);
-        var results = new System.Collections.Generic.List<(string? DocumentationId, string? Handoff)>();
+        var results = new System.Collections.Generic.List<(string? DocumentationId, string ProjectMarker)>();
         foreach (var project in solution.Projects.Where(project => project.Name == "Root"))
         {
             var compilation = await project.GetCompilationAsync();
             Assert.NotNull(compilation);
             var symbol = Assert.IsAssignableFrom<ISymbol>(compilation.GetTypeByMetadataName("Shared.Worker"));
-            results.Add((DocumentationCommentId.CreateDeclarationId(symbol), identity.FormatHandoff(symbol, solution)));
+            results.Add((DocumentationCommentId.CreateDeclarationId(symbol), AnalysisSymbolIdentity.GetStableProjectMarker(project)));
         }
 
         return results.ToArray();

@@ -13,7 +13,7 @@ using AiNetCodeNavigator.Core.Workspace;
 
 namespace AiNetCodeNavigator.Core.Assemblies;
 
-/// <summary>Keeps recently used assembly workspaces resident so handoffs can reuse their snapshot.</summary>
+/// <summary>Keeps recently used assembly workspaces resident while requests hold explicit snapshot leases.</summary>
 internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
 {
     private static readonly TimeSpan IdleLifetime = TimeSpan.FromMinutes(10);
@@ -36,58 +36,41 @@ internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
     }
 
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "Successful accesses transfer ownership to the caller; idle session ownership stays with this registry until eviction.")]
-    internal Task<Result<AssemblySessionAccess>> AcquireAsync(string assemblyPath, CancellationToken cancellationToken)
-        => AcquireAsync(assemblyPath, cancellationToken, requireResident: false);
-
-    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "A successful access transfers ownership of the resident snapshot lease to the caller.")]
-    internal Task<Result<AssemblySessionAccess>> AcquireResidentAsync(string assemblyPath, CancellationToken cancellationToken)
-        => AcquireAsync(assemblyPath, cancellationToken, requireResident: true);
-
-    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "A successful session access transfers its lease to the caller; created sessions remain owned by this registry until eviction.")]
-    private async Task<Result<AssemblySessionAccess>> AcquireAsync(string assemblyPath, CancellationToken cancellationToken, bool requireResident)
+    internal async Task<Result<AssemblySessionAccess>> AcquireAsync(string assemblyPath, CancellationToken cancellationToken)
     {
         var fullPath = Path.GetFullPath(assemblyPath);
         Entry entry;
         List<Entry> retired;
         var capacityExceeded = false;
-        var ownerNotResident = false;
         lock (gate)
         {
             retired = RetireIdleSessions(DateTime.UtcNow);
             if (!sessions.TryGetValue(fullPath, out entry!))
             {
-                if (requireResident)
+                while (sessions.Count >= MaxResidentSessions)
+                {
+                    var oldest = sessions.Values
+                        .Where(candidate => candidate.ActiveAccesses == 0)
+                        .OrderBy(candidate => candidate.LastAccessUtc)
+                        .FirstOrDefault();
+                    if (oldest is null) break;
+                    sessions.Remove(oldest.Path);
+                    retired.Add(oldest);
+                }
+
+                if (sessions.Count >= MaxResidentSessions)
                 {
                     entry = null!;
-                    ownerNotResident = true;
+                    capacityExceeded = true;
                 }
                 else
                 {
-                    while (sessions.Count >= MaxResidentSessions)
-                    {
-                        var oldest = sessions.Values
-                            .Where(candidate => candidate.ActiveAccesses == 0)
-                            .OrderBy(candidate => candidate.LastAccessUtc)
-                            .FirstOrDefault();
-                        if (oldest is null) break;
-                        sessions.Remove(oldest.Path);
-                        retired.Add(oldest);
-                    }
-
-                    if (sessions.Count >= MaxResidentSessions)
-                    {
-                        entry = null!;
-                        capacityExceeded = true;
-                    }
-                    else
-                    {
-                        entry = new Entry(fullPath, new AssemblyAnalysisSession(fullPath));
-                        sessions.Add(fullPath, entry);
-                    }
+                    entry = new Entry(fullPath, new AssemblyAnalysisSession(fullPath));
+                    sessions.Add(fullPath, entry);
                 }
             }
 
-            if (!capacityExceeded && !ownerNotResident)
+            if (!capacityExceeded)
             {
                 entry.ActiveAccesses++;
                 entry.LastAccessUtc = DateTime.UtcNow;
@@ -95,13 +78,6 @@ internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
         }
 
         await DisposeEntriesAsync(retired).ConfigureAwait(false);
-        if (ownerNotResident)
-        {
-            return Result<AssemblySessionAccess>.Failure(
-                NavigationErrorCodes.HandoffOwnerUnresident,
-                "The assembly owner for this handoff is no longer resident in this server process.",
-                "Repeat the original discovery query on the owner target, then use its current ownerTargetPath and handoff.");
-        }
         if (capacityExceeded)
         {
             return Result<AssemblySessionAccess>.Failure(
@@ -149,30 +125,6 @@ internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
 
         var generation = snapshotLease.Generation;
         return Result<AssemblySessionAccess>.Success(new AssemblySessionAccess(this, entry, snapshotLease, generation));
-    }
-
-    internal async Task<Result<AssemblySessionAccess>> AcquireByTargetTokenAsync(
-        string targetToken,
-        CancellationToken cancellationToken)
-    {
-        await ExpireIdleSessionsAsync(DateTime.UtcNow).ConfigureAwait(false);
-        string? matchingPath;
-        lock (gate)
-        {
-            matchingPath = sessions.Keys.FirstOrDefault(path =>
-                SymbolHandoffToken.TryCreateTarget(path, out var candidate)
-                && string.Equals(candidate, targetToken, StringComparison.Ordinal));
-        }
-
-        if (matchingPath is null)
-        {
-            return Result<AssemblySessionAccess>.Failure(
-                NavigationErrorCodes.HandoffOwnerUnresident,
-                "The assembly owner for this handoff is no longer resident in this server process.",
-                "Repeat the original discovery query on the owner target, then use its current ownerTargetPath and handoff.");
-        }
-
-        return await AcquireResidentAsync(matchingPath, cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task ExpireIdleSessionsAsync(DateTime nowUtc, string? assemblyPath = null)

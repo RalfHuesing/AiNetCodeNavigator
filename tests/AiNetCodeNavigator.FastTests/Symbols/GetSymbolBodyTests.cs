@@ -35,7 +35,7 @@ public sealed class GetSymbolBodyTests
         Assert.False(result.HasMore);
         Assert.True(result.TotalLines > 0);
         Assert.NotNull(result.HandoffId);
-        Assert.StartsWith("h:", result.HandoffId);
+        Assert.StartsWith("src:", result.HandoffId);
     }
 
     [Fact]

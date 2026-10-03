@@ -457,8 +457,8 @@ public sealed class CallTreeTests
         var ascii = CallGraphTextRenderer.RenderAscii(graph);
         Assert.Contains("[n1] Greeter.Greet", ascii);
         Assert.Contains("ServiceCaller.ExecuteSingle", ascii);
-        Assert.All(graph.Nodes.Where(n => n.HandoffId is not null), node => Assert.StartsWith("h:", node.HandoffId));
-        Assert.StartsWith("h:", graph.Nodes.Single(n => n.NodeId == graph.RootNodeId).HandoffId);
+        Assert.All(graph.Nodes.Where(n => n.HandoffId is not null), node => Assert.StartsWith("src:", node.HandoffId));
+        Assert.StartsWith("src:", graph.Nodes.Single(n => n.NodeId == graph.RootNodeId).HandoffId);
 
         var mermaid = CallTreeMermaidRenderer.RenderMermaid(graph);
         Assert.Contains("flowchart TD", mermaid);

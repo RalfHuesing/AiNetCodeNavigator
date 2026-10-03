@@ -102,7 +102,7 @@ internal static class AssemblyCallTreeClosureBuilder
                 {
                     graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
                         scanOwner.Scope.Solution, targetSymbol, 1, topN, direction, includeBcl, scope, includeGenerated,
-                        AssemblyHandoffFormatting.CreateInternal(scanOwner.Scope.Solution, scanOwner.Scope.Context)), ct).ConfigureAwait(false);
+                        AssemblyReferenceFormatting.Create(scanOwner.Scope)), ct).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException or ArgumentException)
                 {
@@ -114,7 +114,7 @@ internal static class AssemblyCallTreeClosureBuilder
                 foreach (var node in graph.Nodes)
                 {
                     if (string.Equals(node.NodeId, graph.RootNodeId, StringComparison.Ordinal)) continue;
-                    var resolvedOwner = ResolveAssemblyCallTreeNodeOwner(node, sourceOwners);
+                    var resolvedOwner = ResolveAssemblyCallTreeNodeOwner(node, sourceOwners, scanOwner);
                     if (resolvedOwner is null)
                     {
                         if (frontier.Depth + 1 < Math.Clamp(depth, 1, 3)
@@ -162,7 +162,8 @@ internal static class AssemblyCallTreeClosureBuilder
             foreach (var node in owner.Graph.Nodes)
             {
                 var isRoot = string.Equals(node.NodeId, owner.Graph.RootNodeId, StringComparison.Ordinal);
-                var resolvedNodeOwner = isRoot ? null : ResolveAssemblyCallTreeNodeOwner(node, sourceOwners);
+                var resolvedNodeOwner = isRoot ? null : ResolveAssemblyCallTreeNodeOwner(node, sourceOwners,
+                    new SourceOwner(owner.TargetPath, owner.Scope));
                 var nodeHandoff = isRoot ? internalRootHandoff : resolvedNodeOwner?.HandoffId;
                 var nodeOwnerPath = isRoot ? handoffOwnerPath : resolvedNodeOwner?.TargetPath;
                 var declaration = isRoot ? declarationId : resolvedNodeOwner?.DeclarationId;
@@ -267,7 +268,7 @@ internal static class AssemblyCallTreeClosureBuilder
         var outputNodes = selectedNodeKeys.Select(key =>
         {
             var node = nodeMap[key];
-            return node with { NodeId = selectedNodeIds[key], HandoffId = AssemblyHandoffFormatting.Externalize(node.HandoffId) };
+            return node with { NodeId = selectedNodeIds[key] };
         }).ToArray();
         var mergedEdges = mergedEdgesByKey.Where(edge => selectedNodeIds.ContainsKey(edge.FromKey) && selectedNodeIds.ContainsKey(edge.ToKey))
             .Select(edge => edge.Edge with { FromNodeId = selectedNodeIds[edge.FromKey], ToNodeId = selectedNodeIds[edge.ToKey] })
@@ -342,30 +343,64 @@ internal static class AssemblyCallTreeClosureBuilder
     {
         var matches = DocumentationCommentId.GetSymbolsForDeclarationId(declarationId, ownerScope.Context.Compilation)
             .Where(symbol => SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, ownerScope.Context.Assembly)
-                && AssemblyHandoffFormatting.HasSourceDeclaration(symbol, ownerScope.Solution,
+                && AssemblyReferenceFormatting.HasSourceDeclaration(symbol, ownerScope.Solution,
                     ownerScope.Context.DecompiledProjectPaths?.DecompiledSourceRoot))
             .Distinct(SymbolEqualityComparer.Default).Take(2).ToArray();
         return matches.Length == 1 ? matches[0] : null;
     }
 
-    private static ResolvedNodeOwner? ResolveAssemblyCallTreeNodeOwner(CallGraphNode node, IReadOnlyList<SourceOwner> sourceOwners)
+    private static ResolvedNodeOwner? ResolveAssemblyCallTreeNodeOwner(
+        CallGraphNode node,
+        IReadOnlyList<SourceOwner> sourceOwners,
+        SourceOwner producerOwner)
     {
         if (string.IsNullOrWhiteSpace(node.SymbolId)) return null;
-        SymbolHandoffIdentifier? handoff = SymbolHandoffIdentifier.TryParse(node.HandoffId ?? string.Empty, out var parsed)
-            && parsed.Origin is SymbolHandoffOrigin.Assembly ? parsed : null;
-        var declarationId = handoff?.DocumentationCommentId ?? node.SymbolId;
+        var hasStableReference = StableSymbolReferenceCodec.TryParseReferenceInput(node.HandoffId, null,
+            out var parsedReference, out var referenceError);
+        var assemblyReference = hasStableReference && referenceError is null
+            ? parsedReference as StableSymbolReference.Assembly : null;
+        if (node.HandoffId is not null && assemblyReference is null) return null;
+        var declarationId = assemblyReference?.Id ?? node.SymbolId;
+
+        // Graph nodes are produced from this already leased owner's compilation. Their public
+        // reference has no owner path until projection, so prove the exact source declaration
+        // against the producer scope before adding that path to the projected node.
+        if (assemblyReference is { } producedReference && string.IsNullOrWhiteSpace(node.OwnerTargetPath))
+        {
+            var producerMatches = sourceOwners.Where(candidate =>
+                ReferenceEquals(candidate.Scope, producerOwner.Scope)
+                && string.Equals(Path.GetFullPath(candidate.TargetPath), Path.GetFullPath(producerOwner.TargetPath),
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                .Take(2).ToArray();
+            if (producerMatches.Length != 1
+                || !string.Equals(producerOwner.Scope.Context.Identity?.Name, producedReference.SimpleName, StringComparison.Ordinal))
+                return null;
+
+            var producedSymbol = ResolveAssemblySourceSymbolInOwner(declarationId, producerOwner.Scope);
+            if (producedSymbol is null) return null;
+            var producedId = ExactAssemblySymbolResolver.CreateReference(producerOwner.Scope, producedSymbol);
+            var producedStableId = producedId.IsSuccess ? StableSymbolReferenceCodec.Format(producedId.Value!) : null;
+            if (producedStableId is null || !string.Equals(producedStableId, node.HandoffId, StringComparison.Ordinal)) return null;
+            return new(producerOwner.TargetPath, producerOwner.Scope, declarationId, producedSymbol, producedStableId);
+        }
+
         var matches = new List<ResolvedNodeOwner>();
         foreach (var candidate in sourceOwners)
         {
-            if (handoff is null && (node.ContainingAssemblyIdentity is not { } containingIdentity
+            if (assemblyReference is { } exactReference
+                && !string.Equals(candidate.Scope.Context.Identity?.Name, exactReference.SimpleName, StringComparison.Ordinal)) continue;
+            if (assemblyReference is not null && (string.IsNullOrWhiteSpace(node.OwnerTargetPath)
+                || !string.Equals(Path.GetFullPath(candidate.TargetPath), Path.GetFullPath(node.OwnerTargetPath), OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))) continue;
+            if (assemblyReference is null && (node.ContainingAssemblyIdentity is not { } containingIdentity
                 || !AssemblyIdentityMatcher.Matches(candidate.Scope.Context.Identity, containingIdentity))) continue;
             var symbol = ResolveAssemblySourceSymbolInOwner(declarationId, candidate.Scope);
             if (symbol is null) continue;
-            var formatter = AssemblyHandoffFormatting.CreateInternal(candidate.Scope.Solution, candidate.Scope.Context);
-            var internalHandoff = formatter(symbol);
-            if (internalHandoff is null || handoff is not null
-                && !string.Equals(internalHandoff, node.HandoffId, StringComparison.Ordinal)) continue;
-            matches.Add(new(candidate.TargetPath, candidate.Scope, declarationId, symbol, internalHandoff));
+            var reference = ExactAssemblySymbolResolver.CreateReference(candidate.Scope, symbol);
+            var stableId = reference.IsSuccess ? StableSymbolReferenceCodec.Format(reference.Value!) : null;
+            if (stableId is null || assemblyReference is not null
+                && !string.Equals(stableId, node.HandoffId, StringComparison.Ordinal)) continue;
+            matches.Add(new(candidate.TargetPath, candidate.Scope, declarationId, symbol, stableId));
             if (matches.Count > 1) return null;
         }
         return matches.Count == 1 ? matches[0] : null;

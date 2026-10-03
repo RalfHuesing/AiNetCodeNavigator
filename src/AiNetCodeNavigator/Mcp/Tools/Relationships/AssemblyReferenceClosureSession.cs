@@ -90,24 +90,30 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
         CancellationToken cancellationToken,
         Func<CancellationToken, Task>? afterRawDiscovery = null,
         Func<AssemblyNavigationSessionScope, CancellationToken, Task>? afterRootScopeOpened = null,
-        Func<AssemblySymbolHandoffAccess, CancellationToken, Task>? afterHandoffResolved = null,
+        Func<AssemblySymbolReferenceAccess, CancellationToken, Task>? afterHandoffResolved = null,
         Action<string>? beforeOwnerScopeOpen = null)
     {
         var normalizedIdentifier = InputNormalizer.NormalizeSymbolIdentifier(identifier);
-        if (!InputNormalizer.HasOpaqueHandoffPrefix(normalizedIdentifier)
-            && !normalizedIdentifier.StartsWith("i:", System.StringComparison.OrdinalIgnoreCase))
+        if (!StableSymbolReferenceCodec.TryParseReferenceInput(identifier, normalizedIdentifier,
+            out var stableReference, out var referenceError))
         {
             return await OpenRawAcrossReferencesAsync(targetPath, normalizedIdentifier, cancellationToken,
                 afterRawDiscovery, afterRootScopeOpened, beforeOwnerScopeOpen).ConfigureAwait(false);
         }
 
-        AssemblySymbolHandoffAccess? handoff = null;
+        if (referenceError is not null) return Failed(referenceError.Value, "$.symbolIdentifier");
+        if (stableReference is not StableSymbolReference.Assembly)
+            return Failed(new ResultError(NavigationErrorCodes.TargetMismatch,
+                "An assembly call tree requires an assembly reference.",
+                "Open the returned ownerTargetPath and use its assembly reference."), "$.symbolIdentifier");
+
+        AssemblySymbolReferenceAccess? handoff = null;
         AssemblyNavigationSessionScope? preopenedHandoffOwner = null;
         AssemblyNavigationSessionScope? root = null;
         var scopes = new List<AssemblyNavigationSessionScope>();
         try
         {
-            var openedHandoff = await AssemblySymbolHandoffResolver.ResolveAsync(identifier, cancellationToken).ConfigureAwait(false);
+            var openedHandoff = await AssemblySymbolReferenceResolver.OpenAndResolveAsync(targetPath, identifier, cancellationToken).ConfigureAwait(false);
             if (!openedHandoff.IsSuccess) return await FailedAndDisposeAsync(openedHandoff.Error!.Value, "$.symbolIdentifier").ConfigureAwait(false);
             handoff = openedHandoff.Value!;
             if (afterHandoffResolved is not null)
@@ -115,9 +121,6 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
             var handoffOwnerPath = Path.GetFullPath(handoff.Origin.CanonicalPath);
             var handoffSymbol = handoff.Symbol;
             var handoffIdentity = handoff.Identity;
-            var handoffContentHash = handoff.Origin.ContentHash;
-            var handoffGeneration = handoff.Generation;
-            var handoffReferenceSnapshotHash = handoff.ReferenceSnapshotHash;
             preopenedHandoffOwner = handoff.DetachScope();
             handoff = null;
             if (string.Equals(Path.GetFullPath(targetPath), handoffOwnerPath, StringComparison.OrdinalIgnoreCase))
@@ -141,24 +144,15 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
                 .Where(reference => reference.Resolved && !string.IsNullOrWhiteSpace(reference.ResolvedPath))
                 .Select(reference => (Reference: reference, Path: Path.GetFullPath(reference.ResolvedPath!)))
                 .ToArray();
-            if (!string.Equals(rootPath, handoffOwnerPath, StringComparison.OrdinalIgnoreCase)
-                && !references.Any(item => string.Equals(item.Path, handoffOwnerPath, StringComparison.OrdinalIgnoreCase)))
+            if (!string.Equals(rootPath, handoffOwnerPath, StringComparison.OrdinalIgnoreCase))
                 return await FailedAndDisposeAsync(new ResultError(NavigationErrorCodes.TargetMismatch,
-                    "The symbol handoff is not owned by the selected assembly or its current reference snapshot.",
-                    "Use a handoff returned by this assembly's find_symbol(includeReferences=true) result."), "$.symbolIdentifier").ConfigureAwait(false);
-
-            if (string.Equals(rootPath, handoffOwnerPath, StringComparison.OrdinalIgnoreCase)
-                && (!string.Equals(root.Context.Origin.ContentHash, handoffContentHash, StringComparison.OrdinalIgnoreCase)
-                    || root.Context.Generation != handoffGeneration
-                    || !string.Equals(root.Context.ReferenceSnapshotHash, handoffReferenceSnapshotHash, StringComparison.OrdinalIgnoreCase)))
-                return await FailedAndDisposeAsync(new ResultError(NavigationErrorCodes.StaleSnapshot,
-                    "The root assembly changed between root-scope and handoff acquisition.",
-                    "Repeat the query so the root scope and symbol handoff share one assembly generation."), "$.targetPath").ConfigureAwait(false);
+                    "The exact declaration reference must be resolved on its selected owner target.",
+                    "Use the ownerTargetPath returned with this reference."), "$.symbolIdentifier").ConfigureAwait(false);
 
             var declarationId = DocumentationCommentId.CreateDeclarationId(handoffSymbol);
             if (string.IsNullOrWhiteSpace(declarationId) || handoffSymbol.ContainingAssembly is null)
                 return await FailedAndDisposeAsync(new ResultError(NavigationErrorCodes.InvalidArgument,
-                    "The selected handoff has no stable assembly declaration identity.",
+                    "The selected reference has no stable assembly declaration identity.",
                     "Use a declaration returned by find_symbol(includeReferences=true)."), "$.symbolIdentifier").ConfigureAwait(false);
 
             var ownerPaths = new List<string> { rootPath };
@@ -208,13 +202,6 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
                     scopes.Add(ownerScope);
                 }
                 if (ownerScope.Context.Status is not AssemblySessionStatus.Complete) hasFailedOwners = true;
-                if (string.Equals(ownerPath, handoffOwnerPath, StringComparison.OrdinalIgnoreCase)
-                    && (!string.Equals(ownerScope.Context.Origin.ContentHash, handoffContentHash, StringComparison.OrdinalIgnoreCase)
-                        || ownerScope.Context.Generation != handoffGeneration
-                        || !string.Equals(ownerScope.Context.ReferenceSnapshotHash, handoffReferenceSnapshotHash, StringComparison.OrdinalIgnoreCase)))
-                    return await FailedAndDisposeAsync(new ResultError(NavigationErrorCodes.StaleSnapshot,
-                        "The handoff owner changed between handoff and closure-owner acquisition.",
-                        "Repeat the query so the handoff and closure owner share one assembly generation."), "$.targetPath").ConfigureAwait(false);
                 if (!string.Equals(ownerPath, rootPath, StringComparison.OrdinalIgnoreCase))
                 {
                     var validation = AssemblyReferenceSnapshotValidator.ValidateOwner(
@@ -229,7 +216,7 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
 
             if (!owners.Any(owner => string.Equals(owner.TargetPath, handoffOwnerPath, StringComparison.OrdinalIgnoreCase)))
                 return await FailedAndDisposeAsync(new ResultError(NavigationErrorCodes.TargetUnreadable,
-                    "The handoff owner could not be opened in the current reference snapshot.",
+                    "The reference owner could not be opened in the current reference snapshot.",
                     "Refresh the assembly query and retry with a current owner target path."), "$.targetPath").ConfigureAwait(false);
 
             var session = new AssemblyReferenceClosureSession(root!, handoffSymbol, handoffIdentity, owners, scopes, rootPath,
@@ -322,7 +309,7 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
                         return await FailedAndDisposeAsync(new ResultError(
                             NavigationErrorCodes.TargetUnreadable,
                             "The current reference snapshot reaches a boundary before raw symbol resolution can verify every owner.",
-                            "Use a handoff returned by find_symbol(includeReferences=true) or resolve the missing reference boundary."),
+                            "Use an asm: reference returned by find_symbol(includeReferences=true) or resolve the missing reference boundary."),
                             "$.targetPath").ConfigureAwait(false);
                 }
 
@@ -360,7 +347,7 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
                             ? "The current reference snapshot contains unresolved assemblies."
                         : resolutionError!.Value.Message;
                 var error = resolutionError ?? new ResultError(NavigationErrorCodes.TargetUnreadable, message,
-                    "Resolve the incomplete reference snapshot before using a raw identifier; an owner-bound handoff avoids cross-owner name ambiguity.");
+                    "Resolve the incomplete reference snapshot before using a raw identifier; an asm: reference identifies one exact assembly owner.");
                 return await FailedAndDisposeAsync(error, "$.symbolIdentifier").ConfigureAwait(false);
             }
 
@@ -402,10 +389,11 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
             }
             if (candidatesToExpose.Length > 1)
             {
-                var choices = string.Join("; ", candidatesToExpose.Select(candidate =>
-                    $"{candidate.Signature} at {candidate.FilePath}:{candidate.Line} [targetPath: '{candidate.OwnerTargetPath}', handoffId: `{candidate.HandoffId}`]"));
+                var choices = string.Join("; ", candidatesToExpose.Select(candidate => candidate.HandoffId is { Length: > 0 } handoff
+                    ? $"{candidate.Signature} at {candidate.FilePath}:{candidate.Line} [targetPath: '{candidate.OwnerTargetPath}', handoffId: `{handoff}`]"
+                    : $"{candidate.Signature} at {candidate.FilePath}:{candidate.Line} [targetPath: '{candidate.OwnerTargetPath}']; no stable reference is available"));
                 return await FailedAndDisposeAsync(new ResultError(NavigationErrorCodes.AmbiguousSymbol,
-                    $"'{identifier}' matches declarations in multiple assemblies. Select a candidate by its owner targetPath and handoffId. {choices}"),
+                    $"'{identifier}' matches declarations in multiple assemblies. Select a candidate by its exact owner targetPath and asm: reference; declarations without a stable reference require a raw identifier on that owner. {choices}"),
                     "$.symbolIdentifier").ConfigureAwait(false);
             }
 
@@ -453,46 +441,28 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
         return ResolveMetadataSymbol(declarationId, originalIdentity, owner.Scope.Context.Compilation);
     }
 
-    internal AssemblyReferenceClosureOwnerSymbol? ResolveInternalSourceHandoff(string? internalIdentifier)
+    internal AssemblyReferenceClosureOwnerSymbol? ResolveInternalSourceHandoff(string? referenceText, string? ownerTargetPath)
     {
-        if (string.IsNullOrWhiteSpace(internalIdentifier)
-            || !SymbolHandoffIdentifier.TryParse(internalIdentifier, out var identifier)
-            || identifier.Origin != SymbolHandoffOrigin.Assembly)
+        if (string.IsNullOrWhiteSpace(referenceText) || string.IsNullOrWhiteSpace(ownerTargetPath)
+            || !StableSymbolReferenceCodec.TryParse(referenceText, out var parsed, out _)
+            || parsed is not StableSymbolReference.Assembly reference)
             return null;
-
-        var owners = new List<AssemblyReferenceClosureOwnerSymbol>();
-        foreach (var owner in Owners)
-        {
-            var matches = DocumentationCommentId.GetSymbolsForDeclarationId(identifier.DocumentationCommentId,
-                    owner.Scope.Context.Compilation)
-                .Where(symbol => SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, owner.Scope.Context.Assembly)
-                    && HasSourceDeclaration(symbol, owner.Scope.Solution, owner.Scope.Context.DecompiledProjectPaths?.DecompiledSourceRoot)
-                    && string.Equals(owner.HandoffIdentity.FormatHandoff(symbol), internalIdentifier, StringComparison.Ordinal))
-                .Distinct(SymbolEqualityComparer.Default)
-                .Take(2)
-                .ToArray();
-            if (matches.Length == 1)
-                owners.Add(new(owner, identifier.DocumentationCommentId, matches[0]));
-        }
-        return owners.Count == 1 ? owners[0] : null;
+        var owner = Owners.SingleOrDefault(candidate => SamePath(candidate.TargetPath, ownerTargetPath));
+        if (owner is null) return null;
+        var resolved = ExactAssemblySymbolResolver.Resolve(owner.Scope, reference);
+        if (!resolved.IsSuccess || !HasSourceDeclaration(resolved.Value!, owner.Scope.Solution,
+            owner.Scope.Context.DecompiledProjectPaths?.DecompiledSourceRoot)) return null;
+        return new(owner, reference.DeclarationId, resolved.Value!);
     }
 
     internal Func<ISymbol, string?> CreateInternalFormatter(AssemblyReferenceClosureOwner owner) => symbol =>
     {
         if (!HasSourceDeclaration(symbol, owner.Scope.Solution, owner.Scope.Context.DecompiledProjectPaths?.DecompiledSourceRoot)) return null;
-        var declarationId = DocumentationCommentId.CreateDeclarationId(symbol);
-        if (string.IsNullOrWhiteSpace(declarationId)) return null;
-        var matches = DocumentationCommentId.GetSymbolsForDeclarationId(declarationId, owner.Scope.Context.Compilation)
-            .Where(candidate => SymbolEqualityComparer.Default.Equals(candidate.ContainingAssembly, owner.Scope.Context.Assembly))
-            .Distinct(SymbolEqualityComparer.Default)
-            .Take(2)
-            .ToArray();
-        return matches.Length == 1 ? owner.HandoffIdentity.FormatHandoff(matches[0]) : null;
+        var reference = ExactAssemblySymbolResolver.CreateReference(owner.Scope, symbol);
+        return reference.IsSuccess ? StableSymbolReferenceCodec.Format(reference.Value!) : null;
     };
 
-    internal static string? Externalize(string? internalIdentifier) => string.IsNullOrWhiteSpace(internalIdentifier)
-        ? null
-        : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalIdentifier);
+    internal static string? Externalize(string? reference) => reference;
 
     internal static bool IdentityMatches(AssemblyIdentity actual, AssemblyIdentityDto expected) =>
         AssemblyIdentityMatcher.Matches(actual, expected);
@@ -513,6 +483,19 @@ internal sealed class AssemblyReferenceClosureSession : IAsyncDisposable
                 && HasSourceDeclaration(symbol, owner.Scope.Solution, owner.Scope.Context.DecompiledProjectPaths?.DecompiledSourceRoot))
             .Distinct(SymbolEqualityComparer.Default).Take(2).ToArray();
         return matches.Length == 1 ? matches[0] : null;
+    }
+
+    private static bool SamePath(string left, string right)
+    {
+        try
+        {
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), comparison);
+        }
+        catch (System.Exception exception) when (exception is System.ArgumentException or IOException or System.NotSupportedException)
+        {
+            return false;
+        }
     }
 
     private static ISymbol? ResolveMetadataSymbol(string declarationId, AssemblyIdentityDto expected, Compilation compilation)

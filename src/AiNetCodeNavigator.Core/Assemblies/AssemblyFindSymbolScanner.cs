@@ -74,7 +74,7 @@ public static class AssemblyFindSymbolScanner
                     && TestDetector.IsTestProject(rootProject, classificationPath: rootContext.Origin.CanonicalPath);
                 if (!(scope == SymbolScopeType.Tests && !rootIsTest || scope == SymbolScopeType.Production && rootIsTest))
                 {
-                    ScanContext(rootContext, candidate);
+                    ScanContext(rootScope, candidate);
                 }
 
                 continue;
@@ -106,17 +106,12 @@ public static class AssemblyFindSymbolScanner
                 && TestDetector.IsTestProject(project, classificationPath: context.Origin.CanonicalPath);
             if (scope == SymbolScopeType.Tests && !isTest || scope == SymbolScopeType.Production && isTest) continue;
 
-            ScanContext(context, candidate);
+            ScanContext(scopeAccess, candidate);
         }
 
-        void ScanContext(AssemblyContext context, string candidatePath)
+        void ScanContext(AssemblyNavigationSessionScope ownerScope, string candidatePath)
         {
-
-            var identity = AnalysisSymbolIdentity.ForAssembly(
-                context.Origin.CanonicalPath,
-                context.Origin.ContentHash,
-                context.Generation,
-                context.ReferenceSnapshotHash);
+            var context = ownerScope.Context;
             foreach (var symbol in EnumerateSymbols(context.Assembly))
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -143,8 +138,8 @@ public static class AssemblyFindSymbolScanner
                     .ToArray();
                 if (locations.Length == 0) continue;
 
-                var internalId = identity.FormatHandoff(symbol);
-                var handoff = internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
+                var stableReference = ExactAssemblySymbolResolver.CreateReference(ownerScope, symbol);
+                var handoff = stableReference.IsSuccess ? StableSymbolReferenceCodec.Format(stableReference.Value!) : null;
                 entries.Add(new SymbolLocationEntry(
                     symbol.Name,
                     symbolKind,

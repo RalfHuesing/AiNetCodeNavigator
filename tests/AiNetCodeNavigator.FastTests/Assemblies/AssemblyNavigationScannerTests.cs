@@ -140,7 +140,7 @@ public sealed class AssemblyNavigationScannerTests
     }
 
     [Fact]
-    public async Task Search_DoesNotAllocateHandlesForResultsBeyondCurrentPage()
+    public async Task Search_EmitsReferencesOnlyForTheVisibleResultPage()
     {
         using var temp = TestTempDirectory.Create("assembly-search-page-handles-");
         var path = AssemblyTestHelper.EmitAssembly(temp, "PagedHandleProbe", """
@@ -149,16 +149,15 @@ public sealed class AssemblyNavigationScannerTests
             public sealed class Beta { }
             public sealed class Gamma { }
             """);
-        var isolatedRegistry = new HandoffHandleRegistry();
-
         var first = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(
-            path, Query: "Alpha|Beta|Gamma", UseRegex: true, Kind: "type", MaxResults: 1), isolatedRegistry);
+            path, Query: "Alpha|Beta|Gamma", UseRegex: true, Kind: "type", MaxResults: 1));
 
         Assert.True(first.IsSuccess, first.Error?.ToString());
         var hit = Assert.Single(first.Value!.Results);
         Assert.Equal("Alpha", hit.Symbol);
-        Assert.StartsWith("h:", hit.HandoffId, StringComparison.Ordinal);
-        Assert.Equal(1, isolatedRegistry.Count);
+        Assert.StartsWith("asm:", hit.HandoffId, StringComparison.Ordinal);
+        Assert.True(StableSymbolReferenceCodec.TryParse(hit.HandoffId!, out var reference, out var parseError), parseError?.Message);
+        Assert.IsType<StableSymbolReference.Assembly>(reference);
         Assert.NotNull(first.Value.ResultCursor);
     }
 
@@ -249,7 +248,7 @@ public sealed class AssemblyNavigationScannerTests
 
         Assert.True(first.IsSuccess);
         var firstItem = Assert.Single(first.Value!.Extensions);
-        Assert.StartsWith("h:", firstItem.HandoffId, StringComparison.Ordinal);
+        Assert.StartsWith("asm:", firstItem.HandoffId, StringComparison.Ordinal);
         Assert.Equal(Path.GetFullPath(path), firstItem.OwnerTargetPath);
         Assert.NotNull(first.Value.ResultCursor);
 
@@ -263,9 +262,15 @@ public sealed class AssemblyNavigationScannerTests
         Assert.NotEqual(firstItem.Signature, secondItem.Signature);
         Assert.All(next.Value.Extensions, item => Assert.Equal(Path.GetFullPath(path), item.OwnerTargetPath));
 
-        var body = await AssemblySymbolBodyScanner.GetAsync(firstItem.HandoffId!);
-        Assert.Null(body.Error);
-        Assert.Contains(firstItem.Name, body.Body!.Body, StringComparison.Ordinal);
+        foreach (var extension in new[] { firstItem, secondItem })
+        {
+            Assert.Equal(Path.GetFullPath(path), extension.OwnerTargetPath);
+            var body = await AssemblySymbolBodyScanner.GetAsync(extension.HandoffId!, expectedTargetPath: extension.OwnerTargetPath);
+            Assert.Null(body.Error);
+            Assert.Contains(extension.Name, body.Body!.Body, StringComparison.Ordinal);
+            Assert.Contains(extension.Name == "Mark" ? "return value;" : "return value.Length;",
+                body.Body.Body, StringComparison.Ordinal);
+        }
     }
 
     [Fact]

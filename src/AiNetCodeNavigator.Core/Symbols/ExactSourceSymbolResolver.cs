@@ -25,6 +25,33 @@ public static class ExactSourceSymbolResolver
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(symbol);
 
+        project = solution.GetProject(project.Id) ?? project;
+
+        var compilationResult = await GetCompilationAsync(project, cancellationToken).ConfigureAwait(false);
+        if (!compilationResult.IsSuccess)
+        {
+            return Result<StableSymbolReference.Source>.Failure(compilationResult.Error!);
+        }
+        var compilation = compilationResult.Value!;
+
+        var ownerTrees = await GetOwnerSyntaxTreesAsync(project, cancellationToken).ConfigureAwait(false);
+        return CreateReference(solution, project, compilation, ownerTrees, symbol);
+    }
+
+    /// <summary>Creates a source reference from a request-owned current compilation context.</summary>
+    internal static Result<StableSymbolReference.Source> CreateReference(
+        Solution solution,
+        Project project,
+        Compilation compilation,
+        IReadOnlySet<SyntaxTree> ownerTrees,
+        ISymbol symbol)
+    {
+        ArgumentNullException.ThrowIfNull(solution);
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(compilation);
+        ArgumentNullException.ThrowIfNull(ownerTrees);
+        ArgumentNullException.ThrowIfNull(symbol);
+
         var currentProject = solution.GetProject(project.Id);
         var loaded = currentProject is not null;
         project = currentProject ?? project;
@@ -47,13 +74,6 @@ public static class ExactSourceSymbolResolver
                 "Load one intended project context in the selected solution and retry.");
         }
 
-        var compilationResult = await GetCompilationAsync(project, cancellationToken).ConfigureAwait(false);
-        if (!compilationResult.IsSuccess)
-        {
-            return Result<StableSymbolReference.Source>.Failure(compilationResult.Error!);
-        }
-        var compilation = compilationResult.Value!;
-
         var declaration = Normalize(symbol);
         if (declaration.IsImplicitlyDeclared || declaration is IMethodSymbol { MethodKind: MethodKind.LocalFunction })
         {
@@ -63,7 +83,8 @@ public static class ExactSourceSymbolResolver
                 "Use the declaration's raw source location because Roslyn does not provide a stable reference for it.");
         }
 
-        if (!await IsDeclaredByProjectAsync(declaration, project, compilation, cancellationToken).ConfigureAwait(false))
+        if (!SymbolEqualityComparer.Default.Equals(declaration.ContainingAssembly, compilation.Assembly)
+            || !declaration.DeclaringSyntaxReferences.Any(reference => ownerTrees.Contains(reference.SyntaxTree)))
         {
             return Result<StableSymbolReference.Source>.Failure(
                 NavigationErrorCodes.TargetMismatch,
@@ -89,7 +110,7 @@ public static class ExactSourceSymbolResolver
                 "Rediscover the declaration and use the canonical reference returned by the tool.");
         }
 
-        var resolved = await ResolveInOwnerAsync(solution, project, compilation, declarationId!, cancellationToken).ConfigureAwait(false);
+        var resolved = ResolveInOwner(compilation, ownerTrees, declarationId!);
         if (!resolved.IsSuccess)
         {
             return Result<StableSymbolReference.Source>.Failure(resolved.Error!);
@@ -165,6 +186,14 @@ public static class ExactSourceSymbolResolver
         CancellationToken cancellationToken)
     {
         var ownerTrees = await GetOwnerSyntaxTreesAsync(project, cancellationToken).ConfigureAwait(false);
+        return ResolveInOwner(compilation, ownerTrees, declarationId);
+    }
+
+    private static Result<ISymbol> ResolveInOwner(
+        Compilation compilation,
+        IReadOnlySet<SyntaxTree> ownerTrees,
+        string declarationId)
+    {
         var symbols = DocumentationCommentId.GetSymbolsForDeclarationId(declarationId, compilation)
             .Select(Normalize)
             .Where(symbol => SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, compilation.Assembly)
@@ -187,14 +216,7 @@ public static class ExactSourceSymbolResolver
         };
     }
 
-    private static async Task<bool> IsDeclaredByProjectAsync(ISymbol symbol, Project project, Compilation compilation, CancellationToken cancellationToken)
-    {
-        if (!SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, compilation.Assembly)) return false;
-        var ownerTrees = await GetOwnerSyntaxTreesAsync(project, cancellationToken).ConfigureAwait(false);
-        return symbol.DeclaringSyntaxReferences.Any(reference => ownerTrees.Contains(reference.SyntaxTree));
-    }
-
-    private static async Task<HashSet<SyntaxTree>> GetOwnerSyntaxTreesAsync(Project project, CancellationToken cancellationToken)
+    internal static async Task<HashSet<SyntaxTree>> GetOwnerSyntaxTreesAsync(Project project, CancellationToken cancellationToken)
     {
         var ownerTrees = new HashSet<SyntaxTree>();
         foreach (var document in project.Documents)

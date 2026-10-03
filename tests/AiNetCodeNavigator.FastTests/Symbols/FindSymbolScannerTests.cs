@@ -31,14 +31,10 @@ public sealed class FindSymbolScannerTests
         Assert.Equal("Greeter", entry.Name);
         Assert.Equal("class", entry.Kind);
         Assert.NotNull(entry.HandoffId);
-        Assert.StartsWith("h:", entry.HandoffId);
-        var internalId = HandoffHandleRegistry.Default.RestoreInternalHandoffForInput(entry.HandoffId!);
-        Assert.True(internalId.IsSuccess);
-        Assert.True(SymbolHandoffIdentifier.TryParse(internalId.Value!, out var parsed));
-        Assert.Equal(SymbolHandoffOrigin.Source, parsed.Origin);
-        Assert.Contains("~p:", parsed.DocumentationCommentId, System.StringComparison.Ordinal);
-        Assert.True(SymbolHandoffToken.TryCreateTarget(fixture.Solution.FilePath!, out var targetToken));
-        Assert.Equal(targetToken, parsed.TargetToken);
+        Assert.StartsWith("src:src/Sample.Core/", entry.HandoffId, System.StringComparison.Ordinal);
+        Assert.True(StableSymbolReferenceCodec.TryParse(entry.HandoffId!, out var parsed, out var parseError), parseError?.Message);
+        Assert.IsType<StableSymbolReference.Source>(parsed);
+        Assert.Equal("T:SampleNamespace.Greeter", parsed!.DeclarationId);
 
         var resolved = await SourceSymbolResolver.ResolveAsync(fixture.Solution, entry.HandoffId!);
         Assert.True(resolved.IsSuccess);
@@ -46,53 +42,23 @@ public sealed class FindSymbolScannerTests
 
         var structure = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(fixture.Solution, entry.HandoffId!));
         Assert.NotNull(structure);
-        Assert.Contains(structure.Members, member => member.Name == "Greet" && member.HandoffId?.StartsWith("h:", System.StringComparison.Ordinal) == true);
+        Assert.Contains(structure.Members, member => member.Name == "Greet" && member.HandoffId?.StartsWith("src:", System.StringComparison.Ordinal) == true);
     }
 
     [Fact]
-    public async Task SourceHandoffResolver_ReturnsTypedUnknownForeignAndStaleErrors()
+    public async Task SourceSymbolConsumers_RejectLegacyAndMalformedReferencesWithoutNameFallback()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
-        var identity = await AnalysisSymbolIdentity.ForSourceAsync(fixture.Solution);
-        Assert.NotNull(identity);
+        foreach (var input in new[] { "h:unknown99", "i:0:identifier", "SRC:src/Sample.Core/Sample.Core.csproj|T:SampleNamespace.Greeter" })
+        {
+            var symbol = await SourceSymbolResolver.ResolveAsync(fixture.Solution, input);
+            Assert.False(symbol.IsSuccess);
+            Assert.Equal(NavigationErrorCodes.InvalidSymbolReference, symbol.Error!.Value.Code);
 
-        var unknown = await SourceHandoffResolver.ResolveAsync(fixture.Solution, "h:unknown99", identity!);
-        Assert.False(unknown.IsSuccess);
-        Assert.Equal(NavigationErrorCodes.HandoffUnknown, unknown.Error!.Value.Code);
-        var unknownSymbol = await SourceSymbolResolver.ResolveAsync(fixture.Solution, "h:unknown99", identity);
-        Assert.False(unknownSymbol.IsSuccess);
-        Assert.Equal(NavigationErrorCodes.HandoffUnknown, unknownSymbol.Error!.Value.Code);
-        var unknownStructure = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(fixture.Solution, "h:unknown99"));
-        Assert.NotNull(unknownStructure?.Error);
-        Assert.Equal(NavigationErrorCodes.HandoffUnknown, unknownStructure!.Error!.Value.Code);
-
-        var project = fixture.Solution.Projects.First();
-        var compilation = await project.GetCompilationAsync();
-        Assert.NotNull(compilation);
-        var symbol = compilation.GetTypeByMetadataName("SampleNamespace.Greeter");
-        Assert.NotNull(symbol);
-
-        var foreignIdentity = AnalysisSymbolIdentity.ForSource(
-            @"C:\\OtherRepo\\Sample.sln",
-            identity!.ContentHash,
-            fixture.Solution);
-        var foreignInternal = foreignIdentity.FormatHandoff(symbol!, fixture.Solution);
-        Assert.NotNull(foreignInternal);
-        var foreignHandle = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(foreignInternal!);
-        var foreign = await SourceHandoffResolver.ResolveAsync(fixture.Solution, foreignHandle, identity);
-        Assert.False(foreign.IsSuccess);
-        Assert.Equal(NavigationErrorCodes.TargetMismatch, foreign.Error!.Value.Code);
-
-        var staleIdentity = AnalysisSymbolIdentity.ForSource(
-            fixture.Solution.FilePath!,
-            new string('f', 64),
-            fixture.Solution);
-        var staleInternal = staleIdentity.FormatHandoff(symbol!, fixture.Solution);
-        Assert.NotNull(staleInternal);
-        var staleHandle = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(staleInternal!);
-        var stale = await SourceHandoffResolver.ResolveAsync(fixture.Solution, staleHandle, identity);
-        Assert.False(stale.IsSuccess);
-        Assert.Equal(NavigationErrorCodes.StaleSnapshot, stale.Error!.Value.Code);
+            var structure = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(fixture.Solution, input));
+            Assert.NotNull(structure?.Error);
+            Assert.Equal(NavigationErrorCodes.InvalidSymbolReference, structure!.Error!.Value.Code);
+        }
     }
 
     [Fact]
@@ -102,13 +68,13 @@ public sealed class FindSymbolScannerTests
 
         var sourceSymbol = await SourceSymbolResolver.ResolveAsync(fixture.Solution, "H:unknown99");
         Assert.False(sourceSymbol.IsSuccess);
-        Assert.Equal(NavigationErrorCodes.InvalidHandoff, sourceSymbol.Error!.Value.Code);
+        Assert.Equal(NavigationErrorCodes.InvalidSymbolReference, sourceSymbol.Error!.Value.Code);
 
         var classStructure = await ClassStructureScanner.ScanAsync(
             new ClassStructureScanRequest(fixture.Solution, "H:unknown99"));
         Assert.NotNull(classStructure);
         Assert.NotNull(classStructure!.Error);
-        Assert.Equal(NavigationErrorCodes.InvalidHandoff, classStructure.Error!.Value.Code);
+        Assert.Equal(NavigationErrorCodes.InvalidSymbolReference, classStructure.Error!.Value.Code);
     }
 
     [Fact]
@@ -218,7 +184,7 @@ public sealed class FindSymbolScannerTests
     }
 
     [Fact]
-    public async Task SourceHandoffRoundTripsAcrossCaseVariantSolutionPaths()
+    public async Task StableSourceReferenceRoundTripsAcrossCaseVariantSolutionPaths()
     {
         using var upper = TestWorkspaceBuilder.CreateSolution(
             @"C:\VirtualRepo\Roundtrip.slnx",

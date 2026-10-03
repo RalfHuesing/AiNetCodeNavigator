@@ -9,8 +9,10 @@ using AiNetCodeNavigator.Mcp.Tools.Assemblies;
 using AiNetCodeNavigator.Mcp.Tools.Relationships;
 using AiNetCodeNavigator.Mcp.Tools.Symbols;
 using AiNetCodeNavigator.TestKit;
+using AiNetCodeNavigator.TestKit.Builders;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using ModelContextProtocol.Protocol;
 using static AiNetCodeNavigator.IntegrationTests.Mcp.IntegrationMcpAssertions;
 
@@ -19,6 +21,123 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 [Trait("Category", "Integration")]
 public sealed class AssemblyToolsContractTests
 {
+    [Fact]
+    public async Task RawAssemblyLocalFunctionLocationKeepsBodyWithoutStableReference()
+    {
+        using var fixture = TestTempDirectory.Create("assembly-raw-local-function-");
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "RawLocalFunctionProbe",
+            "namespace RawAssemblyProbe; public sealed class Target { public int Run() { int Local() => 41; return Local(); } }");
+        var opened = await AssemblyNavigationSessionScope.OpenAsync(assemblyPath, default);
+        Assert.True(opened.IsSuccess, opened.Error?.Message);
+        await using var scope = opened.Value!;
+        var syntax = Assert.Single(scope.Context.Compilation.SyntaxTrees
+            .SelectMany(tree => tree.GetRoot().DescendantNodes().OfType<LocalFunctionStatementSyntax>()));
+        var tree = syntax.SyntaxTree;
+        var identifier = syntax.Identifier;
+        var line = tree.GetLineSpan(identifier.Span).StartLinePosition;
+        var rawLocation = $"{tree.FilePath}:{line.Line + 1}:{line.Character + 1}";
+
+        var raw = await AssemblySymbolInputResolver.ResolveAsync(scope, rawLocation);
+        Assert.True(raw.IsSuccess, raw.Error?.Message);
+        Assert.Null(raw.HandoffId);
+        var candidate = Assert.Single(raw.Candidates);
+        Assert.Equal("Local", candidate.Name);
+        if (string.IsNullOrWhiteSpace(scope.Solution.FilePath))
+        {
+            Assert.Equal(Path.GetFileName(tree.FilePath).Replace('\\', '/'), candidate.FilePath);
+        }
+        else
+        {
+            var solutionDirectory = Path.GetDirectoryName(scope.Solution.FilePath)!;
+            Assert.Equal(Path.GetFullPath(tree.FilePath), Path.GetFullPath(Path.Combine(solutionDirectory, candidate.FilePath)));
+        }
+        Assert.Equal(line.Line + 1, candidate.Line);
+        Assert.Null(candidate.HandoffId);
+
+        var result = await AssemblySymbolBodyScanner.GetAsync(rawLocation, maxBodyLines: 30,
+            expectedTargetPath: assemblyPath, pinnedScope: scope);
+
+        Assert.Null(result.Error);
+        Assert.NotNull(result.Body);
+        Assert.Contains("Local", result.Body!.Body, StringComparison.Ordinal);
+        Assert.Contains("41", result.Body.Body, StringComparison.Ordinal);
+        Assert.Equal("available", result.Body.Availability);
+        Assert.Equal("decompiled", result.Body.ContentMode);
+        Assert.Null(result.Body.HandoffId);
+        Assert.Empty(result.ResolutionCandidates);
+    }
+
+    [Fact]
+    public async Task RawAssemblyAmbiguousLocalFunctionsRetainCandidatesAndRecoverByLocation()
+    {
+        using var fixture = TestTempDirectory.Create("assembly-raw-local-function-ambiguity-");
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "RawLocalFunctionAmbiguityProbe", """
+            namespace RawAssemblyAmbiguityProbe;
+            public sealed class Target
+            {
+                public int Run()
+                {
+                    int FirstLocal() => 11;
+                    int SecondLocal() => 22;
+                    return FirstLocal() + SecondLocal();
+                }
+            }
+            """);
+        var opened = await AssemblyNavigationSessionScope.OpenAsync(assemblyPath, default);
+        Assert.True(opened.IsSuccess, opened.Error?.Message);
+        await using var scope = opened.Value!;
+
+        var returnStatement = Assert.Single(scope.Context.Compilation.SyntaxTrees
+            .SelectMany(tree => tree.GetRoot().DescendantNodes().OfType<ReturnStatementSyntax>())
+            .Where(statement => statement.Expression?.ToString().Contains("FirstLocal", StringComparison.Ordinal) == true
+                && statement.Expression.ToString().Contains("SecondLocal", StringComparison.Ordinal)));
+        var returnLine = returnStatement.SyntaxTree.GetLineSpan(returnStatement.Span).StartLinePosition.Line + 1;
+        var rawDiscovery = $"{returnStatement.SyntaxTree.FilePath}:{returnLine}";
+        var ambiguous = await AssemblySymbolInputResolver.ResolveAsync(scope, rawDiscovery);
+        Assert.False(ambiguous.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.AmbiguousSymbol, ambiguous.Error?.Code);
+        Assert.Equal(2, ambiguous.Candidates.Count);
+        Assert.All(ambiguous.Candidates, candidate =>
+        {
+            Assert.Null(candidate.HandoffId);
+            Assert.Equal(Path.GetFullPath(assemblyPath), Path.GetFullPath(candidate.OwnerTargetPath));
+            Assert.True(candidate.FilePath.Length > 0);
+            Assert.True(candidate.Line > 0);
+        });
+        Assert.Equal(2, ambiguous.Candidates
+            .Select(candidate => $"{candidate.FilePath}:{candidate.Line}")
+            .Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        var recoveryHint = ambiguous.Error!.Value.Hint ?? string.Empty;
+        Assert.False(string.IsNullOrWhiteSpace(recoveryHint), ambiguous.Error.Value.Message);
+        Assert.Contains("file", recoveryHint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("line", recoveryHint, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("handoffId", recoveryHint, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("handoffId", ambiguous.Error.Value.Message, StringComparison.OrdinalIgnoreCase);
+
+        foreach (var candidate in ambiguous.Candidates)
+        {
+            Assert.Contains($"{candidate.FilePath}:{candidate.Line}", ambiguous.Error.Value.Message, StringComparison.Ordinal);
+            Assert.Contains(candidate.Name, ambiguous.Error.Value.Message, StringComparison.Ordinal);
+            var rawLocation = $"{candidate.FilePath}:{candidate.Line}";
+            Assert.Null(candidate.HandoffId);
+
+            var recovered = await AssemblySymbolBodyScanner.GetAsync(rawLocation, maxBodyLines: 20,
+                expectedTargetPath: assemblyPath, pinnedScope: scope);
+            Assert.Null(recovered.Error);
+            Assert.NotNull(recovered.Body);
+            Assert.Equal("available", recovered.Body!.Availability);
+            Assert.Null(recovered.Body.HandoffId);
+            Assert.Contains(candidate.Name, recovered.Body.Body, StringComparison.Ordinal);
+            var expectedReturn = candidate.Name switch
+            {
+                "FirstLocal" => "return 11",
+                "SecondLocal" => "return 22",
+                _ => throw new Xunit.Sdk.XunitException($"Unexpected ambiguous candidate name: {candidate.Name}"),
+            };
+            Assert.Contains(expectedReturn, recovered.Body.Body, StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
     public async Task FindSymbolResultCursor_PagesAssemblyBatchAndPreservesReferenceOwners()
     {
@@ -625,6 +744,61 @@ public sealed class AssemblyToolsContractTests
     }
 
     [Fact]
+    public async Task AssemblyBodyBatchPreservesValidItemAndEveryTypedReferenceFailure()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        using var fixture = TestTempDirectory.Create("ainet-assembly-body-batch-reference-preflight-");
+        var sourceText = "namespace SourceBodyBatchProbe; public sealed class Target { public int Read() { var first = 1; var second = 2; return first + second; } }";
+        var sourceSolutionPath = fixture.CreateFile("SourceBatch.slnx", string.Empty);
+        var sourcePath = fixture.CreateFile("SourceBatch.cs", sourceText);
+        using var workspace = TestWorkspaceBuilder.Create().WithVirtualSolutionPath(sourceSolutionPath)
+            .WithProject("SourceBatch", (sourcePath, sourceText)).Build();
+        await using var registry = new ProjectRegistry(new ProjectRegistryOptions(
+            _ => ResidentSolutionCreation.Resident(new ResidentSolution(workspace.Solution)), TimeProvider.System));
+        await using var runtime = new NavigatorHostRuntime(
+            host.Services.GetRequiredService<IHostApplicationLifetime>(), projectRegistry: registry);
+        var symbols = new SymbolTools(runtime);
+
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "AssemblyBodyBatchProbe", """
+            namespace AssemblyBodyBatchProbe;
+            public sealed class Target { public int Read() { var first = 3; var second = 4; return first + second; } }
+            """);
+        var foundAssembly = await symbols.FindSymbol(assemblyPath, pattern: "Target.Read", kind: "method", maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(foundAssembly, 16384, 1024);
+        var assemblyReference = ReadAnyHandoff(TextOf(foundAssembly));
+        Assert.StartsWith("asm:", assemblyReference, StringComparison.Ordinal);
+
+        var foundSource = await symbols.FindSymbol(sourceSolutionPath, pattern: "Target.Read", kind: "method", maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(foundSource, 16384, 1024);
+        var sourceReference = ReadAnyStableReference(TextOf(foundSource));
+        Assert.StartsWith("src:", sourceReference, StringComparison.Ordinal);
+
+        var invalidReferences = new[] { "asm:malformed", "src:malformed", sourceReference, "h:zzzz", "i:zzzz" };
+        var mixed = await symbols.GetSymbolBody(assemblyPath, [assemblyReference, .. invalidReferences], maxBodyLines: 1,
+            maxResponseBytes: 32768, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(mixed, 32768, 4096);
+        var mixedText = TextOf(mixed);
+        Assert.Contains("Resolution status: resolved", mixedText, StringComparison.Ordinal);
+        Assert.Contains("Resolution status: failed", mixedText, StringComparison.Ordinal);
+        Assert.Contains("completeness=truncated", mixedText, StringComparison.Ordinal);
+        Assert.Contains("Next body window: startLine=2", mixedText, StringComparison.Ordinal);
+        foreach (var reference in invalidReferences)
+        {
+            Assert.Contains($"Symbol: {reference}", mixedText, StringComparison.Ordinal);
+        }
+
+        var allFailed = await symbols.GetSymbolBody(assemblyPath, invalidReferences, maxResponseBytes: 32768, maxResponseTokens: 4096);
+        Assert.True(allFailed.IsError ?? false, TextOf(allFailed));
+        AssertBudget(TextOf(allFailed), 32768, 4096);
+        var allFailedText = TextOf(allFailed);
+        foreach (var reference in invalidReferences)
+        {
+            Assert.Contains($"Symbol: {reference}", allFailedText, StringComparison.Ordinal);
+        }
+        Assert.Equal(invalidReferences.Length, allFailedText.Split("Resolution status: failed", StringSplitOptions.None).Length - 1);
+    }
+
+    [Fact]
     public async Task AssemblySkeletonBatch_UsesOneSnapshotAcrossHandoffs()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
@@ -656,7 +830,90 @@ public sealed class AssemblyToolsContractTests
     }
 
     [Fact]
-    public async Task DisposedRuntimeAssemblyHandoffsAreUnknownAndRepeatedDisposeKeepsFreshHandles()
+    public async Task AssemblySkeletonReferenceBatchPreservesMixedAndAllFailedItemsAndMetadata()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        using var fixture = TestTempDirectory.Create("ainet-assembly-skeleton-reference-batch-");
+        var sourceText = "namespace SourceSkeletonBatchProbe; public sealed class Foreign { public int Read() => 9; }";
+        var sourceSolutionPath = fixture.CreateFile("SourceSkeletonBatch.slnx", string.Empty);
+        var sourcePath = fixture.CreateFile("SourceSkeletonBatch.cs", sourceText);
+        using var workspace = TestWorkspaceBuilder.Create().WithVirtualSolutionPath(sourceSolutionPath)
+            .WithProject("SourceSkeletonBatch", (sourcePath, sourceText)).Build();
+        await using var registry = new ProjectRegistry(new ProjectRegistryOptions(
+            _ => ResidentSolutionCreation.Resident(new ResidentSolution(workspace.Solution)), TimeProvider.System));
+        await using var runtime = new NavigatorHostRuntime(
+            host.Services.GetRequiredService<IHostApplicationLifetime>(), projectRegistry: registry);
+        var symbols = new SymbolTools(runtime);
+        var structure = new StructureTools(runtime);
+
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "AssemblySkeletonBatchProbe",
+            "namespace AssemblySkeletonBatchProbe; public sealed class Target { public int Read() => 7; }");
+        var assemblyDiscovery = await symbols.FindSymbol(assemblyPath, pattern: "AssemblySkeletonBatchProbe.Target", kind: "class", maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(assemblyDiscovery, 16384, 1024);
+        var assemblyReference = ReadHandoff(TextOf(assemblyDiscovery), "class Target");
+        Assert.StartsWith("asm:", assemblyReference, StringComparison.Ordinal);
+        var assemblyOnly = await structure.GetFileSkeleton(assemblyPath, [assemblyReference], maxResponseBytes: 32768, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(assemblyOnly, 32768, 4096);
+        Assert.Contains("snapshotId=assembly:", TextOf(assemblyOnly), StringComparison.Ordinal);
+        Assert.Equal($"fileSkeleton(paths={assemblyReference})", ReadHeader(TextOf(assemblyOnly), "analyzedScope"));
+        Assert.Contains("### Target", TextOf(assemblyOnly), StringComparison.Ordinal);
+        Assert.Contains("Read", TextOf(assemblyOnly), StringComparison.Ordinal);
+
+        var sourceDiscovery = await symbols.FindSymbol(sourceSolutionPath, pattern: "SourceSkeletonBatchProbe.Foreign", kind: "class", maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(sourceDiscovery, 16384, 1024);
+        var sourceReference = ReadAnyStableReference(TextOf(sourceDiscovery));
+        Assert.StartsWith("src:", sourceReference, StringComparison.Ordinal);
+
+        var invalidReferences = new[] { "asm:malformed", "src:malformed", sourceReference, "h:zzzz", "i:zzzz" };
+        var mixed = await structure.GetFileSkeleton(assemblyPath, [assemblyReference, .. invalidReferences], maxResponseBytes: 32768, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(mixed, 32768, 4096);
+        var mixedText = TextOf(mixed);
+        Assert.Contains("snapshotId=assembly:", mixedText, StringComparison.Ordinal);
+        Assert.Equal($"fileSkeleton(paths={string.Join('|', new[] { assemblyReference }.Concat(invalidReferences))})",
+            ReadHeader(mixedText, "analyzedScope"));
+        Assert.Contains("### Target", mixedText, StringComparison.Ordinal);
+        Assert.Contains("Read", mixedText, StringComparison.Ordinal);
+        foreach (var reference in invalidReferences)
+        {
+            var item = IntegrationMcpAssertions.ReadItemSection(mixedText, reference);
+            var code = reference == sourceReference ? "TARGET_MISMATCH" : "INVALID_SYMBOL_REFERENCE";
+            Assert.Contains($"Resolution status: failed ({code})", item, StringComparison.Ordinal);
+            if (reference == sourceReference)
+            {
+                Assert.Contains("Next action: Use the src:", item, StringComparison.Ordinal);
+                Assert.Contains("source solution", item, StringComparison.Ordinal);
+                Assert.Contains("owner targetPath", item, StringComparison.Ordinal);
+            }
+            else
+            {
+                AssertActionableRediscovery(item);
+            }
+        }
+
+        var allFailed = await structure.GetFileSkeleton(assemblyPath, invalidReferences, maxResponseBytes: 32768, maxResponseTokens: 4096);
+        AssertErrorWithinBudget(allFailed, "INVALID_SYMBOL_REFERENCE", 32768, 4096);
+        var allFailedText = TextOf(allFailed);
+        foreach (var reference in invalidReferences)
+        {
+            var item = IntegrationMcpAssertions.ReadItemSection(allFailedText, reference);
+            var code = reference == sourceReference ? "TARGET_MISMATCH" : "INVALID_SYMBOL_REFERENCE";
+            Assert.Contains($"Resolution status: failed ({code})", item, StringComparison.Ordinal);
+            if (reference == sourceReference)
+            {
+                Assert.Contains("Next action: Use the src:", item, StringComparison.Ordinal);
+                Assert.Contains("source solution", item, StringComparison.Ordinal);
+                Assert.Contains("owner targetPath", item, StringComparison.Ordinal);
+            }
+            else
+            {
+                AssertActionableRediscovery(item);
+            }
+        }
+        Assert.Contains("Use each item's next action", allFailedText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StableAssemblyReferenceSurvivesRuntimeRestartAndRepeatedDispose()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         using var fixture = TestTempDirectory.Create("ainet-assembly-runtime-lifecycle-");
@@ -665,23 +922,26 @@ public sealed class AssemblyToolsContractTests
             public sealed class Probe { public int Read() => 42; }
             """);
 
-        var oldRuntime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        await using var oldRuntime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var oldTools = new SymbolTools(oldRuntime);
         var oldResult = await oldTools.FindSymbol(assemblyPath, pattern: "Probe.Read", kind: "method", maxResponseBytes: 16384);
         AssertOwnerResult(oldResult, "Read");
-        var oldHandoff = ReadAnyHandoff(TextOf(oldResult));
+        var oldReference = ReadAnyHandoff(TextOf(oldResult));
+        Assert.StartsWith("asm:", oldReference, StringComparison.Ordinal);
         await oldRuntime.DisposeAsync();
 
         await using var freshRuntime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var freshTools = new SymbolTools(freshRuntime);
-        var staleResult = await freshTools.GetSymbolBody(assemblyPath, [oldHandoff], maxResponseBytes: 16384);
-        AssertError(staleResult, "HANDOFF_UNKNOWN");
+        var afterRestart = await freshTools.GetSymbolBody(assemblyPath, [oldReference], maxResponseBytes: 16384);
+        AssertOwnerResult(afterRestart, "Read");
+        Assert.Contains("42", TextOf(afterRestart), StringComparison.Ordinal);
 
         var freshResult = await freshTools.FindSymbol(assemblyPath, pattern: "Probe.Read", kind: "method", maxResponseBytes: 16384);
         AssertOwnerResult(freshResult, "Read");
-        var freshHandoff = ReadAnyHandoff(TextOf(freshResult));
+        var freshReference = ReadAnyHandoff(TextOf(freshResult));
+        Assert.Equal(oldReference, freshReference);
         await oldRuntime.DisposeAsync();
-        var freshBody = await freshTools.GetSymbolBody(assemblyPath, [freshHandoff], maxResponseBytes: 16384);
+        var freshBody = await freshTools.GetSymbolBody(assemblyPath, [freshReference], maxResponseBytes: 16384);
         AssertOwnerResult(freshBody, "Read");
     }
 
@@ -764,7 +1024,7 @@ public sealed class AssemblyToolsContractTests
         var sourceNamespaceTree = await structureTools.GetNamespaceTree(sourceSolution,
             namespacePrefix: "StructureOrderProbe", maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(sourceNamespaceTree, 32768, 4096);
-        var sourceNamespaceHandle = ReadAnyHandoff(TextOf(sourceNamespaceTree));
+        var sourceNamespaceHandle = ReadAnyStableReference(TextOf(sourceNamespaceTree));
         var sourceNamespaceBody = await symbolTools.GetSymbolBody(sourceSolution, [sourceNamespaceHandle], maxResponseBytes: 32768,
             maxResponseTokens: 4096);
         AssertSuccessWithinBudget(sourceNamespaceBody, 32768, 4096);
@@ -920,7 +1180,7 @@ public sealed class AssemblyToolsContractTests
     }
 
     [Fact]
-    public async Task AssemblyBodyRecoveryDistinguishesWrongOwnerStaleAndEvictedSessions()
+    public async Task StableAssemblyReferenceReopensAfterReplacementAndSessionEviction()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
@@ -933,68 +1193,62 @@ public sealed class AssemblyToolsContractTests
         var relationships = new RelationshipTools(runtime);
         var discovery = await symbols.FindSymbol(assemblyPath, pattern: "Target.Read", kind: "method", maxResponseBytes: 16384);
         AssertOwnerResult(discovery, "Read");
-        var originalHandle = ReadAnyHandoff(TextOf(discovery));
+        var originalReference = ReadAnyHandoff(TextOf(discovery));
+        Assert.StartsWith("asm:", originalReference, StringComparison.Ordinal);
 
-        var firstWindow = await symbols.GetSymbolBody(assemblyPath, [originalHandle], startLine: 1, endLine: 1,
+        var firstWindow = await symbols.GetSymbolBody(assemblyPath, [originalReference], startLine: 1, endLine: 1,
             maxResponseBytes: 16384, maxResponseTokens: 2048);
         AssertSuccessWithinBudget(firstWindow, 16384, 2048);
         Assert.Contains("Next body window: startLine=2, maxBodyLines=1; omit endLine", TextOf(firstWindow), StringComparison.Ordinal);
-        var secondWindow = await symbols.GetSymbolBody(assemblyPath, [originalHandle], startLine: 2, maxBodyLines: 1,
+        var secondWindow = await symbols.GetSymbolBody(assemblyPath, [originalReference], startLine: 2, maxBodyLines: 1,
             maxResponseBytes: 16384, maxResponseTokens: 2048);
         AssertSuccessWithinBudget(secondWindow, 16384, 2048);
         Assert.Contains("Resolution status: resolved", TextOf(secondWindow), StringComparison.Ordinal);
 
-        var wrongOwner = await symbols.GetSymbolBody(otherAssemblyPath, [originalHandle], maxResponseBytes: 16384);
+        var wrongOwner = await symbols.GetSymbolBody(otherAssemblyPath, [originalReference], maxResponseBytes: 16384);
         AssertErrorWithinBudget(wrongOwner, "TARGET_MISMATCH", 16384, 4096);
         Assert.Contains("Resolution status: failed (TARGET_MISMATCH)", TextOf(wrongOwner), StringComparison.Ordinal);
         Assert.Contains("ownerTargetPath", TextOf(wrongOwner), StringComparison.Ordinal);
 
         AssemblyTestHelper.EmitAssembly(fixture, "BodyRecoveryProbe", replacement);
-        var stale = await symbols.GetSymbolBody(assemblyPath, [originalHandle], maxResponseBytes: 16384);
-        AssertErrorWithinBudget(stale, "STALE_SNAPSHOT", 16384, 4096);
-        Assert.Contains("find_symbol", TextOf(stale), StringComparison.Ordinal);
-        var mixedFailures = await symbols.GetSymbolBody(assemblyPath, [originalHandle, "h:aaaa"], maxResponseBytes: 16384, maxResponseTokens: 4096);
-        AssertErrorWithinBudget(mixedFailures, "STALE_SNAPSHOT", 16384, 4096);
-        Assert.Contains("Resolution status: failed (STALE_SNAPSHOT)", TextOf(mixedFailures), StringComparison.Ordinal);
-        Assert.Contains("Resolution status: failed (HANDOFF_UNKNOWN)", TextOf(mixedFailures), StringComparison.Ordinal);
-        Assert.Contains("Repeat find_symbol against the current assembly snapshot", TextOf(mixedFailures), StringComparison.Ordinal);
-        Assert.Contains("Find the symbol again using find_symbol", TextOf(mixedFailures), StringComparison.Ordinal);
+        var afterReplacement = await symbols.GetSymbolBody(assemblyPath, [originalReference], maxResponseBytes: 16384);
+        AssertOwnerResult(afterReplacement, "Read");
+        Assert.Contains("return 2;", TextOf(afterReplacement), StringComparison.Ordinal);
+        var mixedFailures = await symbols.GetSymbolBody(assemblyPath, [originalReference, "h:aaaa"], maxResponseBytes: 16384, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(mixedFailures, 16384, 4096);
+        Assert.Contains("return 2;", TextOf(mixedFailures), StringComparison.Ordinal);
+        Assert.Contains("Resolution status: failed (INVALID_SYMBOL_REFERENCE)", TextOf(mixedFailures), StringComparison.Ordinal);
 
         var currentDiscovery = await symbols.FindSymbol(assemblyPath, pattern: "Target.Read", kind: "method", maxResponseBytes: 16384);
         AssertOwnerResult(currentDiscovery, "Read");
-        var currentHandle = ReadAnyHandoff(TextOf(currentDiscovery));
+        var currentReference = ReadAnyHandoff(TextOf(currentDiscovery));
         var otherDiscovery = await symbols.FindSymbol(otherAssemblyPath, pattern: "Other.Read", kind: "method", maxResponseBytes: 16384);
         AssertOwnerResult(otherDiscovery, "Read");
-        var otherHandle = ReadAnyHandoff(TextOf(otherDiscovery));
+        var otherReference = ReadAnyHandoff(TextOf(otherDiscovery));
         await AssemblyAnalysisSessionRegistry.Default.ExpireIdleSessionsAsync(DateTime.UtcNow.AddMinutes(11), assemblyPath);
 
-        var mixedEviction = await symbols.GetSymbolBody(assemblyPath, [currentHandle, "BodyRecoveryProbe.Target.Read"],
-            maxResponseBytes: 16384, maxResponseTokens: 4096);
-        AssertSuccessWithinBudget(mixedEviction, 16384, 4096);
-        Assert.Contains("Resolution status: failed (HANDOFF_OWNER_UNRESIDENT)", TextOf(mixedEviction), StringComparison.Ordinal);
-        Assert.Contains("Resolution status: resolved", TextOf(mixedEviction), StringComparison.Ordinal);
-        Assert.Contains("return 2;", TextOf(mixedEviction), StringComparison.Ordinal);
-        var otherOwnerStillResident = await symbols.GetSymbolBody(otherAssemblyPath, [otherHandle], maxResponseBytes: 16384);
+        var reopened = await symbols.GetSymbolBody(assemblyPath, [currentReference], maxResponseBytes: 16384, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(reopened, 16384, 4096);
+        Assert.Contains("Resolution status: resolved", TextOf(reopened), StringComparison.Ordinal);
+        Assert.Contains("return 2;", TextOf(reopened), StringComparison.Ordinal);
+        var otherOwnerStillResident = await symbols.GetSymbolBody(otherAssemblyPath, [otherReference], maxResponseBytes: 16384);
         AssertOwnerResult(otherOwnerStillResident, "Read");
 
         await AssemblyAnalysisSessionRegistry.Default.ExpireIdleSessionsAsync(DateTime.UtcNow.AddMinutes(11), assemblyPath);
-        var unresidentSourceContext = await relationships.GetContext(assemblyPath, currentHandle, ["body"],
-            maxResponseBytes: 16384, maxResponseTokens: 4096);
-        AssertErrorWithinBudget(unresidentSourceContext, NavigationErrorCodes.HandoffOwnerUnresident, 16384, 4096);
-        var unresidentClosureContext = await relationships.GetContext(assemblyPath, currentHandle, ["body", "callers"],
+        var reopenedContext = await relationships.GetContext(assemblyPath, currentReference, ["body", "callers"],
             includeReferences: true, maxResponseBytes: 16384, maxResponseTokens: 4096);
-        AssertErrorWithinBudget(unresidentClosureContext, NavigationErrorCodes.HandoffOwnerUnresident, 16384, 4096);
-        Assert.DoesNotContain("STALE_SNAPSHOT", TextOf(unresidentSourceContext), StringComparison.Ordinal);
-        Assert.DoesNotContain("STALE_SNAPSHOT", TextOf(unresidentClosureContext), StringComparison.Ordinal);
-        var evicted = await symbols.GetSymbolBody(assemblyPath, [currentHandle], maxResponseBytes: 16384, maxResponseTokens: 4096);
-        AssertErrorWithinBudget(evicted, NavigationErrorCodes.HandoffOwnerUnresident, 16384, 4096);
-        Assert.Contains("Repeat the original discovery query on the owner target", TextOf(evicted), StringComparison.Ordinal);
-        Assert.DoesNotContain("STALE_SNAPSHOT", TextOf(evicted), StringComparison.Ordinal);
+        AssertSuccessWithinBudget(reopenedContext, 16384, 4096);
+        using var contextDocument = ParseJsonWithDiagnostics(BodyOf(TextOf(reopenedContext)),
+            "GetContext after assembly session eviction");
+        var bodySection = Assert.Single(contextDocument.RootElement.GetProperty("sections").EnumerateArray()
+            .Where(section => section.GetProperty("name").GetString() == "body"));
+        Assert.Equal("complete", bodySection.GetProperty("status").GetString());
+        Assert.Contains("return 2;", bodySection.GetProperty("items").GetProperty("body").GetString(), StringComparison.Ordinal);
 
         var rediscovered = await symbols.FindSymbol(assemblyPath, pattern: "Target.Read", kind: "method", maxResponseBytes: 16384);
         AssertOwnerResult(rediscovered, "Read");
-        var rediscoveredHandle = ReadAnyHandoff(TextOf(rediscovered));
-        var recovered = await symbols.GetSymbolBody(assemblyPath, [rediscoveredHandle], maxResponseBytes: 16384);
+        var rediscoveredReference = ReadAnyHandoff(TextOf(rediscovered));
+        var recovered = await symbols.GetSymbolBody(assemblyPath, [rediscoveredReference], maxResponseBytes: 16384);
         AssertOwnerResult(recovered, "Read");
         Assert.Contains("return 2;", TextOf(recovered), StringComparison.Ordinal);
     }
@@ -1161,10 +1415,10 @@ public sealed class AssemblyToolsContractTests
         AssertError(await relationships.GetContext(assemblyPath, "AssemblyRouteProbe.Probe", ["tests"], maxResponseBytes: 16384), "INVALID_ARGUMENT");
         AssertError(await relationships.GetContext(assemblyPath, "AssemblyRouteProbe.Probe", ["body"], includeReferences: false,
             maxResponseBytes: 16384), "INVALID_ARGUMENT");
-        AssertError(await symbols.GetSymbolBody(assemblyPath, ["h:zzzz"], maxResponseBytes: 16384), "HANDOFF_UNKNOWN");
-        AssertError(await structure.GetClassStructure(assemblyPath, "h:zzzz", maxResponseBytes: 16384), "HANDOFF_UNKNOWN");
-        AssertError(await relationships.GetTypeHierarchy(assemblyPath, "h:zzzz", maxResponseBytes: 16384), "HANDOFF_UNKNOWN");
-        AssertError(await relationships.FindImplementations(assemblyPath, "h:zzzz", maxResponseBytes: 16384), "HANDOFF_UNKNOWN");
+        AssertError(await symbols.GetSymbolBody(assemblyPath, ["h:zzzz"], maxResponseBytes: 16384), "INVALID_SYMBOL_REFERENCE");
+        AssertError(await structure.GetClassStructure(assemblyPath, "h:zzzz", maxResponseBytes: 16384), "INVALID_SYMBOL_REFERENCE");
+        AssertError(await relationships.GetTypeHierarchy(assemblyPath, "h:zzzz", maxResponseBytes: 16384), "INVALID_SYMBOL_REFERENCE");
+        AssertError(await relationships.FindImplementations(assemblyPath, "h:zzzz", maxResponseBytes: 16384), "INVALID_SYMBOL_REFERENCE");
         AssertError(await assemblies.SearchAssembly(assemblyPath, pattern: "(", isRegex: true, maxResponseBytes: 16384), "INVALID_ARGUMENT");
         AssertError(await assemblies.SearchAssembly(assemblyPath, pattern: null, maxResponseBytes: 16384), "INVALID_ARGUMENT");
 
@@ -1329,7 +1583,8 @@ public sealed class AssemblyToolsContractTests
                 initialContinuation: null);
             Assert.Equal(broadPage.Text, smallPage.Text);
             Assert.True(smallPage.Pages > 1, "This inspect domain page must itself require outer response pages.");
-            using var pageJson = System.Text.Json.JsonDocument.Parse(broadPage.Text);
+            using var pageJson = ParseJsonWithDiagnostics(broadPage.Text,
+                $"InspectAssembly reconstructed domain page (resultCursor={inspectDomainCursor ?? "<first>"}, outerPages={broadPage.Pages}, smallerBudgetOuterPages={smallPage.Pages}, budgets=65536/16000 and 4096/1600)");
             inspectNames.Add(pageJson.RootElement.GetProperty("types")[0].GetProperty("name").GetString()!);
             fullInspectCursor = ReadOptionalDomainCursor(broadPage.Text);
             inspectDomains++;
@@ -1337,18 +1592,25 @@ public sealed class AssemblyToolsContractTests
         Assert.Equal(8, inspectDomains);
         Assert.Equal(Enumerable.Range(0, 8).Select(index => $"Probe{index}"), inspectNames);
 
-        var searchFirst = await assemblies.SearchAssembly(assemblyPath, pattern: "Needle", declarationOnly: true,
-            kind: "method", maxResults: 100, maxFiles: 0, maxResponseBytes: 65536, maxResponseTokens: 50000);
-        AssertOwnerResultWithinBudget(searchFirst, "Needle0", 65536, 50000);
-        var searchCursor = ReadDomainCursor(TextOf(searchFirst));
-        var searchNext = await assemblies.SearchAssembly(assemblyPath, pattern: "Needle", declarationOnly: true,
-            kind: "method", maxResults: 100, maxFiles: 0, resultCursor: searchCursor,
-            maxResponseBytes: 65536, maxResponseTokens: 50000);
-        AssertOwnerPage(TextOf(searchNext));
-        Assert.Contains("Probe", TextOf(searchNext), StringComparison.Ordinal);
-        Assert.Equal(TextOf(searchNext), TextOf(await assemblies.SearchAssembly(assemblyPath, pattern: "Needle",
-            declarationOnly: true, kind: "method", maxResults: 100, maxFiles: 0, resultCursor: searchCursor,
-            maxResponseBytes: 65536, maxResponseTokens: 50000)));
+        var searchFirstPages = await ReadOuterPagesAsync((bytes, tokens, continuation) => assemblies.SearchAssembly(
+            assemblyPath, pattern: "Needle", declarationOnly: true, kind: "method", maxResults: 100, maxFiles: 0,
+            maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 65536, 50000);
+        AssertOwnerPage(searchFirstPages.FirstPage);
+        Assert.Contains("Needle0", searchFirstPages.Text, StringComparison.Ordinal);
+        Assert.True(searchFirstPages.Pages > 1, "The first search domain page must be reconstructed from its outer response pages.");
+        var searchCursor = ReadDomainCursor(searchFirstPages.Text);
+        var searchNextPages = await ReadOuterPagesAsync((bytes, tokens, continuation) => assemblies.SearchAssembly(
+            assemblyPath, pattern: "Needle", declarationOnly: true, kind: "method", maxResults: 100, maxFiles: 0,
+            resultCursor: continuation is null ? searchCursor : null,
+            maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 65536, 50000);
+        AssertOwnerPage(searchNextPages.FirstPage);
+        Assert.Contains("Probe", searchNextPages.Text, StringComparison.Ordinal);
+        var searchReplayPages = await ReadOuterPagesAsync((bytes, tokens, continuation) => assemblies.SearchAssembly(
+            assemblyPath, pattern: "Needle", declarationOnly: true, kind: "method", maxResults: 100, maxFiles: 0,
+            resultCursor: continuation is null ? searchCursor : null,
+            maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 65536, 50000);
+        Assert.Equal(searchNextPages.Text, searchReplayPages.Text);
+        Assert.Equal(searchNextPages.Pages, searchReplayPages.Pages);
         AssertError(await assemblies.SearchAssembly(assemblyPath, pattern: "Needle", declarationOnly: true,
             kind: "type", maxResults: 1, maxFiles: 0, resultCursor: searchCursor, maxResponseBytes: 16384), "RESULT_CURSOR_ARGUMENT_MISMATCH");
         AssertError(await assemblies.SearchAssembly(foreignPath, pattern: "Needle", declarationOnly: true,
@@ -1369,7 +1631,8 @@ public sealed class AssemblyToolsContractTests
                 initialContinuation: null);
             Assert.Equal(broadPage.Text, smallPage.Text);
             Assert.True(smallPage.Pages > 1, "This search domain page must itself require outer response pages.");
-            using var pageJson = System.Text.Json.JsonDocument.Parse(broadPage.Text);
+            using var pageJson = ParseJsonWithDiagnostics(broadPage.Text,
+                $"SearchAssembly reconstructed domain page (resultCursor={searchDomainCursor ?? "<first>"}, outerPages={broadPage.Pages}, smallerBudgetOuterPages={smallPage.Pages}, budgets=65536/16000 and 4096/1600)");
             foreach (var hit in pageJson.RootElement.GetProperty("results").EnumerateArray())
                 searchNames.Add(hit.GetProperty("symbol").GetString()!);
             fullSearchCursor = ReadOptionalDomainCursor(broadPage.Text);
@@ -1500,7 +1763,7 @@ public sealed class AssemblyToolsContractTests
         Assert.Equal(compactExtensionJson.RootElement.GetProperty("totalCount").GetInt32(), detailedExtensionJson.RootElement.GetProperty("totalCount").GetInt32());
         var ownExtension = Assert.Single(compactExtensionJson.RootElement.GetProperty("extensions").EnumerateArray());
         Assert.Equal("Twice", ownExtension.GetProperty("name").GetString());
-        Assert.StartsWith("h:", ownExtension.GetProperty("handoffId").GetString(), StringComparison.Ordinal);
+        Assert.StartsWith("asm:", ownExtension.GetProperty("handoffId").GetString(), StringComparison.Ordinal);
         Assert.Equal(target, ownExtension.GetProperty("ownerTargetPath").GetString(), ignoreCase: true);
         Assert.Contains("incompleteRelationships", compactExtensionJson.RootElement.GetProperty("analysis").GetProperty("omissionReasons").GetRawText(), StringComparison.Ordinal);
         Assert.DoesNotContain(Path.GetFileName(dependency), TextOf(compactExtensions), StringComparison.OrdinalIgnoreCase);
@@ -1557,9 +1820,22 @@ public sealed class AssemblyToolsContractTests
             maxResults: 10, maxResponseBytes: 65536, maxResponseTokens: 4096, operationToken: operation));
         AssertOwnerResult(leafFromRoot, "Read");
         var leafHandle = ReadHandoff(TextOf(leafFromRoot), "Read");
-        var leafBody = await symbols.GetSymbolBody(leaf, [leafHandle], maxResponseBytes: 32768, maxResponseTokens: 4096);
-        Assert.False(leafBody.IsError ?? false, TextOf(leafBody) + "\nProducer:\n" + TextOf(leafFromRoot) + "\nHandle: " + leafHandle);
-        Assert.Contains("Read", TextOf(leafBody), StringComparison.Ordinal);
+        var leafBodyPages = await ReadAssemblyOuterPagesAsync((operation, _, continuation, bytes, tokens) =>
+            symbols.GetSymbolBody(leaf, [leafHandle], maxBodyLines: 1000, operationToken: operation,
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation),
+            domainCursor: null, bytes: 32768, tokens: 4096);
+        var leafBodyText = leafBodyPages.Text;
+        Assert.Contains("Read", leafBodyText, StringComparison.Ordinal);
+        Assert.Contains("Resolution status: resolved (availability: available)", leafBodyText, StringComparison.Ordinal);
+        Assert.Contains(longLiteral, leafBodyText, StringComparison.Ordinal);
+        Assert.Contains(".Length", leafBodyText, StringComparison.Ordinal);
+        Assert.Contains("return", leafBodyText, StringComparison.OrdinalIgnoreCase);
+        const string completeBodyMarker = "\nNext action: none; this declaration window is complete.\n";
+        var bodyContentStart = leafBodyText.IndexOf(completeBodyMarker, StringComparison.Ordinal);
+        Assert.True(bodyContentStart >= 0, leafBodyText);
+        var leafBodyContent = leafBodyText[(bodyContentStart + completeBodyMarker.Length)..];
+        AssertErrorWithinBudget(await symbols.GetSymbolBody(root, [leafHandle], maxResponseBytes: 32768, maxResponseTokens: 4096),
+            "TARGET_MISMATCH", 32768, 4096);
 
         var extensionMatches = new List<(string Name, string Owner, string Handoff)>();
         string? extensionCursor = null;
@@ -1567,10 +1843,14 @@ public sealed class AssemblyToolsContractTests
         var extensionPages = 0;
         do
         {
-            var page = await PollAssemblyOwnerAsync(operation => assemblies.FindAssemblyExtensions(root,
-                receiverType: "System.Int32", includeReferences: true, maxResults: 1,
-                resultCursor: extensionCursor, maxResponseBytes: 65536, maxResponseTokens: 4096, operationToken: operation));
-            using var document = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(page)));
+            var page = await ReadAssemblyOuterPagesAsync((operation, domainCursor, continuation, bytes, tokens) =>
+                assemblies.FindAssemblyExtensions(root, receiverType: "System.Int32", includeReferences: true, maxResults: 1,
+                    resultCursor: domainCursor, maxResponseBytes: bytes, maxResponseTokens: tokens,
+                    operationToken: operation, continuationToken: continuation),
+                extensionCursor, bytes: 65536, tokens: 4096);
+            AssertOwnerPage(page.FirstPage);
+            using var document = ParseJsonWithDiagnostics(BodyOf(page.Text),
+                $"Closure extension domain page (domainCursor={extensionCursor ?? "<first>"}, outerPages={page.Pages})");
             var pageRoot = document.RootElement;
             foreach (var item in pageRoot.GetProperty("extensions").EnumerateArray())
             {
@@ -1599,12 +1879,28 @@ public sealed class AssemblyToolsContractTests
             maxResponseBytes: 65536, maxResponseTokens: 4096),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 4096);
 
-        var incoming = await PollAssemblyOwnerAsync(operation => relationships.GetCallTree(root, leafHandle, direction: "incoming", depth: 3,
-            includeReferences: true, maxResponseBytes: 65536, maxResponseTokens: 4096, operationToken: operation));
-        AssertOwnerPage(TextOf(incoming));
-        var incomingText = TextOf(incoming);
-        Assert.Contains("ClosureBridge", incomingText, StringComparison.Ordinal);
-        Assert.Contains("ClosureRoot", incomingText, StringComparison.Ordinal);
+        const string closureDeclarationId = "M:ClosureLeaf.Leaf.Read";
+        AssertErrorWithinBudget(await relationships.GetCallTree(root, leafHandle, direction: "incoming", depth: 3,
+            includeReferences: true, maxResponseBytes: 65536, maxResponseTokens: 4096), "TARGET_MISMATCH", 65536, 4096);
+        var incoming = await ReadAssemblyOuterPagesAsync((operation, _, continuation, bytes, tokens) =>
+            relationships.GetCallTree(root, closureDeclarationId, direction: "incoming", depth: 3,
+                includeReferences: true, maxResponseBytes: bytes, maxResponseTokens: tokens,
+                operationToken: operation, continuationToken: continuation),
+            domainCursor: null, bytes: 65536, tokens: 4096);
+        AssertOwnerPage(incoming.FirstPage);
+        var incomingText = incoming.Text;
+        var firstOuterContinuation = TryReadToken(incoming.FirstPage, "continuationToken", out var firstOuterToken)
+            ? firstOuterToken : "<none>";
+        var firstMetadata = string.Join(Environment.NewLine, incoming.FirstPage.Split('\n').Where(line =>
+            line.StartsWith("Status:", StringComparison.Ordinal)
+            || line.StartsWith("snapshotId=", StringComparison.Ordinal)
+            || line.StartsWith("analyzedScope=", StringComparison.Ordinal)
+            || line.StartsWith("analysisCompleteness=", StringComparison.Ordinal)
+            || line.StartsWith("resultContinuation=", StringComparison.Ordinal)));
+        Assert.True(incomingText.Contains("ClosureBridge", StringComparison.Ordinal),
+            $"Bridge caller missing after reconstructing {incoming.Pages} outer page(s). First outer continuation={firstOuterContinuation}. First metadata:\n{firstMetadata}\nFirst response:\n{incoming.FirstPage}\nReconstructed graph:\n{incomingText}");
+        Assert.True(incomingText.Contains("ClosureRoot", StringComparison.Ordinal),
+            $"Root caller missing after reconstructing {incoming.Pages} outer page(s). First outer continuation={firstOuterContinuation}. First metadata:\n{firstMetadata}\nFirst response:\n{incoming.FirstPage}\nReconstructed graph:\n{incomingText}");
         Assert.Contains(leaf, incomingText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(bridge, incomingText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(root, incomingText, StringComparison.OrdinalIgnoreCase);
@@ -1615,10 +1911,14 @@ public sealed class AssemblyToolsContractTests
         var rootBody = await symbols.GetSymbolBody(root, [rootHandle], maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertOwnerResult(rootBody, "Run");
 
-        var references = await PollAssemblyOwnerAsync(operation => relationships.FindReferences(root, leafHandle, includeReferences: true, depth: 3,
-            maxResponseBytes: 65536, maxResponseTokens: 4096, operationToken: operation));
-        AssertOwnerPage(TextOf(references));
-        var referencesText = TextOf(references);
+        AssertErrorWithinBudget(await relationships.FindReferences(root, leafHandle, includeReferences: true, depth: 3,
+            maxResponseBytes: 65536, maxResponseTokens: 4096), "TARGET_MISMATCH", 65536, 4096);
+        var references = await ReadAssemblyOuterPagesAsync((operation, _, continuation, bytes, tokens) =>
+            relationships.FindReferences(root, closureDeclarationId, includeReferences: true, depth: 3,
+                maxResponseBytes: bytes, maxResponseTokens: tokens, operationToken: operation, continuationToken: continuation),
+            domainCursor: null, bytes: 65536, tokens: 4096);
+        AssertOwnerPage(references.FirstPage);
+        var referencesText = references.Text;
         Assert.Contains("ClosureBridge", referencesText, StringComparison.Ordinal);
         Assert.Contains("ClosureRoot", referencesText, StringComparison.Ordinal);
 
@@ -1627,10 +1927,15 @@ public sealed class AssemblyToolsContractTests
         var referencePages = 0;
         do
         {
-            var page = await PollAssemblyOwnerAsync(operation => relationships.FindReferences(root, leafHandle,
-                includeReferences: true, depth: 3, maxResults: 1, resultCursor: referenceCursor,
-                maxResponseBytes: 65536, maxResponseTokens: 4096, operationToken: operation));
-            using var document = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(page)));
+            var page = await ReadAssemblyOuterPagesAsync((operation, domainCursor, continuation, bytes, tokens) =>
+                relationships.FindReferences(root, closureDeclarationId,
+                    includeReferences: true, depth: 3, maxResults: 1, resultCursor: domainCursor,
+                    maxResponseBytes: bytes, maxResponseTokens: tokens,
+                    operationToken: operation, continuationToken: continuation),
+                referenceCursor, bytes: 65536, tokens: 4096);
+            AssertOwnerPage(page.FirstPage);
+            using var document = ParseJsonWithDiagnostics(BodyOf(page.Text),
+                $"Closure references domain page (domainCursor={referenceCursor ?? "<first>"}, outerPages={page.Pages})");
             var pageRoot = document.RootElement;
             foreach (var item in pageRoot.GetProperty("references").EnumerateArray())
                 pagedReferences.Add($"{item.GetProperty("ownerTargetPath").GetString()}:{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}");
@@ -1649,10 +1954,15 @@ public sealed class AssemblyToolsContractTests
         var impactPages = 0;
         do
         {
-            var page = await PollAssemblyOwnerAsync(operation => relationships.GetImpact(root, leafHandle,
-                includeReferences: true, depth: 3, maxResults: 1, resultCursor: impactCursor,
-                maxResponseBytes: 65536, maxResponseTokens: 4096, operationToken: operation));
-            using var document = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(page)));
+            var page = await ReadAssemblyOuterPagesAsync((operation, domainCursor, continuation, bytes, tokens) =>
+                relationships.GetImpact(root, closureDeclarationId,
+                    includeReferences: true, depth: 3, maxResults: 1, resultCursor: domainCursor,
+                    maxResponseBytes: bytes, maxResponseTokens: tokens,
+                    operationToken: operation, continuationToken: continuation),
+                impactCursor, bytes: 65536, tokens: 4096);
+            AssertOwnerPage(page.FirstPage);
+            using var document = ParseJsonWithDiagnostics(BodyOf(page.Text),
+                $"Closure impact domain page (domainCursor={impactCursor ?? "<first>"}, outerPages={page.Pages})");
             var pageRoot = document.RootElement;
             foreach (var item in pageRoot.GetProperty("callSites").EnumerateArray())
                 pagedImpact.Add($"{item.GetProperty("ownerTargetPath").GetString()}:{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}");
@@ -1666,17 +1976,33 @@ public sealed class AssemblyToolsContractTests
         Assert.Equal(2, pagedImpact.Count);
         Assert.Equal(2, pagedImpact.Distinct(StringComparer.OrdinalIgnoreCase).Count());
         Assert.NotNull(firstImpactCursor);
-        AssertErrorWithinBudget(await relationships.GetImpact(root, leafHandle, includeReferences: true, depth: 3,
+        AssertErrorWithinBudget(await relationships.GetImpact(root, closureDeclarationId, includeReferences: true, depth: 3,
             maxResults: 2, resultCursor: firstImpactCursor, maxResponseBytes: 65536, maxResponseTokens: 4096),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 4096);
         Assert.Contains("Forward", referencesText, StringComparison.Ordinal);
 
-        var context = await PollAssemblyOwnerAsync(operation => relationships.GetContext(root, leafHandle, ["body", "callers"],
-            includeReferences: true, maxResults: 20, maxResponseBytes: 65536, maxResponseTokens: 12000, operationToken: operation));
-        AssertSuccessWithinBudget(context, 65536, 12000);
-        var contextText = TextOf(context);
+        AssertErrorWithinBudget(await relationships.GetContext(root, leafHandle, ["body", "callers"],
+            includeReferences: true, maxResults: 20, maxBodyLines: 1000, maxResponseBytes: 65536, maxResponseTokens: 12000), "TARGET_MISMATCH", 65536, 12000);
+        AssertErrorWithinBudget(await relationships.GetImpact(root, leafHandle, includeReferences: true, depth: 3,
+            maxResponseBytes: 65536, maxResponseTokens: 4096), "TARGET_MISMATCH", 65536, 4096);
+        var context = await ReadAssemblyOuterPagesAsync((operation, _, continuation, bytes, tokens) =>
+            relationships.GetContext(root, closureDeclarationId, ["body", "callers"], includeReferences: true,
+                maxResults: 20, maxBodyLines: 1000, maxResponseBytes: bytes, maxResponseTokens: tokens,
+                operationToken: operation, continuationToken: continuation),
+            domainCursor: null, bytes: 65536, tokens: 12000);
+        AssertOwnerPage(context.FirstPage);
+        var contextText = context.Text;
         Assert.Contains("callers", contextText, StringComparison.Ordinal);
         Assert.Contains("ClosureBridge", contextText, StringComparison.Ordinal);
+        using var contextDocument = ParseJsonWithDiagnostics(BodyOf(contextText), "Root-anchored closure context");
+        var bodySection = Assert.Single(contextDocument.RootElement.GetProperty("sections").EnumerateArray()
+            .Where(section => section.GetProperty("name").GetString() == "body"));
+        Assert.Equal("complete", bodySection.GetProperty("status").GetString());
+        var contextBody = bodySection.GetProperty("items").GetProperty("body").GetString()
+            ?? throw new Xunit.Sdk.XunitException("The root-anchored body section omitted its body text.");
+        Assert.Equal(leafBodyContent, contextBody);
+        Assert.Contains(longLiteral, contextBody, StringComparison.Ordinal);
+        Assert.Contains(".Length", contextBody, StringComparison.Ordinal);
     }
 
     private static void AssertDeclarationOrder(string text)
@@ -1726,7 +2052,7 @@ public sealed class AssemblyToolsContractTests
             var handoff = selected.ValueKind == System.Text.Json.JsonValueKind.Object
                 ? selected.GetProperty("handoffId").GetString()
                 : null;
-            Assert.True(handoff?.StartsWith("h:", StringComparison.Ordinal) == true, body);
+            Assert.True(handoff?.StartsWith("asm:", StringComparison.Ordinal) == true, body);
             return handoff!;
         }
         var line = text.Split('\n').First(line => line.Contains(memberName, StringComparison.Ordinal)
@@ -1747,7 +2073,7 @@ public sealed class AssemblyToolsContractTests
             && string.Equals(Path.GetFullPath(entry.GetProperty("ownerTargetPath").GetString()!),
                 Path.GetFullPath(ownerTargetPath), StringComparison.OrdinalIgnoreCase)));
         var handoff = selected.GetProperty("handoffId").GetString();
-        Assert.True(handoff?.StartsWith("h:", StringComparison.Ordinal) == true,
+        Assert.True(handoff?.StartsWith("asm:", StringComparison.Ordinal) == true,
             $"The selected owner result for {documentationId} did not include a handoff.");
         return handoff!;
     }
@@ -1755,62 +2081,28 @@ public sealed class AssemblyToolsContractTests
     private static string ReadCallTreeHandoff(string text, string name, string expectedOwnerPath)
     {
         var line = text.Split('\n').FirstOrDefault(value => value.Contains(name, StringComparison.Ordinal)
-            && value.Contains("h:", StringComparison.Ordinal));
+            && value.Contains("asm:", StringComparison.Ordinal));
         Assert.True(line is not null, text);
         Assert.Contains("targetPath: " + expectedOwnerPath, line, StringComparison.OrdinalIgnoreCase);
-        var marker = "`h:";
-        var start = line.IndexOf(marker, StringComparison.Ordinal);
-        Assert.True(start >= 0, line);
-        start += 1;
-        var end = line.IndexOf('`', start + 2);
-        Assert.True(end > start, line);
-        return line[start..end];
+        var reference = Assert.Single(IntegrationMcpAssertions.ReadStableReferences(line!));
+        Assert.StartsWith("asm:", reference, StringComparison.Ordinal);
+        return reference;
     }
 
     private static string ReadAnyHandoff(string text)
     {
-        var body = IntegrationMcpAssertions.BodyOf(text);
-        if (body.TrimStart().StartsWith("{", StringComparison.Ordinal))
-        {
-            using var document = System.Text.Json.JsonDocument.Parse(body);
-            var handoff = FindFirstHandoff(document.RootElement);
-            if (handoff?.StartsWith("h:", StringComparison.Ordinal) == true) return handoff;
-        }
-        for (var start = text.IndexOf("h:", StringComparison.Ordinal); start >= 0;
-             start = text.IndexOf("h:", start + 2, StringComparison.Ordinal))
-        {
-            var end = start + 2;
-            while (end < text.Length && char.IsAsciiLetterOrDigit(text[end])) end++;
-            if (end > start + 2) return text[start..end];
-        }
-        Assert.Fail("The handler did not emit an opaque assembly handoff.\n" + text);
+        var handoff = IntegrationMcpAssertions.ReadStableReferences(text)
+            .FirstOrDefault(reference => reference.StartsWith("asm:", StringComparison.Ordinal));
+        if (handoff is not null) return handoff;
+        Assert.Fail("The handler did not emit a canonical assembly reference.\n" + text);
         return string.Empty;
     }
 
-    private static string? FindFirstHandoff(System.Text.Json.JsonElement element)
+    private static string ReadAnyStableReference(string text)
     {
-        if (element.ValueKind == System.Text.Json.JsonValueKind.Object)
-        {
-            foreach (var property in element.EnumerateObject())
-            {
-                if (property.NameEquals("handoffId") && property.Value.ValueKind == System.Text.Json.JsonValueKind.String)
-                {
-                    var value = property.Value.GetString();
-                    if (!string.IsNullOrWhiteSpace(value)) return value;
-                }
-                var nested = FindFirstHandoff(property.Value);
-                if (!string.IsNullOrWhiteSpace(nested)) return nested;
-            }
-        }
-        else if (element.ValueKind == System.Text.Json.JsonValueKind.Array)
-        {
-            foreach (var item in element.EnumerateArray())
-            {
-                var nested = FindFirstHandoff(item);
-                if (!string.IsNullOrWhiteSpace(nested)) return nested;
-            }
-        }
-        return null;
+        var reference = IntegrationMcpAssertions.ReadStableReferences(text).FirstOrDefault();
+        Assert.True(reference is not null, text);
+        return reference!;
     }
 
     private static int ReadPosition(string text)
@@ -1861,7 +2153,7 @@ public sealed class AssemblyToolsContractTests
         var body = await symbols.GetSymbolBody(targetPath, [handle], maxResponseBytes: 32768, maxResponseTokens: 4096);
         var text = TextOf(body);
         Assert.False(body.IsError ?? false, text);
-        Assert.DoesNotContain("HANDOFF_UNKNOWN", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("INVALID_SYMBOL_REFERENCE", text, StringComparison.Ordinal);
         Assert.DoesNotContain("TARGET_MISMATCH", text, StringComparison.Ordinal);
         Assert.Contains("Status: operation=ok", text, StringComparison.Ordinal);
     }
@@ -1940,9 +2232,29 @@ public sealed class AssemblyToolsContractTests
 
         var repeated = await invoke(minBytes, minTokens);
         var repeatedText = TextOf(repeated);
-        Assert.Equal(recoveredText, repeatedText);
+        Assert.False(repeated.IsError ?? false, repeatedText);
+        Assert.DoesNotContain("RESPONSE_BUDGET_TOO_SMALL", repeatedText, StringComparison.Ordinal);
+        AssertOwnerPage(repeatedText);
+        Assert.Equal(NormalizeOuterContinuationToken(recoveredText), NormalizeOuterContinuationToken(repeatedText));
         Assert.InRange(Encoding.UTF8.GetByteCount(repeatedText), 0, minBytes);
         Assert.InRange(TokenCount(repeatedText), 0, minTokens);
+    }
+
+    private static string NormalizeOuterContinuationToken(string text)
+    {
+        var lines = text.Split('\n');
+        var tokenLines = Enumerable.Range(0, lines.Length)
+            .Where(index => lines[index].StartsWith("continuationToken=", StringComparison.Ordinal)).ToArray();
+        Assert.InRange(tokenLines.Length, 0, 1);
+        if (tokenLines.Length == 0) return text;
+
+        var index = tokenLines[0];
+        var tokenLine = lines[index];
+        var token = tokenLine["continuationToken=".Length..].TrimEnd('\r');
+        Assert.NotEmpty(token);
+        Assert.All(token, character => Assert.True(char.IsAsciiDigit(character), tokenLine));
+        lines[index] = "continuationToken=<outer-page-token>" + (tokenLine.EndsWith('\r') ? "\r" : string.Empty);
+        return string.Join('\n', lines);
     }
 
     private static void AssertOwnerPage(string text)
@@ -1963,8 +2275,27 @@ public sealed class AssemblyToolsContractTests
         var body = BodyOf(text);
         var jsonStart = body.IndexOf('{');
         Assert.True(jsonStart >= 0, body);
-        using var document = System.Text.Json.JsonDocument.Parse(body[jsonStart..]);
+        using var document = ParseJsonWithDiagnostics(body[jsonStart..],
+            $"Assembly owner response domain cursor (responseLength={text.Length})");
         return document.RootElement.TryGetProperty("resultCursor", out var cursor) ? cursor.GetString() : null;
+    }
+
+    private static Task<(string Text, int Pages, string FirstPage)> ReadAssemblyOuterPagesAsync(
+        Func<string?, string?, string?, int, int?, Task<CallToolResult>> invoke,
+        string? domainCursor,
+        int bytes,
+        int tokens)
+    {
+        var firstOuterRequest = true;
+        return ReadOuterResponsePagesAsync((pageBytes, pageTokens, continuation) =>
+        {
+            if (firstOuterRequest)
+            {
+                firstOuterRequest = false;
+                return PollAssemblyOwnerAsync(operation => invoke(operation, domainCursor, null, pageBytes, pageTokens));
+            }
+            return invoke(null, null, continuation, pageBytes, pageTokens);
+        }, bytes, tokens);
     }
 
     private static async Task<(string Text, int Pages, string FirstPage)> ReadOuterPagesAsync(
@@ -1972,28 +2303,7 @@ public sealed class AssemblyToolsContractTests
         int bytes,
         int tokens,
         string? initialContinuation = null)
-    {
-        var accumulated = new StringBuilder();
-        string? continuation = initialContinuation;
-        string? firstPage = null;
-        for (var pageNumber = 0; pageNumber < 100; pageNumber++)
-        {
-            var result = await invoke(bytes, tokens, continuation);
-            var text = TextOf(result);
-            firstPage ??= text;
-            Assert.False(result.IsError ?? false, $"Outer page {pageNumber} failed: {text}");
-            Assert.InRange(Encoding.UTF8.GetByteCount(text), 0, bytes);
-            Assert.InRange(TokenCount(text), 0, tokens);
-            Assert.DoesNotContain("operation=running", text, StringComparison.Ordinal);
-            Assert.DoesNotContain("operation=retry", text, StringComparison.Ordinal);
-            accumulated.Append(BodyOf(text));
-            continuation = ReadOuterContinuation(text);
-            if (continuation is null) return (accumulated.ToString(), pageNumber + 1, firstPage);
-            Assert.NotEmpty(continuation);
-            Assert.All(continuation, character => Assert.True(char.IsAsciiDigit(character)));
-        }
-        throw new Xunit.Sdk.XunitException("The outer response did not reach its final page.");
-    }
+        => await ReadOuterResponsePagesAsync(invoke, bytes, tokens, initialContinuation);
 
     private static async Task<(string Text, int Pages, bool SawExactBudgetRecovery)> ReadOuterPagesWithBudgetRecoveryAsync(
         Func<int, int?, string?, Task<CallToolResult>> invoke)

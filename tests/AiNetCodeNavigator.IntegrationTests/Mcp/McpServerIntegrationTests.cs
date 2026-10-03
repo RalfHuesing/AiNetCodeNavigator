@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
+using AiNetCodeNavigator.Core.Symbols;
 
 namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 
@@ -593,15 +594,15 @@ public sealed class McpServerIntegrationTests
             var cases = new (string Tool, Dictionary<string, object?> Arguments, string ExpectedCode)[]
             {
                 ("find_symbol", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath }, "INVALID_ARGUMENT"),
-                ("get_symbol_body", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifiers"] = new[] { "h:unknown" } }, "HANDOFF_UNKNOWN"),
+                ("get_symbol_body", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifiers"] = new[] { "h:unknown" } }, "INVALID_SYMBOL_REFERENCE"),
                 ("get_file_skeleton", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["filePaths"] = new[] { "Missing.cs" } }, "INVALID_ARGUMENT"),
-                ("get_class_structure", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "HANDOFF_UNKNOWN"),
+                ("get_class_structure", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "INVALID_SYMBOL_REFERENCE"),
                 ("get_namespace_tree", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["kind"] = "unsupported" }, "INVALID_ARGUMENT"),
                 ("get_index_scope", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath }, "INVALID_ARGUMENT"),
                 ("get_call_tree", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "h:unknown", ["direction"] = "sideways" }, "INVALID_ARGUMENT"),
-                ("find_references", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "h:unknown" }, "HANDOFF_UNKNOWN"),
-                ("get_type_hierarchy", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "HANDOFF_UNKNOWN"),
-                ("find_implementations", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "HANDOFF_UNKNOWN"),
+                ("find_references", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "h:unknown" }, "INVALID_SYMBOL_REFERENCE"),
+                ("get_type_hierarchy", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "INVALID_SYMBOL_REFERENCE"),
+                ("find_implementations", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "INVALID_SYMBOL_REFERENCE"),
                 ("get_impact", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = " " }, "INVALID_ARGUMENT"),
                 ("dependency_graph", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath }, "INVALID_ARGUMENT"),
                 ("resolve_type_origin", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "", ["typeName"] = "" }, "INVALID_ARGUMENT"),
@@ -690,7 +691,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             var sourceText = GetFirstText(sourceFind);
             Assert.Contains("CounterConsumer", sourceText, StringComparison.Ordinal);
             var sourceHandle = ExtractHandoff(sourceText);
-            Assert.StartsWith("h:", sourceHandle, StringComparison.Ordinal);
+            AssertStableReference(sourceHandle);
 
             await SendRequestAsync(process, 30, "tools/call", new
             {
@@ -743,7 +744,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             }, timeout.Token);
             var unknownSourceHandoff = await ReadResponseAsync(process, 35, timeout.Token);
             Assert.True(unknownSourceHandoff.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(unknownSourceHandoff));
-            Assert.Contains("HANDOFF_UNKNOWN", GetFirstText(unknownSourceHandoff), StringComparison.Ordinal);
+            Assert.Contains("INVALID_SYMBOL_REFERENCE", GetFirstText(unknownSourceHandoff), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 12, "tools/call", new
             {
@@ -804,7 +805,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             var skeleton = await ReadResponseAsync(process, 7, timeout.Token);
             Assert.False(skeleton.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("CounterConsumer", GetFirstText(skeleton), StringComparison.Ordinal);
-            Assert.Contains("handoffId: `h:", GetFirstText(skeleton), StringComparison.Ordinal);
+            Assert.Contains("handoffId: `src:", GetFirstText(skeleton), StringComparison.Ordinal);
 
             var absoluteSourcePath = Path.Combine(Path.GetDirectoryName(solutionPath)!, "NavigationFixture.cs");
             await SendRequestAsync(process, 36, "tools/call", new
@@ -873,7 +874,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             var structure = await ReadResponseAsync(process, 8, timeout.Token);
             Assert.False(structure.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("CounterConsumer", GetFirstText(structure), StringComparison.Ordinal);
-            Assert.Contains("[handoff: h:", GetFirstText(structure), StringComparison.Ordinal);
+            Assert.Contains("[handoff: src:", GetFirstText(structure), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 80, "tools/call", new
             {
@@ -962,7 +963,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             var assemblyFind = await ReadResponseAsync(process, 5, timeout.Token);
             Assert.False(assemblyFind.GetProperty("result").GetProperty("isError").GetBoolean());
             var assemblyHandle = ExtractHandoff(GetFirstText(assemblyFind));
-            Assert.StartsWith("h:", assemblyHandle, StringComparison.Ordinal);
+            AssertStableReference(assemblyHandle);
 
             await SendRequestAsync(process, 33, "tools/call", new
             {
@@ -1312,7 +1313,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                 Assert.False(caller.ValueKind == JsonValueKind.Undefined, responseText);
                 Assert.True(payload.GetProperty("directCallersCount").GetInt32() > 0, responseText);
                 callerHandoff ??= caller.GetProperty("callingMemberHandoffId").GetString();
-                Assert.StartsWith("h:", callerHandoff, StringComparison.Ordinal);
+                AssertStableReference(callerHandoff);
                 if (baselineImpactPayload is { } expected)
                 {
                     Assert.Equal(expected.GetProperty("directCallersCount").GetInt32(), payload.GetProperty("directCallersCount").GetInt32());
@@ -1450,7 +1451,7 @@ if (Directory.Exists(fixtureRoot))
                 .Single(entry => entry.GetProperty("enclosingSymbolName").GetString() == "ClosureB.Run");
             Assert.Equal(Path.GetFullPath(bPath), bCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
             var bCallerHandoff = bCaller.GetProperty("enclosingSymbolHandoffId").GetString();
-            Assert.StartsWith("h:", bCallerHandoff, StringComparison.Ordinal);
+            AssertStableReference(bCallerHandoff);
             await SendRequestAsync(process, 28, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -1464,7 +1465,7 @@ if (Directory.Exists(fixtureRoot))
                 .Single(entry => entry.GetProperty("enclosingSymbolName").GetString() == "ClosureOnlyC.LocalRun");
             Assert.Equal(ownedCPath, cCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
             var cCallerHandoff = cCaller.GetProperty("enclosingSymbolHandoffId").GetString();
-            Assert.StartsWith("h:", cCallerHandoff, StringComparison.Ordinal);
+            AssertStableReference(cCallerHandoff);
             await SendRequestAsync(process, 29, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -1558,7 +1559,7 @@ if (Directory.Exists(fixtureRoot))
                 .Single(line => line.Contains("handoffId:", StringComparison.Ordinal)
                     && line.Contains(Path.GetFullPath(ownedCPath), StringComparison.OrdinalIgnoreCase));
             var mermaidHandoff = mermaidOwnerLine.Split("handoffId:", StringSplitOptions.None)[1].Split(';')[0].Trim();
-            Assert.StartsWith("h:", mermaidHandoff, StringComparison.Ordinal);
+            AssertStableReference(mermaidHandoff);
             await SendRequestAsync(process, 40, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -1593,7 +1594,7 @@ if (Directory.Exists(fixtureRoot))
                 .Single(site => site.GetProperty("callingMember").GetString() == "ClosureB.Run");
             Assert.Equal(Path.GetFullPath(bPath), impactBCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
             var impactBHandle = impactBCaller.GetProperty("callingMemberHandoffId").GetString();
-            Assert.StartsWith("h:", impactBHandle, StringComparison.Ordinal);
+            AssertStableReference(impactBHandle);
             await SendRequestAsync(process, 44, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -1654,7 +1655,7 @@ if (Directory.Exists(fixtureRoot))
                 item.GetProperty("enclosingSymbolName").GetString() == "ClosureB.Run");
             Assert.Equal(Path.GetFullPath(bPath), contextBCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
             var contextCallerHandle = contextBCaller.GetProperty("enclosingSymbolHandoffId").GetString();
-            Assert.StartsWith("h:", contextCallerHandle, StringComparison.Ordinal);
+            AssertStableReference(contextCallerHandle);
             await SendRequestAsync(process, 47, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -1692,7 +1693,7 @@ if (Directory.Exists(fixtureRoot))
             Assert.Equal(Path.GetFullPath(aPath), aCallerReference.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
             Assert.Equal(2, aCallerReference.GetProperty("depth").GetInt32());
             var aCallerReferenceHandoff = aCallerReference.GetProperty("enclosingSymbolHandoffId").GetString();
-            Assert.StartsWith("h:", aCallerReferenceHandoff, StringComparison.Ordinal);
+            AssertStableReference(aCallerReferenceHandoff);
             await SendRequestAsync(process, 85, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -1962,7 +1963,7 @@ if (Directory.Exists(fixtureRoot))
                 .FirstOrDefault(entry => entry.GetProperty("enclosingSymbolName").GetString()?.EndsWith(".Run", StringComparison.Ordinal) == true);
             Assert.False(rawBCaller.ValueKind == JsonValueKind.Undefined, rawCrossOwnerText);
             Assert.Equal(Path.GetFullPath(bPath), rawBCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
-            Assert.StartsWith("h:", rawBCaller.GetProperty("enclosingSymbolHandoffId").GetString(), StringComparison.Ordinal);
+            AssertStableReference(rawBCaller.GetProperty("enclosingSymbolHandoffId").GetString());
 
             await SendRequestAsync(process, 104, "tools/call", new
             {
@@ -1975,7 +1976,7 @@ if (Directory.Exists(fixtureRoot))
             Assert.Contains("AMBIGUOUS_SYMBOL", ambiguousRawText, StringComparison.Ordinal);
             Assert.Contains(Path.GetFullPath(aPath), ambiguousRawText, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(Path.GetFullPath(bPath), ambiguousRawText, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("handoffId: `h:", ambiguousRawText, StringComparison.Ordinal);
+            Assert.Contains("handoffId: `src:", ambiguousRawText, StringComparison.Ordinal);
             var bCandidateHandoff = ExtractOwnerCandidateHandoff(ambiguousRawText, Path.GetFullPath(bPath));
             await SendRequestAsync(process, 118, "tools/call", new
             {
@@ -2036,7 +2037,7 @@ if (Directory.Exists(fixtureRoot))
             Assert.False(baseReference.ValueKind == JsonValueKind.Undefined, GetFirstText(typeReferences));
             Assert.Equal(Path.GetFullPath(bPath), baseReference.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
             var derivedTypeHandoff = baseReference.GetProperty("enclosingSymbolHandoffId").GetString();
-            Assert.StartsWith("h:", derivedTypeHandoff, StringComparison.Ordinal);
+            AssertStableReference(derivedTypeHandoff);
             await SendRequestAsync(process, 15, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -2078,7 +2079,7 @@ if (Directory.Exists(fixtureRoot))
             }, timeout.Token);
             var unknownHandoff = await ReadResponseAsync(process, 22, timeout.Token);
             Assert.True(unknownHandoff.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(unknownHandoff));
-            Assert.True(GetFirstText(unknownHandoff).Contains("HANDOFF_UNKNOWN", StringComparison.Ordinal), GetFirstText(unknownHandoff));
+            Assert.True(GetFirstText(unknownHandoff).Contains("INVALID_SYMBOL_REFERENCE", StringComparison.Ordinal), GetFirstText(unknownHandoff));
 
             await SendRequestAsync(process, 39, "tools/call", new
             {
@@ -2089,7 +2090,7 @@ if (Directory.Exists(fixtureRoot))
             Assert.False(mixedBodyBatch.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(mixedBodyBatch));
             Assert.Contains("completeness=truncated", GetFirstText(mixedBodyBatch), StringComparison.Ordinal);
             Assert.Contains("ClosureOnlyC", GetFirstText(mixedBodyBatch), StringComparison.Ordinal);
-            Assert.Contains("HANDOFF_UNKNOWN", GetFirstText(mixedBodyBatch), StringComparison.Ordinal);
+            Assert.Contains("INVALID_SYMBOL_REFERENCE", GetFirstText(mixedBodyBatch), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 21, "tools/call", new
             {
@@ -2291,7 +2292,7 @@ if (Directory.Exists(fixtureRoot))
             Assert.Contains("more calls", text, StringComparison.Ordinal);
             Assert.Contains("Some reachable owner symbols could not be mapped or expanded within the bounded reference closure", text, StringComparison.Ordinal);
             var visibleHandoffCount = text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .Count(line => line.StartsWith("- [n", StringComparison.Ordinal) && line.Contains("`h:", StringComparison.Ordinal));
+                .Count(line => line.StartsWith("- [n", StringComparison.Ordinal) && line.Contains("`src:", StringComparison.Ordinal));
             Assert.Equal(250, visibleHandoffCount);
 
             await SendRequestAsync(process, 10, "tools/call", new
@@ -2323,7 +2324,7 @@ if (Directory.Exists(fixtureRoot))
             Assert.Contains("completeness=truncated", edgeCappedText, StringComparison.Ordinal);
             Assert.Contains("more calls", edgeCappedText, StringComparison.Ordinal);
             var edgeCappedHandoffs = edgeCappedText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .Count(line => line.StartsWith("- [n", StringComparison.Ordinal) && line.Contains("`h:", StringComparison.Ordinal));
+                .Count(line => line.StartsWith("- [n", StringComparison.Ordinal) && line.Contains("`src:", StringComparison.Ordinal));
             Assert.Equal(132, edgeCappedHandoffs);
 
             process.StandardInput.Close();
@@ -2397,7 +2398,7 @@ if (Directory.Exists(fixtureRoot))
             Assert.Single(firstHits);
             Assert.Equal("PagedAlpha", firstHits[0].GetProperty("symbol").GetString());
             Assert.Equal(Path.GetFullPath(assemblyPath), firstHits[0].GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
-            Assert.StartsWith("h:", firstHits[0].GetProperty("handoffId").GetString(), StringComparison.Ordinal);
+            AssertStableReference(firstHits[0].GetProperty("handoffId").GetString());
             Assert.True(firstPayload.GetProperty("truncated").GetBoolean());
             Assert.Contains("maxResults", firstPayload.GetProperty("truncatedBy").EnumerateArray().Select(value => value.GetString()));
             var cursor = firstPayload.GetProperty("resultCursor").GetString();
@@ -2413,7 +2414,7 @@ if (Directory.Exists(fixtureRoot))
             Assert.False(second.GetProperty("result").GetProperty("isError").GetBoolean(), secondText);
             var secondPayload = ParsePayload(secondText);
             Assert.Equal("PagedBeta", secondPayload.GetProperty("results")[0].GetProperty("symbol").GetString());
-            Assert.StartsWith("h:", secondPayload.GetProperty("results")[0].GetProperty("handoffId").GetString(), StringComparison.Ordinal);
+            AssertStableReference(secondPayload.GetProperty("results")[0].GetProperty("handoffId").GetString());
             Assert.NotEqual(cursor, secondPayload.GetProperty("resultCursor").GetString());
 
             await SendRequestAsync(process, 4, "tools/call", new
@@ -2493,10 +2494,10 @@ if (Directory.Exists(fixtureRoot))
             var hierarchyPayload = ParsePayload(hierarchyText);
             var betaSubtype = hierarchyPayload.GetProperty("subtypes").EnumerateArray()
                 .Single(entry => entry.GetProperty("name").GetString()!.Contains("PagedBeta", StringComparison.Ordinal));
-            Assert.StartsWith("h:", betaSubtype.GetProperty("handoffId").GetString(), StringComparison.Ordinal);
+            AssertStableReference(betaSubtype.GetProperty("handoffId").GetString());
             var betaImplementation = ParsePayload(implementationsText).GetProperty("implementations").EnumerateArray()
                 .Single(entry => entry.GetProperty("symbolName").GetString() == "PagedBeta");
-            Assert.StartsWith("h:", betaImplementation.GetProperty("handoffId").GetString(), StringComparison.Ordinal);
+            AssertStableReference(betaImplementation.GetProperty("handoffId").GetString());
 
             await SendRequestAsync(process, 45, "tools/call", new
             {
@@ -2636,7 +2637,7 @@ if (Directory.Exists(fixtureRoot))
                 .Single(item => item.GetProperty("snippet").GetString()!.Contains("ReadBeta", StringComparison.Ordinal));
             Assert.Contains("BetaInvoker.Invoke", betaReference.GetProperty("enclosingSymbolName").GetString(), StringComparison.Ordinal);
             var referenceCallerHandle = betaReference.GetProperty("enclosingSymbolHandoffId").GetString();
-            Assert.StartsWith("h:", referenceCallerHandle, StringComparison.Ordinal);
+            AssertStableReference(referenceCallerHandle);
             await SendRequestAsync(process, 62, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -2673,7 +2674,7 @@ if (Directory.Exists(fixtureRoot))
             Assert.True(impactCallSite.TryGetProperty("callingMemberHandoffId", out var impactCallerHandoff),
                 "The assembly impact caller must include an owner-bound handoff.");
             var impactCallerHandle = impactCallerHandoff.GetString();
-            Assert.StartsWith("h:", impactCallerHandle, StringComparison.Ordinal);
+            AssertStableReference(impactCallerHandle);
             await SendRequestAsync(process, 72, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -2696,7 +2697,7 @@ if (Directory.Exists(fixtureRoot))
                 .Single(item => item.GetProperty("callingMember").GetString() == "BetaInvoker.Invoke");
             Assert.Equal(Path.GetFullPath(assemblyPath), Path.GetFullPath(closureImpactCaller.GetProperty("ownerTargetPath").GetString()!), StringComparer.OrdinalIgnoreCase);
             var closureImpactCallerHandle = closureImpactCaller.GetProperty("callingMemberHandoffId").GetString();
-            Assert.StartsWith("h:", closureImpactCallerHandle, StringComparison.Ordinal);
+            AssertStableReference(closureImpactCallerHandle);
             await SendRequestAsync(process, 83, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -2720,8 +2721,8 @@ if (Directory.Exists(fixtureRoot))
                 && edge.GetProperty("toTypeName").GetString()!.Contains("PagedBeta", StringComparison.Ordinal));
             var dependencySourceHandle = betaDependency.GetProperty("fromHandoffId").GetString();
             var dependencyTargetHandle = betaDependency.GetProperty("toHandoffId").GetString();
-            Assert.StartsWith("h:", dependencySourceHandle, StringComparison.Ordinal);
-            Assert.StartsWith("h:", dependencyTargetHandle, StringComparison.Ordinal);
+            AssertStableReference(dependencySourceHandle);
+            AssertStableReference(dependencyTargetHandle);
             await SendRequestAsync(process, 79, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -2817,7 +2818,7 @@ if (Directory.Exists(fixtureRoot))
             }, timeout.Token);
             var unknownCallTreeHandle = await ReadResponseAsync(process, 70, timeout.Token);
             Assert.True(unknownCallTreeHandle.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(unknownCallTreeHandle));
-            Assert.Contains("HANDOFF_UNKNOWN", GetFirstText(unknownCallTreeHandle), StringComparison.Ordinal);
+            Assert.Contains("INVALID_SYMBOL_REFERENCE", GetFirstText(unknownCallTreeHandle), StringComparison.Ordinal);
 
             var (sourceSolutionPath, _) = await CreateNavigationFixtureAsync(Path.Combine(fixture.DirectoryPath, "source-owner"));
             await SendRequestAsync(process, 74, "tools/call", new
@@ -3136,7 +3137,7 @@ if (Directory.Exists(fixtureRoot))
                 .Single(edge => edge.GetProperty("fromTypeName").GetString()!.Contains("Consumer", StringComparison.Ordinal)
                     && edge.GetProperty("toTypeName").GetString()!.Contains("LeafFirst", StringComparison.Ordinal));
             var sourceDependencyHandle = ownerEdge.GetProperty("toHandoffId").GetString();
-            Assert.StartsWith("h:", sourceDependencyHandle, StringComparison.Ordinal);
+            AssertStableReference(sourceDependencyHandle);
             await SendRequestAsync(process, 9, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -3730,7 +3731,15 @@ if (Directory.Exists(fixtureRoot))
         var valueStart = markerStart + marker.Length;
         var valueEnd = text.IndexOf(']', valueStart);
         Assert.True(valueEnd > valueStart, "The navigation result included a malformed opaque handoff.");
-        return text[valueStart..valueEnd];
+        var handoff = text[valueStart..valueEnd];
+        AssertStableReference(handoff);
+        return handoff;
+    }
+
+    private static void AssertStableReference(string? value)
+    {
+        Assert.True(value is not null && StableSymbolReferenceCodec.TryParse(value, out _, out _),
+            $"Expected an exact src:/asm: stable symbol reference, received '{value ?? "<null>"}'.");
     }
 
     private static string ExtractBodyHandoff(string text)
@@ -3742,7 +3751,7 @@ if (Directory.Exists(fixtureRoot))
         var valueEnd = text.IndexOfAny(['\r', '\n'], valueStart);
         if (valueEnd < 0) valueEnd = text.Length;
         var handoff = text[valueStart..valueEnd].Trim();
-        Assert.StartsWith("h:", handoff, StringComparison.Ordinal);
+        AssertStableReference(handoff);
         return handoff;
     }
 
@@ -3753,21 +3762,25 @@ if (Directory.Exists(fixtureRoot))
         Assert.True(ownerStart >= 0, $"No ambiguity candidate was offered for owner '{ownerPath}'. Response: {text}");
         var valueStart = ownerStart + ownerMarker.Length;
         var valueEnd = text.IndexOf('`', valueStart);
-        Assert.True(valueEnd > valueStart, $"The owner candidate did not include a reusable h: handoff. Response: {text}");
+        Assert.True(valueEnd > valueStart, $"The owner candidate did not include a reusable stable reference. Response: {text}");
         var handoff = text[valueStart..valueEnd];
-        Assert.StartsWith("h:", handoff, StringComparison.Ordinal);
+        AssertStableReference(handoff);
         return handoff;
     }
 
     private static string ExtractBacktickHandoff(string text)
     {
-        const string marker = "`h:";
-        var markerStart = text.IndexOf(marker, StringComparison.Ordinal);
+        var sourceMarkerStart = text.IndexOf("`src:", StringComparison.Ordinal);
+        var assemblyMarkerStart = text.IndexOf("`asm:", StringComparison.Ordinal);
+        var markerStart = sourceMarkerStart < 0 ? assemblyMarkerStart
+            : assemblyMarkerStart < 0 ? sourceMarkerStart : Math.Min(sourceMarkerStart, assemblyMarkerStart);
         Assert.True(markerStart >= 0, "The rendered call graph did not include an owner handoff for the selected node.");
         var valueStart = markerStart + 1;
         var valueEnd = text.IndexOf('`', valueStart);
         Assert.True(valueEnd > valueStart, "The rendered call graph included a malformed handoff.");
-        return text[valueStart..valueEnd];
+        var handoff = text[valueStart..valueEnd];
+        AssertStableReference(handoff);
+        return handoff;
     }
 
     private static string ExtractSkeletonHandoff(string text, string? lineContains = null)

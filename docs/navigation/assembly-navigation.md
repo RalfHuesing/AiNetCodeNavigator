@@ -1,8 +1,8 @@
 # Assembly Navigation
 
-Assembly tools analyze managed `.dll` and `.exe` targets through a read-only decompiled Roslyn snapshot. They do not load analyzed code for execution. `inspect_assembly` provides the library API inventory; use its type handoffs with `get_file_skeleton`, `get_class_structure`, or `get_symbol_body` for focused navigation.
+Assembly tools analyze managed `.dll` and `.exe` targets through a read-only decompiled Roslyn snapshot. They do not load analyzed code for execution. `inspect_assembly` provides the library API inventory; use its type references with `get_file_skeleton`, `get_class_structure`, or `get_symbol_body` for focused navigation.
 
-Assembly handoffs bind to the canonical owner path, PE content hash, resolved-reference snapshot, generation, and declaration ID. Owner-aware consumers validate the target path and snapshot before returning source. Direct Root/Bridge/Leaf tests verify referenced-owner handoffs can be followed against their actual owner binaries; unsupported or unresolved metadata symbols do not receive handoffs.
+An assembly reference identifies the metadata simple name and declaration ID within the supplied target. Keep the exact returned owner target for cross-owner follow-ups; a deliberately selected same-name DLL is the selected owner. Assembly analyses still retain their generation leases and reference provenance checks, so one analysis cannot combine evidence from replaced binary generations. Unsupported or unresolved metadata symbols do not receive references. See [Shared Symbol Resolution](symbol-resolution.md) for the public owner and lifetime rules.
 
 `get_context` accepts a symbol and an explicit, duplicate-free selection of `body`, `members`, and `callers`. Assembly targets do not support `tests`. Its declaration head, identity, snapshot, and acquired owner lease are shared by the selected sections. The caller list contains direct incoming reference locations only; the `includeReferences` option expands only this direct relationship over the resolved assembly owners, while transitive call traversal remains `get_call_tree` or `get_impact`.
 

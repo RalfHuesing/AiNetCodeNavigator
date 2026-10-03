@@ -83,14 +83,10 @@ public static class InspectAssemblyScanner
         var references = remainingPageSize > 0 && request.IncludeReferences
             ? referencesInventory.Skip(referenceOffset).Take(remainingPageSize).ToList()
             : [];
-        var handoffIdentity = AnalysisSymbolIdentity.ForAssembly(
-            context.Origin.CanonicalPath,
-            context.Origin.ContentHash,
-            context.Generation,
-            context.ReferenceSnapshotHash);
-
+        var analysisIdentity = AnalysisSymbolIdentity.ForAssembly(context.Origin.CanonicalPath,
+            context.Origin.ContentHash, context.Generation, context.ReferenceSnapshotHash);
         var typeDtos = limitedTypes
-            .Select(type => ToTypeDto(type, request, handoffIdentity, context.Origin.CanonicalPath))
+            .Select(type => ToTypeDto(type, request, scope))
             .ToList();
 
         var namespaces = allTypes
@@ -137,7 +133,7 @@ public static class InspectAssemblyScanner
             context.DecompiledProjectPaths?.DecompiledSourceRoot,
             resultCursor,
             Analysis: new NavigationAnalysisMetadata(
-                NavigationAnalysisMetadata.CreateSnapshotId("assembly", handoffIdentity.ContentHash),
+                NavigationAnalysisMetadata.CreateSnapshotId("assembly", analysisIdentity.ContentHash),
                 $"types(namespace={request.Namespace ?? "*"}, typeName={request.TypeName ?? "*"}, memberName={request.MemberName ?? "*"}, publicOnly={request.PublicOnly}, includeReferences={includeReferences}, maxResults={maxResults})",
                 analysisLimitations,
                 analysisLimitations.Count > 0 ? "partial" : "complete",
@@ -199,22 +195,20 @@ public static class InspectAssemblyScanner
     private static AssemblyTypeDto ToTypeDto(
         INamedTypeSymbol type,
         InspectAssemblyRequest request,
-        AnalysisSymbolIdentity handoffIdentity,
-        string ownerTargetPath)
+        AssemblyNavigationSessionScope scope)
     {
         var matchingMembers = type.GetMembers()
             .Where(member => !member.IsImplicitlyDeclared)
             .Where(member => !IsAccessor(member))
             .Where(member => !request.PublicOnly || IsPublicApi(member))
             .Where(member => MatchesMember(member, request.MemberName, request.MemberNames))
-            .Select(member => ToMemberDto(member, handoffIdentity))
+            .Select(member => ToMemberDto(member, scope))
             .OrderBy(member => member.Kind, StringComparer.Ordinal)
             .ThenBy(member => member.Signature, StringComparer.Ordinal)
             .ToList();
 
         var members = matchingMembers;
-        var stableId = StableId(type, handoffIdentity);
-        var handoffId = stableId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(stableId);
+        var stableId = StableReference(type, scope);
         return new AssemblyTypeDto(
             type.ContainingNamespace.ToDisplayString(),
             TypeName(type),
@@ -225,11 +219,11 @@ public static class InspectAssemblyScanner
             stableId,
             Handoff: stableId is not null,
             AllowedFollowUpTools: stableId is null ? Array.Empty<string>() : HandoffFollowUpTools.ForAssembly(type),
-            HandoffId: handoffId,
-            OwnerTargetPath: stableId is null ? null : ownerTargetPath);
+            HandoffId: stableId,
+            OwnerTargetPath: stableId is null ? null : scope.Context.Origin.CanonicalPath);
     }
 
-    private static AssemblyMemberDto ToMemberDto(ISymbol member, AnalysisSymbolIdentity handoffIdentity)
+    private static AssemblyMemberDto ToMemberDto(ISymbol member, AssemblyNavigationSessionScope scope)
     {
         var method = member as IMethodSymbol;
         var parameters = member switch
@@ -239,8 +233,7 @@ public static class InspectAssemblyScanner
             _ => Array.Empty<AssemblyParameterDto>(),
         };
 
-        var stableId = StableId(member, handoffIdentity);
-        var handoffId = stableId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(stableId);
+        var stableId = StableReference(member, scope);
         return new AssemblyMemberDto(
             MemberKind(member),
             member.Name,
@@ -253,12 +246,15 @@ public static class InspectAssemblyScanner
             stableId,
             Handoff: stableId is not null,
             AllowedFollowUpTools: stableId is null ? Array.Empty<string>() : HandoffFollowUpTools.ForAssembly(member),
-            HandoffId: handoffId,
-            OwnerTargetPath: stableId is null ? null : handoffIdentity.CanonicalPath);
+            HandoffId: stableId,
+            OwnerTargetPath: stableId is null ? null : scope.Context.Origin.CanonicalPath);
     }
 
-    private static string? StableId(ISymbol symbol, AnalysisSymbolIdentity? handoffIdentity) =>
-        handoffIdentity?.FormatHandoff(symbol);
+    private static string? StableReference(ISymbol symbol, AssemblyNavigationSessionScope scope)
+    {
+        var reference = ExactAssemblySymbolResolver.CreateReference(scope, symbol);
+        return reference.IsSuccess ? StableSymbolReferenceCodec.Format(reference.Value!) : null;
+    }
 
     private static string MethodSignature(IMethodSymbol method)
     {

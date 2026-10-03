@@ -15,6 +15,18 @@ public static class ExactAssemblySymbolResolver
     public static Result<StableSymbolReference.Assembly> CreateReference(AssemblyNavigationSessionScope scope, ISymbol symbol)
     {
         ArgumentNullException.ThrowIfNull(scope);
+        return CreateReference(GetOwnerSimpleName(scope), scope.Context.Assembly, scope.Context.Compilation, symbol);
+    }
+
+    public static Result<StableSymbolReference.Assembly> CreateReference(
+        string simpleName,
+        IAssemblySymbol ownerAssembly,
+        Compilation compilation,
+        ISymbol symbol)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(simpleName);
+        ArgumentNullException.ThrowIfNull(ownerAssembly);
+        ArgumentNullException.ThrowIfNull(compilation);
         ArgumentNullException.ThrowIfNull(symbol);
 
         var declaration = Normalize(symbol);
@@ -26,7 +38,7 @@ public static class ExactAssemblySymbolResolver
                 "Use the declaration's raw assembly location because Roslyn does not provide a stable reference for it.");
         }
 
-        if (!SymbolEqualityComparer.Default.Equals(declaration.ContainingAssembly, scope.Context.Assembly))
+        if (!SymbolEqualityComparer.Default.Equals(declaration.ContainingAssembly, ownerAssembly))
         {
             return Result<StableSymbolReference.Assembly>.Failure(
                 NavigationErrorCodes.TargetMismatch,
@@ -43,7 +55,7 @@ public static class ExactAssemblySymbolResolver
                 "Use the declaration's raw assembly location because it has no stable declaration ID.");
         }
 
-        var reference = new StableSymbolReference.Assembly(GetOwnerSimpleName(scope), declarationId!);
+        var reference = new StableSymbolReference.Assembly(simpleName, declarationId!);
         if (!StableSymbolReferenceCodec.TryFormatCanonical(reference, out _, out var codecError))
         {
             return Result<StableSymbolReference.Assembly>.Failure(
@@ -52,7 +64,7 @@ public static class ExactAssemblySymbolResolver
                 "Rediscover the declaration in the selected assembly and use the reference it returns.");
         }
 
-        var resolved = Resolve(scope, reference);
+        var resolved = Resolve(ownerAssembly, compilation, reference);
         if (!resolved.IsSuccess)
         {
             return Result<StableSymbolReference.Assembly>.Failure(resolved.Error!);
@@ -71,6 +83,16 @@ public static class ExactAssemblySymbolResolver
     public static Result<ISymbol> Resolve(AssemblyNavigationSessionScope scope, StableSymbolReference.Assembly reference)
     {
         ArgumentNullException.ThrowIfNull(scope);
+        return Resolve(scope.Context.Assembly, scope.Context.Compilation, reference);
+    }
+
+    public static Result<ISymbol> Resolve(
+        IAssemblySymbol ownerAssembly,
+        Compilation compilation,
+        StableSymbolReference.Assembly reference)
+    {
+        ArgumentNullException.ThrowIfNull(ownerAssembly);
+        ArgumentNullException.ThrowIfNull(compilation);
         ArgumentNullException.ThrowIfNull(reference);
         if (!StableSymbolReferenceCodec.TryFormatCanonical(reference, out _, out var codecError))
         {
@@ -79,7 +101,7 @@ public static class ExactAssemblySymbolResolver
                 "The typed assembly reference is malformed or noncanonical."));
         }
 
-        var actualName = GetOwnerSimpleName(scope);
+        var actualName = ownerAssembly.Identity.Name;
         if (!string.Equals(reference.SimpleName, actualName, StringComparison.Ordinal))
         {
             return Result<ISymbol>.Failure(
@@ -88,9 +110,9 @@ public static class ExactAssemblySymbolResolver
                 "Reopen the original ownerTargetPath returned by discovery and resolve with that owner's scope. If that path is unavailable, rediscover on the intended binary and use its returned ownerTargetPath and reference; do not select by simple name alone.");
         }
 
-        var symbols = DocumentationCommentId.GetSymbolsForDeclarationId(reference.DeclarationId, scope.Context.Compilation)
+        var symbols = DocumentationCommentId.GetSymbolsForDeclarationId(reference.DeclarationId, compilation)
             .Select(Normalize)
-            .Where(symbol => SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, scope.Context.Assembly)
+            .Where(symbol => SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, ownerAssembly)
                 && string.Equals(DocumentationCommentId.CreateDeclarationId(symbol), reference.DeclarationId, StringComparison.Ordinal))
             .Distinct(SymbolEqualityComparer.Default)
             .ToArray();

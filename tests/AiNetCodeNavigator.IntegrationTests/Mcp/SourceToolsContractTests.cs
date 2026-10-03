@@ -200,32 +200,214 @@ public sealed class SourceToolsContractTests
     }
 
     [Fact]
-    public async Task DisposedRuntimeHandoffsAreUnknownToFreshRuntimeConsumers()
+    public async Task RawLocalFunctionLocationKeepsBodyWithoutStableReference()
+    {
+        using var workspace = TestWorkspaceBuilder.Create()
+            .WithVirtualSolutionPath(@"C:\VirtualRepo\RawLocalFunction.slnx")
+            .WithProject("App", ("Target.cs", "namespace RawProbe; public sealed class Target { public int Run() { int Local() => 41; return Local(); } }"))
+            .Build();
+        var source = workspace.Solution.Projects.Single().Documents.Single();
+        var text = await source.GetTextAsync();
+        var localNameColumn = text.ToString().IndexOf("Local", StringComparison.Ordinal) + 1;
+        Assert.True(localNameColumn > 0);
+
+        var body = await SourceSymbolBodyResolver.ResolveAsync(workspace.Solution,
+            $"Target.cs:1:{localNameColumn}", maxBodyLines: 20);
+
+        Assert.Null(body.Error);
+        Assert.NotNull(body.Body);
+        Assert.Contains("int Local() => 41", body.Body!.Body, StringComparison.Ordinal);
+        Assert.Equal("available", body.Body.Availability);
+        Assert.Null(body.Body.HandoffId);
+        var candidate = Assert.Single(body.ResolutionCandidates);
+        Assert.Equal("Local", candidate.Name);
+        Assert.Null(candidate.HandoffId);
+        Assert.Equal(1, candidate.Line);
+    }
+
+    [Fact]
+    public async Task StableSourceReferenceSurvivesBodySourceProjectOptionAndRuntimeChanges()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         using var fixture = TestTempDirectory.Create("ainet-source-runtime-lifecycle-");
         var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
-        var oldRuntime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var appDirectory = Path.Combine(Path.GetDirectoryName(target)!, "src", "App");
+        var testsDirectory = Path.Combine(Path.GetDirectoryName(target)!, "tests", "ScopeProbe.Tests");
+        await using var oldRuntime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var producer = new SymbolTools(oldRuntime);
         var found = await producer.FindSymbol(target, pattern: "Run", kind: "method", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(found, 16384, 1024);
-        var oldHandoff = ReadHandoff(TextOf(found), "method Run in");
+        var reference = ReadHandoff(TextOf(found), "method Run in");
+        Assert.StartsWith("src:", reference, StringComparison.Ordinal);
+        await File.WriteAllTextAsync(Path.Combine(appDirectory, "Target.cs"), "namespace ScopeProbe; public class Target { public void Run() { var updated = 42; _ = updated; } }");
+        var afterBodyEdit = await producer.GetSymbolBody(target, [reference], maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(afterBodyEdit, 16384, 1024);
+        Assert.Contains("updated", TextOf(afterBodyEdit), StringComparison.Ordinal);
+        Assert.Contains("42", TextOf(afterBodyEdit), StringComparison.Ordinal);
+
+        await File.AppendAllTextAsync(Path.Combine(testsDirectory, "TargetTests.cs"), Environment.NewLine + "// unrelated loaded source edit");
+        var afterOtherSourceEdit = await producer.GetSymbolBody(target, [reference], maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(afterOtherSourceEdit, 16384, 1024);
+        Assert.Contains("42", TextOf(afterOtherSourceEdit), StringComparison.Ordinal);
+
+        var projectFile = Path.Combine(appDirectory, "ScopeProbe.App.csproj");
+        var projectText = await File.ReadAllTextAsync(projectFile);
+        Assert.Contains("</Project>", projectText, StringComparison.Ordinal);
+        await File.WriteAllTextAsync(projectFile, projectText.Replace("</Project>",
+            "<PropertyGroup><DefineConstants>$(DefineConstants);R02_STABLE_REFERENCE_OPTION</DefineConstants></PropertyGroup></Project>",
+            StringComparison.Ordinal));
+        var afterProjectOptionChange = await producer.GetSymbolBody(target, [reference], maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(afterProjectOptionChange, 16384, 1024);
+        Assert.Contains("42", TextOf(afterProjectOptionChange), StringComparison.Ordinal);
 
         await oldRuntime.DisposeAsync();
 
         await using var freshRuntime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var consumer = new SymbolTools(freshRuntime);
-        var body = await consumer.GetSymbolBody(target, [oldHandoff], maxResponseBytes: 16384, maxResponseTokens: 1024);
+        var body = await consumer.GetSymbolBody(target, [reference], maxResponseBytes: 16384, maxResponseTokens: 1024);
 
-        AssertErrorWithinBudget(body, "HANDOFF_UNKNOWN", 16384, 1024);
+        AssertSuccessWithinBudget(body, 16384, 1024);
+        Assert.Contains("updated", TextOf(body), StringComparison.Ordinal);
+        Assert.Contains("42", TextOf(body), StringComparison.Ordinal);
 
         var freshResult = await consumer.FindSymbol(target, pattern: "Run", kind: "method", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(freshResult, 16384, 1024);
-        var freshHandoff = ReadHandoff(TextOf(freshResult), "method Run in");
+        var freshReference = ReadHandoff(TextOf(freshResult), "method Run in");
+        Assert.Equal(reference, freshReference);
         await oldRuntime.DisposeAsync();
-        var freshBody = await consumer.GetSymbolBody(target, [freshHandoff], maxResponseBytes: 16384, maxResponseTokens: 1024);
+        var freshBody = await consumer.GetSymbolBody(target, [freshReference], maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(freshBody, 16384, 1024);
         Assert.Contains("Run", TextOf(freshBody), StringComparison.Ordinal);
+
+        await File.WriteAllTextAsync(Path.Combine(appDirectory, "Target.cs"),
+            "namespace ScopeProbe; public class Target { public void Run(int changedSignature) { var changed = changedSignature; _ = changed; } }");
+        var changedDeclaration = await consumer.GetSymbolBody(target, [reference], maxResponseBytes: 16384, maxResponseTokens: 1024);
+        Assert.Contains("SYMBOL_NOT_FOUND", TextOf(changedDeclaration), StringComparison.Ordinal);
+        AssertActionableRediscovery(TextOf(changedDeclaration));
+        Assert.DoesNotContain("changedSignature", TextOf(changedDeclaration), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SourceBodyBatchPreservesValidItemAndEveryTypedReferenceFailure()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        using var fixture = TestTempDirectory.Create("ainet-source-body-batch-reference-preflight-");
+        var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
+        var symbols = new SymbolTools(runtime);
+        var foundSource = await symbols.FindSymbol(target, pattern: "Run", kind: "method", maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(foundSource, 16384, 1024);
+        var sourceReference = ReadHandoff(TextOf(foundSource), "method Run in");
+        Assert.StartsWith("src:", sourceReference, StringComparison.Ordinal);
+
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "ForeignBodyBatchProbe", """
+            namespace ForeignBodyBatchProbe;
+            public sealed class Target { public int Read() { var first = 1; var second = 2; return first + second; } }
+            """);
+        var foundAssembly = await symbols.FindSymbol(assemblyPath, pattern: "Target.Read", kind: "method", maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(foundAssembly, 16384, 1024);
+        var assemblyReference = Assert.Single(ReadHandoffs(TextOf(foundAssembly)));
+        Assert.StartsWith("asm:", assemblyReference, StringComparison.Ordinal);
+
+        var invalidReferences = new[] { "src:malformed", "asm:malformed", assemblyReference, "h:zzzz", "i:zzzz" };
+        var mixed = await symbols.GetSymbolBody(target, [sourceReference, .. invalidReferences], maxBodyLines: 1,
+            maxResponseBytes: 32768, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(mixed, 32768, 4096);
+        var mixedText = TextOf(mixed);
+        Assert.Contains("Resolution status: resolved", mixedText, StringComparison.Ordinal);
+        Assert.Contains("Resolution status: failed", mixedText, StringComparison.Ordinal);
+        Assert.Contains("completeness=truncated", mixedText, StringComparison.Ordinal);
+        Assert.Contains("Next body window: startLine=2", mixedText, StringComparison.Ordinal);
+        foreach (var reference in invalidReferences)
+        {
+            Assert.Contains($"Symbol: {reference}", mixedText, StringComparison.Ordinal);
+        }
+
+        var allFailed = await symbols.GetSymbolBody(target, invalidReferences, maxResponseBytes: 32768, maxResponseTokens: 4096);
+        Assert.True(allFailed.IsError ?? false, TextOf(allFailed));
+        AssertBudget(TextOf(allFailed), 32768, 4096);
+        var allFailedText = TextOf(allFailed);
+        foreach (var reference in invalidReferences)
+        {
+            Assert.Contains($"Symbol: {reference}", allFailedText, StringComparison.Ordinal);
+        }
+        Assert.Equal(invalidReferences.Length, allFailedText.Split("Resolution status: failed", StringSplitOptions.None).Length - 1);
+    }
+
+    [Fact]
+    public async Task SourceSkeletonReferenceBatchPreservesMixedAndAllFailedItemsAndMetadata()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        using var fixture = TestTempDirectory.Create("ainet-source-skeleton-reference-batch-");
+        var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
+        var symbols = new SymbolTools(runtime);
+        var structure = new StructureTools(runtime);
+
+        var sourceDiscovery = await symbols.FindSymbol(target, pattern: "ScopeProbe.Target", kind: "class", maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(sourceDiscovery, 16384, 1024);
+        var sourceReference = ReadHandoff(TextOf(sourceDiscovery), "class Target");
+        Assert.StartsWith("src:", sourceReference, StringComparison.Ordinal);
+        var sourceOnly = await structure.GetFileSkeleton(target, [sourceReference], maxResponseBytes: 32768, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(sourceOnly, 32768, 4096);
+        Assert.Contains("snapshotId=source:", TextOf(sourceOnly), StringComparison.Ordinal);
+        Assert.Equal($"fileSkeleton(paths={sourceReference})", ReadHeader(TextOf(sourceOnly), "analyzedScope"));
+        Assert.Contains("### Target", TextOf(sourceOnly), StringComparison.Ordinal);
+        Assert.Contains("Run", TextOf(sourceOnly), StringComparison.Ordinal);
+
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "ForeignSkeletonBatchProbe",
+            "namespace ForeignSkeletonBatchProbe; public sealed class Foreign { public int Read() => 7; }");
+        var assemblyDiscovery = await symbols.FindSymbol(assemblyPath, pattern: "ForeignSkeletonBatchProbe.Foreign", kind: "class", maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(assemblyDiscovery, 16384, 1024);
+        var assemblyReference = Assert.Single(ReadHandoffs(TextOf(assemblyDiscovery)));
+        Assert.StartsWith("asm:", assemblyReference, StringComparison.Ordinal);
+
+        var invalidReferences = new[] { "src:malformed", "asm:malformed", assemblyReference, "h:zzzz", "i:zzzz" };
+        var mixed = await structure.GetFileSkeleton(target, [sourceReference, .. invalidReferences], maxResponseBytes: 32768, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(mixed, 32768, 4096);
+        var mixedText = TextOf(mixed);
+        Assert.Contains("snapshotId=source:", mixedText, StringComparison.Ordinal);
+        Assert.Equal($"fileSkeleton(paths={string.Join('|', new[] { sourceReference }.Concat(invalidReferences))})",
+            ReadHeader(mixedText, "analyzedScope"));
+        Assert.Contains("### Target", mixedText, StringComparison.Ordinal);
+        Assert.Contains("Run", mixedText, StringComparison.Ordinal);
+        foreach (var reference in invalidReferences)
+        {
+            var item = IntegrationMcpAssertions.ReadItemSection(mixedText, reference);
+            var code = reference == assemblyReference ? "TARGET_MISMATCH" : "INVALID_SYMBOL_REFERENCE";
+            Assert.Contains($"Resolution status: failed ({code})", item, StringComparison.Ordinal);
+            if (reference == assemblyReference)
+            {
+                Assert.Contains("Next action: Use the src:", item, StringComparison.Ordinal);
+                Assert.Contains("source solution", item, StringComparison.Ordinal);
+                Assert.Contains("owner targetPath", item, StringComparison.Ordinal);
+            }
+            else
+            {
+                AssertActionableRediscovery(item);
+            }
+        }
+
+        var allFailed = await structure.GetFileSkeleton(target, invalidReferences, maxResponseBytes: 32768, maxResponseTokens: 4096);
+        AssertErrorWithinBudget(allFailed, "INVALID_SYMBOL_REFERENCE", 32768, 4096);
+        var allFailedText = TextOf(allFailed);
+        foreach (var reference in invalidReferences)
+        {
+            var item = IntegrationMcpAssertions.ReadItemSection(allFailedText, reference);
+            var code = reference == assemblyReference ? "TARGET_MISMATCH" : "INVALID_SYMBOL_REFERENCE";
+            Assert.Contains($"Resolution status: failed ({code})", item, StringComparison.Ordinal);
+            if (reference == assemblyReference)
+            {
+                Assert.Contains("Next action: Use the src:", item, StringComparison.Ordinal);
+                Assert.Contains("source solution", item, StringComparison.Ordinal);
+                Assert.Contains("owner targetPath", item, StringComparison.Ordinal);
+            }
+            else
+            {
+                AssertActionableRediscovery(item);
+            }
+        }
+        Assert.Contains("Use each item's next action", allFailedText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -316,13 +498,13 @@ public sealed class SourceToolsContractTests
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(mixedBody, 16384, 1024);
         Assert.Contains("completeness=truncated", TextOf(mixedBody), StringComparison.Ordinal);
-        Assert.Contains("HANDOFF_UNKNOWN", TextOf(mixedBody), StringComparison.Ordinal);
-        Assert.Contains("Resolution status: failed (HANDOFF_UNKNOWN)", TextOf(mixedBody), StringComparison.Ordinal);
-        Assert.Contains("Next action: Find the symbol again using find_symbol", TextOf(mixedBody), StringComparison.Ordinal);
+        Assert.Contains("INVALID_SYMBOL_REFERENCE", TextOf(mixedBody), StringComparison.Ordinal);
+        Assert.Contains("Resolution status: failed (INVALID_SYMBOL_REFERENCE)", TextOf(mixedBody), StringComparison.Ordinal);
+        AssertActionableRediscovery(TextOf(mixedBody));
         Assert.Contains("Next body window: startLine=2", TextOf(mixedBody), StringComparison.Ordinal);
         Assert.Contains("Run", TextOf(mixedBody), StringComparison.Ordinal);
         var allInvalidBody = await symbols.GetSymbolBody(target, ["h:zzzz", "h:aaaa"], maxResponseBytes: 16384, maxResponseTokens: 1024);
-        AssertErrorWithinBudget(allInvalidBody, "HANDOFF_UNKNOWN", 16384, 1024);
+        AssertErrorWithinBudget(allInvalidBody, "INVALID_SYMBOL_REFERENCE", 16384, 1024);
         Assert.Contains("Symbol: h:zzzz", TextOf(allInvalidBody), StringComparison.Ordinal);
         Assert.Contains("Symbol: h:aaaa", TextOf(allInvalidBody), StringComparison.Ordinal);
 
@@ -333,9 +515,32 @@ public sealed class SourceToolsContractTests
         Assert.Contains("First", skeletonText, StringComparison.Ordinal);
         Assert.Contains("Second", skeletonText, StringComparison.Ordinal);
         Assert.NotEqual(ReadHandoffOnLineContaining(skeletonText, "int First"), ReadHandoffOnLineContaining(skeletonText, "int Second"));
-        var skeletonHandoffs = ReadHandoffs(skeletonText);
+        var completeSkeleton = await ReadAllSkeletonPagesAsync(structure, target, appFile, 16384, 1024);
+        Assert.True(completeSkeleton.Pages > 1, skeletonText);
+        var skeletonHandoffs = ReadHandoffs(completeSkeleton.Text);
         Assert.True(skeletonHandoffs.Length >= 2, skeletonText);
         Assert.Equal(skeletonHandoffs.Length, skeletonHandoffs.Distinct(StringComparer.Ordinal).Count());
+
+        var partialTypeSearch = await symbols.FindSymbol(target, pattern: "OrderProbe", kind: "class", includeGenerated: true,
+            maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(partialTypeSearch, 16384, 1024);
+        var partialTypeReference = ReadHandoff(TextOf(partialTypeSearch), "OrderProbe");
+        var partialSkeleton = await structure.GetFileSkeleton(target, [partialTypeReference],
+            maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(partialSkeleton, 16384, 1024);
+        Assert.Contains("Zebra", TextOf(partialSkeleton), StringComparison.Ordinal);
+        Assert.Contains("GeneratedMember", TextOf(partialSkeleton), StringComparison.Ordinal);
+        var filteredPartialStructure = await structure.GetClassStructure(target, partialTypeReference,
+            includeGenerated: false, maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(filteredPartialStructure, 16384, 1024);
+        Assert.Contains("Zebra", TextOf(filteredPartialStructure), StringComparison.Ordinal);
+        Assert.DoesNotContain("GeneratedMember", TextOf(filteredPartialStructure), StringComparison.Ordinal);
+        var generatedPartialStructure = await structure.GetClassStructure(target, partialTypeReference,
+            includeGenerated: true, maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(generatedPartialStructure, 16384, 1024);
+        Assert.Contains("Zebra", TextOf(generatedPartialStructure), StringComparison.Ordinal);
+        Assert.Contains("GeneratedMember", TextOf(generatedPartialStructure), StringComparison.Ordinal);
+
         var pagedSkeleton = await ReadAllSkeletonPagesAsync(structure, target, appFile, 1024, 4096);
         Assert.True(pagedSkeleton.Pages > 1);
         Assert.Contains("PageEntry15", pagedSkeleton.Text, StringComparison.Ordinal);
@@ -353,7 +558,7 @@ public sealed class SourceToolsContractTests
         AssertSuccessWithinBudget(classStructure, 16384, 1024);
         Assert.Contains("Run", TextOf(classStructure), StringComparison.Ordinal);
         var unknownType = await structure.GetClassStructure(target, "h:zzzz", maxResponseBytes: 16384, maxResponseTokens: 1024);
-        AssertErrorWithinBudget(unknownType, "HANDOFF_UNKNOWN", 16384, 1024);
+        AssertErrorWithinBudget(unknownType, "INVALID_SYMBOL_REFERENCE", 16384, 1024);
         var declarationOrder = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", maxMembers: 1,
             sortBy: "lines", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(declarationOrder, 16384, 1024);
@@ -863,9 +1068,11 @@ public sealed class SourceToolsContractTests
         StructureTools tools, string target, string filePath, int bytes, int tokens)
     {
         var text = new StringBuilder();
-        var broadResult = await tools.GetFileSkeleton(target, [filePath], maxResponseBytes: 65536, maxResponseTokens: 4096);
-        AssertSuccessWithinBudget(broadResult, 65536, 4096);
-        var expected = BodyOf(TextOf(broadResult));
+        var broadPages = await ReadOuterResponsePagesAsync(
+            (responseBytes, responseTokens, continuation) => tools.GetFileSkeleton(target, [filePath],
+                maxResponseBytes: responseBytes, maxResponseTokens: responseTokens, continuationToken: continuation),
+            65536, 4096);
+        var expected = broadPages.Text;
         var result = await tools.GetFileSkeleton(target, [filePath], maxResponseBytes: bytes, maxResponseTokens: tokens);
         var pages = 0;
         for (var request = 0; request < 100; request++)
@@ -928,18 +1135,16 @@ public sealed class SourceToolsContractTests
                 .SelectMany(result => result.GetProperty("entries").EnumerateArray())
                 .FirstOrDefault(entry => string.Equals(entry.GetProperty("name").GetString(), name, StringComparison.Ordinal))
                 .GetProperty("handoffId").GetString();
-            Assert.StartsWith("h:", handoff);
+            Assert.StartsWith("src:", handoff);
             return handoff!;
         }
         var declarationIndex = text.IndexOf(declaration, StringComparison.Ordinal);
         Assert.True(declarationIndex >= 0, text);
-        var marker = "[handoff: ";
-        var start = text.IndexOf(marker, declarationIndex, StringComparison.Ordinal);
-        Assert.True(start >= 0, text);
-        start += marker.Length;
-        var end = text.IndexOf(']', start);
-        Assert.True(end > start, text);
-        return text[start..end];
+        var lineStart = text.LastIndexOf('\n', declarationIndex);
+        lineStart = lineStart < 0 ? 0 : lineStart + 1;
+        var lineEnd = text.IndexOf('\n', declarationIndex);
+        lineEnd = lineEnd < 0 ? text.Length : lineEnd;
+        return Assert.Single(IntegrationMcpAssertions.ReadStableReferences(text[lineStart..lineEnd]));
     }
 
     private static string[] ReadHandoffs(string text)
@@ -953,20 +1158,7 @@ public sealed class SourceToolsContractTests
                 .Select(entry => entry.TryGetProperty("handoffId", out var value) ? value.GetString() : null)
                 .Where(static value => !string.IsNullOrWhiteSpace(value)).Select(static value => value!).ToArray();
         }
-        var handoffs = new List<string>();
-        foreach (var (marker, suffix) in new[] { ("[handoff: ", "]"), ("handoffId: `", "`") })
-        {
-            var position = 0;
-            while ((position = text.IndexOf(marker, position, StringComparison.Ordinal)) >= 0)
-            {
-                position += marker.Length;
-                var end = text.IndexOf(suffix, position, StringComparison.Ordinal);
-                Assert.True(end > position, text);
-                handoffs.Add(text[position..end]);
-                position = end + suffix.Length;
-            }
-        }
-        return handoffs.ToArray();
+        return IntegrationMcpAssertions.ReadStableReferences(text);
     }
 
     private static string ReadHandoffOnLineContaining(string text, string fragment)

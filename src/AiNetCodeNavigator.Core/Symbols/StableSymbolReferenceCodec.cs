@@ -56,7 +56,7 @@ public static class StableSymbolReferenceCodec
         value = TrimAsciiSpaces(value);
         if (IsLegacyPrefix(value, "h:") || IsLegacyPrefix(value, "i:"))
         {
-            error = InvalidReference("Opaque and internal handoff identifiers are not stable references.");
+            error = InvalidReference("Legacy h:/i: identifiers are not canonical src:/asm: references.");
             return true;
         }
 

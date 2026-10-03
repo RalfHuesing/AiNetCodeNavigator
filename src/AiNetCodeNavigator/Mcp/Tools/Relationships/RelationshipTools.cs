@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -24,16 +25,17 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 {
     private Func<CancellationToken, Task>? afterAssemblyCallTreeGraphBuilt;
     private Func<AssemblyNavigationSessionScope, CancellationToken, Task>? afterAssemblyClosureRootScopeOpened;
-    private Func<AssemblySymbolHandoffAccess, CancellationToken, Task>? afterAssemblyClosureHandoffResolved;
+    private Func<AssemblySymbolReferenceAccess, CancellationToken, Task>? afterAssemblyClosureHandoffResolved;
     private Func<CancellationToken, Task>? afterAssemblyClosureRawDiscovery;
     internal Action<string>? BeforeContextSectionForTesting { get; set; }
     internal Action<string>? BeforeAssemblyContextOwnerOpenForTesting { get; set; }
+    internal Func<AssemblyNavigationSessionScope, CancellationToken, Task>? AfterAssemblySymbolScopeOpenedForTesting { get; set; }
 
     internal RelationshipTools(
         NavigatorHostRuntime runtime,
         Func<CancellationToken, Task>? afterAssemblyCallTreeGraphBuilt,
         Func<AssemblyNavigationSessionScope, CancellationToken, Task>? afterAssemblyClosureRootScopeOpened,
-        Func<AssemblySymbolHandoffAccess, CancellationToken, Task>? afterAssemblyClosureHandoffResolved = null,
+        Func<AssemblySymbolReferenceAccess, CancellationToken, Task>? afterAssemblyClosureHandoffResolved = null,
         Func<CancellationToken, Task>? afterAssemblyClosureRawDiscovery = null)
         : this(runtime)
     {
@@ -45,7 +47,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "get_call_tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Trace incoming, outgoing, or combined call relationships from a source or assembly symbol.")]
-    public async Task<CallToolResult> GetCallTree([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type, member, documentation ID, or current symbol handoff to trace.")] string symbolIdentifier,
+    public async Task<CallToolResult> GetCallTree([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type, member, documentation ID, or stable src:/asm: reference to trace.")] string symbolIdentifier,
         [System.ComponentModel.Description("Traversal direction: incoming (default), outgoing, or both.")] string direction = "incoming", [Range(1, 5), System.ComponentModel.Description("Maximum call-graph traversal depth.")] int depth = 2, [Range(1, 250), System.ComponentModel.Description("Maximum neighboring call nodes to include.")] int topN = 10,
         [System.ComponentModel.Description("Rendering: ascii (default) or mermaid.")] string format = "ascii", [System.ComponentModel.Description("Include calls to or from base class library symbols.")] bool includeBcl = false, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", [System.ComponentModel.Description("Include symbols from generated source files.")] bool includeGenerated = false,
         [System.ComponentModel.Description("Traverse references across owned assemblies when supported.")] bool includeReferences = false, [System.ComponentModel.Description("For assembly targets, include navigation/decompilation and graph-expansion diagnostics. Default false; source targets do not add this section.")] bool includeDiagnostics = false,
@@ -82,7 +84,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     if (afterAssemblyCallTreeGraphBuilt is not null)
                         await afterAssemblyCallTreeGraphBuilt(ct).ConfigureAwait(false);
                     var body = format == "mermaid" ? CallTreeMermaidRenderer.RenderMermaid(graph) : CallGraphTextRenderer.RenderAscii(graph);
-                    var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath,
+            var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath,
                         access.Origin.ContentHash, access.Generation, access.ReferenceSnapshotHash);
                     body = AppendCallTreeDiagnostics(body, graph, access.Diagnostics, includeDiagnostics);
                     var response = NavigationToolSupport.SuccessText(body, graph.Truncated,
@@ -91,6 +93,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         $"callTree(symbol={symbolIdentifier.Trim()}, depth={depth}, topN={topN}, direction={parsedDirection}, includeBcl={includeBcl}, scope={scope}, includeGenerated={includeGenerated}, format={format}, includeReferences=false)",
                         graph.Truncated ? ["graphLimit"] : []);
                 }
+                if (ValidateSourceReferenceInput(symbolIdentifier, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier") is { } referenceRouteError)
+                    return referenceRouteError;
                 return await WithSource(target, async (solution, source) =>
                 {
                 var symbol = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
@@ -112,7 +116,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "find_references", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Find source locations that reference a symbol, optionally traversing bounded assembly references.")]
-    public async Task<CallToolResult> FindReferences([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type, member, documentation ID, or current symbol handoff whose references should be found.")] string symbolIdentifier,
+    public async Task<CallToolResult> FindReferences([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type, member, documentation ID, or stable src:/asm: reference whose references should be found.")] string symbolIdentifier,
         [Range(1, 3), System.ComponentModel.Description("Maximum reference traversal depth.")] int depth = 1, [Range(1, int.MaxValue), System.ComponentModel.Description("Page size for matching references.")] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all",
         [System.ComponentModel.Description("Include matches from generated source files.")] bool includeGenerated = false, [System.ComponentModel.Description("Traverse into referenced assemblies when supported.")] bool includeReferences = false, [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384,
         [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null, [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
@@ -179,6 +183,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     return NavigationToolSupport.WithAssemblyMetadata(response, identity,
                         $"findReferences(symbol={symbolIdentifier.Trim()}, requestedDepth={result.RequestedDepth}, effectiveDepth={result.EffectiveDepth}, visitedSymbols={result.VisitedSymbolCount}, nodeLimit={result.EffectiveNodeLimit}, pageSize={maxResults}, scope={scope}, includeGenerated={includeGenerated}, includeReferences=false)", omissions, page.NextCursor is not null);
                 }
+                if (ValidateSourceReferenceInput(symbolIdentifier, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier") is { } referenceRouteError)
+                    return referenceRouteError;
                 return await WithSource(target, async (solution, source) =>
                 {
                 var symbol = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
@@ -214,7 +220,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "get_type_hierarchy", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Show base types, interfaces, and derived types for a selected type.")]
-    public async Task<CallToolResult> GetTypeHierarchy([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type name, documentation ID, or current type handoff whose hierarchy should be shown.")] string symbolIdentifier,
+    public async Task<CallToolResult> GetTypeHierarchy([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type name, documentation ID, or stable src:/asm: reference whose hierarchy should be shown.")] string symbolIdentifier,
         [Range(1, int.MaxValue), System.ComponentModel.Description("Page size for derived types.")] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", [System.ComponentModel.Description("Include derived types declared in generated source.")] bool includeGenerated = false,
         [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
         [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
@@ -256,6 +262,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         $"typeHierarchy(symbol={symbolIdentifier.Trim()}, pageSize={maxResults}, scope={scope}, includeGenerated={includeGenerated})",
                         [], page.NextCursor is not null);
                 }
+                if (ValidateSourceReferenceInput(symbolIdentifier, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier") is { } referenceRouteError)
+                    return referenceRouteError;
                 return await WithSource(target, async (solution, source) =>
                 {
                 var symbol = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
@@ -286,7 +294,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "find_implementations", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Find concrete type or member implementations of a selected contract or virtual member.")]
-    public async Task<CallToolResult> FindImplementations([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type, member, documentation ID, or current symbol handoff whose implementations should be found.")] string symbolIdentifier,
+    public async Task<CallToolResult> FindImplementations([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type, member, documentation ID, or stable src:/asm: reference whose implementations should be found.")] string symbolIdentifier,
         [Range(1, int.MaxValue), System.ComponentModel.Description("Page size for matching implementations.")] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", [System.ComponentModel.Description("Include implementations declared in generated source.")] bool includeGenerated = false,
         [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
         [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
@@ -325,6 +333,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         $"findImplementations(symbol={symbolIdentifier.Trim()}, pageSize={maxResults}, scope={scope}, includeGenerated={includeGenerated})",
                         [], page.NextCursor is not null);
                 }
+                if (ValidateSourceReferenceInput(symbolIdentifier, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier") is { } referenceRouteError)
+                    return referenceRouteError;
                 return await WithSource(target, async (solution, source) =>
                 {
                 var symbol = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
@@ -353,7 +363,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "get_impact", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Summarize callers affected by a source or assembly symbol.")]
-    public async Task<CallToolResult> GetImpact([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type, member, documentation ID, or current symbol handoff whose callers and effects should be summarized.")] string symbolIdentifier,
+    public async Task<CallToolResult> GetImpact([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type, member, documentation ID, or stable src:/asm: reference whose callers and effects should be summarized.")] string symbolIdentifier,
         [Range(1, 3), System.ComponentModel.Description("Maximum impact traversal depth.")] int depth = 1, [Range(1, int.MaxValue), System.ComponentModel.Description("Page size for impact call sites.")] int maxResults = 50, [System.ComponentModel.Description("Traverse into referenced assemblies when supported.")] bool includeReferences = false,
         [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
         [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
@@ -400,7 +410,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     if (!access.IsSuccess) return NavigationToolSupport.Failure(access.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                     await using var lease = access.Value!;
                     if (!string.Equals(Path.GetFullPath(lease.Origin.CanonicalPath), target.CanonicalPath, StringComparison.OrdinalIgnoreCase))
-                        return Invalid("symbolIdentifier", "Use a handoff produced by this targetPath.");
+                        return Invalid("symbolIdentifier", "Use the stable reference with this exact targetPath.");
                     var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(lease.Symbol, lease.Solution, depth, int.MaxValue, ct,
                         handoffFormatter: CreateAssemblyHandoffFormatter(access.Value!)).ConfigureAwait(false);
                     var identity = AnalysisSymbolIdentity.ForAssembly(lease.Origin.CanonicalPath, lease.Origin.ContentHash,
@@ -427,6 +437,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     return NavigationToolSupport.WithAssemblyMetadata(response, identity,
                         $"impact(symbol={lease.Symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)}, requestedDepth={impact.RequestedDepth}, effectiveDepth={impact.EffectiveDepth}, visitedSymbols={impact.VisitedSymbolCount}, nodeLimit={impact.EffectiveNodeLimit}, pageSize={maxResults}, includeReferences=false)", omissions, page.NextCursor is not null);
                 }
+                if (ValidateSourceReferenceInput(symbolIdentifier, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier") is { } referenceRouteError)
+                    return referenceRouteError;
                 return await WithSource(target, async (solution, source) =>
                 {
                     var symbol = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
@@ -463,7 +475,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     [System.ComponentModel.Description("Trace dependencies from exactly one file path or symbol identifier in the selected target.")]
     public async Task<CallToolResult> DependencyGraph([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
         [System.ComponentModel.Description("Indexed source file path used as the dependency graph root; specify this or symbolIdentifier.")] string? filePath = null,
-        [System.ComponentModel.Description("Type or member identifier used as the dependency graph root; specify this or filePath.")] string? symbolIdentifier = null, [System.ComponentModel.Description("Traversal direction: both (default), incoming, or outgoing.")] string direction = "both", [Range(1, 3), System.ComponentModel.Description("Maximum dependency traversal depth.")] int depth = 1,
+        [System.ComponentModel.Description("Type or member identifier, including a stable src:/asm: reference, used as the dependency graph root; specify this or filePath.")] string? symbolIdentifier = null, [System.ComponentModel.Description("Traversal direction: both (default), incoming, or outgoing.")] string direction = "both", [Range(1, 3), System.ComponentModel.Description("Maximum dependency traversal depth.")] int depth = 1,
         [Range(1, 500), System.ComponentModel.Description("Maximum dependency entries to return.")] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", [System.ComponentModel.Description("Include dependencies from generated source files.")] bool includeGenerated = false,
         [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 24576).") ] int maxResponseBytes = 24576, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
         [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
@@ -486,14 +498,14 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         await using var access = accessResult.Value!;
                         var targetSymbol = access.Symbol as INamedTypeSymbol ?? access.Symbol.ContainingType;
                         if (targetSymbol is null || !targetSymbol.Locations.Any(location => location.IsInSource))
-                            return McpToolResults.InvalidArgument("The handoff has no source type in this assembly.", "$.symbolIdentifier",
-                                "Use a handoff for a type or member declared in the selected assembly source.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                            return McpToolResults.InvalidArgument("The reference has no source type in this assembly.", "$.symbolIdentifier",
+                                "Use an asm: reference for a type or member declared in the selected assembly source.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                         string targetTypeId;
                         try { targetTypeId = DependencyGraphScanner.GetSourceTypeId(access.Solution, targetSymbol); }
                         catch (ArgumentException)
                         {
-                            return McpToolResults.InvalidArgument("The handoff has no source type in this assembly.", "$.symbolIdentifier",
-                                "Use a handoff for a type or member declared in the selected assembly source.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                            return McpToolResults.InvalidArgument("The reference has no source type in this assembly.", "$.symbolIdentifier",
+                                "Use an asm: reference for a type or member declared in the selected assembly source.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                         }
                         var scan = await DependencyGraphScanner.ScanSolutionAsync(access.Solution, ct,
                             new DependencyGraphScanOptions(PageSize: maxResults, TargetTypeName: targetSymbol.ToDisplayString(),
@@ -537,6 +549,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         DependencyGraphOmissions(fileScan));
                 }
 
+                if (symbolIdentifier is not null && ValidateSourceReferenceInput(symbolIdentifier, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier") is { } typeRouteError)
+                    return typeRouteError;
                 return await WithSource(target, async (solution, source) =>
                 {
                 string? typeName = null;
@@ -564,7 +578,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         TargetTypeName: typeName, Direction: parsedDirection, Depth: depth,
                         PageSize: maxResults, TargetTypeId: typeId, TargetTypeIds: fileTypeIds),
                     new DependencyGraphScanOptions(ScopeType: parsedScope, IncludeGenerated: includeGenerated),
-                    CreateSourceHandoffFormatter(solution, identity), ct).ConfigureAwait(false);
+                    CreateStableSourceReferenceFormatter(solution, identity), ct).ConfigureAwait(false);
                 var response = NavigationToolSupport.Success(scan, scan.IsTruncated, "Increase maxResults, depth, or document coverage and repeat the query.");
                 var omissions = new List<string>();
                 if (scan.IsDepthClamped) omissions.Add("depthLimit");
@@ -731,8 +745,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     [McpServerTool(Name = "resolve_type_origin", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Resolve a type name or symbol identifier to its source or metadata assembly origin.")]
-    public async Task<CallToolResult> ResolveTypeOrigin([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [System.ComponentModel.Description("Symbol identifier for the type; specify this or typeName.")] string? symbolIdentifier = null,
-        [System.ComponentModel.Description("Exactly one of this type name or symbolIdentifier is required.")] string? typeName = null, [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384,
+    public async Task<CallToolResult> ResolveTypeOrigin([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [System.ComponentModel.Description("Symbol identifier for the type, including a stable src:/asm: reference; specify this or typeName.")] string? symbolIdentifier = null,
+        [System.ComponentModel.Description("Type name or stable src:/asm: reference; exactly one of this or symbolIdentifier is required.")] string? typeName = null, [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384,
         [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null, [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
         [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
     {
@@ -762,6 +776,9 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     return NavigationToolSupport.WithAssemblyMetadata(NavigationToolSupport.Success(result.Value!), assemblyIdentity,
                         $"resolveTypeOrigin(input={input.Trim()})");
                 }
+                if (ValidateSourceReferenceInput(symbolIdentifier ?? typeName!, maxResponseBytes, maxResponseTokens,
+                    symbolIdentifier is null ? "$.typeName" : "$.symbolIdentifier") is { } typeOriginRouteError)
+                    return typeOriginRouteError;
                 return await WithSource(target, async (solution, source) =>
                 {
                     var identifier = symbolIdentifier ?? typeName!;
@@ -788,7 +805,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     [System.ComponentModel.Description("Read selected body, direct members, direct callers, or static test candidates for one source or assembly symbol.")]
     public Task<CallToolResult> GetContext(
         [Required, System.ComponentModel.Description("Absolute path to an existing source .sln/.slnx solution or managed .dll/.exe assembly.")] string targetPath,
-        [Required, System.ComponentModel.Description("Type or member identifier for the selected context target.")] string symbolIdentifier,
+        [Required, System.ComponentModel.Description("Type or member identifier, including a stable src:/asm: reference, for the selected context target.")] string symbolIdentifier,
         [Required, System.ComponentModel.Description("Non-empty, duplicate-free selection from body, members, callers, and tests.")] string[] sections,
         [System.ComponentModel.Description("Source caller scope: all (default), production, or tests. Applies only to callers.")] string? callerScope = null,
         [System.ComponentModel.Description("Include generated source declarations; defaults to false.")] bool? includeGenerated = null,
@@ -826,11 +843,15 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     "Use a resultCursor returned for this exact get_context selection.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                 var activeSections = continuation.Section is null ? selected : [continuation.Section];
                 if (target.TargetType == AnalysisTargetType.Project)
+                {
+                    if (ValidateSourceReferenceInput(symbolIdentifier, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier") is { } sourceRouteError)
+                        return sourceRouteError;
                     return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target,
                         async (solution, source, token) => await BuildSourceContextAsync(target, solution, source, symbolIdentifier,
                             selected, activeSections, requestBinding, scope, generated, effectivePageSize, bodyLines, bodyStart, coreCursor,
                             continuation.Section, maxResponseBytes, maxResponseTokens, token).ConfigureAwait(false),
                         maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
+                }
                 return await BuildAssemblyContextAsync(target, symbolIdentifier, selected, activeSections, requestBinding, generated, references,
                     effectivePageSize, bodyLines, bodyStart, coreCursor, continuation.Section, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
             }, requiredType: null, cancellationToken, resultCursor, "get_context");
@@ -842,10 +863,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     {
         if (string.IsNullOrWhiteSpace(symbolIdentifier))
             return McpToolResults.InvalidArgument("symbolIdentifier must be a non-empty symbol identifier.", "$.symbolIdentifier",
-                "Provide a declaration name, documentation ID, source position, or current handoff ID.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-        if (symbolIdentifier.Trim().StartsWith("i:", StringComparison.OrdinalIgnoreCase))
-            return McpToolResults.InvalidArgument("Internal symbol identifiers are not accepted by get_context.", "$.symbolIdentifier",
-                "Provide a declaration name, documentation ID, source position, or public handoff ID.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                "Provide a declaration name, documentation ID, source position, or stable src:/asm: reference.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         if (sections is null || sections.Length == 0 || sections.Any(string.IsNullOrWhiteSpace))
             return McpToolResults.InvalidArgument("sections must contain at least one supported section.", "$.sections",
                 "Choose one or more of body, members, callers, and tests.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
@@ -980,7 +998,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                             Signature = member.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
                             FilePath = location?.SourceTree?.FilePath ?? string.Empty, Line = line,
                             SpanStart = location?.SourceSpan.Start ?? int.MaxValue,
-                            HandoffId = handoff is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(handoff) };
+                            HandoffId = handoff };
                     }).OrderBy(member => member.FilePath, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(member => member.Line).ThenBy(member => member.SpanStart).ToArray();
                 var page = PageContextList(all, target.CanonicalPath, source.Identity.ContentHash, selected, section,
@@ -994,7 +1012,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 {
                 var refs = await FindReferencesResolver.FindReferencesAsync(symbol, solution, int.MaxValue, 1, ct,
                     scope: callerScope, includeGenerated: includeGenerated,
-                    handoffFormatter: CreateSourceHandoffFormatter(solution, source.Identity)).ConfigureAwait(false);
+                    handoffFormatter: CreateStableSourceReferenceFormatter(solution, source.Identity)).ConfigureAwait(false);
                 var page = PageContextList(refs.References, target.CanonicalPath, source.Identity.ContentHash, selected, section,
                     pageSize, internalCursor, identifier, callerScope, null, includeGenerated, null, null, requestBinding, bytes, tokens);
                 if (page.Error is not null) return page.Error;
@@ -1065,39 +1083,29 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
             return await BuildAssemblyContextWithReferencesAsync(target, identifier, selected, active, requestBinding, pageSize,
                 bodyLines, startLine, internalCursor, continuationSection, bytes, tokens, ct).ConfigureAwait(false);
         var normalizedIdentifier = InputNormalizer.NormalizeSymbolIdentifier(identifier);
-        var opened = InputNormalizer.HasOpaqueHandoffPrefix(normalizedIdentifier)
-            ? await AssemblyNavigationSessionScope.OpenResidentAsync(target.CanonicalPath, ct).ConfigureAwait(false)
-            : await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
+        if (AssemblySymbolInputResolver.TryRouteIdentifier(identifier, normalizedIdentifier, out var reference, out var referenceError))
+        {
+            if (referenceError is not null) return NavigationToolSupport.Failure(referenceError.Value, bytes, tokens, "$.symbolIdentifier");
+            if (reference is not StableSymbolReference.Assembly)
+                return NavigationToolSupport.Failure(new ResultError(NavigationErrorCodes.TargetMismatch,
+                    "A source reference cannot be resolved in an assembly target.",
+                    "Open the source solution target and use the src: reference."), bytes, tokens, "$.symbolIdentifier");
+        }
+        var opened = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
         if (!opened.IsSuccess) return NavigationToolSupport.Failure(opened.Error!.Value, bytes, tokens, "$.targetPath");
         await using var scope = opened.Value!;
-        ISymbol symbol;
-        string symbolHandoff;
-        if (InputNormalizer.HasOpaqueHandoffPrefix(normalizedIdentifier))
-        {
-            var resolvedHandoff = AssemblySymbolHandoffResolver.ResolveWithinScope(normalizedIdentifier, scope);
-            if (!resolvedHandoff.IsSuccess) return NavigationToolSupport.Failure(resolvedHandoff.Error!.Value, bytes, tokens, "$.symbolIdentifier");
-            symbol = resolvedHandoff.Value!;
-            var internalHandoff = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash,
-                scope.Context.Generation, scope.Context.ReferenceSnapshotHash).FormatHandoff(symbol);
-            if (internalHandoff is null) return McpToolResults.Recoverable(NavigationErrorCodes.StaleSnapshot,
-                "The selected assembly symbol no longer resolves in this snapshot.", "Repeat symbol discovery and retry.",
-                fieldPath: "$.symbolIdentifier", maxResponseBytes: bytes, maxResponseTokens: tokens);
-            symbolHandoff = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalHandoff);
-        }
-        else
-        {
-            var symbolResult = await AssemblySymbolInputResolver.ResolveAsync(scope, normalizedIdentifier, ct).ConfigureAwait(false);
-            if (!symbolResult.IsSuccess) return NavigationToolSupport.Failure(symbolResult.Error!.Value, bytes, tokens, "$.symbolIdentifier");
-            symbol = symbolResult.Symbol!;
-            symbolHandoff = symbolResult.HandoffId!;
-        }
+        var symbolResult = await AssemblySymbolInputResolver.ResolveAsync(scope, identifier, ct).ConfigureAwait(false);
+        if (!symbolResult.IsSuccess) return NavigationToolSupport.Failure(symbolResult.Error!.Value, bytes, tokens, "$.symbolIdentifier");
+        var symbol = symbolResult.Symbol!;
+        var symbolHandoff = symbolResult.HandoffId;
         var identity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash,
             scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
         if (selected.Contains("members", StringComparer.Ordinal) && symbol is not INamedTypeSymbol)
             return McpToolResults.InvalidArgument("members requires a type target.", "$.sections",
                 "Select a type declaration or remove members.", maxResponseBytes: bytes, maxResponseTokens: tokens);
         var ownerFormatter = CreateAssemblyHandoffFormatter(scope.Solution, scope.Context);
-        var declaration = BuildContextDeclaration(symbol, scope.Solution, identity, scope.Context.Origin.CanonicalPath, "assembly");
+        var declaration = BuildContextDeclaration(symbol, scope.Solution, identity, scope.Context.Origin.CanonicalPath, "assembly",
+            referenceFormatter: ownerFormatter);
         var sections = new List<object>();
         var omissions = new List<string>();
         string? currentSection = null;
@@ -1203,7 +1211,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         var formatter = session.CreateInternalFormatter(owner);
         var internalHandoff = formatter(symbol);
         var handoff = AssemblyReferenceClosureSession.Externalize(internalHandoff);
-        var declaration = BuildContextDeclaration(symbol, owner.Scope.Solution, identity, owner.TargetPath, "assembly");
+        var declaration = BuildContextDeclaration(symbol, owner.Scope.Solution, identity, owner.TargetPath, "assembly",
+            referenceFormatter: _ => handoff);
         var sections = new List<object>();
         var omissions = new List<string>();
         string? currentSection = null;
@@ -1348,14 +1357,15 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     }
 
     private static ContextDeclaration BuildContextDeclaration(ISymbol symbol, Solution solution, AnalysisSymbolIdentity identity,
-        string ownerPath, string targetKind, SyntaxReference? preferredDeclaration = null)
+        string ownerPath, string targetKind, SyntaxReference? preferredDeclaration = null,
+        Func<ISymbol, string?>? referenceFormatter = null)
     {
         var location = preferredDeclaration is null
             ? symbol.Locations.FirstOrDefault(item => item.IsInSource)
             : Location.Create(preferredDeclaration.SyntaxTree, preferredDeclaration.Span);
         var line = location?.GetLineSpan().StartLinePosition.Line + 1 ?? 0;
-        var internalId = targetKind == "source" ? identity.FormatHandoff(symbol, solution) : identity.FormatHandoff(symbol);
-        var handoff = internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
+        var handoff = referenceFormatter is not null ? referenceFormatter(symbol)
+            : targetKind == "source" ? identity.FormatHandoff(symbol, solution) : null;
         return new ContextDeclaration(symbol.Name, symbol.Kind.ToString().ToLowerInvariant(),
             symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat), SymbolVisibilityResolver.ResolveVisibility(symbol),
             location?.SourceTree?.FilePath ?? string.Empty, line, handoff, ownerPath, string.Empty);
@@ -1375,40 +1385,51 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         int bytes, int? tokens, CancellationToken ct) => await NavigationToolSupport.WithSourceSolutionAsync(runtime, target,
         (solution, source, _) => operation(solution, source), bytes, tokens, ct).ConfigureAwait(false);
 
-    private static async Task<Result<AssemblySymbolHandoffAccess>> ResolveAssemblySymbolAsync(
+    private static CallToolResult? ValidateSourceReferenceInput(string originalInput, int bytes, int? tokens, string fieldPath)
+    {
+        var discoveryProbe = InputNormalizer.NormalizeSymbolIdentifier(originalInput);
+        if (!StableSymbolReferenceCodec.TryParseReferenceInput(originalInput, discoveryProbe,
+            out var reference, out var error)) return null;
+        if (error is not null) return NavigationToolSupport.Failure(error.Value, bytes, tokens, fieldPath);
+        if (reference is StableSymbolReference.Source) return null;
+        return NavigationToolSupport.Failure(new ResultError(NavigationErrorCodes.TargetMismatch,
+            "An assembly reference cannot be resolved in a source solution.",
+            "Open the assembly owner targetPath and use the asm: reference there."), bytes, tokens, fieldPath);
+    }
+
+    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The successful result transfers ownership of the acquired scope to the returned access; every non-transfer path disposes it in finally.")]
+    private async Task<Result<AssemblySymbolReferenceAccess>> ResolveAssemblySymbolAsync(
         AnalysisTarget target, string identifier, CancellationToken ct)
     {
-        var normalizedIdentifier = InputNormalizer.NormalizeSymbolIdentifier(identifier);
-        if (!InputNormalizer.HasOpaqueHandoffPrefix(normalizedIdentifier)
-            && !normalizedIdentifier.StartsWith("i:", StringComparison.OrdinalIgnoreCase))
+        var normalized = InputNormalizer.NormalizeSymbolIdentifier(identifier);
+        if (AssemblySymbolInputResolver.TryRouteIdentifier(identifier, normalized, out var reference, out var routeError))
         {
-            var opened = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
-            if (!opened.IsSuccess) return Result<AssemblySymbolHandoffAccess>.Failure(opened.Error);
-            string? handoff;
-            await using (var scope = opened.Value!)
-            {
-                var raw = await AssemblySymbolInputResolver.ResolveAsync(scope, normalizedIdentifier, ct).ConfigureAwait(false);
-                if (!raw.IsSuccess) return Result<AssemblySymbolHandoffAccess>.Failure(raw.Error!);
-                handoff = raw.HandoffId;
-            }
-
-            if (string.IsNullOrWhiteSpace(handoff))
-                return Result<AssemblySymbolHandoffAccess>.Failure(NavigationErrorCodes.SymbolNotFound,
-                    "The raw identifier did not produce an owner-bound assembly handoff.");
-            identifier = handoff;
+            if (routeError is not null) return Result<AssemblySymbolReferenceAccess>.Failure(routeError.Value);
+            if (reference is not StableSymbolReference.Assembly)
+                return Result<AssemblySymbolReferenceAccess>.Failure(NavigationErrorCodes.TargetMismatch,
+                    "A source reference cannot be resolved in an assembly target.",
+                    "Open the source solution target and use the src: reference there.");
         }
-
-        var resolved = await AssemblySymbolHandoffResolver.ResolveAsync(identifier, ct).ConfigureAwait(false);
-        if (!resolved.IsSuccess) return resolved;
-        if (!string.Equals(Path.GetFullPath(resolved.Value!.Origin.CanonicalPath), target.CanonicalPath, StringComparison.OrdinalIgnoreCase))
+        var opened = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
+        if (!opened.IsSuccess) return Result<AssemblySymbolReferenceAccess>.Failure(opened.Error);
+        var scope = opened.Value!;
+        var ownershipTransferred = false;
+        try
         {
-            await resolved.Value.DisposeAsync().ConfigureAwait(false);
-            return Result<AssemblySymbolHandoffAccess>.Failure(
-                NavigationErrorCodes.TargetMismatch,
-                "The symbol handoff belongs to another assembly.",
-                "Use a handoff returned for this targetPath.");
+            if (AfterAssemblySymbolScopeOpenedForTesting is not null)
+                await AfterAssemblySymbolScopeOpenedForTesting(scope, ct).ConfigureAwait(false);
+            var resolved = await AssemblySymbolInputResolver.ResolveAsync(scope, identifier, ct).ConfigureAwait(false);
+            if (!resolved.IsSuccess) return Result<AssemblySymbolReferenceAccess>.Failure(resolved.Error!);
+
+            var access = AssemblySymbolReferenceAccess.FromResolvedScope(scope, resolved.Symbol!);
+            var result = Result<AssemblySymbolReferenceAccess>.Success(access);
+            ownershipTransferred = true;
+            return result;
         }
-        return resolved;
+        finally
+        {
+            if (!ownershipTransferred) await scope.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     private async Task<CallToolResult> BuildAssemblyCallTreeWithClosureAsync(
@@ -1435,7 +1456,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         await using var session = opened.Session!;
         var handoffOwnerScope = session.Owners.Single(owner => string.Equals(owner.TargetPath, session.HandoffOwnerPath,
             StringComparison.OrdinalIgnoreCase)).Scope;
-        var internalRootHandoff = AssemblyHandoffFormatting.CreateInternal(handoffOwnerScope)(session.HandoffSymbol);
+        var internalRootHandoff = AssemblyReferenceFormatting.Create(handoffOwnerScope)(session.HandoffSymbol);
         if (internalRootHandoff is null)
             return NavigationToolSupport.Failure(new ResultError(NavigationErrorCodes.StaleSnapshot,
                 "The selected assembly declaration no longer resolves to source in its owner assembly.",
@@ -1472,31 +1493,14 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         return omissions;
     }
 
-    private static Func<ISymbol, string?> CreateAssemblyHandoffFormatter(AssemblySymbolHandoffAccess access)
-        => CreateAssemblyHandoffFormatter(access.Solution, access.Origin.CanonicalPath, access.Origin.ContentHash,
-            access.Generation, access.ReferenceSnapshotHash, access.DecompiledProjectPaths?.DecompiledSourceRoot,
-            access.Assembly, access.Compilation);
+    private static Func<ISymbol, string?> CreateAssemblyHandoffFormatter(AssemblySymbolReferenceAccess access)
+        => AssemblyReferenceFormatting.Create(access.ScopeValue);
 
-    private static Func<ISymbol, string?> CreateSourceHandoffFormatter(Solution solution, AnalysisSymbolIdentity? identity)
-        => symbol =>
-        {
-            var internalId = identity?.FormatHandoff(symbol, solution);
-            return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
-        };
+    private static Func<ISymbol, string?> CreateStableSourceReferenceFormatter(Solution solution, AnalysisSymbolIdentity? identity)
+        => symbol => identity?.FormatHandoff(symbol, solution);
 
     private static Func<ISymbol, string?> CreateAssemblyHandoffFormatter(Solution solution, AssemblyContext context)
-        => CreateAssemblyHandoffFormatter(solution, context.Origin.CanonicalPath, context.Origin.ContentHash,
-            context.Generation, context.ReferenceSnapshotHash, context.DecompiledProjectPaths?.DecompiledSourceRoot,
-            context.Assembly, context.Compilation);
-
-    private static Func<ISymbol, string?> CreateAssemblyHandoffFormatter(Solution solution, string canonicalPath,
-        string contentHash, long generation, string referenceSnapshotHash, string? sourceRoot,
-        IAssemblySymbol assembly, Compilation compilation)
-    {
-        var internalFormatter = AssemblyHandoffFormatting.CreateInternal(solution, canonicalPath, contentHash,
-            generation, referenceSnapshotHash, sourceRoot, assembly, compilation);
-        return symbol => AssemblyHandoffFormatting.Externalize(internalFormatter(symbol));
-    }
+        => AssemblyReferenceFormatting.Create(solution, context);
 
     private static bool IsWithinDirectory(string rootDirectory, string? candidatePath)
     {

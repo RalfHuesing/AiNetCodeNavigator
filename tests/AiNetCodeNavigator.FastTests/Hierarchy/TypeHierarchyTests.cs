@@ -118,14 +118,14 @@ public sealed class TypeHierarchyTests
         Assert.True(limitedInterfaceHierarchy.IsTruncated);
         var externalBase = Assert.Single(middleHierarchy.BaseTypes.Where(entry => entry.Name == "Contracts.Root"));
         var inheritedInterface = Assert.Single(middleHierarchy.Interfaces.Where(entry => entry.Name == "Contracts.IRoot"));
-        Assert.StartsWith("h:", externalBase.HandoffId);
-        Assert.StartsWith("h:", inheritedInterface.HandoffId);
+        Assert.StartsWith("src:", externalBase.HandoffId);
+        Assert.StartsWith("src:", inheritedInterface.HandoffId);
         Assert.Equal("Root", (await SourceSymbolResolver.ResolveAsync(fixture.Solution, externalBase.HandoffId!)).Symbol!.Name);
         Assert.Equal("IRoot", (await SourceSymbolResolver.ResolveAsync(fixture.Solution, inheritedInterface.HandoffId!)).Symbol!.Name);
 
         var sameNamedSubtypes = baseHierarchy.Subtypes.Where(entry => entry.Name.EndsWith("Shared", System.StringComparison.Ordinal)).ToList();
         Assert.Equal(2, sameNamedSubtypes.Count);
-        Assert.All(sameNamedSubtypes, entry => Assert.StartsWith("h:", entry.HandoffId));
+        Assert.All(sameNamedSubtypes, entry => Assert.StartsWith("src:", entry.HandoffId));
         var resolvedProjects = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
         foreach (var entry in sameNamedSubtypes)
         {
@@ -177,7 +177,7 @@ public sealed class TypeHierarchyTests
 
         foreach (var entry in baseLocations.Concat(interfaceLocations))
         {
-            Assert.StartsWith("h:", entry.HandoffId);
+            Assert.StartsWith("src:", entry.HandoffId);
             var resolved = await SourceSymbolResolver.ResolveAsync(fixture.Solution, entry.HandoffId!);
             Assert.True(resolved.IsSuccess);
             Assert.Equal("Contracts", resolved.Symbol!.ContainingAssembly!.Name);

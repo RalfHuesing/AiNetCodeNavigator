@@ -137,7 +137,7 @@ public static class TypeHierarchyScanner
             .ThenBy(location => location.GetLineSpan().StartLinePosition.Line)
             .ToList();
         var handoff = handoffFormatter is null
-            ? SourceHandoffFormatter.Format(symbol, solution, identity)
+            ? StableSourceReferenceFormatter.Format(symbol, solution, identity)
             : handoffFormatter(symbol);
         var kind = symbol.IsRecord
             ? (symbol.TypeKind == TypeKind.Struct ? "record struct" : "record")

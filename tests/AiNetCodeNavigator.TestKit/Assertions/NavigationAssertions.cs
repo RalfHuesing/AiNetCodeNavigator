@@ -15,11 +15,13 @@ using Xunit;
 public static class NavigationAssertions
 {
     /// <summary>
-    /// Checks whether a handoff identifier follows the product's handle alphabet (for example, "h:gwtQ").
+    /// Checks whether a handoff field contains a canonical stable source or assembly reference.
     /// </summary>
     public static void AssertValidHandoffId(string? handoffId)
     {
-        Assert.True(HandoffCounterAlphabet.IsValidHandle(handoffId), $"'{handoffId}' is not a valid handoff ID.");
+        Assert.True(
+            handoffId is not null && StableSymbolReferenceCodec.TryParse(handoffId, out _, out var error) && error is null,
+            $"'{handoffId}' is not a canonical stable symbol reference.");
     }
 
     /// <summary>

@@ -47,7 +47,7 @@ public static class FindAssemblyExtensionsScanner
         var incompleteRelationships = context.References.Any(reference => !reference.Resolved
             || reference.ResolutionState is "depth_limit" or "invalid")
             || context.Status is AssemblySessionStatus.Partial or AssemblySessionStatus.Degraded;
-        ScanOwner(context);
+        ScanOwner(scope);
         if (request.IncludeReferences)
         {
             var owners = context.References
@@ -79,7 +79,7 @@ public static class FindAssemblyExtensionsScanner
                         : $"incompleteRelationships: referenced owner closure was incomplete ({Path.GetFileName(ownerPath)}).");
                     continue;
                 }
-                ScanOwner(ownerScope.Context);
+                ScanOwner(ownerScope);
             }
         }
 
@@ -117,10 +117,9 @@ public static class FindAssemblyExtensionsScanner
                 truncatedBy.Where(reason => reason != "maxResults").ToArray(), incompleteRelationships ? "partial" : "complete", hasMore),
             resultCursor));
 
-        void ScanOwner(AssemblyContext owner)
+        void ScanOwner(AssemblyNavigationSessionScope ownerScope)
         {
-            var identity = AnalysisSymbolIdentity.ForAssembly(owner.Origin.CanonicalPath, owner.Origin.ContentHash,
-                owner.Generation, owner.ReferenceSnapshotHash);
+            var owner = ownerScope.Context;
             foreach (var type in AssemblyAnalysisSymbolTraversal.GetAllTypes(owner.Assembly.GlobalNamespace))
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -133,13 +132,14 @@ public static class FindAssemblyExtensionsScanner
                     if (!MatchesReceiver(receiverName, request.ReceiverType)
                         || !Matches(method.Name, request.ExtensionName)
                         || !Matches(namespaceName, request.Namespace)) continue;
-                    var stableId = identity.FormatHandoff(method);
-                    if (stableId is null)
+                    var stableReference = ExactAssemblySymbolResolver.CreateReference(ownerScope, method);
+                    if (!stableReference.IsSuccess)
                     {
                         incompleteRelationships = true;
                         diagnostics.Add($"incompleteRelationships: extension declaration has no stable owner handoff ({method.Name}).");
                         continue;
                     }
+                    var stableId = StableSymbolReferenceCodec.Format(stableReference.Value!);
                     var added = extensions.Add(new AssemblyExtensionDto(
                         namespaceName,
                         type.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
@@ -149,7 +149,7 @@ public static class FindAssemblyExtensionsScanner
                         method.ReturnType.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
                         owner.Identity?.Name ?? Path.GetFileNameWithoutExtension(owner.Origin.CanonicalPath),
                         stableId,
-                        HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(stableId),
+                        stableId,
                         owner.Origin.CanonicalPath));
                     if (added) totalCount++;
                 }

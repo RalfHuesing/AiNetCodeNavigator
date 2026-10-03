@@ -421,6 +421,17 @@ public sealed class IndexScopeContractTests
                 }
                 Assert.True(parameter.Value.TryGetProperty("type", out _) || parameter.Value.TryGetProperty("anyOf", out _)
                     || parameter.Value.TryGetProperty("$ref", out _), $"{tool.ProtocolTool.Name}.{parameter.Name} must publish a JSON schema.");
+
+                if (parameter.Name is "symbolIdentifier" or "symbolIdentifiers" or "filePaths")
+                {
+                    var routeDescription = parameter.Value.GetProperty("description").GetString()!;
+                    Assert.Contains("src:", routeDescription, StringComparison.Ordinal);
+                    Assert.Contains("asm:", routeDescription, StringComparison.Ordinal);
+                    Assert.DoesNotContain("h:", routeDescription, StringComparison.OrdinalIgnoreCase);
+                    Assert.DoesNotContain("i:", routeDescription, StringComparison.OrdinalIgnoreCase);
+                    Assert.DoesNotContain("opaque", routeDescription, StringComparison.OrdinalIgnoreCase);
+                    Assert.DoesNotContain("handle", routeDescription, StringComparison.OrdinalIgnoreCase);
+                }
             }
         }
         Assert.True(missingDescriptions.Count == 0, string.Join(", ", missingDescriptions));

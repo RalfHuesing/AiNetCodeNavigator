@@ -42,24 +42,6 @@ public sealed class AssemblyNavigationSessionScope : IAsyncDisposable
         return Result<AssemblyNavigationSessionScope>.Success(Create(acquired.Value!));
     }
 
-    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "A successful result transfers the acquired resident snapshot lease to the returned scope.")]
-    internal static async Task<Result<AssemblyNavigationSessionScope>> OpenResidentAsync(
-        string? assemblyPath,
-        CancellationToken cancellationToken)
-    {
-        if (!InspectAssemblyScanner.TryValidatePath(assemblyPath, out var fullPath, out var pathError))
-        {
-            return Result<AssemblyNavigationSessionScope>.Failure(
-                NavigationErrorCodes.InvalidArgument,
-                pathError,
-                "assemblyPath must be an absolute path to an existing local .dll or .exe file.");
-        }
-
-        var acquired = await AssemblyAnalysisSessionRegistry.Default.AcquireResidentAsync(fullPath, cancellationToken).ConfigureAwait(false);
-        if (!acquired.IsSuccess) return Result<AssemblyNavigationSessionScope>.Failure(acquired.Error);
-        return Result<AssemblyNavigationSessionScope>.Success(Create(acquired.Value!));
-    }
-
     internal static AssemblyNavigationSessionScope Create(AssemblyAnalysisSessionRegistry.AssemblySessionAccess sessionAccess)
     {
         var generation = sessionAccess.Generation;

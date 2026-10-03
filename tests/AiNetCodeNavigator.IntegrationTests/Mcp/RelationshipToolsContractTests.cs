@@ -67,7 +67,9 @@ public sealed class RelationshipToolsContractTests
             "M:ImpactContractProbe.CompactTarget.Read", maxResponseBytes: 32768);
         Assert.False(sourceResult.IsError ?? false, TextOf(sourceResult));
         Assert.Contains("Caller029", TextOf(sourceResult), StringComparison.Ordinal);
-        await AssertCallerHandoffBodyAsync(new SymbolTools(runtime), sourcePath, sourceResult, "Caller029");
+        await AssertCallerHandoffBodyAsync(new SymbolTools(runtime), sourcePath, sourceResult, "Caller029",
+            (bytes, tokens, continuation) => tools.GetImpact(sourcePath, "M:ImpactContractProbe.CompactTarget.Read",
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation));
         await AssertImpactBudgetRecoveryAsync(tools, sourcePath, "M:ImpactContractProbe.Target.Read");
         await AssertImpactPagesReconstructAsync(tools, sourcePath, "M:ImpactContractProbe.CompactTarget.Read");
 
@@ -83,7 +85,9 @@ public sealed class RelationshipToolsContractTests
         var assemblyResult = await tools.GetImpact(assemblyPath, "M:ImpactContractProbe.CompactTarget.Read", maxResponseBytes: 32768);
         Assert.False(assemblyResult.IsError ?? false, TextOf(assemblyResult));
         Assert.Contains("Caller029", TextOf(assemblyResult), StringComparison.Ordinal);
-        await AssertCallerHandoffBodyAsync(new SymbolTools(runtime), assemblyPath, assemblyResult, "Caller029");
+        await AssertCallerHandoffBodyAsync(new SymbolTools(runtime), assemblyPath, assemblyResult, "Caller029",
+            (bytes, tokens, continuation) => tools.GetImpact(assemblyPath, "M:ImpactContractProbe.CompactTarget.Read",
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation));
         var omittedReferences = TextOf(assemblyResult);
         var explicitFalse = await tools.GetImpact(assemblyPath, "M:ImpactContractProbe.CompactTarget.Read", includeReferences: false, maxResponseBytes: 32768);
         Assert.Equal(omittedReferences, TextOf(explicitFalse));
@@ -99,9 +103,14 @@ public sealed class RelationshipToolsContractTests
         SymbolTools symbolTools,
         string targetPath,
         ModelContextProtocol.Protocol.CallToolResult impact,
-        string expectedCaller)
+        string expectedCaller,
+        Func<int, int?, string?, Task<ModelContextProtocol.Protocol.CallToolResult>> readContinuation)
     {
-        using var impactJson = JsonDocument.Parse(BodyOf(TextOf(impact)));
+        const int responseBytes = 32768;
+        var pages = await ReadOuterResponsePagesAsync(readContinuation, responseBytes, null);
+        Assert.Equal(BodyOf(TextOf(impact)), BodyOf(pages.FirstPage));
+        using var impactJson = ParseJsonWithDiagnostics(BodyOf(pages.Text),
+            $"GetImpact caller extraction for {expectedCaller} (outerPages={pages.Pages}, bytes={responseBytes})");
         var selectedCaller = impactJson.RootElement.GetProperty("callSites").EnumerateArray()
             .Select(site => new
             {
@@ -112,10 +121,12 @@ public sealed class RelationshipToolsContractTests
                 && !string.IsNullOrWhiteSpace(site.Handoff));
         var handoff = selectedCaller?.Handoff;
         Assert.False(string.IsNullOrWhiteSpace(handoff), "Impact call sites should expose a caller handoff.");
-        var body = await symbolTools.GetSymbolBody(targetPath, [handoff!], maxResponseBytes: 32768);
-        Assert.False(body.IsError ?? false, TextOf(body));
-        Assert.Contains(expectedCaller, TextOf(body), StringComparison.Ordinal);
-        Assert.Contains("CompactTarget.Read", TextOf(body), StringComparison.Ordinal);
+        var bodyPages = await ReadOuterResponsePagesAsync(
+            (bytes, tokens, continuation) => symbolTools.GetSymbolBody(targetPath, [handoff!],
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation),
+            32768, null);
+        Assert.Contains(expectedCaller, bodyPages.Text, StringComparison.Ordinal);
+        Assert.Contains("CompactTarget.Read", bodyPages.Text, StringComparison.Ordinal);
     }
 
     private static async Task AssertImpactPagesReconstructAsync(
@@ -125,9 +136,11 @@ public sealed class RelationshipToolsContractTests
         int responseBytes = 512,
         int responseTokens = 512)
     {
-        var expectedResult = await tools.GetImpact(targetPath, symbolIdentifier, maxResponseBytes: 65536, maxResponseTokens: 4096);
-        Assert.False(expectedResult.IsError ?? false, TextOf(expectedResult));
-        var expectedBody = BodyOf(TextOf(expectedResult));
+        var expectedPages = await ReadOuterResponsePagesAsync(
+            (bytes, tokens, continuation) => tools.GetImpact(targetPath, symbolIdentifier,
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation),
+            65536, 4096);
+        var expectedBody = expectedPages.Text;
         var reconstructed = new System.Text.StringBuilder();
         var pageCount = 0;
         var complete = false;
@@ -216,9 +229,11 @@ public sealed class RelationshipToolsContractTests
         int responseBytes,
         int responseTokens)
     {
-        var expectedResult = await tools.GetImpact(targetPath, symbolIdentifier, maxResponseBytes: 65536, maxResponseTokens: 4096);
-        Assert.False(expectedResult.IsError ?? false, TextOf(expectedResult));
-        var expectedBody = BodyOf(TextOf(expectedResult));
+        var expectedPages = await ReadOuterResponsePagesAsync(
+            (bytes, tokens, continuation) => tools.GetImpact(targetPath, symbolIdentifier,
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation),
+            65536, 4096);
+        var expectedBody = expectedPages.Text;
         var reconstructed = new System.Text.StringBuilder();
         var operationToken = (string?)null;
         var continuationToken = (string?)null;
@@ -280,7 +295,13 @@ public sealed class RelationshipToolsContractTests
         Assert.True(minimumRetryObserved, "The bounded impact response should exercise exact minimum-budget recovery.");
         Assert.Equal(expectedBody, reconstructed.ToString());
         var longCallerNameInBody = "LongCaller" + new string('X', 700);
-        Assert.Equal(1, CountOccurrences(reconstructed.ToString(), longCallerNameInBody));
+        using var impactDocument = ParseJsonWithDiagnostics(reconstructed.ToString(),
+            $"GetImpact reconstructed long-caller page (callerLength={longCallerNameInBody.Length})");
+        var longCallerSite = Assert.Single(impactDocument.RootElement.GetProperty("callSites").EnumerateArray()
+            .Where(site => site.GetProperty("callingMember").GetString()?.Contains(longCallerNameInBody, StringComparison.Ordinal) == true));
+        var longCallerReference = longCallerSite.GetProperty("callingMemberHandoffId").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(longCallerReference), longCallerSite.ToString());
+        Assert.Equal(1, CountOccurrences(longCallerReference!, longCallerNameInBody));
     }
 
     private static async Task<string> CreateSourceFixtureAsync(string root)

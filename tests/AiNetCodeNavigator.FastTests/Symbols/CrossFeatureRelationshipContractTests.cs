@@ -70,8 +70,8 @@ public sealed class CrossFeatureRelationshipContractTests
 
         foreach (var site in impact.CallSites)
         {
-            Assert.StartsWith("h:", site.CallingMemberHandoffId);
-            Assert.StartsWith("h:", site.ReachedFromSymbolHandoffId);
+            Assert.StartsWith("src:", site.CallingMemberHandoffId);
+            Assert.StartsWith("src:", site.ReachedFromSymbolHandoffId);
             var callerResolution = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.CallingMemberHandoffId!);
             var originResolution = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.ReachedFromSymbolHandoffId!);
             Assert.True(callerResolution.IsSuccess);
@@ -259,7 +259,7 @@ public sealed class CrossFeatureRelationshipContractTests
         Assert.Equal(2, generatedProductionHierarchy.TotalSubtypes);
         Assert.True(generatedProductionHierarchy.IsTruncated);
         var hierarchyHandoff = Assert.Single(productionHierarchy.Subtypes).HandoffId;
-        Assert.StartsWith("h:", hierarchyHandoff);
+        Assert.StartsWith("src:", hierarchyHandoff);
         var hierarchyBody = await SourceSymbolBodyResolver.ResolveAsync(fixture.Solution, hierarchyHandoff!, maxBodyLines: 20);
         Assert.Null(hierarchyBody.Error);
         Assert.Contains("class Counter", hierarchyBody.Body!.Body, StringComparison.Ordinal);

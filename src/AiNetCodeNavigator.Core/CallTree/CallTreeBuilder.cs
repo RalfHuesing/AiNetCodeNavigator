@@ -34,7 +34,7 @@ public static class CallTreeBuilder
         var solutionDir = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
         var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
 
-        var handoffFormatter = request.HandoffFormatter ?? (symbol => SourceHandoffFormatter.Format(symbol, request.Solution, handoffIdentity));
+        var handoffFormatter = request.HandoffFormatter ?? (symbol => StableSourceReferenceFormatter.Format(symbol, request.Solution, handoffIdentity));
         var state = new BuilderState(request.Solution, solutionDir, depth, Math.Max(request.TopN, 1), request.IncludeBcl,
             handoffFormatter, request.Scope, request.IncludeGenerated);
 

@@ -289,6 +289,13 @@ public sealed class StableSymbolReferenceTests
         Assert.Equal("AMBIGUOUS_SYMBOL", created.Error?.Code);
         Assert.Contains("TargetFramework=unknown", created.Error?.Message, System.StringComparison.Ordinal);
         Assert.Contains("multiplicity=2", created.Error?.Message, System.StringComparison.Ordinal);
+
+        var raw = await SourceSymbolResolver.ResolveAsync(solution, "Widget");
+        Assert.False(raw.IsSuccess);
+        Assert.Equal("AMBIGUOUS_SYMBOL", raw.Error?.Code);
+        Assert.Equal(2, raw.Candidates.Count);
+        Assert.All(raw.Candidates, candidate => Assert.Null(candidate.HandoffId));
+        Assert.All(raw.Candidates, candidate => Assert.Equal("Widget", candidate.Name));
     }
 
     [Fact]

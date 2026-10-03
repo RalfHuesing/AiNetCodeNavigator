@@ -206,10 +206,10 @@ public static class FindReferencesResolver
                 EnclosingSymbolHandoffId = item.CallerSymbol is null
                     ? null
                     : handoffFormatter is null
-                        ? SourceHandoffFormatter.Format(item.CallerSymbol, solution, handoffIdentity)
+                        ? StableSourceReferenceFormatter.Format(item.CallerSymbol, solution, handoffIdentity)
                         : handoffFormatter(item.CallerSymbol),
                 ReachedFromSymbolHandoffId = handoffFormatter is null
-                    ? SourceHandoffFormatter.Format(item.ReachedFromSymbol, solution, handoffIdentity)
+                    ? StableSourceReferenceFormatter.Format(item.ReachedFromSymbol, solution, handoffIdentity)
                     : handoffFormatter(item.ReachedFromSymbol),
             })
             .ToList();
@@ -359,7 +359,7 @@ public static class FindReferencesResolver
 
             var line = loc?.GetLineSpan().StartLinePosition.Line + 1 ?? 0;
             var handoff = handoffFormatter is null
-                ? SourceHandoffFormatter.Format(impl, solution, handoffIdentity)
+                ? StableSourceReferenceFormatter.Format(impl, solution, handoffIdentity)
                 : handoffFormatter(impl);
 
             var projectName = impl.ContainingAssembly?.Name ?? string.Empty;

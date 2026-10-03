@@ -62,7 +62,7 @@ public sealed class ClassStructureScannerTests
         Assert.NotNull(unresolved);
         Assert.Equal(NavigationErrorCodes.AmbiguousSymbol, unresolved.Error?.Code);
         Assert.Equal(2, unresolved.ResolutionCandidates.Count);
-        Assert.All(unresolved.ResolutionCandidates, candidate => Assert.StartsWith("h:", candidate.HandoffId));
+        Assert.All(unresolved.ResolutionCandidates, candidate => Assert.StartsWith("src:", candidate.HandoffId));
 
         var selected = await ClassStructureScanner.ScanAsync(
             new ClassStructureScanRequest(ambiguous.Solution, unresolved.ResolutionCandidates[0].HandoffId!));
@@ -172,7 +172,13 @@ public sealed class ClassStructureScannerTests
         Assert.Equal(7, CountUnescapedPipes(operatorRow));
         Assert.Equal(7, CountUnescapedPipes(constantRow));
         Assert.Contains("operator \\|", operatorRow);
-        Assert.Contains($"`{operatorEntry.HandoffId}`", operatorRow);
+        var handoff = Assert.IsType<string>(operatorEntry.HandoffId);
+        var escapedHandoff = handoff.Replace("|", "\\|", System.StringComparison.Ordinal);
+        Assert.Contains($"`{escapedHandoff}`", operatorRow);
+        var unescapedHandoff = escapedHandoff.Replace("\\|", "|", System.StringComparison.Ordinal);
+        Assert.Equal(handoff, unescapedHandoff);
+        Assert.True(StableSymbolReferenceCodec.TryParse(unescapedHandoff, out var parsedHandoff, out var parseError), parseError?.Message);
+        Assert.Equal(unescapedHandoff, StableSymbolReferenceCodec.Format(parsedHandoff!));
         Assert.Contains("left\\|right", constantRow);
     }
 
@@ -340,7 +346,7 @@ public sealed class ClassStructureScannerTests
         var payload = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(fixture.Solution, "Greeter"));
         Assert.NotNull(payload);
         var entry = Assert.Single(payload.Members, member => member.Name == "Greet");
-        Assert.StartsWith("h:", entry.HandoffId);
+        Assert.StartsWith("src:", entry.HandoffId);
 
         var resolved = await SourceSymbolResolver.ResolveAsync(fixture.Solution, entry.HandoffId!);
 
@@ -360,14 +366,14 @@ public sealed class ClassStructureScannerTests
     }
 
     [Fact]
-    public async Task ScanAsync_InvalidHandoffReturnsStructuredError()
+    public async Task ScanAsync_LegacyHandleReturnsInvalidReferenceError()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
 
         var payload = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(fixture.Solution, "h:invalid"));
 
         Assert.NotNull(payload);
-        Assert.Equal("HANDOFF_UNKNOWN", payload.Error?.Code);
+        Assert.Equal("INVALID_SYMBOL_REFERENCE", payload.Error?.Code);
         Assert.Empty(payload.Members);
     }
 

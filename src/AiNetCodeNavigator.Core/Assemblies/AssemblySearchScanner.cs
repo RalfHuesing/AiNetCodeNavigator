@@ -32,15 +32,13 @@ public static class AssemblySearchScanner
     public static Task<Result<AssemblySearchPayload>> SearchAsync(
         AssemblySearchRequest request,
         CancellationToken cancellationToken = default) =>
-        SearchAsync(request, HandoffHandleRegistry.Default, cancellationToken);
+        SearchCoreAsync(request, cancellationToken);
 
-    internal static async Task<Result<AssemblySearchPayload>> SearchAsync(
+    private static async Task<Result<AssemblySearchPayload>> SearchCoreAsync(
         AssemblySearchRequest request,
-        HandoffHandleRegistry handoffRegistry,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(handoffRegistry);
         if (string.IsNullOrWhiteSpace(request.Query))
         {
             return Result<AssemblySearchPayload>.Failure(NavigationErrorCodes.InvalidArgument, "query must not be empty.");
@@ -174,10 +172,8 @@ public static class AssemblySearchScanner
             if (request.Kind is not ("type" or "method") || candidate.DeclaredSymbol is null)
                 return candidate.Hit;
 
-            var internalHandoff = handoffIdentity.FormatHandoff(candidate.DeclaredSymbol);
-            var publicHandoff = internalHandoff is null
-                ? null
-                : handoffRegistry.GetOpaqueHandleForOutputOrThrow(internalHandoff);
+            var stableReference = ExactAssemblySymbolResolver.CreateReference(scope, candidate.DeclaredSymbol);
+            var publicHandoff = stableReference.IsSuccess ? StableSymbolReferenceCodec.Format(stableReference.Value!) : null;
             return candidate.Hit with
             {
                 HandoffId = publicHandoff,

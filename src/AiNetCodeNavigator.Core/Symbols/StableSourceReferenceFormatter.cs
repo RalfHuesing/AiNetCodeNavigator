@@ -4,7 +4,7 @@ using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.Symbols;
 
-internal static class SourceHandoffFormatter
+internal static class StableSourceReferenceFormatter
 {
     internal static string? Format(ISymbol? symbol, Solution solution, AnalysisSymbolIdentity? identity)
     {
@@ -13,9 +13,6 @@ internal static class SourceHandoffFormatter
             return null;
         }
 
-        var internalId = identity.FormatHandoff(symbol, solution);
-        return internalId is null
-            ? null
-            : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
+        return identity.FormatHandoff(symbol, solution);
     }
 }

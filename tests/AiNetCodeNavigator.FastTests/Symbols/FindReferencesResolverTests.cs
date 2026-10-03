@@ -36,7 +36,7 @@ public sealed class FindReferencesResolverTests
         Assert.All(result.References, r => Assert.NotEmpty(r.Snippet));
 
         var caller = Assert.Single(result.References.Where(reference => reference.ProjectName == "Sample.App" && reference.EnclosingSymbolName.Contains("ExecuteSingle")));
-        Assert.StartsWith("h:", caller.EnclosingSymbolHandoffId);
+        Assert.StartsWith("src:", caller.EnclosingSymbolHandoffId);
         var resolvedCaller = await SourceSymbolResolver.ResolveAsync(fixture.Solution, caller.EnclosingSymbolHandoffId!);
         Assert.True(resolvedCaller.IsSuccess);
         Assert.Equal("ExecuteSingle", resolvedCaller.Symbol!.Name);
@@ -58,7 +58,7 @@ public sealed class FindReferencesResolverTests
             handoffFormatter: symbol =>
             {
                 formattedSymbols.Add(symbol);
-                return $"h:page-{formattedSymbols.Count}";
+                return $"src:src/App/App.csproj|M:Page{formattedSymbols.Count}";
             });
 
         Assert.Single(result.References);
@@ -166,7 +166,7 @@ public sealed class FindReferencesResolverTests
         Assert.Equal("CallerB.B", direct.EnclosingSymbolName);
         Assert.Equal(1, direct.Depth);
         Assert.Equal("Target.A", direct.ReachedFromSymbolName);
-        Assert.StartsWith("h:", direct.ReachedFromSymbolHandoffId);
+        Assert.StartsWith("src:", direct.ReachedFromSymbolHandoffId);
         Assert.Equal("A", (await SourceSymbolResolver.ResolveAsync(fixture.Solution, direct.ReachedFromSymbolHandoffId!)).Symbol!.Name);
         Assert.Equal(2, depthTwo.References.Count);
         var indirect = Assert.Single(depthTwo.References.Where(reference => reference.Depth == 2));
@@ -360,7 +360,7 @@ public sealed class FindReferencesResolverTests
 
         Assert.Equal(2, result.TotalCount);
         Assert.Equal(2, result.Implementations.Count);
-        Assert.All(result.Implementations, implementation => Assert.StartsWith("h:", implementation.HandoffId));
+        Assert.All(result.Implementations, implementation => Assert.StartsWith("src:", implementation.HandoffId));
         Assert.Equal("App.One", result.Implementations[0].ProjectName);
         Assert.Equal("App.Two", result.Implementations[1].ProjectName);
 
@@ -396,8 +396,8 @@ public sealed class FindReferencesResolverTests
         var abstractImplementation = Assert.Single(abstractResult.Implementations);
         Assert.Equal("App", interfaceImplementation.ProjectName);
         Assert.Equal("App", abstractImplementation.ProjectName);
-        Assert.StartsWith("h:", interfaceImplementation.HandoffId);
-        Assert.StartsWith("h:", abstractImplementation.HandoffId);
+        Assert.StartsWith("src:", interfaceImplementation.HandoffId);
+        Assert.StartsWith("src:", abstractImplementation.HandoffId);
         Assert.Equal("Run", (await SourceSymbolResolver.ResolveAsync(fixture.Solution, interfaceImplementation.HandoffId!)).Symbol!.Name);
         Assert.Equal("Stop", (await SourceSymbolResolver.ResolveAsync(fixture.Solution, abstractImplementation.HandoffId!)).Symbol!.Name);
     }
@@ -423,8 +423,8 @@ public sealed class FindReferencesResolverTests
         Assert.Equal("Label", propertyOverride.SymbolName);
         Assert.Equal("App", interfaceImplementation.ProjectName);
         Assert.Equal("App", propertyOverride.ProjectName);
-        Assert.StartsWith("h:", interfaceImplementation.HandoffId);
-        Assert.StartsWith("h:", propertyOverride.HandoffId);
+        Assert.StartsWith("src:", interfaceImplementation.HandoffId);
+        Assert.StartsWith("src:", propertyOverride.HandoffId);
         Assert.Equal("Name", (await SourceSymbolResolver.ResolveAsync(fixture.Solution, interfaceImplementation.HandoffId!)).Symbol!.Name);
         Assert.Equal("Label", (await SourceSymbolResolver.ResolveAsync(fixture.Solution, propertyOverride.HandoffId!)).Symbol!.Name);
     }
