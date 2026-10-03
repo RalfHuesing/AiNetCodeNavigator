@@ -220,7 +220,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     {
         if (!TryScope(scopeType, out var scope)) return Invalid("scopeType", "Use all, production, or tests.");
         return await NavigationToolSupport.RouteAsync(runtime, "get_type_hierarchy", targetPath,
-            new { symbolIdentifier, scopeType, includeGenerated }, operationToken, continuationToken,
+            new { symbolIdentifier, scopeType, includeGenerated, maxResults }, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens,
             async (target, coreCursor, ct) =>
             {
@@ -240,7 +240,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
                         access.Generation, access.ReferenceSnapshotHash);
                     var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, identity.ContentHash + "|" + access.ReferenceSnapshotHash,
-                        "get_type_hierarchy.subtypes", symbolIdentifier.Trim(), scope.ToString(), includeGenerated.ToString());
+                        "get_type_hierarchy.subtypes", symbolIdentifier.Trim(), scope.ToString(), includeGenerated.ToString(),
+                        maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
                     var page = NavigationToolSupport.PageResults(assemblyResult.Subtypes, maxResults, coreCursor, binding,
                         maxResponseBytes, maxResponseTokens);
                     if (page.Error is not null) return page.Error;
@@ -261,7 +262,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 var result = await TypeHierarchyScanner.ScanAsync(named, solution, int.MaxValue, ct, scope, includeGenerated).ConfigureAwait(false);
                 if (!result.IsSuccess) return McpToolResults.InvalidArgument(result.ErrorMessage!, "$.symbolIdentifier", "Choose a supported named type.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                 var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
-                    "get_type_hierarchy.subtypes", symbolIdentifier.Trim(), scope.ToString(), includeGenerated.ToString());
+                    "get_type_hierarchy.subtypes", symbolIdentifier.Trim(), scope.ToString(), includeGenerated.ToString(),
+                    maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 var page = NavigationToolSupport.PageResults(result.Subtypes, maxResults, coreCursor, binding,
                     maxResponseBytes, maxResponseTokens);
                 if (page.Error is not null) return page.Error;
@@ -357,7 +359,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     {
         if (string.IsNullOrWhiteSpace(symbolIdentifier)) return Invalid("symbolIdentifier", "Provide a non-empty source or assembly symbol identifier.");
         return await NavigationToolSupport.RouteAsync(runtime, "get_impact", targetPath,
-            new { symbolIdentifier, depth, includeReferences },
+            new { symbolIdentifier, depth, includeReferences, maxResults },
             operationToken, continuationToken, maxResponseBytes, maxResponseTokens,
             async (target, coreCursor, ct) =>
             {
@@ -372,7 +374,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         var closureIdentity = closureImpact.AnalysisIdentity!;
                         var closureBinding = BoundResultCursor.CreateBinding(target.CanonicalPath,
                             closureIdentity.ContentHash, "get_impact.callSites", symbolIdentifier.Trim(),
-                            depth.ToString(System.Globalization.CultureInfo.InvariantCulture), "includeReferences=true");
+                            depth.ToString(System.Globalization.CultureInfo.InvariantCulture), "includeReferences=true",
+                            maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
                         var closurePage = NavigationToolSupport.PageResults(closureImpact.Impact!.CallSites, maxResults,
                             coreCursor, closureBinding, maxResponseBytes, maxResponseTokens);
                         if (closurePage.Error is not null) return closurePage.Error;
@@ -401,7 +404,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     var identity = AnalysisSymbolIdentity.ForAssembly(lease.Origin.CanonicalPath, lease.Origin.ContentHash,
                         lease.Generation, lease.ReferenceSnapshotHash);
                     var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, identity.ContentHash + "|" + lease.ReferenceSnapshotHash,
-                        "get_impact.callSites", symbolIdentifier.Trim(), depth.ToString(System.Globalization.CultureInfo.InvariantCulture), includeReferences.ToString());
+                        "get_impact.callSites", symbolIdentifier.Trim(), depth.ToString(System.Globalization.CultureInfo.InvariantCulture), includeReferences.ToString(),
+                        maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
                     var page = NavigationToolSupport.PageResults(impact.CallSites, maxResults, coreCursor, binding,
                         maxResponseBytes, maxResponseTokens);
                     if (page.Error is not null) return page.Error;
@@ -427,7 +431,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     if (symbol.Error is not null) return NavigationToolSupport.Failure(symbol.Error.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                     var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(symbol.Symbol!, solution, depth, int.MaxValue, ct).ConfigureAwait(false);
                     var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
-                        "get_impact.callSites", symbolIdentifier.Trim(), depth.ToString(System.Globalization.CultureInfo.InvariantCulture), includeReferences.ToString());
+                        "get_impact.callSites", symbolIdentifier.Trim(), depth.ToString(System.Globalization.CultureInfo.InvariantCulture), includeReferences.ToString(),
+                        maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
                     var page = NavigationToolSupport.PageResults(impact.CallSites, maxResults, coreCursor, binding,
                         maxResponseBytes, maxResponseTokens);
                     if (page.Error is not null) return page.Error;

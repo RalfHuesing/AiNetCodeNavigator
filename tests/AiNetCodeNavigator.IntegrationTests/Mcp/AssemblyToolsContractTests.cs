@@ -163,6 +163,7 @@ public sealed class AssemblyToolsContractTests
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var relationships = new RelationshipTools(runtime);
+        var symbols = new SymbolTools(runtime);
         using var fixture = TestTempDirectory.Create("ainet-assembly-impact-pages-");
         var callers = string.Join("\n", Enumerable.Range(0, 8).Select(index =>
             $"public sealed class Caller{index:D2} {{ public int Invoke(Target target) => target.Read(); }}"));
@@ -174,9 +175,17 @@ public sealed class AssemblyToolsContractTests
             {{callers}}
             {{subtypes}}
             """);
+        var broadImpact = await relationships.GetImpact(assemblyPath, "M:AssemblyImpactPages.Target.Read",
+            maxResults: 100, maxResponseBytes: 32768, maxResponseTokens: 4096);
+        Assert.False(broadImpact.IsError ?? false, TextOf(broadImpact));
+        using var broadImpactDocument = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(broadImpact)));
+        var expectedImpact = broadImpactDocument.RootElement.GetProperty("callSites").EnumerateArray()
+            .Select(item => $"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("callingMember").GetString()}")
+            .ToArray();
 
         var seen = new List<string>();
         string? cursor = null;
+        string? firstImpactCursor = null;
         var pages = 0;
         int? total = null;
         do
@@ -184,6 +193,7 @@ public sealed class AssemblyToolsContractTests
             var response = await relationships.GetImpact(assemblyPath, "M:AssemblyImpactPages.Target.Read",
                 maxResults: 2, resultCursor: cursor, maxResponseBytes: 32768, maxResponseTokens: 4096);
             Assert.False(response.IsError ?? false, TextOf(response));
+            await FollowAssemblyHandoffAsync(symbols, assemblyPath, response);
             using var document = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(response)));
             var root = document.RootElement;
             total ??= root.GetProperty("transitiveImpactCount").GetInt32();
@@ -191,6 +201,7 @@ public sealed class AssemblyToolsContractTests
                 seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("callingMember").GetString()}");
             cursor = root.TryGetProperty("resultCursor", out var cursorValue)
                 && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
+            firstImpactCursor ??= cursor;
             pages++;
             Assert.InRange(pages, 1, 10);
         } while (cursor is not null);
@@ -199,9 +210,15 @@ public sealed class AssemblyToolsContractTests
         Assert.Equal(8, total);
         Assert.Equal(8, seen.Count);
         Assert.Equal(8, seen.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(expectedImpact, seen);
+        Assert.NotNull(firstImpactCursor);
+        AssertErrorWithinBudget(await relationships.GetImpact(assemblyPath, "M:AssemblyImpactPages.Target.Read",
+            maxResults: 3, resultCursor: firstImpactCursor, maxResponseBytes: 32768, maxResponseTokens: 4096),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 32768, 4096);
 
         seen.Clear();
         cursor = null;
+        string? firstHierarchyCursor = null;
         pages = 0;
         string? firstReferenceCursor = null;
         var broadReferences = await relationships.FindReferences(assemblyPath, "M:AssemblyImpactPages.Target.Read",
@@ -253,23 +270,63 @@ public sealed class AssemblyToolsContractTests
         seen.Clear();
         cursor = null;
         pages = 0;
+        var broadHierarchy = await relationships.GetTypeHierarchy(assemblyPath, "T:AssemblyImpactPages.Target",
+            maxResults: 100, maxResponseBytes: 32768, maxResponseTokens: 4096);
+        Assert.False(broadHierarchy.IsError ?? false, TextOf(broadHierarchy));
+        using var broadHierarchyDocument = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(broadHierarchy)));
+        var expectedHierarchy = broadHierarchyDocument.RootElement.GetProperty("subtypes").EnumerateArray()
+            .Select(item => $"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("name").GetString()}")
+            .ToArray();
         do
         {
             var response = await relationships.GetTypeHierarchy(assemblyPath, "T:AssemblyImpactPages.Target",
                 maxResults: 2, resultCursor: cursor, maxResponseBytes: 32768, maxResponseTokens: 4096);
             Assert.False(response.IsError ?? false, TextOf(response));
+            await FollowAssemblyHandoffAsync(symbols, assemblyPath, response);
             using var document = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(response)));
             var root = document.RootElement;
             foreach (var item in root.GetProperty("subtypes").EnumerateArray())
                 seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("name").GetString()}");
             cursor = root.TryGetProperty("resultCursor", out var cursorValue)
                 && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
+            firstHierarchyCursor ??= cursor;
             pages++;
             Assert.InRange(pages, 1, 10);
         } while (cursor is not null);
         Assert.Equal(4, pages);
         Assert.Equal(8, seen.Count);
         Assert.Equal(8, seen.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(8, broadHierarchyDocument.RootElement.GetProperty("totalSubtypes").GetInt32());
+        Assert.Equal(expectedHierarchy, seen);
+        Assert.NotNull(firstHierarchyCursor);
+        AssertErrorWithinBudget(await relationships.GetTypeHierarchy(assemblyPath, "T:AssemblyImpactPages.Target",
+            maxResults: 3, resultCursor: firstHierarchyCursor, maxResponseBytes: 32768, maxResponseTokens: 4096),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 32768, 4096);
+        AssertErrorWithinBudget(await relationships.GetImpact(assemblyPath, "M:AssemblyImpactPages.Target.Read",
+            maxResults: 2, resultCursor: "malformed-cursor", maxResponseBytes: 32768, maxResponseTokens: 4096),
+            "RESULT_CURSOR_EXPIRED", 32768, 4096);
+        AssertErrorWithinBudget(await relationships.GetTypeHierarchy(assemblyPath, "T:AssemblyImpactPages.Target",
+            maxResults: 2, resultCursor: "malformed-cursor", maxResponseBytes: 32768, maxResponseTokens: 4096),
+            "RESULT_CURSOR_EXPIRED", 32768, 4096);
+        AssertErrorWithinBudget(await relationships.GetImpact(referenceCopyPath, "M:AssemblyImpactPages.Target.Read",
+            maxResults: 2, resultCursor: firstImpactCursor, maxResponseBytes: 32768, maxResponseTokens: 4096),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 32768, 4096);
+        AssertErrorWithinBudget(await relationships.GetTypeHierarchy(referenceCopyPath, "T:AssemblyImpactPages.Target",
+            maxResults: 2, resultCursor: firstHierarchyCursor, maxResponseBytes: 32768, maxResponseTokens: 4096),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 32768, 4096);
+        var changedAssemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "AssemblyImpactPagesChanged", """
+            namespace AssemblyImpactPages;
+            public class Target { public int Read() => 2; }
+            public sealed class ReplacementCaller { public int Invoke(Target target) => target.Read(); }
+            public sealed class ReplacementSubtype : Target { }
+            """);
+        File.Copy(changedAssemblyPath, assemblyPath, overwrite: true);
+        AssertErrorWithinBudget(await relationships.GetImpact(assemblyPath, "M:AssemblyImpactPages.Target.Read",
+            maxResults: 2, resultCursor: firstImpactCursor, maxResponseBytes: 32768, maxResponseTokens: 4096),
+            "STALE_SNAPSHOT", 32768, 4096);
+        AssertErrorWithinBudget(await relationships.GetTypeHierarchy(assemblyPath, "T:AssemblyImpactPages.Target",
+            maxResults: 2, resultCursor: firstHierarchyCursor, maxResponseBytes: 32768, maxResponseTokens: 4096),
+            "STALE_SNAPSHOT", 32768, 4096);
     }
 
     [Fact]
@@ -1287,6 +1344,7 @@ public sealed class AssemblyToolsContractTests
 
         var pagedImpact = new List<string>();
         string? impactCursor = null;
+        string? firstImpactCursor = null;
         var impactPages = 0;
         do
         {
@@ -1299,12 +1357,17 @@ public sealed class AssemblyToolsContractTests
                 pagedImpact.Add($"{item.GetProperty("ownerTargetPath").GetString()}:{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}");
             impactCursor = pageRoot.TryGetProperty("resultCursor", out var cursorValue)
                 && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
+            firstImpactCursor ??= impactCursor;
             impactPages++;
             Assert.InRange(impactPages, 1, 10);
         } while (impactCursor is not null);
         Assert.Equal(2, impactPages);
         Assert.Equal(2, pagedImpact.Count);
         Assert.Equal(2, pagedImpact.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.NotNull(firstImpactCursor);
+        AssertErrorWithinBudget(await relationships.GetImpact(root, leafHandle, includeReferences: true, depth: 3,
+            maxResults: 2, resultCursor: firstImpactCursor, maxResponseBytes: 65536, maxResponseTokens: 4096),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 4096);
         Assert.Contains("Forward", referencesText, StringComparison.Ordinal);
 
         var context = await PollAssemblyOwnerAsync(operation => assemblies.GetAssemblyContext(root, leafHandle, includeReferences: true,

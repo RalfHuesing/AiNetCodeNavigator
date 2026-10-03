@@ -88,7 +88,8 @@ public sealed class RelationshipToolsContractTests
         var explicitFalse = await tools.GetImpact(assemblyPath, "M:ImpactContractProbe.CompactTarget.Read", includeReferences: false, maxResponseBytes: 32768);
         Assert.Equal(omittedReferences, TextOf(explicitFalse));
         await AssertImpactBudgetRecoveryAsync(tools, assemblyPath, "M:ImpactContractProbe.Target.Read");
-        await AssertImpactPagesReconstructAsync(tools, assemblyPath, "M:ImpactContractProbe.CompactTarget.Read");
+        await AssertImpactPagesReconstructAsync(tools, assemblyPath, "M:ImpactContractProbe.CompactTarget.Read",
+            responseBytes: 4096, responseTokens: 4096);
     }
 
     private static string TextOf(ModelContextProtocol.Protocol.CallToolResult result) =>
@@ -117,10 +118,13 @@ public sealed class RelationshipToolsContractTests
         Assert.Contains("CompactTarget.Read", TextOf(body), StringComparison.Ordinal);
     }
 
-    private static async Task AssertImpactPagesReconstructAsync(RelationshipTools tools, string targetPath, string symbolIdentifier)
+    private static async Task AssertImpactPagesReconstructAsync(
+        RelationshipTools tools,
+        string targetPath,
+        string symbolIdentifier,
+        int responseBytes = 512,
+        int responseTokens = 512)
     {
-        const int responseBytes = 512;
-        const int responseTokens = 512;
         var expectedResult = await tools.GetImpact(targetPath, symbolIdentifier, maxResponseBytes: 65536, maxResponseTokens: 4096);
         Assert.False(expectedResult.IsError ?? false, TextOf(expectedResult));
         var expectedBody = BodyOf(TextOf(expectedResult));
