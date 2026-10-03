@@ -147,7 +147,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             "tests" => SymbolScopeType.Tests,
             _ => SymbolScopeType.All,
         };
-        var args = new { symbolIdentifier, sortBy, kindFilter, nameFilter, scopeType, includeGenerated };
+        var args = new { symbolIdentifier, sortBy, maxMembers, kindFilter, nameFilter, scopeType, includeGenerated };
         return NavigationToolSupport.RouteAsync(runtime, "get_class_structure", targetPath, args, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens, async (target, coreCursor, ct) =>
             {
@@ -161,7 +161,8 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                         if (result.Error is { } error) return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                         var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
-                            "get_class_structure.members", symbolIdentifier.Trim(), scopeType, includeGenerated.ToString(), kindFilter?.Trim(), nameFilter?.Trim(), sortBy.Trim().ToLowerInvariant());
+                            "get_class_structure.members", symbolIdentifier.Trim(), scopeType, includeGenerated.ToString(), kindFilter?.Trim(), nameFilter?.Trim(), sortBy.Trim().ToLowerInvariant(),
+                            maxMembers.ToString(System.Globalization.CultureInfo.InvariantCulture));
                         var response = CreateClassStructurePage(result, target.CanonicalPath, maxMembers, coreCursor, binding,
                             maxResponseBytes, maxResponseTokens);
                         if (response.IsError == true) return response;
@@ -185,7 +186,8 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                     var rawIdentity = AssemblySymbolInputResolver.CreateIdentity(rawScope);
                     var rawStructure = BuildAssemblyClassStructure(rawType, target.CanonicalPath, rawIdentity, sortBy, maxMembers, kindFilter, nameFilter, collectAll: true);
                     var rawBinding = BoundResultCursor.CreateBinding(target.CanonicalPath, rawIdentity.ContentHash + "|" + rawScope.Context.ReferenceSnapshotHash,
-                        "get_class_structure.members", normalizedIdentifier, scopeType, includeGenerated.ToString(), kindFilter?.Trim(), nameFilter?.Trim(), sortBy.Trim().ToLowerInvariant());
+                        "get_class_structure.members", normalizedIdentifier, scopeType, includeGenerated.ToString(), kindFilter?.Trim(), nameFilter?.Trim(), sortBy.Trim().ToLowerInvariant(),
+                        maxMembers.ToString(System.Globalization.CultureInfo.InvariantCulture));
                     var rawResponse = CreateClassStructurePage(rawStructure, target.CanonicalPath, maxMembers, coreCursor, rawBinding,
                         maxResponseBytes, maxResponseTokens);
                     if (rawResponse.IsError == true) return rawResponse;
@@ -207,7 +209,8 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                     access.Generation, access.ReferenceSnapshotHash);
                 var result = BuildAssemblyClassStructure(type, access.Origin.CanonicalPath, identity, sortBy, maxMembers, kindFilter, nameFilter, collectAll: true);
                 var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, identity.ContentHash + "|" + access.ReferenceSnapshotHash,
-                    "get_class_structure.members", symbolIdentifier.Trim(), scopeType, includeGenerated.ToString(), kindFilter?.Trim(), nameFilter?.Trim(), sortBy.Trim().ToLowerInvariant());
+                    "get_class_structure.members", symbolIdentifier.Trim(), scopeType, includeGenerated.ToString(), kindFilter?.Trim(), nameFilter?.Trim(), sortBy.Trim().ToLowerInvariant(),
+                    maxMembers.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 var response = CreateClassStructurePage(result, target.CanonicalPath, maxMembers, coreCursor, binding,
                     maxResponseBytes, maxResponseTokens);
                 if (response.IsError == true) return response;
@@ -235,7 +238,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         [System.ComponentModel.Description("Opaque cursor for the next page of the complete filtered inventory.")] string? resultCursor = null,
         CancellationToken cancellationToken = default)
     {
-        var args = new { project, namespacePrefix, depth, includeTypes, kind, includeGenerated };
+        var args = new { project, namespacePrefix, depth, includeTypes, kind, maxResults, includeGenerated };
         return NavigationToolSupport.RouteAsync(runtime, "get_namespace_tree", targetPath, args, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens, async (target, coreCursor, ct) =>
             {
@@ -479,7 +482,8 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             foreach (var node in payload.RootNamespaces) AddNamespace(node);
         }
         var binding = BoundResultCursor.CreateBinding(targetPath, snapshotBinding, "get_namespace_tree.inventory",
-            project, prefix, depth.ToString(System.Globalization.CultureInfo.InvariantCulture), includeTypes.ToString(), kind, includeGenerated.ToString());
+            project, prefix, depth.ToString(System.Globalization.CultureInfo.InvariantCulture), includeTypes.ToString(), kind, includeGenerated.ToString(),
+            pageSize.ToString(System.Globalization.CultureInfo.InvariantCulture));
         var page = NavigationToolSupport.PageResults(items, pageSize, coreCursor, binding, bytes, tokens);
         if (page.Error is not null) return page.Error;
         var response = new

@@ -44,10 +44,27 @@ public sealed class SourceToolsContractTests
         Assert.Equal(205, assemblyMembers.Items.Count);
         Assert.Equal(205, sourceMembers.Items.Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(205, assemblyMembers.Items.Distinct(StringComparer.Ordinal).Count());
+        var expectedMembers = Enumerable.Range(0, 205).Select(index => $"Member{index:D3}");
+        Assert.Equal(expectedMembers, sourceMembers.Items);
+        Assert.Equal(expectedMembers, assemblyMembers.Items);
         foreach (var (target, cursor) in new[] { (solutionPath, sourceMembers.FirstCursor), (assemblyPath, assemblyMembers.FirstCursor) })
         {
             AssertErrorWithinBudget(await tools.GetClassStructure(target, "CapProbe.ManyMembers", resultCursor: "malformed-cursor"), "RESULT_CURSOR_EXPIRED", 16384, 4096);
-            AssertErrorWithinBudget(await tools.GetClassStructure(target, "CapProbe.ManyMembers", sortBy: "name", resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+            AssertErrorWithinBudget(await tools.GetClassStructure(target, "CapProbe.ManyMembers", sortBy: "name", maxMembers: 200, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+            AssertErrorWithinBudget(await tools.GetClassStructure(target, "CapProbe.ManyMembers", scopeType: "tests", maxMembers: 200, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+            AssertErrorWithinBudget(await tools.GetClassStructure(target, "CapProbe.Type000", maxMembers: 200, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+            AssertErrorWithinBudget(await tools.GetClassStructure(target, "CapProbe.ManyMembers", maxMembers: 199, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+        }
+        AssertErrorWithinBudget(await tools.GetClassStructure(assemblyPath, "CapProbe.ManyMembers", maxMembers: 200,
+            resultCursor: sourceMembers.FirstCursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+        foreach (var target in new[] { solutionPath, assemblyPath })
+        {
+            var filtered = await tools.GetClassStructure(target, "CapProbe.ManyMembers", nameFilter: "Member204", maxMembers: 200);
+            AssertSuccessWithinBudget(filtered, 16 * 1024, 4096);
+            using var filteredDocument = JsonDocument.Parse(BodyOf(TextOf(filtered)));
+            Assert.Equal(1, filteredDocument.RootElement.GetProperty("totalMemberCount").GetInt32());
+            Assert.Equal("Member204", Assert.Single(filteredDocument.RootElement.GetProperty("members").EnumerateArray())
+                .GetProperty("name").GetString());
         }
 
         var sourceInventory = await ReadNamespaceItemPagesAsync(tools, solutionPath);
@@ -58,11 +75,31 @@ public sealed class SourceToolsContractTests
         Assert.Equal(207, assemblyInventory.Items.Count);
         Assert.Equal(207, sourceInventory.Items.Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(207, assemblyInventory.Items.Distinct(StringComparer.Ordinal).Count());
+        var expectedInventory = new[] { "namespace:CapProbe", "type:ManyMembers" }
+            .Concat(Enumerable.Range(0, 205).Select(index => $"type:Type{index:D3}"));
+        Assert.Equal(expectedInventory, sourceInventory.Items);
+        Assert.Equal(expectedInventory, assemblyInventory.Items);
         foreach (var (target, cursor) in new[] { (solutionPath, sourceInventory.FirstCursor), (assemblyPath, assemblyInventory.FirstCursor) })
         {
             AssertErrorWithinBudget(await tools.GetNamespaceTree(target, namespacePrefix: "CapProbe", resultCursor: "malformed-cursor"), "RESULT_CURSOR_EXPIRED", 16384, 4096);
-            AssertErrorWithinBudget(await tools.GetNamespaceTree(target, namespacePrefix: "OtherNamespace", resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+            AssertErrorWithinBudget(await tools.GetNamespaceTree(target, namespacePrefix: "OtherNamespace", maxResults: 200, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+            AssertErrorWithinBudget(await tools.GetNamespaceTree(target, namespacePrefix: "CapProbe", project: "OtherProject", maxResults: 200, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+            AssertErrorWithinBudget(await tools.GetNamespaceTree(target, namespacePrefix: "CapProbe", maxResults: 199, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
         }
+        AssertErrorWithinBudget(await tools.GetNamespaceTree(assemblyPath, namespacePrefix: "CapProbe", maxResults: 200,
+            resultCursor: sourceInventory.FirstCursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+
+        await File.WriteAllTextAsync(sourcePath, source + Environment.NewLine + "public sealed class SnapshotAdded { }");
+        AssertErrorWithinBudget(await tools.GetClassStructure(solutionPath, "CapProbe.ManyMembers", maxMembers: 200,
+            resultCursor: sourceMembers.FirstCursor), "STALE_SNAPSHOT", 16384, 4096);
+        AssertErrorWithinBudget(await tools.GetNamespaceTree(solutionPath, namespacePrefix: "CapProbe", maxResults: 200,
+            resultCursor: sourceInventory.FirstCursor), "STALE_SNAPSHOT", 16384, 4096);
+
+        AssemblyTestHelper.EmitAssembly(emitted, "CapProbe", source + Environment.NewLine + "public sealed class SnapshotAdded { }");
+        AssertErrorWithinBudget(await tools.GetClassStructure(assemblyPath, "CapProbe.ManyMembers", maxMembers: 200,
+            resultCursor: assemblyMembers.FirstCursor), "STALE_SNAPSHOT", 16384, 4096);
+        AssertErrorWithinBudget(await tools.GetNamespaceTree(assemblyPath, namespacePrefix: "CapProbe", maxResults: 200,
+            resultCursor: assemblyInventory.FirstCursor), "STALE_SNAPSHOT", 16384, 4096);
     }
 
     [Fact]
@@ -685,21 +722,23 @@ public sealed class SourceToolsContractTests
         var items = new List<string>();
         string? cursor = null;
         string? firstCursor = null;
-        var pageSize = 200;
+        const int pageSize = 200;
         var pages = 0;
         do
         {
+            var bytes = cursor is null ? 65536 : 16384;
+            var tokens = cursor is null ? 8192 : 2048;
             var result = await tools.GetClassStructure(target, typeName, maxMembers: pageSize, resultCursor: cursor,
-                maxResponseBytes: 65536, maxResponseTokens: 8192);
+                maxResponseBytes: bytes, maxResponseTokens: tokens);
             var payload = await ReconstructOuterPagesAsync(result, async continuation =>
                 await tools.GetClassStructure(target, typeName, maxMembers: pageSize, continuationToken: continuation,
-                    maxResponseBytes: 65536, maxResponseTokens: 8192));
+                    maxResponseBytes: bytes, maxResponseTokens: tokens));
             using var document = JsonDocument.Parse(payload);
             var root = document.RootElement;
+            Assert.Equal(205, root.GetProperty("totalMemberCount").GetInt32());
             items.AddRange(root.GetProperty("members").EnumerateArray().Select(member => member.GetProperty("name").GetString()!));
             cursor = root.TryGetProperty("resultCursor", out var next) && next.ValueKind == JsonValueKind.String ? next.GetString() : null;
             firstCursor ??= cursor;
-            if (cursor is not null) pageSize = 17;
             pages++;
             Assert.InRange(pages, 1, 4);
         } while (cursor is not null);
@@ -711,17 +750,21 @@ public sealed class SourceToolsContractTests
         var items = new List<string>();
         string? cursor = null;
         string? firstCursor = null;
-        var pageSize = 200;
+        const int pageSize = 200;
         var pages = 0;
         do
         {
+            var bytes = cursor is null ? 65536 : 16384;
+            var tokens = cursor is null ? 8192 : 2048;
             var result = await tools.GetNamespaceTree(target, namespacePrefix: "CapProbe", maxResults: pageSize, resultCursor: cursor,
-                maxResponseBytes: 65536, maxResponseTokens: 8192);
+                maxResponseBytes: bytes, maxResponseTokens: tokens);
             var payload = await ReconstructOuterPagesAsync(result, async continuation =>
                 await tools.GetNamespaceTree(target, namespacePrefix: "CapProbe", maxResults: pageSize, continuationToken: continuation,
-                    maxResponseBytes: 65536, maxResponseTokens: 8192));
+                    maxResponseBytes: bytes, maxResponseTokens: tokens));
             using var document = JsonDocument.Parse(payload);
             var root = document.RootElement;
+            Assert.Equal(206, root.GetProperty("totalTypes").GetInt32());
+            Assert.Equal(207, root.GetProperty("totalItems").GetInt32());
             foreach (var item in root.GetProperty("items").EnumerateArray())
             {
                 var name = item.TryGetProperty("fullName", out var fullName) ? fullName.GetString() : item.GetProperty("name").GetString();
@@ -729,7 +772,6 @@ public sealed class SourceToolsContractTests
             }
             cursor = root.TryGetProperty("resultCursor", out var next) && next.ValueKind == JsonValueKind.String ? next.GetString() : null;
             firstCursor ??= cursor;
-            if (cursor is not null) pageSize = 17;
             pages++;
             Assert.InRange(pages, 1, 4);
         } while (cursor is not null);
