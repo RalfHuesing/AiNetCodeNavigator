@@ -29,7 +29,7 @@ The orchestrator records this point's implementation evidence here under the [sh
 | --- | --- |
 | Working state | In progress; started from clean verified R02 HEAD `671496d` on 2026-10-04 |
 | Implementation commit(s) | — |
-| Executed verification | Not run |
+| Executed verification | Original reference freshness regressions failed as required before correction; first candidate build failed (see rounds below); candidate acceptance gates remain pending |
 | Measurements / artifacts | — |
 | Blocker / next action | Coordinate immutable image/provenance inputs, add focused regressions before existing freshness corrections, then implement full R03 and execute official gates/audit |
 
@@ -61,3 +61,26 @@ Workers held all production behavior changes; only two focused test fixtures and
 - `pwsh -File ./scripts/test-integration.ps1 -Filter 'FullyQualifiedName~SourceSnapshotIdentityContractTests' --logger 'console;verbosity=normal'`: actual FAIL, exit 1, one completed failing test / zero skipped, approximately 3.8674 seconds. Original discovery and `OldApi` metadata-origin presence pass. After replacement at the same path/size/restored timestamp with changed image SHA-256, the fresh handler still reports the identical source snapshot ID (`Assert.NotEqual` fails). Full-body replacement binding and source-reference follow-up assertions remain required for the eventual passing test; they are not claimed executed in this failing baseline.
 - Artifacts: `temp/roadmap-evidence/R03/metadata-baseline-run3/{build.log,test-integration.log,IntegrationTests.trx}`. Original Fast baseline independently proves the same-object defect with MVID also preserved. All gates terminate normally; no stall or orphan.
 - Root now authorizes Luna's complete production freshness correction and identity service integration against the binding R03 contract. Focused tests retain their failed invariants and will additionally verify replacement `NewApi` binding. Independent audit and all mandatory gates remain open.
+
+### Candidate ownership and source review (not verified)
+
+The metadata capture owner now carries validated inputs with the exact rebound immutable Solution and hashes the same bytes used to construct PE references, with weak reference-keyed metadata lifetime and a shared canonical image map per attempt. The identity owner has drafted the encoder/runtime memo service; all Core consumers and the final supported-provider validation remain in progress. No candidate pass is claimed.
+
+Root source review highlighted strict logical-key ordering (framed-byte ordering differs from ordinal paths), fixed source/additional/analyzer-config categories, all eight loaded build properties with `unknown`, exact context association for duplicate physical projects, scalar-only shared retention, and failure-flight admission races. Luna is addressing these within new behavior before frozen verification; these are working review observations, not a completed independent audit.
+
+To balance independent responsibilities, root transferred only the new `tests/AiNetCodeNavigator.FastTests/Symbols/SourceAnalysisIdentityEncodingTests.cs` to `/root/r02_tests_docs` (retaining explicitly configured Luna/high). That worker derives focused encoding/options/context requirements independently from specification 04. `/root/r03_identity` retains service concurrency/cancellation/retry/weak-lifetime tests, existing Symbols/MCP tests, production encoder/runtime and all identity consumers. Workspace tests/capture remain with the freshness owner. No competing builds/tests are authorized.
+
+### R03-P02 loaded non-source document freshness — pending regression
+
+Root source review found that the existing resident text refresh enumerates only regular `Project.Documents`. Specification 04 also binds loaded additional and analyzer-config texts; cached physical texts in those categories need fresh-boundary validation even with unchanged timestamps. Luna is assigned focused tests first: force the initial loaded text, replace with equal-size/restored-timestamp content, then assert the new snapshot and updated text/provider evidence. This is a source hypothesis pending actual official execution, not a claimed failed regression. The behavior correction is held until that baseline; other unfinished R03 implementation remains within the same point.
+
+Root also requires provider provenance to cover `CompilationOptions.SyntaxTreeOptionsProvider`; a creating-owner capability may admit supported normal option transformations without guessing Roslyn internal implementation names. Private provenance stays outside shared scalar memo entries.
+
+### Candidate build round 1 — compile corrections only
+
+- `pwsh -File ./scripts/build.ps1`: FAIL, exit 1, 15 errors / zero warnings, 3.62 seconds reported build time. Workspace capture uses unavailable Roslyn members (`Length` on an IReadOnlyList, a non-public documentation provider and the wrong Solution metadata-reference method). Identity code has missing error-code imports, an evidence overload mismatch, shadowed local names and nullable resolver paths. No candidate tests ran.
+- Artifact: `temp/roadmap-evidence/R03/candidate-build-run1/build.log`. Both production owners are assigned only their scoped compile/analyzer corrections before the next frozen build. R03-P02 production correction remains held until an actual failing regression. There is no stall or blocker established by this initial candidate compile failure.
+
+- Candidate build round 2, same command: FAIL, exit 1, one CS1503 / zero warnings, 3.56 seconds reported time. Core and Host compile; TestKit's analyzer-config addition needs the public SourceText overload. Artifact: `temp/roadmap-evidence/R03/candidate-build-run2/build.log`. Luna corrected only the fixture overload.
+- Root reviewed R03-P02 before execution and caught unequal-length configuration replacement text. Luna corrected the fixture to `Debug` / `Other` and added explicit UTF-8/file-size equality and restored-timestamp assertions for both physical inputs. Production correction remains held; no failed acceptance is claimed from this fixture inspection.
+- Candidate build round 3, same command: FAIL, exit 1, 16 errors / zero warnings, 2.23 seconds reported time. Core, Host and TestKit compile. New Fast encoding tests use impossible subclasses of sealed pinned C# option types, incorrect public comparer/resolver overrides and a missing analyzer namespace; Integration has a shadowed JSON local. The test owner is assigned scoped public-API compile corrections preserving independently testable requirements; private compiler injection is outside the specified supported context. Artifact: `temp/roadmap-evidence/R03/candidate-build-run3/build.log`. No tests ran, and no mandatory gate passed.
