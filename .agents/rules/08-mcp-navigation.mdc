@@ -40,23 +40,30 @@ Use the `AiNetCodeNavigator` MCP server as the primary tool for C# symbol discov
 1. Start from a known symbol with `find_symbol`, a known file with `get_file_skeleton`, or an assembly API with filtered `inspect_assembly`. Skip discovery already answered by current results.
 2. Reuse returned `handoffId` values (`h:...`) unchanged as `symbolIdentifier`, in `symbolIdentifiers`, or in `filePaths` where supported. Never fabricate, parse, or replace a handle with its display name.
 3. Keep each handle paired with its returned owner `targetPath`. Referenced-assembly results may belong to a different DLL than the initial target; use that owner for follow-ups.
-4. Read the relevant bodies, then inspect callers, implementations, dependencies, and test candidates as the task requires. Before changing a public contract or shared behavior, inspect its relevant consumers and runtime wiring.
+4. Read the relevant bodies, then inspect callers, implementations, dependencies, and test candidates as the task requires. For focused context, use `get_context` with only the needed sections; `tests` is a source-only section independent of caller scope. Before changing a public contract or shared behavior, inspect its relevant consumers and runtime wiring.
 5. Batch related lookups with `find_symbol.namePatterns` (up to ten), `get_symbol_body.symbolIdentifiers`, or `get_file_skeleton.filePaths`. Use exactly one of `pattern` or `namePatterns`; keep batches focused.
 6. Start with shallow traversal and bounded results. Use member/name/project/namespace filters where supported. Increase depth or limits only to resolve an unanswered question or reported truncation; do not request every graph and context tool for every symbol.
 7. Source `scopeType` is `all`, `production`, or `tests` where supported; generated declarations are excluded by default. Check these filters and indexed scope before concluding that no declaration or consumer exists. Assembly `includeReferences` is tool-specific; enable it when the question requires supported referenced owners.
-8. Treat `get_symbol_body.startLine` / `endLine` as one-based positions within the declaration, not physical file lines. Follow the returned next window when more body text is needed. Use returned source locations for precise file edits and citations.
+8. Treat `get_symbol_body.startLine` / `endLine` as one-based positions within the declaration, not physical file lines. For a known declaration identifier or current handoff, read a bounded body window directly and follow the reported next window; do not rediscover it just to use the body tool.
 
 ## Process control responses before drawing conclusions
 
-- **Running:** On `operation=running`, poll the same tool, target, and query using the returned `operationToken`. Preserve an active assembly domain cursor if present; do not combine polling with an outer response-page token. A running response is not a navigation result.
+- **Running:** On `operation=running`, poll the same tool, target, query, and active `resultCursor` (when the response supplies one) using the returned `operationToken`. Do not combine an operation poll with an outer-page `continuationToken`. A running response is not a navigation result.
 - **Retry:** On `operation=retry` with `completeness=not_applicable`, wait briefly and repeat the same call as instructed. Avoid a busy loop; persistent failure requires diagnosis or fallback.
 - **Response pages:** Follow the response preamble's `continuationToken` with the same tool, target, and query, without an `operationToken`. These pages contain one stored response; consuming them does not expand the search or traversal.
-- **Assembly domain pages:** `inspect_assembly` and `search_assembly` may also return a domain cursor (`v1...`) inside the result. Consume that response's outer pages first, then pass the domain cursor as `continuationToken` with unchanged query parameters. Repeat until the required domain results have been read. Do not interpret or construct cursor contents.
-- **Domain truncation:** Read completeness, truncation details, and `nextAction`. If no cursor is provided, narrow the query or change a supported result/traversal limit in a fresh request. A larger response budget alone does not remove domain limits.
+- **Result pages:** List-producing tools may return an opaque `resultCursor` for a known result set. Consume all outer response pages first with `continuationToken`, then pass the result cursor in its dedicated argument with the same target and filters. The cursor is not limited to assemblies; `get_context` cursors select exactly one section. Never interpret or construct cursors.
+- **Domain truncation:** Read completeness, truncation details, and `nextAction`. If no result cursor is provided, narrow the query or change a supported result/traversal limit in a fresh request. A larger response budget alone does not remove domain limits.
 - **Budget too small:** On `RESPONSE_BUDGET_TOO_SMALL`, retry the same request, including any current token, with `maxResponseBytes = minimumResponseBytes` and, when offered, `maxResponseTokens = minimumResponseTokens`. Use the exact offered pair. If recovery exceeds a supported limit, start a narrower query rather than looping.
 - **Ambiguous symbol:** Select the returned candidate by signature, project, file, and owner, then follow its handle. Never choose the first candidate solely because its name matches.
 - **Invalid/stale handle or token:** Follow the reported recovery action. Correct an owner mismatch using the original result; rediscover a symbol after snapshot changes or runtime replacement, and restart an expired page query. Do not silently fall back from a failed handle to a guessed name.
 - **Partial batch:** Retain successful items and inspect failed-item details. Do not present a mixed-success body batch as complete.
+
+## Follow-up and recovery
+
+- Keep each `h:...` handoff paired with the `targetPath` returned for its actual owner. For an owner mismatch, use the reported owner; for an unresident owner, retry after the owner can be opened; for a stale snapshot or unknown handoff after a runtime restart, rediscover the declaration from the current target.
+- Use `get_context` for only the selected `body`, `members`, `callers`, or `tests` sections. Assembly targets support body, members, and callers; static test candidates require a source solution. Use dedicated relationship tools for transitive or specialized questions.
+- For a known source declaration, call `get_symbol_body` with its current identifier and a bounded one-based `startLine` / `maxBodyLines` window. Use the returned next window to continue reading.
+- Poll long work with `operationToken`. Read every outer page using `continuationToken` before following an independent `resultCursor`; never combine an operation poll with an outer-page token. Restart an expired page query or rediscover a handle after the source snapshot changes.
 
 ## Evidence and fallbacks
 

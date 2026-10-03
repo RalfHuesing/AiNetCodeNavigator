@@ -36,6 +36,19 @@ Symbol producers return opaque `h:...` handoffs when the owning source snapshot 
 
 ## Practical patterns
 
+Start source navigation from a declaration, retain the returned handle and its owner target, then read only the needed context. For a known source location, `get_symbol_body` can read its bounded window directly. Select only the context sections that answer the question; static test candidates are independent of caller scope and are available for source solutions:
+
+```json
+{"name":"find_symbol","arguments":{"targetPath":"C:\\work\\App.slnx","pattern":"OrderService.Save","kind":"method"}}
+{"name":"get_context","arguments":{"targetPath":"C:\\work\\App.slnx","symbolIdentifier":"h:...","sections":["body","callers"],"callerScope":"production"}}
+{"name":"get_context","arguments":{"targetPath":"C:\\work\\App.slnx","symbolIdentifier":"h:...","sections":["tests"]}}
+{"name":"get_symbol_body","arguments":{"targetPath":"C:\\work\\App.slnx","symbolIdentifiers":["M:App.OrderService.Save"],"startLine":40,"maxBodyLines":40}}
+```
+
+For assemblies, start with a focused `inspect_assembly` or `search_assembly` query. Each result handle belongs to its reported `targetPath`; pass both unchanged to the next call. Use `get_context` for a selected body, members, or direct callers, and `find_references`, `find_implementations`, or `get_call_tree` when that individual relationship answer is clearer. If a handle reports an owner mismatch or an unresident owner, retry against the reported owner or rediscover the declaration from that target. If a handle is stale after the analyzed snapshot changes, rediscover it; do not substitute its display name without evidence.
+
+List tools return opaque `resultCursor` values when known results continue beyond a page. First consume every outer response page using `continuationToken`, then follow `resultCursor` with the same target and filters. A `get_context` result cursor is bound to its single section; make a separate request for another section. Poll background work with `operationToken` and the same query. Do not combine a poll token with an outer-page token.
+
 Find a declaration and follow its handle to the body:
 
 ```json

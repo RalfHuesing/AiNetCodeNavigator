@@ -35,6 +35,8 @@ internal static class McpServerHost
 
         try
         {
+            var serverInfo = ServerBuildIdentity.Create();
+            Log.Information("Starting MCP server {ServerName} {ServerVersion}", serverInfo.Name, serverInfo.Version);
             var builder = Host.CreateApplicationBuilder(Array.Empty<string>());
             builder.Logging.ClearProviders();
             builder.Logging.AddSerilog(Log.Logger, dispose: false);
@@ -42,7 +44,7 @@ internal static class McpServerHost
                 serviceProvider.GetRequiredService<IHostApplicationLifetime>()));
 
             builder.Services
-                .AddMcpServer()
+                .AddMcpServer(options => options.ServerInfo = serverInfo)
                 .WithStdioServerTransport()
                 .WithTools<SymbolTools>()
                 .WithTools<StructureTools>()

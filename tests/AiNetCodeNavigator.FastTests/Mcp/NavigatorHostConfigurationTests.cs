@@ -19,6 +19,16 @@ public sealed class HostRuntimeIsolationCollection
 [Collection(HostRuntimeIsolationCollection.Name)]
 public sealed class NavigatorHostConfigurationTests
 {
+    [Fact]
+    public void ServerBuildIdentity_UsesInformationalVersionAndMcpName()
+    {
+        var implementation = ServerBuildIdentity.Create();
+
+        Assert.Equal("AiNetCodeNavigator", implementation.Name);
+        Assert.Equal(ServerBuildIdentity.GetVersion(typeof(ServerBuildIdentity).Assembly), implementation.Version);
+        Assert.NotEqual("unknown", implementation.Version);
+    }
+
     [Theory]
     [InlineData("Verbose", LogEventLevel.Verbose)]
     [InlineData("Debug", LogEventLevel.Debug)]

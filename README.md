@@ -14,9 +14,9 @@ The server runs locally over stdio. Source navigation uses Roslyn; assembly navi
 | Follow inheritance, implementations, and dependency edges | `get_type_hierarchy`, `find_implementations`, `dependency_graph` |
 | Inspect library APIs, search decompiled code, and find extension methods | `inspect_assembly`, `search_assembly`, `find_assembly_extensions` |
 | Resolve a type to its source project or framework/NuGet assembly | `resolve_type_origin` |
-| Gather a declaration, callers, and related test candidates | `get_feature_context`, `get_test_context` |
+| Read selected declaration context and static test candidates | `get_context` |
 
-The server exposes **19 read-only navigation tools**. The [tool reference](docs/tools/README.md) lists their supported targets, parameters, result limits, and examples.
+The server exposes **17 read-only navigation tools**. The [tool reference](docs/tools/README.md) lists their supported targets, parameters, result limits, and examples.
 
 Navigation results provide opaque symbol handles (`h:...`) for follow-up calls. Byte and optional token budgets bound responses; polling and continuation tokens let clients retrieve long-running or paged results. See the [tool reference's shared response rules](docs/tools/README.md#shared-request-and-response-behavior).
 
@@ -68,7 +68,7 @@ Replace `h:...` with the exact handle returned by `find_symbol`. For a compiled 
 - The product focuses on C# navigation. Linting, compiler diagnostics, code-quality scoring, and automatic refactoring are outside its scope.
 - Assembly navigation requires managed .NET binaries with IL. Native binaries are unsupported; the server does not execute analyzed assemblies.
 - Test context identifies static test candidates, including heuristic name matches. It does not measure test coverage.
-- Tools differ in source and assembly support. `get_index_scope`, `get_feature_context`, and `get_test_context` are source-only; indexed scope is not a complete physical-file inventory.
+- Tools differ in source and assembly support. `get_index_scope` is source-only; `get_context` supports source and assembly targets, with static test candidates available only for source solutions. Indexed scope is not a complete physical-file inventory.
 - Current verification covers SDK contracts and transport-free source/assembly handlers. The documented client configurations are not handshake-tested compatibility claims; retained stdio/client end-to-end tests are excluded from the official test scripts. See [MCP Host](docs/mcp-host.md) and [Build and Tests](docs/development/build-and-tests.md).
 
 ## Development and documentation
