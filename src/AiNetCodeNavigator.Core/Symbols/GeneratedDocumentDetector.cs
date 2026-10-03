@@ -12,7 +12,7 @@ namespace AiNetCodeNavigator.Core.Symbols;
 /// <summary>Applies the generated-source classification used by symbol navigation.</summary>
 internal static class GeneratedDocumentDetector
 {
-    public static async Task<bool> IsGeneratedDocumentAsync(Document document, CancellationToken cancellationToken)
+    internal static async Task<bool> IsGeneratedDocumentAsync(Document document, CancellationToken cancellationToken)
     {
         var path = (document.FilePath ?? document.Name).Replace('\\', '/');
         if (path.Contains("/obj/", StringComparison.OrdinalIgnoreCase)

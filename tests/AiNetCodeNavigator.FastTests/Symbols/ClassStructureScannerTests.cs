@@ -334,7 +334,7 @@ public sealed class ClassStructureScannerTests
     }
 
     [Fact]
-    public async Task ScanAsync_MemberHandoffRoundTripsToFeatureContext()
+    public async Task ScanAsync_MemberHandoffRoundTripsToSymbolBody()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
         var payload = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(fixture.Solution, "Greeter"));
@@ -342,11 +342,10 @@ public sealed class ClassStructureScannerTests
         var entry = Assert.Single(payload.Members, member => member.Name == "Greet");
         Assert.StartsWith("h:", entry.HandoffId);
 
-        var context = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(fixture.Solution, entry.HandoffId!));
+        var resolved = await SourceSymbolResolver.ResolveAsync(fixture.Solution, entry.HandoffId!);
 
-        Assert.NotNull(context);
-        Assert.Null(context.Error);
-        Assert.Equal("Greet", context.Declaration.SymbolName);
+        Assert.True(resolved.IsSuccess);
+        Assert.Equal("Greet", resolved.Symbol!.Name);
     }
 
     [Fact]

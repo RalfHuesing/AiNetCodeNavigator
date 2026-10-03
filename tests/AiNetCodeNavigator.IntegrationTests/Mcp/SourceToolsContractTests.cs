@@ -469,164 +469,140 @@ public sealed class SourceToolsContractTests
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(assemblyAsSource, "INVALID_ARGUMENT", 16384, 1024);
 
-        var feature = await relationships.GetFeatureContext(target, methodHandoff, maxResponseBytes: 16384, maxResponseTokens: 1024);
-        AssertSuccessWithinBudget(feature, 16384, 1024);
-        Assert.Contains("static-test-candidates-only", TextOf(feature), StringComparison.Ordinal);
-        var featureBytes = await relationships.GetFeatureContext(target, methodHandoff, maxCallers: 1, maxTests: 1,
-            maxResponseBytes: 512, maxResponseTokens: 4096);
-        AssertSuccessWithinBudget(featureBytes, 512, 4096);
-        var featureTokens = await relationships.GetFeatureContext(target, methodHandoff, maxCallers: 1, maxTests: 1,
-            maxResponseBytes: 65536, maxResponseTokens: 512);
-        AssertSuccessWithinBudget(featureTokens, 65536, 512);
-        var featureProduction = await relationships.GetFeatureContext(target, methodHandoff, scopeType: "production",
-            maxResponseBytes: 16384, maxResponseTokens: 1024);
-        AssertSuccessWithinBudget(featureProduction, 16384, 1024);
-        Assert.Contains("RunTest", TextOf(featureProduction), StringComparison.Ordinal);
-        var featureTests = await relationships.GetFeatureContext(target, methodHandoff, scopeType: "tests",
-            maxResponseBytes: 16384, maxResponseTokens: 1024);
-        AssertSuccessWithinBudget(featureTests, 16384, 1024);
-        Assert.Contains("RunTest", TextOf(featureTests), StringComparison.Ordinal);
-        var emptyFeature = await relationships.GetFeatureContext(target, " ", maxResponseBytes: 16384, maxResponseTokens: 1024);
-        AssertErrorWithinBudget(emptyFeature, "INVALID_ARGUMENT", 16384, 1024);
-
-        var testContext = await relationships.GetTestContext(target, methodHandoff, maxResponseBytes: 16384, maxResponseTokens: 1024);
-        AssertSuccessWithinBudget(testContext, 16384, 1024);
-        Assert.Contains("RunTest", TextOf(testContext), StringComparison.Ordinal);
-        Assert.Contains("static-test-candidates-only", TextOf(testContext), StringComparison.Ordinal);
-        var allTestFixturesText = await ReconstructOuterPagesAsync(testContext, async continuation =>
-            await relationships.GetTestContext(target, methodHandoff, continuationToken: continuation,
-                maxResponseBytes: 16384, maxResponseTokens: 1024));
-        using var allTestFixturesDocument = JsonDocument.Parse(JsonBody(allTestFixturesText));
-        var expectedFixtureNames = allTestFixturesDocument.RootElement.GetProperty("testFixtures").EnumerateArray()
-            .Select(item => $"{item.GetProperty("projectIdentity").GetString()}|{item.GetProperty("className").GetString()}|{item.GetProperty("filePath").GetString()}").ToArray();
-        Assert.Equal(2, expectedFixtureNames.Length);
-        Assert.Equal(2, expectedFixtureNames.Distinct(StringComparer.Ordinal).Count());
-
-        const string cursorSymbol = "ScopeProbe.Target.Run";
-        var firstTestPage = await relationships.GetTestContext(target, cursorSymbol, maxResults: 1,
-            maxResponseBytes: 16384, maxResponseTokens: 2048);
-        var firstTestPageText = await ReconstructOuterPagesAsync(firstTestPage, async continuation =>
-            await relationships.GetTestContext(target, cursorSymbol, maxResults: 1, continuationToken: continuation,
-                maxResponseBytes: 16384, maxResponseTokens: 2048));
-        using var firstTestPageDocument = JsonDocument.Parse(JsonBody(firstTestPageText));
-        var testCursor = firstTestPageDocument.RootElement.GetProperty("resultCursor").GetString();
-        Assert.False(string.IsNullOrWhiteSpace(testCursor));
-        var pagedFixtureNames = new List<string?>();
-        string? activeTestCursor = null;
-        var testPages = 0;
-        do
-        {
-            var page = await relationships.GetTestContext(target, cursorSymbol, maxResults: 1, resultCursor: activeTestCursor,
-                maxResponseBytes: 16384, maxResponseTokens: 2048);
-            var pageText = await ReconstructOuterPagesAsync(page, async continuation =>
-                await relationships.GetTestContext(target, cursorSymbol, maxResults: 1, continuationToken: continuation,
-                    maxResponseBytes: 16384, maxResponseTokens: 2048));
-            using var pageDocument = JsonDocument.Parse(JsonBody(pageText));
-            var pageRoot = pageDocument.RootElement;
-            Assert.Equal(2, pageRoot.GetProperty("totalTestFixtures").GetInt32());
-            Assert.Equal(1, pageRoot.GetProperty("returnedTestFixtures").GetInt32());
-            pagedFixtureNames.AddRange(pageRoot.GetProperty("testFixtures").EnumerateArray()
-                .Select(item => $"{item.GetProperty("projectIdentity").GetString()}|{item.GetProperty("className").GetString()}|{item.GetProperty("filePath").GetString()}"));
-            activeTestCursor = pageRoot.TryGetProperty("resultCursor", out var cursorElement) &&
-                cursorElement.ValueKind == JsonValueKind.String ? cursorElement.GetString() : null;
-            testPages++;
-            Assert.InRange(testPages, 1, 5);
-        } while (activeTestCursor is not null);
-        Assert.Equal(expectedFixtureNames, pagedFixtureNames);
-        Assert.Equal(2, pagedFixtureNames.Distinct(StringComparer.Ordinal).Count());
-        var replayedSecondPage = await relationships.GetTestContext(target, cursorSymbol, maxResults: 1, resultCursor: testCursor,
-            maxResponseBytes: 16384, maxResponseTokens: 2048);
-        var replayedSecondPageText = await ReconstructOuterPagesAsync(replayedSecondPage, async continuation =>
-            await relationships.GetTestContext(target, cursorSymbol, maxResults: 1, continuationToken: continuation,
-                maxResponseBytes: 16384, maxResponseTokens: 2048));
-        using var replayedSecondPageDocument = JsonDocument.Parse(JsonBody(replayedSecondPageText));
-        var replayedFixture = replayedSecondPageDocument.RootElement.GetProperty("testFixtures")[0];
-        Assert.Equal(pagedFixtureNames[1], $"{replayedFixture.GetProperty("projectIdentity").GetString()}|{replayedFixture.GetProperty("className").GetString()}|{replayedFixture.GetProperty("filePath").GetString()}");
-
-        var wrongPageSize = await relationships.GetTestContext(target, cursorSymbol, maxResults: 2, resultCursor: testCursor,
-            maxResponseBytes: 16384, maxResponseTokens: 2048);
-        Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(wrongPageSize), StringComparison.Ordinal);
-        var wrongSymbol = await relationships.GetTestContext(target, longBodyHandoff, maxResults: 1, resultCursor: testCursor,
-            maxResponseBytes: 16384, maxResponseTokens: 2048);
-        Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(wrongSymbol), StringComparison.Ordinal);
-        var wrongScope = await relationships.GetTestContext(target, cursorSymbol, scopeType: "tests", maxResults: 1,
-            resultCursor: testCursor, maxResponseBytes: 16384, maxResponseTokens: 2048);
-        Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(wrongScope), StringComparison.Ordinal);
-        var wrongGeneratedOption = await relationships.GetTestContext(target, cursorSymbol, includeGenerated: true,
-            maxResults: 1, resultCursor: testCursor, maxResponseBytes: 16384, maxResponseTokens: 2048);
-        Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(wrongGeneratedOption), StringComparison.Ordinal);
-        using var otherFixture = TestTempDirectory.Create("ainet-test-context-other-target-");
-        var otherTarget = await CreateSourceSolutionAsync(otherFixture.DirectoryPath);
-        var wrongTarget = await relationships.GetTestContext(otherTarget, cursorSymbol, maxResults: 1, resultCursor: testCursor,
-            maxResponseBytes: 16384, maxResponseTokens: 2048);
-        Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(wrongTarget), StringComparison.Ordinal);
-
-        var outerPagedResponse = await relationships.GetTestContext(target, cursorSymbol, maxResults: 1,
-            maxResponseBytes: 512, maxResponseTokens: 4096);
-        AssertSuccessWithinBudget(outerPagedResponse, 512, 4096);
-        Assert.True(TryReadToken(TextOf(outerPagedResponse), "continuationToken", out _), TextOf(outerPagedResponse));
-        var outerBudgetRecoveries = 0;
-        var outerPagedText = await ReconstructOuterPagesAsync(outerPagedResponse, async continuation =>
-        {
-            var tooSmall = await relationships.GetTestContext(target, cursorSymbol, maxResults: 1,
-                continuationToken: continuation, maxResponseBytes: 512, maxResponseTokens: 4096);
-            if (tooSmall.IsError == true && TextOf(tooSmall).Contains("RESPONSE_BUDGET_TOO_SMALL", StringComparison.Ordinal))
-            {
-                AssertErrorWithinBudget(tooSmall, "RESPONSE_BUDGET_TOO_SMALL", 65536, 8192);
-                var suggestedBytes = ReadBudget(TextOf(tooSmall), "minimumResponseBytes");
-                var suggestedTokens = ReadBudget(TextOf(tooSmall), "minimumResponseTokens");
-                var recovered = await relationships.GetTestContext(target, cursorSymbol, maxResults: 1,
-                    continuationToken: continuation, maxResponseBytes: suggestedBytes, maxResponseTokens: suggestedTokens);
-                AssertSuccessWithinBudget(recovered, suggestedBytes, suggestedTokens);
-                outerBudgetRecoveries++;
-                return recovered;
-            }
-            AssertSuccessWithinBudget(tooSmall, 512, 4096);
-            return tooSmall;
-        });
-        Assert.True(outerBudgetRecoveries > 0, "The outer continuation did not exercise its suggested-budget recovery path.");
-        using var outerPagedDocument = JsonDocument.Parse(JsonBody(outerPagedText));
-        Assert.False(string.IsNullOrWhiteSpace(outerPagedDocument.RootElement.GetProperty("resultCursor").GetString()));
-
-        var testContextBytes = await relationships.GetTestContext(target, methodHandoff, maxResults: 1,
-            maxResponseBytes: 512, maxResponseTokens: 4096);
-        AssertSuccessWithinBudget(testContextBytes, 512, 4096);
-        var testContextTokens = await relationships.GetTestContext(target, methodHandoff, maxResults: 1,
-            maxResponseBytes: 65536, maxResponseTokens: 512);
-        AssertSuccessWithinBudget(testContextTokens, 65536, 512);
-        var testContextProduction = await relationships.GetTestContext(target, methodHandoff, scopeType: "production",
-            maxResponseBytes: 16384, maxResponseTokens: 1024);
-        AssertSuccessWithinBudget(testContextProduction, 16384, 1024);
-        Assert.DoesNotContain("RunTest", TextOf(testContextProduction), StringComparison.Ordinal);
-        var emptyTestContext = await relationships.GetTestContext(target, " ", maxResponseBytes: 16384, maxResponseTokens: 1024);
-        AssertErrorWithinBudget(emptyTestContext, "INVALID_ARGUMENT", 16384, 1024);
-
-        var testContextForStaleSnapshot = await relationships.GetTestContext(target, "ScopeProbe.Target.Run", maxResults: 1,
-            maxResponseBytes: 16384, maxResponseTokens: 2048);
-        AssertSuccessWithinBudget(testContextForStaleSnapshot, 16384, 2048);
-        var staleSnapshotText = await ReconstructOuterPagesAsync(testContextForStaleSnapshot, async continuation =>
-            await relationships.GetTestContext(target, "ScopeProbe.Target.Run", maxResults: 1, continuationToken: continuation,
-                maxResponseBytes: 16384, maxResponseTokens: 2048));
-        using var staleSnapshotDocument = JsonDocument.Parse(JsonBody(staleSnapshotText));
-        var staleSnapshotCursor = staleSnapshotDocument.RootElement.GetProperty("resultCursor").GetString();
-        Assert.False(string.IsNullOrWhiteSpace(staleSnapshotCursor));
-        var targetSourcePath = Path.Combine(fixture.DirectoryPath, "src", "App", "Target.cs");
-        await File.AppendAllTextAsync(targetSourcePath, Environment.NewLine + "// snapshot change");
-        var staleSnapshot = await relationships.GetTestContext(target, "ScopeProbe.Target.Run", maxResults: 1,
-            resultCursor: staleSnapshotCursor, maxResponseBytes: 16384, maxResponseTokens: 2048);
-        Assert.Contains("STALE_SNAPSHOT", TextOf(staleSnapshot), StringComparison.Ordinal);
-
         var missingFindSelector = await symbols.FindSymbol(target, maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(missingFindSelector, "INVALID_ARGUMENT", 16384, 1024);
     }
 
     [Fact]
-    public async Task GetTestContext_PagesAllCollectedCandidatesAndKeepsExpansionLimitPartialOnFinalPage()
+    public async Task GetContextSelectsSectionsSharesIdentityAndContinuesOnlyTheCursorSection()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var relationships = new RelationshipTools(runtime);
-        using var fixture = TestTempDirectory.Create("ainet-test-context-candidate-limit-");
+        using var fixture = TestTempDirectory.Create("ainet-get-context-contract-");
+        var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
+
+        var invoked = new List<string>();
+        relationships.BeforeContextSectionForTesting = invoked.Add;
+        var bodyOnly = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["body"],
+            maxBodyLines: 2, maxResponseBytes: 16384, maxResponseTokens: 2048);
+        AssertSuccessWithinBudget(bodyOnly, 16384, 2048);
+        using (var bodyDocument = JsonDocument.Parse(JsonBody(TextOf(bodyOnly))))
+        {
+            var root = bodyDocument.RootElement;
+            Assert.Equal("partial", root.GetProperty("status").GetString());
+            Assert.Equal("void Target.Run()", root.GetProperty("target").GetProperty("signature").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("target").GetProperty("snapshotId").GetString()));
+            Assert.Equal(new[] { "body" }, root.GetProperty("sections").EnumerateArray()
+                .Select(item => item.GetProperty("name").GetString()).ToArray());
+            Assert.True(root.GetProperty("sections")[0].GetProperty("nextStartLine").GetInt32() > 0);
+            Assert.False(root.GetProperty("sections")[0].GetProperty("items").TryGetProperty("handoffId", out _));
+        }
+        Assert.Equal(["body"], invoked);
+
+        invoked.Clear();
+        var callersAndTests = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["callers", "tests"],
+            callerScope: "production", maxResults: 10, maxResponseBytes: 16384, maxResponseTokens: 2048);
+        AssertSuccessWithinBudget(callersAndTests, 16384, 2048);
+        using (var bothDocument = JsonDocument.Parse(JsonBody(TextOf(callersAndTests))))
+        {
+            var sections = bothDocument.RootElement.GetProperty("sections").EnumerateArray().ToArray();
+            Assert.Equal(new[] { "callers", "tests" }, sections.Select(item => item.GetProperty("name").GetString()).ToArray());
+            Assert.Contains("TargetTests", sections[1].GetProperty("items").ToString(), StringComparison.Ordinal);
+            Assert.Contains("OtherBehavior", sections[1].GetProperty("items").ToString(), StringComparison.Ordinal);
+        }
+        Assert.Equal(["callers", "tests"], invoked);
+
+        var generatedMemberExcluded = await relationships.GetContext(target, "ScopeProbe.OrderProbe", ["members"],
+            maxResponseBytes: 16384, maxResponseTokens: 2048);
+        Assert.False(generatedMemberExcluded.IsError ?? false, TextOf(generatedMemberExcluded));
+        Assert.DoesNotContain("GeneratedMember", TextOf(generatedMemberExcluded), StringComparison.Ordinal);
+        var generatedMemberIncluded = await relationships.GetContext(target, "ScopeProbe.OrderProbe", ["members"],
+            includeGenerated: true, maxResponseBytes: 16384, maxResponseTokens: 2048);
+        Assert.False(generatedMemberIncluded.IsError ?? false, TextOf(generatedMemberIncluded));
+        Assert.Contains("GeneratedMember", TextOf(generatedMemberIncluded), StringComparison.Ordinal);
+        var generatedTargetExcluded = await relationships.GetContext(target, "ScopeProbe.GeneratedOnly.GeneratedProbe", ["body"],
+            maxResponseBytes: 16384, maxResponseTokens: 2048);
+        Assert.True(generatedTargetExcluded.IsError == true, TextOf(generatedTargetExcluded));
+        Assert.Contains("INVALID_ARGUMENT", TextOf(generatedTargetExcluded), StringComparison.Ordinal);
+        Assert.Contains("generated source", TextOf(generatedTargetExcluded), StringComparison.Ordinal);
+        var generatedTargetIncluded = await relationships.GetContext(target, "ScopeProbe.GeneratedOnly.GeneratedProbe", ["body"],
+            includeGenerated: true, maxResponseBytes: 16384, maxResponseTokens: 2048);
+        Assert.False(generatedTargetIncluded.IsError ?? false, TextOf(generatedTargetIncluded));
+
+        var callerFirst = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["callers"],
+            maxResults: 1, maxResponseBytes: 16384, maxResponseTokens: 2048);
+        AssertSuccessWithinBudget(callerFirst, 16384, 2048);
+        using (var callerDocument = JsonDocument.Parse(JsonBody(TextOf(callerFirst))))
+        {
+            var root = callerDocument.RootElement;
+            Assert.Equal("partial", root.GetProperty("status").GetString());
+            var section = Assert.Single(root.GetProperty("sections").EnumerateArray());
+            Assert.Equal("callers", section.GetProperty("name").GetString());
+            Assert.Equal("partial", section.GetProperty("status").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(section.GetProperty("resultCursor").GetString()));
+        }
+
+        invoked.Clear();
+        var first = await relationships.GetContext(target, "ScopeProbe.Paged", ["body", "members"],
+            maxBodyLines: 2, maxResults: 1, maxResponseBytes: 16384, maxResponseTokens: 2048);
+        AssertSuccessWithinBudget(first, 16384, 2048);
+        using var firstDocument = JsonDocument.Parse(JsonBody(TextOf(first)));
+        var firstRoot = firstDocument.RootElement;
+        var cursor = firstRoot.GetProperty("sections").EnumerateArray()
+            .Single(item => item.GetProperty("name").GetString() == "members").GetProperty("resultCursor").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(cursor));
+        invoked.Clear();
+        var continuation = await relationships.GetContext(target, "ScopeProbe.Paged", ["body", "members"],
+            maxBodyLines: 2, maxResults: 1, resultCursor: cursor, maxResponseBytes: 16384, maxResponseTokens: 2048);
+        AssertSuccessWithinBudget(continuation, 16384, 2048);
+        using (var continuationDocument = JsonDocument.Parse(JsonBody(TextOf(continuation))))
+        {
+            var root = continuationDocument.RootElement;
+            Assert.Equal("members", root.GetProperty("continuationSection").GetString());
+            Assert.Equal(new[] { "members" }, root.GetProperty("sections").EnumerateArray()
+                .Select(item => item.GetProperty("name").GetString()).ToArray());
+        }
+        Assert.Equal(["members"], invoked);
+        var wrongPageSize = await relationships.GetContext(target, "ScopeProbe.Paged", ["body", "members"],
+            maxBodyLines: 2, maxResults: 2, resultCursor: cursor, maxResponseBytes: 16384, maxResponseTokens: 2048);
+        Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(wrongPageSize), StringComparison.Ordinal);
+
+        var invalidAssemblyTests = await relationships.GetContext(Path.Combine(fixture.DirectoryPath, "missing.dll"),
+            "Type.Member", ["tests"], maxResponseBytes: 16384);
+        Assert.Contains("INVALID_ARGUMENT", TextOf(invalidAssemblyTests), StringComparison.Ordinal);
+        var invalidMemberTarget = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["members"], maxResponseBytes: 16384);
+        Assert.Contains("INVALID_ARGUMENT", TextOf(invalidMemberTarget), StringComparison.Ordinal);
+        var ineffective = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], callerScope: "production", maxResponseBytes: 16384);
+        Assert.Contains("INVALID_ARGUMENT", TextOf(ineffective), StringComparison.Ordinal);
+
+        relationships.BeforeContextSectionForTesting = section =>
+        {
+            if (section == "tests") throw new InvalidOperationException("forced section test failure");
+        };
+        var partial = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["body", "tests", "callers"],
+            maxResponseBytes: 16384, maxResponseTokens: 2048);
+        Assert.True(partial.IsError == true, TextOf(partial));
+        using var partialDocument = JsonDocument.Parse(JsonBody(TextOf(partial)));
+        var partialRoot = partialDocument.RootElement;
+        Assert.Equal("error", partialRoot.GetProperty("status").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(partialRoot.GetProperty("target").GetProperty("snapshotId").GetString()));
+        var partialSections = partialRoot.GetProperty("sections").EnumerateArray().ToArray();
+        Assert.Equal("partial", partialSections[0].GetProperty("status").GetString());
+        Assert.Equal("error", partialSections[1].GetProperty("status").GetString());
+        Assert.Equal("CONTEXT_SECTION_FAILED", partialSections[1].GetProperty("error").GetProperty("code").GetString());
+        Assert.False(partialSections[1].GetProperty("analysisComplete").GetBoolean());
+        Assert.Equal("callers", partialSections[2].GetProperty("name").GetString());
+        Assert.Equal("notAnalyzed", partialSections[2].GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task GetContextTestsPagesAllCandidatesAndKeepsExpansionLimitPartialOnFinalPage()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var relationships = new RelationshipTools(runtime);
+        using var fixture = TestTempDirectory.Create("ainet-get-context-test-candidate-limit-");
         var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
         var testSourcePath = Path.Combine(fixture.DirectoryPath, "tests", "ScopeProbe.Tests", "TargetTests.cs");
         var methods = string.Join(Environment.NewLine, Enumerable.Range(0, TestRecommendationBuilder.MaxCandidateFixtures + 3)
@@ -636,39 +612,190 @@ public sealed class SourceToolsContractTests
 
         var names = new List<string>();
         string? cursor = null;
+        string? firstCursor = null;
         var pages = 0;
         do
         {
-            var page = await relationships.GetTestContext(target, "ScopeProbe.Target.Run", maxResults: 100,
+            var page = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], maxResults: 100,
                 resultCursor: cursor, maxResponseBytes: 65536, maxResponseTokens: 8192);
             AssertSuccessWithinBudget(page, 65536, 8192);
-            Assert.Contains("analysisCompleteness=partial", TextOf(page), StringComparison.Ordinal);
             var pageText = await ReconstructOuterPagesAsync(page, async continuation =>
-                await relationships.GetTestContext(target, "ScopeProbe.Target.Run", maxResults: 100,
+                await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], maxResults: 100,
                     continuationToken: continuation, maxResponseBytes: 65536, maxResponseTokens: 8192));
             using var document = JsonDocument.Parse(JsonBody(pageText));
             var root = document.RootElement;
-            Assert.Equal(TestRecommendationBuilder.MaxCandidateFixtures + 1, root.GetProperty("totalTestFixtures").GetInt32());
-            Assert.Equal(root.GetProperty("testFixtures").GetArrayLength(), root.GetProperty("returnedTestFixtures").GetInt32());
-            Assert.True(root.GetProperty("candidateExpansionLimitReached").GetBoolean());
-            if (!root.TryGetProperty("resultCursor", out var pageCursor) || pageCursor.ValueKind == JsonValueKind.Null)
-            {
-                Assert.Contains("analysisCompleteness=partial", TextOf(page), StringComparison.Ordinal);
-                Assert.Contains("fixed bound", root.GetProperty("analysisNextAction").GetString(), StringComparison.Ordinal);
-            }
-            names.AddRange(root.GetProperty("testFixtures").EnumerateArray().Select(item => item.GetProperty("className").GetString()!));
-            cursor = root.TryGetProperty("resultCursor", out var cursorElement) && cursorElement.ValueKind == JsonValueKind.String
-                ? cursorElement.GetString()
-                : null;
+            var section = Assert.Single(root.GetProperty("sections").EnumerateArray());
+            Assert.Equal("tests", section.GetProperty("name").GetString());
+            Assert.Equal(257, section.GetProperty("totalCount").GetInt32());
+            var analysis = section.GetProperty("analysis");
+            Assert.Equal("static-test-candidates-only", analysis.GetProperty("evidenceMode").GetString());
+            Assert.True(analysis.GetProperty("candidateExpansionLimitReached").GetBoolean());
+            Assert.InRange(section.GetProperty("items").GetArrayLength(), 1, 100);
+            Assert.False(section.GetProperty("analysisComplete").GetBoolean());
+            Assert.Contains("narrower symbol", section.GetProperty("nextAction").GetString(), StringComparison.Ordinal);
+            names.AddRange(section.GetProperty("items").EnumerateArray().Select(item =>
+                $"{item.GetProperty("projectIdentity").GetString()}|{item.GetProperty("className").GetString()}|{item.GetProperty("filePath").GetString()}"));
+            cursor = section.TryGetProperty("resultCursor", out var cursorValue)
+                && cursorValue.ValueKind == JsonValueKind.String ? cursorValue.GetString() : null;
+            firstCursor ??= cursor;
             pages++;
             Assert.InRange(pages, 1, 5);
+            Assert.Equal("partial", section.GetProperty("status").GetString());
         } while (cursor is not null);
 
-        var expected = Enumerable.Range(0, TestRecommendationBuilder.MaxCandidateFixtures + 1)
-            .Select(index => $"DirectTest{index:D3}").ToArray();
+        var expected = Enumerable.Range(0, 257).Select(index =>
+            $"{Path.GetFullPath(Path.Combine(fixture.DirectoryPath, "tests", "ScopeProbe.Tests", "ScopeProbe.Tests.csproj")).Replace('\\', '/')}::ScopeProbe.Tests|DirectTest{index:D3}|tests/ScopeProbe.Tests/TargetTests.cs").ToArray();
         Assert.Equal(3, pages);
         Assert.Equal(expected, names);
         Assert.Equal(expected.Length, names.Distinct(StringComparer.Ordinal).Count());
+        Assert.NotNull(firstCursor);
+
+        var replayA = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], maxResults: 100,
+            resultCursor: firstCursor, maxResponseBytes: 65536, maxResponseTokens: 8192);
+        var replayB = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], maxResults: 100,
+            resultCursor: firstCursor, maxResponseBytes: 65536, maxResponseTokens: 8192);
+        var replayAText = await ReconstructOuterPagesAsync(replayA, async continuation =>
+            await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], maxResults: 100,
+                continuationToken: continuation, maxResponseBytes: 65536, maxResponseTokens: 8192));
+        var replayBText = await ReconstructOuterPagesAsync(replayB, async continuation =>
+            await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], maxResults: 100,
+                continuationToken: continuation, maxResponseBytes: 65536, maxResponseTokens: 8192));
+        using var replayADocument = JsonDocument.Parse(JsonBody(replayAText));
+        using var replayBDocument = JsonDocument.Parse(JsonBody(replayBText));
+        var replayASection = replayADocument.RootElement.GetProperty("sections")[0];
+        var replayBSection = replayBDocument.RootElement.GetProperty("sections")[0];
+        Assert.Equal(replayASection.GetProperty("items").ToString(), replayBSection.GetProperty("items").ToString());
+        Assert.Equal(replayASection.GetProperty("resultCursor").GetString(), replayBSection.GetProperty("resultCursor").GetString());
+        Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(await relationships.GetContext(target,
+            "ScopeProbe.Target.Run", ["tests"], maxResults: 50, resultCursor: firstCursor,
+            maxResponseBytes: 65536, maxResponseTokens: 8192)), StringComparison.Ordinal);
+        Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(await relationships.GetContext(target,
+            "ScopeProbe.Target.LargeBody", ["tests"], maxResults: 100, resultCursor: firstCursor,
+            maxResponseBytes: 65536, maxResponseTokens: 8192)), StringComparison.Ordinal);
+        Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(await relationships.GetContext(target,
+            "ScopeProbe.Target.Run", ["tests"], includeGenerated: true, maxResults: 100, resultCursor: firstCursor,
+            maxResponseBytes: 65536, maxResponseTokens: 8192)), StringComparison.Ordinal);
+
+        using var otherFixture = TestTempDirectory.Create("ainet-get-context-tests-other-target-");
+        var otherTarget = await CreateSourceSolutionAsync(otherFixture.DirectoryPath);
+        Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(await relationships.GetContext(otherTarget,
+            "ScopeProbe.Target.Run", ["tests"], maxResults: 100, resultCursor: firstCursor,
+            maxResponseBytes: 65536, maxResponseTokens: 8192)), StringComparison.Ordinal);
+
+        var requestedBytes = 512;
+        var requestedTokens = 4096;
+        var offeredMinimumBytes = 0;
+        var offeredMinimumTokens = 0;
+        var tiny = await GetTinyBudgetPageAsync(null);
+        var tinyText = new StringBuilder();
+        var tinyPagesCompleted = false;
+        var tinyPageCount = 0;
+        for (var outerPage = 0; outerPage < 100; outerPage++)
+        {
+            AssertSuccessWithinBudget(tiny, requestedBytes, requestedTokens);
+            tinyPageCount++;
+            tinyText.Append(BodyOf(TextOf(tiny)));
+            if (!TryReadToken(TextOf(tiny), "continuationToken", out var outerCursor))
+            {
+                tinyPagesCompleted = true;
+                break;
+            }
+            tiny = await GetTinyBudgetPageAsync(outerCursor);
+            Assert.InRange(outerPage, 0, 99);
+        }
+        Assert.True(tinyPagesCompleted, "The tiny-budget response did not finish within 100 outer pages.");
+        Assert.InRange(tinyPageCount, 1, 100);
+        Assert.True(offeredMinimumBytes >= 512);
+        Assert.True(offeredMinimumTokens > 0);
+        using (var tinyDocument = JsonDocument.Parse(JsonBody(tinyText.ToString())))
+        {
+            var tinySection = Assert.Single(tinyDocument.RootElement.GetProperty("sections").EnumerateArray());
+            Assert.Equal("tests", tinySection.GetProperty("name").GetString());
+            Assert.Equal(1, tinySection.GetProperty("items").GetArrayLength());
+        }
+
+        async Task<CallToolResult> GetTinyBudgetPageAsync(string? outerCursor)
+        {
+            while (true)
+            {
+                var result = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], maxResults: 1,
+                    continuationToken: outerCursor, maxResponseBytes: requestedBytes, maxResponseTokens: requestedTokens);
+                if (result.IsError != true || !TextOf(result).Contains("RESPONSE_BUDGET_TOO_SMALL", StringComparison.Ordinal))
+                    return result;
+                AssertErrorWithinBudget(result, "RESPONSE_BUDGET_TOO_SMALL", requestedBytes, requestedTokens);
+                requestedBytes = ReadBudget(TextOf(result), "minimumResponseBytes");
+                requestedTokens = ReadBudget(TextOf(result), "minimumResponseTokens");
+                offeredMinimumBytes = requestedBytes;
+                offeredMinimumTokens = requestedTokens;
+            }
+        }
+
+        await File.AppendAllTextAsync(Path.Combine(fixture.DirectoryPath, "src", "App", "Target.cs"), "\n// snapshot change");
+        Assert.Contains("STALE_SNAPSHOT", TextOf(await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], maxResults: 100,
+            resultCursor: firstCursor, maxResponseBytes: 65536, maxResponseTokens: 8192)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetContextSectionsShareOneSourceSnapshotAndOldSectionCursorBecomesStaleAfterChange()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var relationships = new RelationshipTools(runtime);
+        using var fixture = TestTempDirectory.Create("ainet-get-context-shared-snapshot-");
+        var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
+        var sourcePath = Path.Combine(fixture.DirectoryPath, "src", "App", "Target.cs");
+        var namesBefore = Enumerable.Range(0, 4).Select(index => $"SnapshotMember{index}").ToArray();
+        var namesAfter = Enumerable.Range(0, 4).Select(index => $"ChangedMember{index}").ToArray();
+        var initialSource = await File.ReadAllTextAsync(sourcePath);
+        var changedSource = initialSource.Replace("public const int Version = 1;", "public const int Version = 2;", StringComparison.Ordinal)
+            .Replace("var marker = 1;", "var marker = 2;", StringComparison.Ordinal)
+            .Replace("SnapshotMember", "ChangedMember", StringComparison.Ordinal);
+        initialSource = initialSource.Replace("    public void Run()", string.Join(Environment.NewLine, namesBefore.Select(name => $"    public void {name}() {{ }}")) + Environment.NewLine + "    public void Run()", StringComparison.Ordinal);
+        changedSource = changedSource.Replace("    public void Run()", string.Join(Environment.NewLine, namesAfter.Select(name => $"    public void {name}() {{ }}")) + Environment.NewLine + "    public void Run()", StringComparison.Ordinal);
+        await File.WriteAllTextAsync(sourcePath, initialSource);
+
+        var changedBetweenSections = false;
+        relationships.BeforeContextSectionForTesting = section =>
+        {
+            if (section == "members" && !changedBetweenSections)
+            {
+                changedBetweenSections = true;
+                File.WriteAllText(sourcePath, changedSource);
+            }
+        };
+        var first = await relationships.GetContext(target, "ScopeProbe.Target", ["body", "members"], maxResults: 100,
+            maxResponseBytes: 32768, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(first, 32768, 4096);
+        using var firstDocument = JsonDocument.Parse(JsonBody(TextOf(first)));
+        var firstRoot = firstDocument.RootElement;
+        var firstSnapshot = firstRoot.GetProperty("target").GetProperty("snapshotId").GetString();
+        var firstMembers = Assert.Single(firstRoot.GetProperty("sections").EnumerateArray()
+            .Where(section => section.GetProperty("name").GetString() == "members"));
+        var firstBody = Assert.Single(firstRoot.GetProperty("sections").EnumerateArray()
+            .Where(section => section.GetProperty("name").GetString() == "body"));
+        Assert.Contains("marker = 1", firstBody.GetProperty("items").GetProperty("body").GetString(), StringComparison.Ordinal);
+        Assert.Contains(namesBefore[0], firstMembers.GetProperty("items").ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(namesAfter[0], firstMembers.GetProperty("items").ToString(), StringComparison.Ordinal);
+
+        relationships.BeforeContextSectionForTesting = null;
+        var next = await relationships.GetContext(target, "ScopeProbe.Target", ["body", "members"], maxResults: 1,
+            maxResponseBytes: 32768, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(next, 32768, 4096);
+        using var nextDocument = JsonDocument.Parse(JsonBody(TextOf(next)));
+        var nextRoot = nextDocument.RootElement;
+        Assert.NotEqual(firstSnapshot, nextRoot.GetProperty("target").GetProperty("snapshotId").GetString());
+        Assert.Contains("marker = 2", nextRoot.GetProperty("sections").ToString(), StringComparison.Ordinal);
+        Assert.Contains(namesAfter[0], nextRoot.GetProperty("sections").ToString(), StringComparison.Ordinal);
+
+        var cursorResult = await relationships.GetContext(target, "ScopeProbe.Target", ["body", "members"], maxResults: 1,
+            maxResponseBytes: 32768, maxResponseTokens: 4096);
+        using var cursorDocument = JsonDocument.Parse(JsonBody(TextOf(cursorResult)));
+        var staleCursor = cursorDocument.RootElement.GetProperty("sections").EnumerateArray()
+            .Single(section => section.GetProperty("name").GetString() == "members").GetProperty("resultCursor").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(staleCursor));
+        await File.WriteAllTextAsync(sourcePath, changedSource.Replace("public const int Version = 2;", "public const int Version = 3;", StringComparison.Ordinal));
+        AssertErrorWithinBudget(await relationships.GetContext(target, "ScopeProbe.Target", ["body", "members"], maxResults: 1,
+            resultCursor: staleCursor, maxResponseBytes: 32768, maxResponseTokens: 4096), "STALE_SNAPSHOT", 32768, 4096);
     }
 
     [Fact]

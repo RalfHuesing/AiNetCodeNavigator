@@ -24,14 +24,6 @@ public static class FindReferencesResolver
     public static async Task<FindReferencesResult> FindReferencesAsync(
         ISymbol targetSymbol,
         Solution solution,
-        int maxResults = 50,
-        CancellationToken ct = default)
-        => await FindReferencesAsyncCore(
-            targetSymbol, solution, maxResults, requestedDepth: 1, DefaultMaxVisitedSymbols, ct, SymbolScopeType.All, includeGenerated: false).ConfigureAwait(false);
-
-    public static async Task<FindReferencesResult> FindReferencesAsync(
-        ISymbol targetSymbol,
-        Solution solution,
         int maxResults,
         int depth,
         CancellationToken ct = default,
@@ -61,7 +53,9 @@ public static class FindReferencesResolver
         var normalizedMaxResults = Math.Max(maxResults, 1);
         var effectiveDepth = Math.Clamp(requestedDepth, 1, MaxReferenceDepth);
         var effectiveNodeLimit = Math.Min(maxNodes, DefaultMaxVisitedSymbols);
-        var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
+        var handoffIdentity = handoffFormatter is null
+            ? await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false)
+            : null;
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
         var entries = new List<(ReferenceLocationEntry Entry, ISymbol? CallerSymbol, ISymbol ReachedFromSymbol,
             string CallerProjectPath, string CallerProjectId, string CallerSymbolId, string ReachedFromSymbolId)>();
@@ -263,7 +257,9 @@ public static class FindReferencesResolver
         ArgumentNullException.ThrowIfNull(solution);
 
         var normalizedMaxResults = Math.Max(maxResults, 1);
-        var handoffIdentity = await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
+        var handoffIdentity = handoffFormatter is null
+            ? await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false)
+            : null;
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
         var implementations = new List<ISymbol>();
         string? errorMessage = null;

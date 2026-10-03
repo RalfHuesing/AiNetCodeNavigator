@@ -152,10 +152,9 @@ public sealed class SkeletonMapTests
                 : line.Contains("_second", System.StringComparison.Ordinal) ? "_second"
                 : line.Contains("Changed", System.StringComparison.Ordinal) ? "Changed"
                 : "Closed";
-            var context = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(document.Project.Solution, match.Groups["id"].Value));
-            Assert.NotNull(context);
-            Assert.Null(context.Error);
-            Assert.Equal(expectedName, context.Declaration.SymbolName);
+            var resolved = await SourceSymbolResolver.ResolveAsync(document.Project.Solution, match.Groups["id"].Value);
+            Assert.True(resolved.IsSuccess);
+            Assert.Equal(expectedName, resolved.Symbol!.Name);
         }
     }
 
@@ -237,7 +236,7 @@ public sealed class SkeletonMapTests
     }
 
     [Fact]
-    public async Task MarkdownRenderer_HandoffRoundTripsToFeatureContext()
+    public async Task MarkdownRenderer_HandoffRoundTripsToSourceSymbol()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
         var project = fixture.Solution.Projects.Single(p => p.Name == "Sample.Core");
@@ -249,14 +248,13 @@ public sealed class SkeletonMapTests
             System.TimeSpan.FromSeconds(1)).Match(markdown);
         Assert.True(match.Success, markdown);
 
-        var context = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(fixture.Solution, match.Groups["id"].Value));
-        Assert.NotNull(context);
-        Assert.Null(context.Error);
-        Assert.Equal("Greeter", context.Declaration.SymbolName);
+        var resolved = await SourceSymbolResolver.ResolveAsync(fixture.Solution, match.Groups["id"].Value);
+        Assert.True(resolved.IsSuccess);
+        Assert.Equal("Greeter", resolved.Symbol!.Name);
     }
 
     [Fact]
-    public async Task MarkdownRenderer_MemberHandoffRoundTripsToFeatureContext()
+    public async Task MarkdownRenderer_MemberHandoffRoundTripsToSourceSymbol()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
         var project = fixture.Solution.Projects.Single(p => p.Name == "Sample.Core");
@@ -269,10 +267,9 @@ public sealed class SkeletonMapTests
             System.TimeSpan.FromSeconds(1));
         Assert.True(match.Success, markdown);
 
-        var context = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(fixture.Solution, match.Groups["id"].Value));
-        Assert.NotNull(context);
-        Assert.Null(context.Error);
-        Assert.Equal("Greet", context.Declaration.SymbolName);
+        var resolved = await SourceSymbolResolver.ResolveAsync(fixture.Solution, match.Groups["id"].Value);
+        Assert.True(resolved.IsSuccess);
+        Assert.Equal("Greet", resolved.Symbol!.Name);
     }
 
     [Fact]

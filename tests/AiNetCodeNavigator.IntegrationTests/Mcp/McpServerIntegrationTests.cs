@@ -30,8 +30,8 @@ public sealed class McpServerIntegrationTests
             {
                 "find_symbol", "get_symbol_body", "get_file_skeleton", "get_class_structure",
                 "get_namespace_tree", "get_index_scope", "get_call_tree", "find_references", "get_type_hierarchy",
-                "find_implementations", "get_impact", "dependency_graph", "resolve_type_origin", "get_assembly_context",
-                "inspect_assembly", "search_assembly", "find_assembly_extensions", "get_feature_context", "get_test_context",
+                "find_implementations", "get_impact", "dependency_graph", "resolve_type_origin", "get_context",
+                "inspect_assembly", "search_assembly", "find_assembly_extensions",
             };
             foreach (var name in navigationTools)
             {
@@ -51,7 +51,7 @@ public sealed class McpServerIntegrationTests
             AssertPropertyDescriptionContains(registered["inspect_assembly"], "includeDiagnostics", "false", "detailed");
             AssertPropertyDescriptionContains(registered["search_assembly"], "includeDiagnostics", "false", "detailed");
             AssertPropertyDescriptionContains(registered["find_assembly_extensions"], "includeDiagnostics", "false", "detailed");
-            AssertPropertyDescriptionContains(registered["get_assembly_context"], "detailLevel", "compact", "standard", "full");
+            AssertPropertyDescriptionContains(registered["get_context"], "sections", "body", "members", "callers", "tests");
             AssertPropertyDescriptionContains(registered["search_assembly"], "isRegex", "false", "literal", "true");
             var inspectProperties = registered["inspect_assembly"].GetProperty("inputSchema").GetProperty("properties");
             var searchProperties = registered["search_assembly"].GetProperty("inputSchema").GetProperty("properties");
@@ -207,26 +207,25 @@ public sealed class McpServerIntegrationTests
 
             await SendRequestAsync(process, 5, "tools/call", new
             {
-                name = "get_assembly_context",
-                arguments = new { targetPath = assemblyPath, detailLevel = "standard" },
+                name = "get_context",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = "T:ZeroMatrix.ZeroBox", sections = new[] { "members" } },
             }, timeout.Token);
             var context = await ReadResponseAsync(process, 5, timeout.Token);
             var contextText = GetFirstText(context);
             Assert.False(context.GetProperty("result").GetProperty("isError").GetBoolean(), contextText);
             var contextPayload = ParsePayload(contextText);
-            Assert.True(contextPayload.GetProperty("shownCount").GetInt32() > 0, contextText);
+            Assert.Equal("members", contextPayload.GetProperty("sections")[0].GetProperty("name").GetString());
 
             await SendRequestAsync(process, 9, "tools/call", new
             {
-                name = "get_assembly_context",
-                arguments = new { targetPath = assemblyPath, maxResults = 0, maxResponseBytes = 0, detailLevel = "standard" },
+                name = "get_context",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = "T:ZeroMatrix.ZeroBox", sections = new[] { "members" }, maxResults = 10 },
             }, timeout.Token);
             var zeroContext = await ReadResponseAsync(process, 9, timeout.Token);
             var zeroContextText = GetFirstText(zeroContext);
             Assert.False(zeroContext.GetProperty("result").GetProperty("isError").GetBoolean(), zeroContextText);
             var zeroContextPayload = ParsePayload(zeroContextText);
-            Assert.Equal(contextPayload.GetProperty("totalTypes").GetInt32(), zeroContextPayload.GetProperty("totalTypes").GetInt32());
-            Assert.Equal(contextPayload.GetProperty("shownCount").GetInt32(), zeroContextPayload.GetProperty("shownCount").GetInt32());
+            Assert.Equal(contextPayload.GetProperty("sections")[0].GetProperty("items").GetArrayLength(), zeroContextPayload.GetProperty("sections")[0].GetProperty("items").GetArrayLength());
 
             await SendRequestAsync(process, 10, "tools/call", new
             {
@@ -308,21 +307,18 @@ public sealed class McpServerIntegrationTests
             Assert.Contains("line-0799", bodyPages.Text, StringComparison.Ordinal);
             Assert.Equal(800, bodyPages.Text.Split("line-", StringSplitOptions.None).Length - 1);
 
-            var contextPages = await ReadAllTextPagesAsync("get_assembly_context", new Dictionary<string, object?>
+            var contextPages = await ReadAllTextPagesAsync("get_context", new Dictionary<string, object?>
             {
                 ["targetPath"] = pageAssemblyPath,
                 ["symbolIdentifier"] = largeBodyHandle,
-                ["includeBody"] = true,
+                ["sections"] = new[] { "body" },
                 ["maxBodyLines"] = 1000,
                 ["maxResponseBytes"] = 8192,
-                ["detailLevel"] = "full",
             }, 190);
             Assert.True(contextPages.Pages > 1, "A context with a large body should continue across response windows.");
-            Assert.Contains("## Body", contextPages.Text, StringComparison.Ordinal);
             Assert.Contains("line-0000", contextPages.Text, StringComparison.Ordinal);
             Assert.Contains("line-0799", contextPages.Text, StringComparison.Ordinal);
             Assert.Equal(800, contextPages.Text.Split("line-", StringSplitOptions.None).Length - 1);
-            Assert.Contains("completeness=complete", contextPages.Text, StringComparison.Ordinal);
 
             process.StandardInput.Close();
             await process.WaitForExitAsync(timeout.Token);
@@ -478,12 +474,12 @@ public sealed class McpServerIntegrationTests
                 .Select(tool => tool.GetProperty("name").GetString()!)
                 .Order(StringComparer.Ordinal)
                 .ToArray();
-            Assert.Equal(19, tools.Length);
+            Assert.Equal(17, tools.Length);
             Assert.Equal(new[]
             {
                 "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol",
-                "get_assembly_context", "get_call_tree", "get_class_structure", "get_feature_context", "get_file_skeleton",
-                "get_impact", "get_index_scope", "get_namespace_tree", "get_symbol_body", "get_test_context",
+                "get_call_tree", "get_class_structure", "get_context", "get_file_skeleton",
+                "get_impact", "get_index_scope", "get_namespace_tree", "get_symbol_body",
                 "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly",
             }, tools);
             Assert.DoesNotContain("get_server_health", tools);
@@ -609,12 +605,11 @@ public sealed class McpServerIntegrationTests
                 ("get_impact", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = " " }, "INVALID_ARGUMENT"),
                 ("dependency_graph", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath }, "INVALID_ARGUMENT"),
                 ("resolve_type_origin", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "", ["typeName"] = "" }, "INVALID_ARGUMENT"),
-                ("get_assembly_context", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown", ["detailLevel"] = "unsupported" }, "INVALID_ARGUMENT"),
+                ("get_context", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown", ["sections"] = new[] { "tests" } }, "INVALID_ARGUMENT"),
                 ("inspect_assembly", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["maxResults"] = -1 }, "INVALID_ARGUMENT"),
                 ("search_assembly", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["pattern"] = null }, "INVALID_ARGUMENT"),
                 ("find_assembly_extensions", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["maxResults"] = -1 }, "INVALID_ARGUMENT"),
-                ("get_feature_context", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "" }, "INVALID_ARGUMENT"),
-                ("get_test_context", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "" }, "INVALID_ARGUMENT"),
+                ("get_context", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "", ["sections"] = new[] { "body" } }, "INVALID_ARGUMENT"),
             };
 
             var requestId = 10;
@@ -678,8 +673,8 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                 .Select(tool => tool.GetProperty("name").GetString())
                 .Order(StringComparer.Ordinal)
                 .ToArray();
-            Assert.Equal(19, names.Length);
-            Assert.Equal(new[] { "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol", "get_assembly_context", "get_call_tree", "get_class_structure", "get_feature_context", "get_file_skeleton", "get_impact", "get_index_scope", "get_namespace_tree", "get_symbol_body", "get_test_context", "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly" }, names);
+            Assert.Equal(17, names.Length);
+            Assert.Equal(new[] { "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol", "get_call_tree", "get_class_structure", "get_context", "get_file_skeleton", "get_impact", "get_index_scope", "get_namespace_tree", "get_symbol_body", "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly" }, names);
             Assert.DoesNotContain("get_server_health", names);
             Assert.DoesNotContain("reload_config", names);
             Assert.DoesNotContain("get_file_tree", names);
@@ -770,18 +765,14 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
 
             await SendRequestAsync(process, 14, "tools/call", new
             {
-                name = "get_feature_context",
-                arguments = new { targetPath = solutionPath, symbolIdentifier = sourceHandle, maxCallers = 5, maxTests = 5 },
+                name = "get_context",
+                arguments = new { targetPath = solutionPath, symbolIdentifier = sourceHandle,
+                    sections = new[] { "body", "callers", "tests" }, callerScope = "production", maxResults = 5 },
             }, timeout.Token);
             var featureContext = await ReadResponseAsync(process, 14, timeout.Token);
             Assert.False(featureContext.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("CounterConsumer", GetFirstText(featureContext), StringComparison.Ordinal);
             Assert.Contains("static-test-candidates-only", GetFirstText(featureContext), StringComparison.Ordinal);
-
-            await SendRequestAsync(process, 15, "tools/call", new { name = "get_test_context", arguments = new { targetPath = solutionPath, symbolIdentifier = sourceHandle, maxResults = 10 } }, timeout.Token);
-            var testContext = await ReadResponseAsync(process, 15, timeout.Token);
-            Assert.False(testContext.GetProperty("result").GetProperty("isError").GetBoolean());
-            Assert.Contains("static-test-candidates-only", GetFirstText(testContext), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 16, "tools/call", new { name = "get_call_tree", arguments = new { targetPath = solutionPath, symbolIdentifier = sourceHandle } }, timeout.Token);
             var callTree = await ReadResponseAsync(process, 16, timeout.Token);
@@ -1104,7 +1095,8 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             Assert.True(mismatchedDomainPage.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", GetFirstText(mismatchedDomainPage), StringComparison.Ordinal);
 
-            await SendRequestAsync(process, 19, "tools/call", new { name = "get_assembly_context", arguments = new { targetPath = fixtureAssemblyPath, symbolIdentifier = assemblyHandle, includeBody = true, maxResults = 10 } }, timeout.Token);
+            await SendRequestAsync(process, 19, "tools/call", new { name = "get_context", arguments = new { targetPath = fixtureAssemblyPath,
+                symbolIdentifier = assemblyHandle, sections = new[] { "body" } } }, timeout.Token);
             var assemblyContext = await ReadResponseAsync(process, 19, timeout.Token);
             Assert.False(assemblyContext.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("NavigationFixture.Counter", GetFirstText(assemblyContext), StringComparison.Ordinal);
@@ -1639,51 +1631,30 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 46, "tools/call", new
             {
-                name = "get_assembly_context",
+                name = "get_context",
                 arguments = new
                 {
                     targetPath = aPath,
                     symbolIdentifier = methodHandoff,
+                    sections = new[] { "body", "callers" },
                     includeReferences = true,
-                    includeBody = true,
-                    includeClassStructure = true,
-                    includeCallers = true,
-                    includeImpact = true,
                     maxBodyLines = 20,
-                    maxCallers = 10,
-                    depth = 1,
-                    topN = 10,
-                    detailLevel = "full",
                 },
             }, timeout.Token);
             var closureContext = await ReadResponseAsync(process, 46, timeout.Token);
             var closureContextText = GetFirstText(closureContext);
             Assert.False(closureContext.GetProperty("result").GetProperty("isError").GetBoolean(), closureContextText);
-            Assert.Contains("## Callers", closureContextText, StringComparison.Ordinal);
-            Assert.Contains("## Impact", closureContextText, StringComparison.Ordinal);
+            Assert.Contains("callers", closureContextText, StringComparison.Ordinal);
             Assert.Contains("ClosureB.Run", closureContextText, StringComparison.Ordinal);
             Assert.Contains("ClosureOnlyC.LocalRun", closureContextText, StringComparison.Ordinal);
-            Assert.Contains($"targetPath: {bPath}", closureContextText, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains($"targetPath: {ownedCPath}", closureContextText, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("ClosureOnlyC.Read()", closureContextText, StringComparison.Ordinal);
-            var contextLocalRunLine = closureContextText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .First(line => line.Contains("ClosureOnlyC.LocalRun", StringComparison.Ordinal)
-                    && line.Contains("targetPath:", StringComparison.OrdinalIgnoreCase)
-                    && line.Contains("handoff:", StringComparison.Ordinal));
-            var contextLocalRunHandle = contextLocalRunLine.Split("handoff:", StringSplitOptions.None)[1].Split(']')[0].Trim();
-            await SendRequestAsync(process, 49, "tools/call", new
-            {
-                name = "get_symbol_body",
-                arguments = new { targetPath = ownedCPath, symbolIdentifiers = new[] { contextLocalRunHandle } },
-            }, timeout.Token);
-            var contextLocalRunBody = await ReadResponseAsync(process, 49, timeout.Token);
-            Assert.False(contextLocalRunBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(contextLocalRunBody));
-            Assert.Contains("LocalRun()", GetFirstText(contextLocalRunBody), StringComparison.Ordinal);
-            var contextCallerLine = closureContextText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .First(line => line.Contains("ClosureB.Run", StringComparison.Ordinal)
-                    && line.Contains("targetPath:", StringComparison.OrdinalIgnoreCase)
-                    && line.Contains("handoff:", StringComparison.Ordinal));
-            var contextCallerHandle = contextCallerLine.Split("handoff:", StringSplitOptions.None)[1].Split(']')[0].Trim();
+            var closureContextPayload = ParsePayload(closureContextText);
+            var closureCallers = closureContextPayload.GetProperty("sections").EnumerateArray()
+                .Single(section => section.GetProperty("name").GetString() == "callers").GetProperty("items");
+            var contextBCaller = closureCallers.EnumerateArray().Single(item =>
+                item.GetProperty("enclosingSymbolName").GetString() == "ClosureB.Run");
+            Assert.Equal(Path.GetFullPath(bPath), contextBCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
+            var contextCallerHandle = contextBCaller.GetProperty("enclosingSymbolHandoffId").GetString();
+            Assert.StartsWith("h:", contextCallerHandle, StringComparison.Ordinal);
             await SendRequestAsync(process, 47, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -1692,7 +1663,18 @@ if (Directory.Exists(fixtureRoot))
             var contextCallerBody = await ReadResponseAsync(process, 47, timeout.Token);
             Assert.False(contextCallerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(contextCallerBody));
             Assert.Contains("Run()", GetFirstText(contextCallerBody), StringComparison.Ordinal);
-            Assert.Contains("completeness=complete", closureContextText, StringComparison.Ordinal);
+            var contextCCaller = closureCallers.EnumerateArray().Single(item =>
+                item.GetProperty("enclosingSymbolName").GetString() == "ClosureOnlyC.LocalRun");
+            Assert.Equal(Path.GetFullPath(ownedCPath), contextCCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
+            var contextCHandle = contextCCaller.GetProperty("enclosingSymbolHandoffId").GetString();
+            await SendRequestAsync(process, 49, "tools/call", new
+            {
+                name = "get_symbol_body",
+                arguments = new { targetPath = ownedCPath, symbolIdentifiers = new[] { contextCHandle } },
+            }, timeout.Token);
+            var contextCBody = await ReadResponseAsync(process, 49, timeout.Token);
+            Assert.False(contextCBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(contextCBody));
+            Assert.Contains("LocalRun()", GetFirstText(contextCBody), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 32, "tools/call", new
             {
@@ -1792,25 +1774,19 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 51, "tools/call", new
             {
-                name = "get_assembly_context",
+                name = "get_context",
                 arguments = new
                 {
                     targetPath = aPath,
                     symbolIdentifier = methodHandoff,
+                    sections = new[] { "callers" },
                     includeReferences = true,
-                    includeCallers = true,
-                    includeImpact = true,
-                    depth = 2,
-                    maxCallers = 10,
-                    topN = 10,
-                    detailLevel = "full",
                 },
             }, timeout.Token);
             var depthTwoContext = await ReadResponseAsync(process, 51, timeout.Token);
             var depthTwoContextText = GetFirstText(depthTwoContext);
             Assert.False(depthTwoContext.GetProperty("result").GetProperty("isError").GetBoolean(), depthTwoContextText);
-            Assert.Contains("completeness=complete", depthTwoContextText, StringComparison.Ordinal);
-            Assert.Contains("ClosureA.Run", depthTwoContextText, StringComparison.Ordinal);
+            Assert.Contains("ClosureB.Run", depthTwoContextText, StringComparison.Ordinal);
 
             await SendRequestAsync(process, 90, "tools/call", new
             {
@@ -2036,14 +2012,14 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 111, "tools/call", new
             {
-                name = "get_assembly_context",
-                arguments = new { targetPath = aPath, symbolIdentifier = "M:ClosureFixture.ClosureOnlyC.Read", includeReferences = true, includeCallers = true, includeImpact = true, includeBody = true, includeClassStructure = true, depth = 1 },
+                name = "get_context",
+                arguments = new { targetPath = aPath, symbolIdentifier = "M:ClosureFixture.ClosureOnlyC.Read", includeReferences = true, sections = new[] { "body", "callers" } },
             }, timeout.Token);
             var rawContext = await ReadResponseAsync(process, 111, timeout.Token);
             var rawContextText = GetFirstText(rawContext);
             Assert.False(rawContext.GetProperty("result").GetProperty("isError").GetBoolean(), rawContextText);
-            Assert.Contains("## Body", rawContextText, StringComparison.Ordinal);
-            Assert.Contains("## Class Structure", rawContextText, StringComparison.Ordinal);
+            Assert.Contains("body", rawContextText, StringComparison.Ordinal);
+            Assert.Contains("callers", rawContextText, StringComparison.Ordinal);
             Assert.Contains("ClosureB.Run", rawContextText, StringComparison.Ordinal);
             Assert.Contains(Path.GetFullPath(bPath), rawContextText, StringComparison.OrdinalIgnoreCase);
 
@@ -2932,111 +2908,35 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 23, "tools/call", new
             {
-                name = "get_assembly_context",
+                name = "get_context",
                 arguments = new
                 {
                     targetPath = assemblyPath,
                     symbolIdentifier = betaHandle,
-                    includeBody = true,
-                    includeClassStructure = true,
-                    includeCallers = true,
-                    includeImpact = true,
+                    sections = new[] { "body", "members", "callers" },
                     maxBodyLines = 1,
-                    maxCallers = 10,
-                    depth = 1,
-                    topN = 10,
-                    detailLevel = " STANDARD ",
                 },
             }, timeout.Token);
             var composedAssemblyContext = await ReadResponseAsync(process, 23, timeout.Token);
             var composedAssemblyContextText = GetFirstText(composedAssemblyContext);
             Assert.False(composedAssemblyContext.GetProperty("result").GetProperty("isError").GetBoolean(), composedAssemblyContextText);
-            Assert.Contains("## Class Structure", composedAssemblyContextText, StringComparison.Ordinal);
-            Assert.Contains("## Callers", composedAssemblyContextText, StringComparison.Ordinal);
+            Assert.Contains("members", composedAssemblyContextText, StringComparison.Ordinal);
+            Assert.Contains("callers", composedAssemblyContextText, StringComparison.Ordinal);
             Assert.Contains("BetaInvoker.Invoke", composedAssemblyContextText, StringComparison.Ordinal);
-            Assert.Contains("## Impact", composedAssemblyContextText, StringComparison.Ordinal);
-            Assert.Contains("## Body", composedAssemblyContextText, StringComparison.Ordinal);
-            Assert.Contains("completeness=truncated", composedAssemblyContextText, StringComparison.Ordinal);
-            var betaInvokerLine = composedAssemblyContextText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .First(line => line.Contains("BetaInvoker.Invoke", StringComparison.Ordinal) && line.Contains("[handoff: ", StringComparison.Ordinal));
-            var betaInvokerHandleStart = betaInvokerLine.IndexOf("[handoff: ", StringComparison.Ordinal);
-            Assert.True(betaInvokerHandleStart >= 0, $"Expected a proven assembly-owner handoff on the caller line: {betaInvokerLine}");
-            var betaInvokerHandle = betaInvokerLine[(betaInvokerHandleStart + "[handoff: ".Length)..].Split(']')[0];
-            await SendRequestAsync(process, 24, "tools/call", new
+            var composedContextPayload = ParsePayload(composedAssemblyContextText);
+            var betaCaller = composedContextPayload.GetProperty("sections").EnumerateArray()
+                .Single(section => section.GetProperty("name").GetString() == "callers")
+                .GetProperty("items").EnumerateArray().Single(item => item.GetProperty("enclosingSymbolName").GetString() == "BetaInvoker.Invoke");
+            Assert.Equal(Path.GetFullPath(assemblyPath), betaCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
+            var betaCallerHandle = betaCaller.GetProperty("enclosingSymbolHandoffId").GetString();
+            await SendRequestAsync(process, 42, "tools/call", new
             {
                 name = "get_symbol_body",
-                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { betaInvokerHandle } },
+                arguments = new { targetPath = assemblyPath, symbolIdentifiers = new[] { betaCallerHandle } },
             }, timeout.Token);
-            var betaInvokerBody = await ReadResponseAsync(process, 24, timeout.Token);
-            Assert.False(betaInvokerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(betaInvokerBody));
-            Assert.Contains("Invoke()", GetFirstText(betaInvokerBody), StringComparison.Ordinal);
-
-            await SendRequestAsync(process, 25, "tools/call", new
-            {
-                name = "get_assembly_context",
-                arguments = new { targetPath = assemblyPath, symbolIdentifier = betaHandle, detailLevel = "tiny" },
-            }, timeout.Token);
-            var invalidContextDetail = await ReadResponseAsync(process, 25, timeout.Token);
-            Assert.True(invalidContextDetail.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(invalidContextDetail));
-            Assert.Contains("detailLevel", GetFirstText(invalidContextDetail), StringComparison.Ordinal);
-
-            await SendRequestAsync(process, 26, "tools/call", new
-            {
-                name = "get_assembly_context",
-                arguments = new { targetPath = assemblyPath, includeReferences = true, maxResults = 100, detailLevel = "FULL", maxResponseBytes = 512 },
-            }, timeout.Token);
-            var smallBudgetContext = await ReadResponseAsync(process, 26, timeout.Token);
-            Assert.False(smallBudgetContext.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(smallBudgetContext));
-            Assert.Contains("completeness=truncated", GetFirstText(smallBudgetContext), StringComparison.Ordinal);
-
-            await SendRequestAsync(process, 27, "tools/call", new
-            {
-                name = "get_assembly_context",
-                arguments = new { targetPath = assemblyPath, symbolIdentifier = " " },
-            }, timeout.Token);
-            var blankContextSymbol = await ReadResponseAsync(process, 27, timeout.Token);
-            Assert.True(blankContextSymbol.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(blankContextSymbol));
-            Assert.Contains("symbolIdentifier", GetFirstText(blankContextSymbol), StringComparison.Ordinal);
-
-            await SendRequestAsync(process, 28, "tools/call", new
-            {
-                name = "get_assembly_context",
-                arguments = new { targetPath = assemblyPath, maxResults = 1000, detailLevel = "standard" },
-            }, timeout.Token);
-            var standardDefaultBudget = await ReadResponseAsync(process, 28, timeout.Token);
-            Assert.False(standardDefaultBudget.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(standardDefaultBudget));
-            Assert.Contains("completeness=truncated", GetFirstText(standardDefaultBudget), StringComparison.Ordinal);
-            var standardDefaultText = GetFirstText(standardDefaultBudget);
-            Assert.NotNull(TryReadStringLine(standardDefaultText, "continuationToken"));
-
-            await SendRequestAsync(process, 29, "tools/call", new
-            {
-                name = "get_assembly_context",
-                arguments = new { targetPath = assemblyPath, maxResults = 1000, detailLevel = "full" },
-            }, timeout.Token);
-            var fullDefaultBudget = await ReadResponseAsync(process, 29, timeout.Token);
-            Assert.False(fullDefaultBudget.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(fullDefaultBudget));
-            var fullDefaultText = GetFirstText(fullDefaultBudget);
-            Assert.True(fullDefaultText.Length > standardDefaultText.Length,
-                "The 64 KiB full default should return a larger first response window than the 32 KiB standard default.");
-            var fullDefaultPageCount = 1;
-            var fullDefaultRequestId = 30;
-            while (TryReadStringLine(fullDefaultText, "continuationToken") is { } fullDefaultToken)
-            {
-                Assert.True(fullDefaultRequestId < 40, "The full-default response should finish within the bounded page loop.");
-                await SendRequestAsync(process, fullDefaultRequestId, "tools/call", new
-                {
-                    name = "get_assembly_context",
-                    arguments = new { targetPath = assemblyPath, maxResults = 1000, detailLevel = "full", continuationToken = fullDefaultToken },
-                }, timeout.Token);
-                var page = await ReadResponseAsync(process, fullDefaultRequestId++, timeout.Token);
-                fullDefaultText = GetFirstText(page);
-                Assert.False(page.GetProperty("result").GetProperty("isError").GetBoolean(), fullDefaultText);
-                fullDefaultPageCount++;
-            }
-            Assert.True(fullDefaultPageCount > 1, "The large context should exercise full-default response paging.");
-            Assert.Contains("completeness=complete", fullDefaultText, StringComparison.Ordinal);
-
+            var betaCallerBody = await ReadResponseAsync(process, 42, timeout.Token);
+            Assert.False(betaCallerBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(betaCallerBody));
+            Assert.Contains("Invoke()", GetFirstText(betaCallerBody), StringComparison.Ordinal);
             await SendRequestAsync(process, 40, "tools/call", new
             {
                 name = "get_file_skeleton",

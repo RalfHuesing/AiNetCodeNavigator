@@ -56,16 +56,41 @@ public static class SourceSymbolBodyResolver
         string? handoffId = null,
         AnalysisSymbolIdentity? handoffIdentity = null,
         Solution? solution = null)
+        => ResolveCore(symbol, maxBodyLines, startLine, handoffId, handoffIdentity, solution,
+            symbol is null ? null : GetBodySyntaxReference(symbol));
+
+    internal static SymbolBodyResult ResolveWithDeclaration(
+        ISymbol symbol,
+        SyntaxReference declarationReference,
+        int maxBodyLines,
+        int startLine = 1,
+        string? handoffId = null,
+        AnalysisSymbolIdentity? handoffIdentity = null,
+        Solution? solution = null)
+    {
+        ArgumentNullException.ThrowIfNull(declarationReference);
+        return ResolveCore(symbol, maxBodyLines, startLine, handoffId, handoffIdentity, solution, declarationReference);
+    }
+
+    private static SymbolBodyResult ResolveCore(
+        ISymbol symbol,
+        int maxBodyLines,
+        int startLine,
+        string? handoffId,
+        AnalysisSymbolIdentity? handoffIdentity,
+        Solution? solution,
+        SyntaxReference? declarationReference)
     {
         ArgumentNullException.ThrowIfNull(symbol);
 
-        var hasSyntax = GetBodySyntaxReference(symbol) is not null;
+        var hasSyntax = declarationReference is not null;
         var unavailable = HasUnavailableBody(symbol, hasSyntax);
         var hint = GetHint(symbol, hasSyntax, unavailable);
         var docCommentId = symbol.GetDocumentationCommentId();
         handoffId ??= solution is null ? null : SourceHandoffFormatter.Format(symbol, solution, handoffIdentity);
 
-        var (body, totalLines, displayedStart, displayedEnd, hasMore) = Extract(symbol, maxBodyLines, startLine);
+        var (body, totalLines, displayedStart, displayedEnd, hasMore) = Extract(symbol, maxBodyLines, startLine,
+            declarationReference);
 
         return new SymbolBodyResult(
             Body: body,
@@ -155,11 +180,12 @@ public static class SourceSymbolBodyResolver
     private static (string Body, int TotalLines, int DisplayedStart, int DisplayedEnd, bool HasMore) Extract(
         ISymbol symbol,
         int maxBodyLines,
-        int startLine)
+        int startLine,
+        SyntaxReference? declarationOverride = null)
     {
         var normalizedMax = Math.Max(1, maxBodyLines);
         var normalizedStart = Math.Max(1, startLine);
-        var declaringReference = GetBodySyntaxReference(symbol);
+        var declaringReference = declarationOverride ?? GetBodySyntaxReference(symbol);
         if (declaringReference is null)
         {
             return ($"// No source syntax available for '{symbol.ToDisplayString()}'.", 0, 1, 0, false);

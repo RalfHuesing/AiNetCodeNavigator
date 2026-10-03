@@ -6,24 +6,6 @@ using AiNetCodeNavigator.Core.Models;
 
 namespace AiNetCodeNavigator.Core.Assemblies;
 
-public sealed record AssemblyContextRequest(string AssemblyPath, int MaxResults = 100, bool IncludeReferences = false);
-
-public sealed record AssemblyContextPayload(
-    string AssemblyPath,
-    AssemblyIdentityDto? Identity,
-    AssemblyOrigin Origin,
-    string Status,
-    int TotalTypes,
-    int TotalNamespaces,
-    IReadOnlyList<string> Namespaces,
-    IReadOnlyList<string> Types,
-    IReadOnlyList<AssemblyReferenceDto> References,
-    IReadOnlyList<string> Diagnostics,
-    int ShownCount,
-    bool Truncated,
-    int TotalReferenceCount,
-    bool ReferencesTruncated);
-
 public sealed record AssemblySearchRequest(
     string AssemblyPath,
     string? Query = null,

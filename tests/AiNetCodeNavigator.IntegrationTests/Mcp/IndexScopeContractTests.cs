@@ -235,7 +235,7 @@ public sealed class IndexScopeContractTests
 
         var assemblyTools = new AssemblyTools(runtime);
         var assemblyPath = typeof(TestTempDirectory).Assembly.Location;
-        var assemblyPendingTask = assemblyTools.GetAssemblyContext(assemblyPath, maxResponseBytes: 65536, maxResponseTokens: 4096);
+        var assemblyPendingTask = assemblyTools.InspectAssembly(assemblyPath, maxResponseBytes: 65536, maxResponseTokens: 4096);
         await WaitUntilAsync(() => runtime.AssemblyRegistry.GetActiveAccessCount(assemblyPath) > 0,
             TimeSpan.FromSeconds(10));
         var assemblyPending = await assemblyPendingTask;
@@ -246,24 +246,42 @@ public sealed class IndexScopeContractTests
         for (var poll = 0; poll < 100; poll++)
         {
             await Task.Delay(50);
-            assemblyResult = await assemblyTools.GetAssemblyContext(assemblyPath, operationToken: assemblyToken,
+            assemblyResult = await assemblyTools.InspectAssembly(assemblyPath, operationToken: assemblyToken,
                 maxResponseBytes: 65536, maxResponseTokens: 4096);
             var assemblyText = TextOf(assemblyResult);
             if (assemblyText.StartsWith(McpToolResults.RunningStatusPrefix, StringComparison.Ordinal)) continue;
             if (assemblyText.StartsWith(McpToolResults.LoadingStatusPrefix, StringComparison.Ordinal)) continue;
             Assert.False(assemblyResult.IsError ?? false, assemblyText);
             Assert.StartsWith("Status: operation=ok,", assemblyText, StringComparison.Ordinal);
-            var payloadOffset = assemblyText.IndexOf('\n');
-            Assert.True(payloadOffset > 0, assemblyText);
-            using var assemblyPayload = JsonDocument.Parse(assemblyText[(payloadOffset + 1)..]);
-            var assemblyOwner = assemblyPayload.RootElement;
-            Assert.Equal(Path.GetFullPath(assemblyPath), assemblyOwner.GetProperty("assemblyPath").GetString());
-            Assert.Contains(assemblyOwner.GetProperty("status").GetString(), new[] { "complete", "partial", "degraded" });
-            Assert.True(assemblyOwner.GetProperty("totalTypes").GetInt32() > 0);
             assemblyPollCompleted = true;
             break;
         }
         Assert.True(assemblyPollCompleted, $"The assembly operation did not reach an owner result: {TextOf(assemblyResult)}");
+
+        var assemblyPayloadText = new StringBuilder();
+        var assemblyPagesCompleted = false;
+        for (var page = 0; page < 100; page++)
+        {
+            var assemblyText = TextOf(assemblyResult);
+            assemblyPayloadText.Append(BodyOf(assemblyText));
+            if (!TryReadToken(assemblyText, "continuationToken", out var assemblyCursor))
+            {
+                assemblyPagesCompleted = true;
+                break;
+            }
+            assemblyResult = await assemblyTools.InspectAssembly(assemblyPath, continuationToken: assemblyCursor,
+                maxResponseBytes: 65536, maxResponseTokens: 4096);
+            Assert.False(assemblyResult.IsError ?? false, TextOf(assemblyResult));
+        }
+        Assert.True(assemblyPagesCompleted, "The inspect_assembly response did not finish within 100 outer pages.");
+        using (var completeAssemblyPayload = JsonDocument.Parse(JsonPayload(assemblyPayloadText.ToString())))
+        {
+            var assemblyOwner = completeAssemblyPayload.RootElement;
+            Assert.Equal(Path.GetFullPath(assemblyPath), Path.GetFullPath(assemblyOwner.GetProperty("assemblyPath").GetString()!));
+            Assert.True(assemblyOwner.GetProperty("totalTypes").GetInt32() > 0, assemblyOwner.ToString());
+            Assert.Equal(assemblyOwner.GetProperty("types").GetArrayLength(), assemblyOwner.GetProperty("shownCount").GetInt32());
+            Assert.Contains(assemblyOwner.GetProperty("completeness").GetString(), new[] { "complete", "truncated" });
+        }
 
         await AssertSourceAndAssemblyCancellationUsesOwnerRoutesAsync(host.Services.GetRequiredService<IHostApplicationLifetime>(),
             solutionPath, typeof(IndexScopeContractTests).Assembly.Location);
@@ -361,13 +379,13 @@ public sealed class IndexScopeContractTests
         }
 
         var names = registered.Select(item => item.Tool.ProtocolTool.Name).Order(StringComparer.Ordinal).ToArray();
-        Assert.Equal(19, names.Length);
+        Assert.Equal(17, names.Length);
         Assert.Equal(new[]
         {
             "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol",
-            "get_assembly_context", "get_call_tree", "get_class_structure", "get_feature_context", "get_file_skeleton",
+            "get_call_tree", "get_class_structure", "get_context", "get_file_skeleton",
             "get_impact", "get_index_scope", "get_namespace_tree", "get_symbol_body",
-            "get_test_context", "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly",
+            "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly",
         }, names);
         Assert.DoesNotContain("get_server_health", names);
         Assert.DoesNotContain("reload_config", names);
@@ -412,11 +430,10 @@ public sealed class IndexScopeContractTests
         Assert.Contains("assembly targets", findSymbolDescription, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("resolved referenced assemblies", findSymbolDescription, StringComparison.Ordinal);
         Assert.Contains("source searches ignore", findSymbolDescription, StringComparison.Ordinal);
-        var assemblyContextReferencesDescription = registered.Single(item => item.Tool.ProtocolTool.Name == "get_assembly_context")
-            .Tool.ProtocolTool.InputSchema.GetProperty("properties").GetProperty("includeReferences").GetProperty("description").GetString();
-        Assert.Contains("reference metadata", assemblyContextReferencesDescription, StringComparison.Ordinal);
-        Assert.Contains("raw symbols", assemblyContextReferencesDescription, StringComparison.Ordinal);
-        Assert.Contains("caller/impact traversal", assemblyContextReferencesDescription, StringComparison.Ordinal);
+        var contextSchema = registered.Single(item => item.Tool.ProtocolTool.Name == "get_context")
+            .Tool.ProtocolTool.InputSchema.GetProperty("properties");
+        Assert.Contains("members", contextSchema.GetProperty("sections").GetProperty("description").GetString(), StringComparison.Ordinal);
+        Assert.Contains("callers", contextSchema.GetProperty("sections").GetProperty("description").GetString(), StringComparison.Ordinal);
     }
 
     private static string GetWireParameterName(ParameterInfo parameter)
@@ -515,7 +532,7 @@ public sealed class IndexScopeContractTests
 
         using var assemblyCancellation = new CancellationTokenSource();
         var assemblies = new AssemblyTools(runtime);
-        var assemblyCall = assemblies.GetAssemblyContext(assemblyPath, cancellationToken: assemblyCancellation.Token);
+        var assemblyCall = assemblies.InspectAssembly(assemblyPath, cancellationToken: assemblyCancellation.Token);
         await WaitUntilAsync(() => runtime.AssemblyRegistry.GetActiveAccessCount(assemblyPath) > 0,
             TimeSpan.FromSeconds(10));
         await assemblyCancellation.CancelAsync();

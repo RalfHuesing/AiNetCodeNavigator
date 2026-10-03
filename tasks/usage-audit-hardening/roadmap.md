@@ -43,7 +43,7 @@ Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept 
 - [x] **[M2-T2 — Assembly-Ausgaben und Suchvertrag vereinfachen](roadmap/M2-T2.md)**
 - [x] **[M2-T3 — Body- und Namespace-Recovery präzisieren](roadmap/M2-T3.md)**
 - [x] **[M2-T4 — Testkandidaten semantisch ergänzen](roadmap/M2-T4.md)**
-- [ ] **[M2-T5 — Gemeinsamen Kontext einführen und drei Routen entfernen](roadmap/M2-T5.md)**
+- [x] **[M2-T5 — Gemeinsamen Kontext einführen und drei Routen entfernen](roadmap/M2-T5.md)**
 - [ ] **[M2-T6 — Releasezuordnung, Katalog und Agentenanleitung abschließen](roadmap/M2-T6.md)**
 - [ ] **[M2-A — Audit der Agentenoberfläche](roadmap/M2-A.md)**
 

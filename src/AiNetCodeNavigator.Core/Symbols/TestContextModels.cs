@@ -57,7 +57,4 @@ public sealed record TestContextPayload(
     public bool ImplementationExpansionLimitReached { get; init; }
     public bool CandidateExpansionLimitReached { get; init; }
     public bool ReferenceInspectionLimitReached { get; init; }
-    public string? AnalysisNextAction { get; init; }
-    public int ReturnedTestFixtures { get; init; }
-    public string? ResultCursor { get; init; }
 }

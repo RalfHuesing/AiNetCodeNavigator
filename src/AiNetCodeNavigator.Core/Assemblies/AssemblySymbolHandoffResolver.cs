@@ -129,7 +129,7 @@ public static class AssemblySymbolHandoffResolver
 
 public sealed class AssemblySymbolHandoffAccess : IAsyncDisposable
 {
-    private readonly AssemblyAnalysisSessionRegistry.AssemblySessionAccess sessionAccess;
+    private AssemblyAnalysisSessionRegistry.AssemblySessionAccess? sessionAccess;
 
     internal AssemblySymbolHandoffAccess(AssemblyAnalysisSessionRegistry.AssemblySessionAccess sessionAccess, ISymbol symbol)
     {
@@ -137,19 +137,34 @@ public sealed class AssemblySymbolHandoffAccess : IAsyncDisposable
         Symbol = symbol;
     }
 
+    private AssemblyAnalysisSessionRegistry.AssemblySessionAccess Access => sessionAccess
+        ?? throw new InvalidOperationException("The assembly handoff lease was transferred to its navigation scope.");
+
     public ISymbol Symbol { get; }
-    public Solution Solution => sessionAccess.Generation.Snapshot.Solution;
-    public Compilation Compilation => sessionAccess.Generation.Snapshot.Compilation;
-    public IAssemblySymbol Assembly => sessionAccess.Generation.Snapshot.Compilation.Assembly;
-    public DecompiledProjectPaths? DecompiledProjectPaths => sessionAccess.Generation.DecompiledProjectPaths;
-    public AssemblyOrigin Origin => sessionAccess.Generation.Origin;
-    public AssemblyIdentityDto Identity => sessionAccess.Generation.Identity;
-    public long Generation => sessionAccess.Generation.Number;
-    public string ReferenceSnapshotHash => sessionAccess.Generation.ReferenceSnapshotHash;
-    public IReadOnlyList<string> Diagnostics => sessionAccess.Generation.Diagnostics
+    public Solution Solution => Access.Generation.Snapshot.Solution;
+    public Compilation Compilation => Access.Generation.Snapshot.Compilation;
+    public IAssemblySymbol Assembly => Access.Generation.Snapshot.Compilation.Assembly;
+    public DecompiledProjectPaths? DecompiledProjectPaths => Access.Generation.DecompiledProjectPaths;
+    public AssemblyOrigin Origin => Access.Generation.Origin;
+    public AssemblyIdentityDto Identity => Access.Generation.Identity;
+    public long Generation => Access.Generation.Number;
+    public string ReferenceSnapshotHash => Access.Generation.ReferenceSnapshotHash;
+    public IReadOnlyList<string> Diagnostics => Access.Generation.Diagnostics
         .Select(diagnostic => diagnostic.Message)
         .Distinct(StringComparer.Ordinal)
         .ToArray();
 
-    public ValueTask DisposeAsync() => sessionAccess.DisposeAsync();
+    internal AssemblyNavigationSessionScope DetachScope()
+    {
+        var access = Access;
+        sessionAccess = null;
+        return AssemblyNavigationSessionScope.Create(access);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        var access = sessionAccess;
+        sessionAccess = null;
+        return access is null ? ValueTask.CompletedTask : access.DisposeAsync();
+    }
 }

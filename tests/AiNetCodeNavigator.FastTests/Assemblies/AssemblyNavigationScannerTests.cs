@@ -15,34 +15,12 @@ using Xunit;
 
 namespace AiNetCodeNavigator.FastTests.Assemblies;
 
-// @covers AssemblyContextScanner
 // @covers AssemblySearchScanner
 // @covers FindAssemblyExtensionsScanner
 // @covers ResolveTypeOriginScanner
 [Trait("Category", "Component")]
 public sealed class AssemblyNavigationScannerTests
 {
-    [Fact]
-    public async Task Context_ReturnsBoundedTypeAndReferenceSummary()
-    {
-        using var temp = TestTempDirectory.Create("assembly-context-");
-        var path = AssemblyTestHelper.EmitAssembly(temp, "ContextProbe", """
-            namespace Probe.Context;
-            public sealed class First { }
-            public sealed class Second { }
-            """);
-
-        var result = await AssemblyContextScanner.GetAsync(new AssemblyContextRequest(path, MaxResults: 1));
-
-        Assert.True(result.IsSuccess);
-        Assert.Equal(2, result.Value!.TotalTypes);
-        Assert.Single(result.Value.Types);
-        Assert.True(result.Value.Truncated);
-        Assert.Equal(1, result.Value.ShownCount);
-        Assert.Equal(0, result.Value.References.Count);
-        Assert.True(result.Value.TotalReferenceCount > 0);
-    }
-
     [Fact]
     public async Task Search_UsesExplicitLiteralAndRegexModesWithResultBounds()
     {
@@ -426,8 +404,8 @@ public sealed class AssemblyNavigationScannerTests
         var native = temp.GetPath("native.dll");
         File.WriteAllBytes(native, [0, 1, 2, 3, 4]);
 
-        var missingResult = await AssemblyContextScanner.GetAsync(new AssemblyContextRequest(missing));
-        var nativeResult = await AssemblyContextScanner.GetAsync(new AssemblyContextRequest(native));
+        var missingResult = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(missing, "x"));
+        var nativeResult = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(native, "x"));
 
         Assert.False(missingResult.IsSuccess);
         Assert.Equal(AiNetCodeNavigator.Core.Workspace.NavigationErrorCodes.InvalidArgument, missingResult.Error!.Value.Code);
@@ -446,39 +424,16 @@ public sealed class AssemblyNavigationScannerTests
             """);
         var originalBytes = await File.ReadAllBytesAsync(path);
 
-        var context = AssemblyContextScanner.GetAsync(new AssemblyContextRequest(path));
         var search = AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "Read"));
         var extensions = FindAssemblyExtensionsScanner.FindAsync(new FindAssemblyExtensionsRequest(path, "string"));
         var origin = ResolveTypeOriginScanner.ResolveAsync(new ResolveTypeOriginRequest(path, "Probe.Concurrent.Target"));
-        await Task.WhenAll(context, search, extensions, origin);
+        await Task.WhenAll(search, extensions, origin);
 
-        Assert.True((await context).IsSuccess);
         var searchResult = await search;
         Assert.True(searchResult.IsSuccess, searchResult.Error?.ToString());
         Assert.True((await extensions).IsSuccess);
         Assert.True((await origin).IsSuccess);
         Assert.Equal(originalBytes, await File.ReadAllBytesAsync(path));
-    }
-
-    [Fact]
-    public async Task Context_PreservesResolvedAndMissingReferenceDiagnostics()
-    {
-        using var temp = TestTempDirectory.Create("assembly-navigation-missing-reference-");
-        var dependency = AssemblyTestHelper.EmitAssembly(temp, "MissingDependency", """
-            namespace Probe.Dependency;
-            public sealed class DependencyType { }
-            """);
-        var path = AssemblyTestHelper.EmitAssembly(temp, "MissingReferenceProbe", """
-            namespace Probe.Consumer;
-            public sealed class Consumer { public Probe.Dependency.DependencyType? Value; }
-            """, dependency);
-        File.Delete(dependency);
-
-        var result = await AssemblyContextScanner.GetAsync(new AssemblyContextRequest(path, IncludeReferences: true));
-
-        Assert.True(result.IsSuccess);
-        Assert.Contains(result.Value!.References, reference => !reference.Resolved);
-        Assert.NotEmpty(result.Value.Diagnostics);
     }
 
     [Fact]
@@ -545,8 +500,6 @@ public sealed class AssemblyNavigationScannerTests
         using var cancellation = new System.Threading.CancellationTokenSource();
         await cancellation.CancelAsync();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            AssemblyContextScanner.GetAsync(new AssemblyContextRequest(path), cancellation.Token));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             FindAssemblyExtensionsScanner.FindAsync(new FindAssemblyExtensionsRequest(path), cancellation.Token));
     }

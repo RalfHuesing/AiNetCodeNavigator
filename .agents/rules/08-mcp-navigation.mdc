@@ -13,7 +13,7 @@ Use the `AiNetCodeNavigator` MCP server as the primary tool for C# symbol discov
 - Discover the server's exposed tools when needed; client prefixes may differ. Use their actual input schemas for supported parameters, values, defaults, and limits. Do not invent tools or arguments.
 - Set `targetPath` to the absolute path of the relevant existing `.sln` / `.slnx` solution or managed `.dll` / `.exe` assembly. A directory, `.csproj`, or `.cs` file is not a navigation target.
 - Select the solution containing the code being investigated. If several solutions could own it, use repository structure and task context to choose; clarify only unresolved ownership.
-- `get_index_scope`, `get_feature_context`, and `get_test_context` are source-only. `get_assembly_context`, `inspect_assembly`, `search_assembly`, and `find_assembly_extensions` require an assembly. Other navigation tools support source and assembly targets, with tool-specific scope options.
+- `get_index_scope` is source-only. `inspect_assembly`, `search_assembly`, and `find_assembly_extensions` require an assembly. `get_context` supports source and assembly targets, with target-specific sections and options.
 - If the server is unavailable, no supported target exists, or loading fails persistently, continue with focused file reads and text searches. State the limitation when it affects the result; do not repeatedly issue the same failing call.
 
 ## Choose by question
@@ -31,8 +31,8 @@ Use the `AiNetCodeNavigator` MCP server as the primary tool for C# symbol discov
 | Which callers/dependents could be affected? | `get_impact` from a symbol; start at `depth: 1`. This tool does not accept Git refs or changed-file lists. |
 | Which types/files depend on this file or symbol? | `dependency_graph` with exactly one of `filePath` or `symbolIdentifier`. |
 | Which source project or external assembly owns this type? | `resolve_type_origin` with exactly one of `symbolIdentifier` or `typeName`. |
-| Which source declaration, callers, and test candidates matter? | `get_feature_context` for combined context; `get_test_context` for test candidates alone. |
-| What API or behavior exists in a compiled library? | `inspect_assembly` for API declarations; `get_assembly_context` for selected context sections; `search_assembly` for decompiled text, external calls, or data access. |
+| Which source declaration, callers, or test candidates matter? | `get_context` with the explicitly selected `body`, `members`, `callers`, or `tests` sections. |
+| What API or behavior exists in a compiled library? | `inspect_assembly` for API declarations; `get_context` for selected body, member, or direct-caller sections; `search_assembly` for decompiled text, external calls, or data access. |
 | Which compiled extension methods are available? | `find_assembly_extensions`, narrowed by receiver, name, or namespace. |
 
 ## Gather context progressively
@@ -64,7 +64,7 @@ Use the `AiNetCodeNavigator` MCP server as the primary tool for C# symbol discov
 - Prefer semantic tools over repository-wide text searches for declarations, callers, references, inheritance, and implementations. Use targeted text search for literals, comments, configuration, non-C# content, unindexed files, unsupported semantic questions, or unavailable navigation. Text matches are leads; they do not prove symbol identity or semantic relationships.
 - Use direct file reads for editing context and checking current source. Rediscover affected handles when needed after edits; stored response pages are immutable and do not verify the edited state.
 - Interpret results within the selected target, indexed scope, filters, depth, reference closure, and completeness. Static navigation cannot establish all runtime behavior, reflection/DI wiring, or consumers outside the analyzed scope. Report material gaps in conclusions about absence or impact.
-- `get_test_context` and `get_feature_context` return static test candidates, including heuristic matches. Inspect the candidate tests and run the relevant verification tools; these results do not measure coverage or prove that tests pass.
+- The `tests` section of `get_context` returns static test candidates, including heuristic matches. Inspect the candidate tests and run the relevant verification tools; these results do not measure coverage or prove that tests pass.
 - Assembly bodies are decompiled representations, not original source. Navigation does not execute analyzed binaries.
 - Host settings are read at process startup. Restart the MCP server after changing its configuration file; configuration reload is not an MCP navigation capability.
 - AiNetCodeNavigator provides read-only navigation, not linting, code-quality scoring, refactoring, builds, or test execution. Use the appropriate external tools for changes and verification.

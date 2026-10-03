@@ -10,7 +10,7 @@ The binding product references are these current-state pages and local Navigator
 - [MCP Argument Validation](mcp-argument-validation.md): SDK input-schema validation, binder compatibility checks, safe field paths, and error-budget behavior.
 - [MCP Long-Running Calls and Continuations](mcp-long-running-calls.md): Operation token lifecycle, polling, immutable text snapshots, continuation tokens, and their limits.
 - [MCP Host](mcp-host.md): Stdio lifecycle, the navigation tool catalog, and startup host settings.
-- [MCP Tools](tools/README.md): The 19 navigation tools, targets, wire arguments, defaults, paging, recovery, and usage examples.
+- [MCP Tools](tools/README.md): The 17 navigation tools, targets, wire arguments, defaults, paging, recovery, and usage examples.
 - [Setup](setup/README.md): Windows executable, stdio process configuration, host settings, and current Claude Desktop, Cursor, and Antigravity setup references.
 - [MCP Navigation Registration Status](navigation/mcp-registration-status.md): Current transport-free handler contracts and the boundary around retained end-to-end tests.
 
@@ -30,7 +30,7 @@ The binding product references are these current-state pages and local Navigator
 - [Dependency Graph Core Scanner](navigation/dependency-graph.md): Project and source type dependencies, project-qualified edges, paging, scan bounds, and recoverable document errors.
 - [Resolve Type Origin](navigation/resolve-type-origin.md): Source and metadata type origin results, exact source project ownership, and assembly-reference lookup.
 - [Cross-Feature Relationship Contract](navigation/relationship-contracts.md): Shared source handoffs, caller-site identity, cross-project relationship behavior, and per-engine result limits.
-- [Test Context](navigation/test-context.md): Test project/file/class detection and heuristic fixture and method recommendations.
-- [Get Feature Context](navigation/get-feature-context.md): Combined declaration, caller and test candidate context, scope, handoffs, errors, and result limits.
+- [Shared Navigation Context](navigation/get-context.md): Explicit Source and Assembly sections, shared symbol resolution, per-section paging, and partial errors.
+- [Static Test Candidates](navigation/test-context.md): Test project/file/class detection and heuristic fixture and method recommendations.
 - [Assembly Decompilation Core](navigation/assembly-decompilation.md): Read-only binary fingerprinting, decompilation cache generations, native/invalid image handling, and the virtual Roslyn snapshot.
 - [Assembly Navigation Core Scanners](navigation/assembly-navigation.md): Assembly context, bounded text/data/external-call searches, extension method discovery, and referenced type origins.

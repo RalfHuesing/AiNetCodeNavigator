@@ -40,10 +40,9 @@ public sealed class FindSymbolScannerTests
         Assert.True(SymbolHandoffToken.TryCreateTarget(fixture.Solution.FilePath!, out var targetToken));
         Assert.Equal(targetToken, parsed.TargetToken);
 
-        var context = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(fixture.Solution, entry.HandoffId!));
-        Assert.NotNull(context);
-        Assert.Null(context.Error);
-        Assert.Equal("Greeter", context.Declaration.SymbolName);
+        var resolved = await SourceSymbolResolver.ResolveAsync(fixture.Solution, entry.HandoffId!);
+        Assert.True(resolved.IsSuccess);
+        Assert.Equal("Greeter", resolved.Symbol!.Name);
 
         var structure = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(fixture.Solution, entry.HandoffId!));
         Assert.NotNull(structure);
@@ -60,9 +59,9 @@ public sealed class FindSymbolScannerTests
         var unknown = await SourceHandoffResolver.ResolveAsync(fixture.Solution, "h:unknown99", identity!);
         Assert.False(unknown.IsSuccess);
         Assert.Equal(NavigationErrorCodes.HandoffUnknown, unknown.Error!.Value.Code);
-        var unknownContext = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(fixture.Solution, "h:unknown99"));
-        Assert.NotNull(unknownContext?.Error);
-        Assert.Equal(NavigationErrorCodes.HandoffUnknown, unknownContext!.Error!.Value.Code);
+        var unknownSymbol = await SourceSymbolResolver.ResolveAsync(fixture.Solution, "h:unknown99", identity);
+        Assert.False(unknownSymbol.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.HandoffUnknown, unknownSymbol.Error!.Value.Code);
         var unknownStructure = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(fixture.Solution, "h:unknown99"));
         Assert.NotNull(unknownStructure?.Error);
         Assert.Equal(NavigationErrorCodes.HandoffUnknown, unknownStructure!.Error!.Value.Code);
@@ -101,11 +100,9 @@ public sealed class FindSymbolScannerTests
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
 
-        var featureContext = await FeatureContextScanner.ScanAsync(
-            new FeatureContextRequest(fixture.Solution, "H:unknown99"));
-        Assert.NotNull(featureContext);
-        Assert.NotNull(featureContext!.Error);
-        Assert.Equal(NavigationErrorCodes.InvalidHandoff, featureContext.Error!.Value.Code);
+        var sourceSymbol = await SourceSymbolResolver.ResolveAsync(fixture.Solution, "H:unknown99");
+        Assert.False(sourceSymbol.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.InvalidHandoff, sourceSymbol.Error!.Value.Code);
 
         var classStructure = await ClassStructureScanner.ScanAsync(
             new ClassStructureScanRequest(fixture.Solution, "H:unknown99"));
@@ -119,10 +116,9 @@ public sealed class FindSymbolScannerTests
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
 
-        var featureContext = await FeatureContextScanner.ScanAsync(
-            new FeatureContextRequest(fixture.Solution, @"H:\repo\file.cs"));
-        Assert.NotNull(featureContext);
-        Assert.Equal(NavigationErrorCodes.SymbolNotFound, featureContext.Error?.Code);
+        var sourceSymbol = await SourceSymbolResolver.ResolveAsync(fixture.Solution, @"H:\repo\file.cs");
+        Assert.False(sourceSymbol.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.SymbolNotFound, sourceSymbol.Error?.Code);
 
         var classStructure = await ClassStructureScanner.ScanAsync(
             new ClassStructureScanRequest(fixture.Solution, @"H:\repo\file.cs"));
@@ -212,9 +208,9 @@ public sealed class FindSymbolScannerTests
             },
         };
 
-        var featureContext = await FeatureContextScanner.ScanAsync(
-            new FeatureContextRequest(fixture.Solution, "Greeter", HandoffIdentity: forgedIdentity));
-        Assert.Equal(NavigationErrorCodes.TargetMismatch, featureContext!.Error!.Value.Code);
+        var sourceSymbol = await SourceSymbolResolver.ResolveAsync(fixture.Solution, "Greeter", forgedIdentity);
+        Assert.False(sourceSymbol.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.TargetMismatch, sourceSymbol.Error!.Value.Code);
 
         var classStructure = await ClassStructureScanner.ScanAsync(
             new ClassStructureScanRequest(fixture.Solution, "Greeter", HandoffIdentity: forgedIdentity));
@@ -236,10 +232,9 @@ public sealed class FindSymbolScannerTests
         var entry = Assert.Single(found.Entries);
         Assert.NotNull(entry.HandoffId);
 
-        var payload = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(lower.Solution, entry.HandoffId!));
-        Assert.NotNull(payload);
-        Assert.Null(payload.Error);
-        Assert.Equal("SampleType", payload.Declaration.SymbolName);
+        var payload = await SourceSymbolResolver.ResolveAsync(lower.Solution, entry.HandoffId!);
+        Assert.True(payload.IsSuccess);
+        Assert.Equal("SampleType", payload.Symbol!.Name);
     }
 
     [Fact]

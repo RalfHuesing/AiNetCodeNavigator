@@ -26,6 +26,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     private Func<AssemblyNavigationSessionScope, CancellationToken, Task>? afterAssemblyClosureRootScopeOpened;
     private Func<AssemblySymbolHandoffAccess, CancellationToken, Task>? afterAssemblyClosureHandoffResolved;
     private Func<CancellationToken, Task>? afterAssemblyClosureRawDiscovery;
+    internal Action<string>? BeforeContextSectionForTesting { get; set; }
+    internal Action<string>? BeforeAssemblyContextOwnerOpenForTesting { get; set; }
 
     internal RelationshipTools(
         NavigatorHostRuntime runtime,
@@ -782,100 +784,591 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
     }
 
-    [McpServerTool(Name = "get_feature_context", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [System.ComponentModel.Description("Summarize source callers and tests associated with a feature symbol.")]
-    public async Task<CallToolResult> GetFeatureContext([Required, System.ComponentModel.Description("Absolute path to an existing source solution.")] string targetPath, [Required, System.ComponentModel.Description("Source type or member identifier whose callers and related tests should be summarized.")] string symbolIdentifier,
-        [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", [System.ComponentModel.Description("Include declarations from generated source files.")] bool includeGenerated = false, [Range(1, 50), System.ComponentModel.Description("Maximum callers to return.")] int maxCallers = 10,
-        [Range(1, 50), System.ComponentModel.Description("Maximum related tests to return.")] int maxTests = 10, [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 24576).") ] int maxResponseBytes = 24576,
-        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null, [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
-        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(symbolIdentifier))
-            return McpToolResults.InvalidArgument("symbolIdentifier must be a non-empty symbol identifier.", "$.symbolIdentifier",
-                "Provide a source symbol name, documentation ID, position, or current handoff ID.",
-                maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-        if (!TryScope(scopeType, out var scope)) return McpToolResults.InvalidArgument("scopeType is unsupported.", "$.scopeType", "Use all, production, or tests.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-        return await NavigationToolSupport.RouteAsync(runtime, "get_feature_context", targetPath,
-            new { symbolIdentifier, scopeType, includeGenerated, maxCallers, maxTests }, operationToken, continuationToken,
-            maxResponseBytes, maxResponseTokens,
-            async (target, ct) => await WithSource(target, async (solution, source) =>
-            {
-                var identity = source.Identity;
-                var payload = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(solution, symbolIdentifier, maxCallers, maxTests, scope, identity, includeGenerated), ct).ConfigureAwait(false);
-                if (payload?.Error is { } error) return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
-                var testAnalysisLimited = payload!.TestImplementationExpansionLimitReached ||
-                    payload.TestCandidateExpansionLimitReached || payload.TestReferenceInspectionLimitReached;
-                var response = NavigationToolSupport.Success(payload, payload.CallersTruncated || payload.TestsTruncated || testAnalysisLimited,
-                    testAnalysisLimited
-                        ? "Static test-candidate analysis reached a fixed bound; choose a narrower symbol to reduce its candidate set."
-                        : "Increase maxCallers or maxTests and repeat the query.");
-                var omissions = new List<string>();
-                if (payload.CallersTruncated) omissions.Add("maxCallers");
-                if (payload.TestsTruncated) omissions.Add("maxTests");
-                if (payload.TestImplementationExpansionLimitReached) omissions.Add("testImplementationExpansionLimit");
-                if (payload.TestCandidateExpansionLimitReached) omissions.Add("testCandidateExpansionLimit");
-                if (payload.TestReferenceInspectionLimitReached) omissions.Add("testReferenceInspectionLimit");
-                return source.WithMetadata(response,
-                    $"featureContext(symbol={symbolIdentifier.Trim()}, scope={scope}, includeGenerated={includeGenerated}, maxCallers={maxCallers}, maxTests={maxTests})",
-                    omissions.ToArray());
-            }, maxResponseBytes, maxResponseTokens, ct), AnalysisTargetType.Project, cancellationToken).ConfigureAwait(false);
-    }
-
-    [McpServerTool(Name = "get_test_context", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [System.ComponentModel.Description("Find source tests and related context for a selected symbol.")]
-    public async Task<CallToolResult> GetTestContext([Required, System.ComponentModel.Description("Absolute path to an existing source solution.")] string targetPath, [Required, System.ComponentModel.Description("Source type or member identifier used to locate related tests.")] string symbolIdentifier,
-        [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", [System.ComponentModel.Description("Include declarations from generated source files.")] bool includeGenerated = false, [Range(1, 100), System.ComponentModel.Description("Maximum test fixture page size.")] int maxResults = 30,
-        [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
-        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
-        [System.ComponentModel.Description("Opaque cursor for the next page of discovered test fixtures. Read all outer response pages before using it.")] string? resultCursor = null,
+    [McpServerTool(Name = "get_context", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [System.ComponentModel.Description("Read selected body, direct members, direct callers, or static test candidates for one source or assembly symbol.")]
+    public Task<CallToolResult> GetContext(
+        [Required, System.ComponentModel.Description("Absolute path to an existing source .sln/.slnx solution or managed .dll/.exe assembly.")] string targetPath,
+        [Required, System.ComponentModel.Description("Type or member identifier for the selected context target.")] string symbolIdentifier,
+        [Required, System.ComponentModel.Description("Non-empty, duplicate-free selection from body, members, callers, and tests.")] string[] sections,
+        [System.ComponentModel.Description("Source caller scope: all (default), production, or tests. Applies only to callers.")] string? callerScope = null,
+        [System.ComponentModel.Description("Include generated source declarations; defaults to false.")] bool? includeGenerated = null,
+        [System.ComponentModel.Description("Include referenced assembly owners in the callers section; defaults to false.")] bool? includeReferences = null,
+        [Range(1, 100), System.ComponentModel.Description("Page size for each selected list section (1–100; default 10). Body window size is controlled separately.")] int? maxResults = null,
+        [Range(1, 1000), System.ComponentModel.Description("Maximum declaration lines in a body window; defaults to 80.")] int? maxBodyLines = null,
+        [Range(1, 1000000), System.ComponentModel.Description("One-based body window start line; omit for the first window.")] int? startLine = null,
+        [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes.")] int maxResponseBytes = 24576,
+        [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
+        [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
+        [System.ComponentModel.Description("Opaque cursor for exactly one selected section. Read all outer response pages before continuing it.")] string? resultCursor = null,
         CancellationToken cancellationToken = default)
     {
+        var validation = ValidateContextArguments(targetPath, symbolIdentifier, sections, callerScope, includeGenerated,
+            includeReferences, maxResults, maxBodyLines, startLine, resultCursor, maxResponseBytes, maxResponseTokens);
+        if (validation is not null) return Task.FromResult(validation);
+
+        var selected = sections.Select(value => value.Trim().ToLowerInvariant()).ToArray();
+        var scope = TryScope(callerScope ?? "all", out var parsedScope) ? parsedScope : SymbolScopeType.All;
+        var generated = includeGenerated ?? false;
+        var references = includeReferences ?? false;
+        var effectivePageSize = maxResults ?? 10;
+        var bodyLines = maxBodyLines ?? 80;
+        var bodyStart = startLine ?? 1;
+        var args = new { symbolIdentifier, sections, callerScope, includeGenerated, includeReferences, maxResults, maxBodyLines, startLine };
+        var requestBinding = System.Text.Json.JsonSerializer.Serialize(new { callerScope, includeGenerated, includeReferences, maxResults, maxBodyLines, startLine });
+
+        return NavigationToolSupport.RouteAsync(runtime, "get_context", targetPath, args, operationToken, continuationToken,
+            maxResponseBytes, maxResponseTokens,
+            async (target, coreCursor, ct) =>
+            {
+                var continuation = ParseContextCursor(coreCursor, selected);
+                if (continuation.Error is not null) return McpToolResults.InvalidArgument(continuation.Error, "$.resultCursor",
+                    "Use a resultCursor returned for this exact get_context selection.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                var activeSections = continuation.Section is null ? selected : [continuation.Section];
+                if (target.TargetType == AnalysisTargetType.Project)
+                    return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target,
+                        async (solution, source, token) => await BuildSourceContextAsync(target, solution, source, symbolIdentifier,
+                            selected, activeSections, requestBinding, scope, generated, effectivePageSize, bodyLines, bodyStart, coreCursor,
+                            continuation.Section, maxResponseBytes, maxResponseTokens, token).ConfigureAwait(false),
+                        maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
+                return await BuildAssemblyContextAsync(target, symbolIdentifier, selected, activeSections, requestBinding, generated, references,
+                    effectivePageSize, bodyLines, bodyStart, coreCursor, continuation.Section, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
+            }, requiredType: null, cancellationToken, resultCursor, "get_context");
+    }
+
+    private CallToolResult? ValidateContextArguments(string? targetPath, string? symbolIdentifier, string[]? sections,
+        string? callerScope, bool? includeGenerated, bool? includeReferences, int? maxResults, int? maxBodyLines,
+        int? startLine, string? resultCursor, int maxResponseBytes, int? maxResponseTokens)
+    {
         if (string.IsNullOrWhiteSpace(symbolIdentifier))
             return McpToolResults.InvalidArgument("symbolIdentifier must be a non-empty symbol identifier.", "$.symbolIdentifier",
-                "Provide a source symbol name, documentation ID, position, or current handoff ID.",
-                maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-        if (!TryScope(scopeType, out var scope)) return McpToolResults.InvalidArgument("scopeType is unsupported.", "$.scopeType", "Use all, production, or tests.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-        return await NavigationToolSupport.RouteAsync(runtime, "get_test_context", targetPath,
-            new { symbolIdentifier, scopeType, includeGenerated, maxResults }, operationToken, continuationToken,
-            maxResponseBytes, maxResponseTokens,
-            async (target, coreCursor, ct) => await WithSource(target, async (solution, source) =>
-            {
-                var resolved = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
-                if (resolved.Error is not null) return NavigationToolSupport.Failure(resolved.Error.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
-                var payload = await TestRecommendationBuilder.BuildAsync(resolved.Symbol!, solution, source.Identity, ct, includeGenerated, scope).ConfigureAwait(false);
-                var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
-                    "get_test_context.candidates", symbolIdentifier.Trim(), scope.ToString(), includeGenerated.ToString(),
-                    maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                var page = NavigationToolSupport.PageResults(payload.TestFixtures, maxResults, coreCursor, binding,
-                    maxResponseBytes, maxResponseTokens);
-                if (page.Error is not null) return page.Error;
-                var scanLimited = payload.ImplementationExpansionLimitReached || payload.CandidateExpansionLimitReached ||
-                    payload.ReferenceInspectionLimitReached;
-                var shown = payload with
-                {
-                    TestFixtures = page.Items,
-                    ReturnedTestFixtures = page.Items.Length,
-                    ResultCursor = page.NextCursor,
-                    AnalysisNextAction = scanLimited
-                        ? "The static candidate analysis reached a fixed bound; select a narrower symbol to inspect a smaller candidate set."
-                        : null
-                };
-                // Domain analysis limits are reported through source analysis metadata. Reserve the
-                // response-level truncated status for a page that has more domain results.
-                var truncated = page.NextCursor is not null;
-                var nextAction = page.NextCursor is not null
-                    ? "Read all outer response pages, then continue with resultCursor."
-                    : null;
-                var response = NavigationToolSupport.Success(shown, truncated, nextAction);
-                var omissions = new List<string>();
-                if (payload.ImplementationExpansionLimitReached) omissions.Add("implementationExpansionLimit");
-                if (payload.CandidateExpansionLimitReached) omissions.Add("candidateExpansionLimit");
-                if (payload.ReferenceInspectionLimitReached) omissions.Add("referenceInspectionLimit");
-                return source.WithMetadata(response,
-                    $"testContext(symbol={symbolIdentifier.Trim()}, scope={scope}, includeGenerated={includeGenerated}, maxResults={maxResults})",
-                    omissions.ToArray(), page.NextCursor is not null);
-            }, maxResponseBytes, maxResponseTokens, ct), AnalysisTargetType.Project, cancellationToken, resultCursor, "get_test_context.candidates").ConfigureAwait(false);
+                "Provide a declaration name, documentation ID, source position, or current handoff ID.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        if (symbolIdentifier.Trim().StartsWith("i:", StringComparison.OrdinalIgnoreCase))
+            return McpToolResults.InvalidArgument("Internal symbol identifiers are not accepted by get_context.", "$.symbolIdentifier",
+                "Provide a declaration name, documentation ID, source position, or public handoff ID.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        if (sections is null || sections.Length == 0 || sections.Any(string.IsNullOrWhiteSpace))
+            return McpToolResults.InvalidArgument("sections must contain at least one supported section.", "$.sections",
+                "Choose one or more of body, members, callers, and tests.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        var normalized = sections.Select(value => value.Trim().ToLowerInvariant()).ToArray();
+        if (normalized.Distinct(StringComparer.Ordinal).Count() != normalized.Length)
+            return McpToolResults.InvalidArgument("sections cannot contain duplicates.", "$.sections",
+                "List each requested section once.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        if (normalized.Any(value => value is not ("body" or "members" or "callers" or "tests"))
+            || sections.Where((value, index) => !string.Equals(value, normalized[index], StringComparison.Ordinal)).Any())
+            return McpToolResults.InvalidArgument("sections contains an unsupported section.", "$.sections",
+                "Choose from body, members, callers, and tests.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        if (maxResults is < 1 or > 100) return McpToolResults.InvalidArgument("maxResults must be from 1 to 100.", "$.maxResults",
+            "Use a positive list page size no greater than 100.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        if (maxResults is not null && !normalized.Intersect(["members", "callers", "tests"], StringComparer.Ordinal).Any())
+            return McpToolResults.InvalidArgument("maxResults applies only to list sections.", "$.maxResults",
+                "Select members, callers, or tests, or omit maxResults.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        if (maxBodyLines is < 1 or > 1000) return McpToolResults.InvalidArgument("maxBodyLines must be from 1 to 1000.", "$.maxBodyLines",
+            "Use a positive body window size.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        if (startLine is < 1) return McpToolResults.InvalidArgument("startLine must be positive.", "$.startLine",
+            "Use a one-based body window position.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        var type = Path.GetExtension(targetPath ?? string.Empty).ToLowerInvariant() is ".dll" or ".exe"
+            ? AnalysisTargetType.Assembly : AnalysisTargetType.Project;
+        if (type == AnalysisTargetType.Project)
+        {
+            if (includeReferences is not null) return McpToolResults.InvalidArgument("includeReferences applies only to assembly callers.", "$.includeReferences",
+                "Omit this argument for source targets.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+            if (callerScope is not null && !normalized.Contains("callers"))
+                return McpToolResults.InvalidArgument("callerScope requires the callers section.", "$.callerScope",
+                    "Select callers or omit callerScope.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+            if (callerScope is not null && !TryScope(callerScope, out _))
+                return McpToolResults.InvalidArgument("callerScope is unsupported.", "$.callerScope", "Use all, production, or tests.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        }
+        else
+        {
+            if (normalized.Contains("tests")) return McpToolResults.InvalidArgument("The tests section supports source solutions only.", "$.sections",
+                "Use a source solution target for static test candidates.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+            if (callerScope is not null) return McpToolResults.InvalidArgument("callerScope applies only to source callers.", "$.callerScope",
+                "Omit this argument for assembly targets.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+            if (includeGenerated is not null) return McpToolResults.InvalidArgument("includeGenerated applies only to source targets.", "$.includeGenerated",
+                "Omit this argument for assembly targets.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+            if (includeReferences is not null && !normalized.Contains("callers"))
+                return McpToolResults.InvalidArgument("includeReferences requires the callers section.", "$.includeReferences",
+                    "Select callers or omit includeReferences.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        }
+        if (!normalized.Contains("body") && (maxBodyLines is not null || startLine is not null))
+            return McpToolResults.InvalidArgument("Body window arguments require the body section.", maxBodyLines is not null ? "$.maxBodyLines" : "$.startLine",
+                "Select body or omit body window arguments.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        if (maxResponseBytes is < McpResponseBudgetLimits.MinimumBytes or > McpResponseBudgetLimits.MaximumBytes)
+            return McpToolResults.InvalidArgument("maxResponseBytes is outside the supported range.", "$.maxResponseBytes",
+                "Use the supported response byte range.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        return null;
     }
+
+    private async Task<CallToolResult> BuildSourceContextAsync(AnalysisTarget target, Solution solution,
+        NavigationToolSupport.SourceAnalysisContext source, string identifier, string[] selected, string[] active, string requestBinding,
+        SymbolScopeType callerScope, bool includeGenerated, int pageSize, int bodyLines, int startLine,
+        string? internalCursor, string? continuationSection, int bytes, int? tokens, CancellationToken ct)
+    {
+        var resolved = await SourceSymbolResolver.ResolveAsync(solution, identifier, source.Identity, ct).ConfigureAwait(false);
+        if (!resolved.IsSuccess) return NavigationToolSupport.Failure(resolved.Error!.Value, bytes, tokens, "$.symbolIdentifier");
+        var symbol = resolved.Symbol!;
+        if (active.Contains("members", StringComparer.Ordinal) && symbol is not INamedTypeSymbol)
+            return McpToolResults.InvalidArgument("members requires a type target.", "$.sections",
+                "Select a type declaration or remove members.", maxResponseBytes: bytes, maxResponseTokens: tokens);
+        var targetDeclarations = symbol.DeclaringSyntaxReferences;
+        SyntaxReference? selectedDeclaration = includeGenerated ? targetDeclarations.FirstOrDefault() : null;
+        foreach (var candidate in targetDeclarations)
+        {
+            if (selectedDeclaration is not null) break;
+            var document = solution.GetDocument(candidate.SyntaxTree);
+            if (document is null || !await GeneratedDocumentDetector.IsGeneratedDocumentAsync(document, ct).ConfigureAwait(false))
+                selectedDeclaration = candidate;
+        }
+        if (!includeGenerated && targetDeclarations.Length > 0 && selectedDeclaration is null)
+            return McpToolResults.InvalidArgument("The selected declaration is generated source and excluded by includeGenerated=false.", "$.includeGenerated",
+                "Set includeGenerated=true to inspect generated declarations.", maxResponseBytes: bytes, maxResponseTokens: tokens);
+        var declaration = BuildContextDeclaration(symbol, solution, source.Identity, target.CanonicalPath, "source", selectedDeclaration);
+        var sections = new List<object>();
+        var omissions = new List<string>();
+        string? currentSection = null;
+        var sectionFailed = false;
+        try
+        {
+            foreach (var section in active)
+            {
+                currentSection = section;
+                BeforeContextSectionForTesting?.Invoke(section);
+                if (section == "body")
+                {
+                var body = selectedDeclaration is not null && symbol is INamedTypeSymbol
+                    ? SourceSymbolBodyResolver.ResolveWithDeclaration(symbol, selectedDeclaration, bodyLines, startLine,
+                        handoffIdentity: source.Identity, solution: solution)
+                    : SourceSymbolBodyResolver.Resolve(symbol, bodyLines, startLine, handoffIdentity: source.Identity, solution: solution);
+                var reasons = body.HasMore ? new[] { "maxBodyLines" } : Array.Empty<string>();
+                    sections.Add(new ContextSection("body", body.HasMore ? "partial" : "complete", "selected source declaration",
+                    reasons, 1, new { body.Body, body.DisplayedStart, body.DisplayedEnd, body.TotalLines, body.HasMore,
+                        Availability = body.Availability, body.Hint }, null,
+                        body.HasMore ? body.DisplayedEnd + 1 : null, null,
+                        body.HasMore ? $"Continue with startLine={body.DisplayedEnd + 1} and the same maxBodyLines." : null,
+                        AnalysisComplete: true));
+                omissions.AddRange(reasons);
+            }
+                else if (section == "members")
+                {
+                if (symbol is not INamedTypeSymbol type) return McpToolResults.InvalidArgument("members requires a type target.", "$.sections",
+                    "Select a type declaration or remove members.", maxResponseBytes: bytes, maxResponseTokens: tokens);
+                var sourceMembers = new List<ISymbol>();
+                foreach (var member in type.GetMembers().Where(member => !member.IsImplicitlyDeclared))
+                {
+                    if (!includeGenerated && member.DeclaringSyntaxReferences.Length > 0)
+                    {
+                        var hasVisibleDeclaration = false;
+                        foreach (var memberDeclaration in member.DeclaringSyntaxReferences)
+                        {
+                            var memberDocument = solution.GetDocument(memberDeclaration.SyntaxTree);
+                            if (memberDocument is null || !await GeneratedDocumentDetector.IsGeneratedDocumentAsync(memberDocument, ct).ConfigureAwait(false))
+                            {
+                                hasVisibleDeclaration = true;
+                                break;
+                            }
+                        }
+                        if (!hasVisibleDeclaration) continue;
+                    }
+                    sourceMembers.Add(member);
+                }
+                var all = sourceMembers.Select(member =>
+                    {
+                        var location = member.Locations.FirstOrDefault(item => item.IsInSource);
+                        var line = location?.GetLineSpan().StartLinePosition.Line + 1 ?? 0;
+                        var handoff = source.Identity.FormatHandoff(member, solution);
+                        return new { Kind = member.Kind.ToString().ToLowerInvariant(), member.Name,
+                            Signature = member.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+                            FilePath = location?.SourceTree?.FilePath ?? string.Empty, Line = line,
+                            SpanStart = location?.SourceSpan.Start ?? int.MaxValue,
+                            HandoffId = handoff is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(handoff) };
+                    }).OrderBy(member => member.FilePath, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(member => member.Line).ThenBy(member => member.SpanStart).ToArray();
+                var page = PageContextList(all, target.CanonicalPath, source.Identity.ContentHash, selected, section,
+                    pageSize, internalCursor, identifier, callerScope, null, includeGenerated, null, null, requestBinding, bytes, tokens);
+                if (page.Error is not null) return page.Error;
+                sections.Add(new ContextSection(section, page.NextCursor is null ? "complete" : "partial", "direct declared members", [], all.Length, page.Items!, page.NextCursor,
+                    null, null, page.NextCursor is null ? null : "Continue this section with its resultCursor.",
+                    AnalysisComplete: true, ResultContinuationAvailable: page.NextCursor is not null));
+            }
+                else if (section == "callers")
+                {
+                var refs = await FindReferencesResolver.FindReferencesAsync(symbol, solution, int.MaxValue, 1, ct,
+                    scope: callerScope, includeGenerated: includeGenerated,
+                    handoffFormatter: CreateSourceHandoffFormatter(solution, source.Identity)).ConfigureAwait(false);
+                var page = PageContextList(refs.References, target.CanonicalPath, source.Identity.ContentHash, selected, section,
+                    pageSize, internalCursor, identifier, callerScope, null, includeGenerated, null, null, requestBinding, bytes, tokens);
+                if (page.Error is not null) return page.Error;
+                if (!refs.IsComplete) omissions.Add("callerAnalysisLimit");
+                sections.Add(new ContextSection(section, !refs.IsComplete ? "partial" : page.NextCursor is null ? "complete" : "partial", "direct incoming source references",
+                    refs.IsComplete ? [] : ["callerAnalysisLimit"], refs.TotalCount, page.Items!, page.NextCursor, null, null,
+                    page.NextCursor is null ? null : "Continue this section with its resultCursor.",
+                    AnalysisComplete: refs.IsComplete, ResultContinuationAvailable: page.NextCursor is not null));
+            }
+                else
+                {
+                var tests = await TestRecommendationBuilder.BuildAsync(symbol, solution, source.Identity, ct,
+                    includeGenerated, SymbolScopeType.All).ConfigureAwait(false);
+                var fixtures = tests.TestFixtures;
+                var page = PageContextList(fixtures, target.CanonicalPath, source.Identity.ContentHash, selected, section,
+                    pageSize, internalCursor, identifier, callerScope, null, includeGenerated, null, null, requestBinding, bytes, tokens);
+                if (page.Error is not null) return page.Error;
+                var limited = tests.ImplementationExpansionLimitReached || tests.CandidateExpansionLimitReached || tests.ReferenceInspectionLimitReached;
+                var reasons = new List<string>();
+                if (tests.ImplementationExpansionLimitReached) reasons.Add("implementationExpansionLimit");
+                if (tests.CandidateExpansionLimitReached) reasons.Add("candidateExpansionLimit");
+                if (tests.ReferenceInspectionLimitReached) reasons.Add("referenceInspectionLimit");
+                sections.Add(new ContextSection(section, limited || page.NextCursor is not null ? "partial" : "complete", "recognized source test projects and files",
+                    reasons, tests.TotalTestFixtures, page.Items!, page.NextCursor, null, null,
+                    limited ? "Select a narrower symbol to inspect beyond the bounded test-candidate analysis." :
+                        page.NextCursor is null ? null : "Continue this section with its resultCursor.",
+                    AnalysisComplete: !limited, ResultContinuationAvailable: page.NextCursor is not null,
+                    Analysis: new { tests.EvidenceMode, tests.ExpandedImplementationCount, tests.ImplementationExpansionLimitReached,
+                        tests.CandidateExpansionLimitReached, tests.ReferenceInspectionLimitReached }));
+                omissions.AddRange(reasons);
+                }
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            sectionFailed = true;
+            sections = sections.Select(item => item is ContextSection section ? section with { Status = "partial" } : item).ToList();
+            omissions.Add("sectionError");
+            sections.Add(new ContextSection(currentSection ?? "unknown", "error", "analysis failed", ["sectionError"], 0,
+                Array.Empty<object>(), null, null, new ContextSectionError("CONTEXT_SECTION_FAILED",
+                    $"{exception.GetType().Name}: {exception.Message}"), AnalysisComplete: false));
+            var failedIndex = Array.IndexOf(active, currentSection);
+            foreach (var notRun in active.Skip(failedIndex + 1))
+                sections.Add(new ContextSection(notRun, "notAnalyzed", "not analyzed after an earlier section error",
+                    ["blockedBySectionError"], 0, Array.Empty<object>(), null, null,
+                    new ContextSectionError("SECTION_NOT_ANALYZED", "An earlier selected section failed."), AnalysisComplete: false));
+        }
+        var snapshotId = NavigationAnalysisMetadata.CreateSnapshotId("source", source.Identity.ContentHash);
+        var hasPartialSection = sections.Any(item => item is ContextSection { Status: "partial" or "notAnalyzed" });
+        var responsePayload = new ContextResult(sectionFailed ? "error" : omissions.Count == 0 && !hasPartialSection ? "complete" : "partial", declaration with { SnapshotId = snapshotId }, sections,
+            continuationSection, omissions.Distinct(StringComparer.Ordinal).ToArray());
+        var response = NavigationToolSupport.Success(responsePayload, !sectionFailed && sections.Any(item => item is ContextSection { ResultCursor: not null }),
+            "Continue the selected result section with its resultCursor.");
+        if (sectionFailed)
+        {
+            response.IsError = true;
+            return response;
+        }
+        return source.WithMetadata(response, $"get_context(symbol={identifier.Trim()}, sections={string.Join('|', selected)}, callerScope={callerScope}, includeGenerated={includeGenerated}, maxResults={pageSize}, bodyStart={startLine}, bodyLines={bodyLines})",
+            omissions.ToArray(), sections.Any(item => item is ContextSection { ResultCursor: not null }));
+    }
+
+    private async Task<CallToolResult> BuildAssemblyContextAsync(AnalysisTarget target, string identifier, string[] selected,
+        string[] active, string requestBinding, bool includeGenerated, bool includeReferences, int pageSize, int bodyLines, int startLine,
+        string? internalCursor, string? continuationSection, int bytes, int? tokens, CancellationToken ct)
+    {
+        if (includeReferences && selected.Contains("callers", StringComparer.Ordinal))
+            return await BuildAssemblyContextWithReferencesAsync(target, identifier, selected, active, requestBinding, pageSize,
+                bodyLines, startLine, internalCursor, continuationSection, bytes, tokens, ct).ConfigureAwait(false);
+        var normalizedIdentifier = InputNormalizer.NormalizeSymbolIdentifier(identifier);
+        var opened = InputNormalizer.HasOpaqueHandoffPrefix(normalizedIdentifier)
+            ? await AssemblyNavigationSessionScope.OpenResidentAsync(target.CanonicalPath, ct).ConfigureAwait(false)
+            : await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
+        if (!opened.IsSuccess) return NavigationToolSupport.Failure(opened.Error!.Value, bytes, tokens, "$.targetPath");
+        await using var scope = opened.Value!;
+        ISymbol symbol;
+        string symbolHandoff;
+        if (InputNormalizer.HasOpaqueHandoffPrefix(normalizedIdentifier))
+        {
+            var resolvedHandoff = AssemblySymbolHandoffResolver.ResolveWithinScope(normalizedIdentifier, scope);
+            if (!resolvedHandoff.IsSuccess) return NavigationToolSupport.Failure(resolvedHandoff.Error!.Value, bytes, tokens, "$.symbolIdentifier");
+            symbol = resolvedHandoff.Value!;
+            var internalHandoff = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash,
+                scope.Context.Generation, scope.Context.ReferenceSnapshotHash).FormatHandoff(symbol);
+            if (internalHandoff is null) return McpToolResults.Recoverable(NavigationErrorCodes.StaleSnapshot,
+                "The selected assembly symbol no longer resolves in this snapshot.", "Repeat symbol discovery and retry.",
+                fieldPath: "$.symbolIdentifier", maxResponseBytes: bytes, maxResponseTokens: tokens);
+            symbolHandoff = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalHandoff);
+        }
+        else
+        {
+            var symbolResult = await AssemblySymbolInputResolver.ResolveAsync(scope, normalizedIdentifier, ct).ConfigureAwait(false);
+            if (!symbolResult.IsSuccess) return NavigationToolSupport.Failure(symbolResult.Error!.Value, bytes, tokens, "$.symbolIdentifier");
+            symbol = symbolResult.Symbol!;
+            symbolHandoff = symbolResult.HandoffId!;
+        }
+        var identity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash,
+            scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
+        if (selected.Contains("members", StringComparer.Ordinal) && symbol is not INamedTypeSymbol)
+            return McpToolResults.InvalidArgument("members requires a type target.", "$.sections",
+                "Select a type declaration or remove members.", maxResponseBytes: bytes, maxResponseTokens: tokens);
+        var ownerFormatter = CreateAssemblyHandoffFormatter(scope.Solution, scope.Context);
+        var declaration = BuildContextDeclaration(symbol, scope.Solution, identity, scope.Context.Origin.CanonicalPath, "assembly");
+        var sections = new List<object>();
+        var omissions = new List<string>();
+        string? currentSection = null;
+        var sectionFailed = false;
+        try
+        {
+        foreach (var section in active)
+        {
+            currentSection = section;
+            BeforeContextSectionForTesting?.Invoke(section);
+            if (section == "body")
+            {
+                var body = SourceSymbolBodyResolver.Resolve(symbol, bodyLines, startLine, handoffId: symbolHandoff);
+                var reasons = body.HasMore ? new[] { "maxBodyLines" } : Array.Empty<string>();
+                sections.Add(new ContextSection(section, body.HasMore ? "partial" : "complete", "selected assembly owner declaration",
+                    reasons, 1, new { body.Body, body.DisplayedStart, body.DisplayedEnd, body.TotalLines, body.HasMore,
+                        Availability = body.Availability, body.Hint }, null,
+                    body.HasMore ? body.DisplayedEnd + 1 : null, null,
+                    body.HasMore ? $"Continue with startLine={body.DisplayedEnd + 1} and the same maxBodyLines." : null,
+                    AnalysisComplete: true));
+                omissions.AddRange(reasons);
+            }
+            else if (section == "members")
+            {
+                var type = (INamedTypeSymbol)symbol;
+                var all = type.GetMembers().Where(member => !member.IsImplicitlyDeclared)
+                    .Select(member => new { Kind = member.Kind.ToString().ToLowerInvariant(), member.Name,
+                        Signature = member.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+                        FilePath = member.Locations.FirstOrDefault(location => location.IsInSource)?.SourceTree?.FilePath ?? string.Empty,
+                        Line = member.Locations.FirstOrDefault(location => location.IsInSource)?.GetLineSpan().StartLinePosition.Line + 1 ?? 0,
+                        SpanStart = member.Locations.FirstOrDefault(location => location.IsInSource)?.SourceSpan.Start ?? int.MaxValue,
+                        HandoffId = ownerFormatter(member) })
+                    .OrderBy(member => member.FilePath, StringComparer.OrdinalIgnoreCase).ThenBy(member => member.Line).ThenBy(member => member.SpanStart).ToArray();
+                var page = PageContextList(all, target.CanonicalPath, identity.ContentHash + "|" + scope.Context.ReferenceSnapshotHash, selected, section,
+                    pageSize, internalCursor, identifier, SymbolScopeType.All, includeReferences, false, null, null, requestBinding, bytes, tokens);
+                if (page.Error is not null) return page.Error;
+                sections.Add(new ContextSection(section, page.NextCursor is null ? "complete" : "partial", "direct declared members", [], all.Length, page.Items!, page.NextCursor, null, null,
+                    page.NextCursor is null ? null : "Continue this section with its resultCursor.",
+                    AnalysisComplete: true, ResultContinuationAvailable: page.NextCursor is not null));
+            }
+            else
+            {
+                var refs = await FindReferencesResolver.FindReferencesAsync(symbol, scope.Solution, int.MaxValue, 1, ct,
+                    scope: SymbolScopeType.All, includeGenerated: false, handoffFormatter: ownerFormatter,
+                    ownerTargetPath: scope.Context.Origin.CanonicalPath).ConfigureAwait(false);
+                var page = PageContextList(refs.References, target.CanonicalPath, identity.ContentHash + "|" + scope.Context.ReferenceSnapshotHash, selected, section,
+                    pageSize, internalCursor, identifier, SymbolScopeType.All, includeReferences, false, null, null, requestBinding, bytes, tokens);
+                if (page.Error is not null) return page.Error;
+                var incompleteClosure = includeReferences && scope.Context.References.Any(reference => !reference.Resolved);
+                var incompleteOwner = scope.Context.Status != AssemblySessionStatus.Complete;
+                var reasons = refs.IsComplete && !incompleteClosure && !incompleteOwner ? Array.Empty<string>()
+                    : new[] { incompleteClosure ? "referenceClosureIncomplete" : incompleteOwner ? "assemblyOwnerIncomplete" : "callerAnalysisLimit" };
+                sections.Add(new ContextSection(section, reasons.Length > 0 || page.NextCursor is not null ? "partial" : "complete",
+                    includeReferences ? "direct callers in selected assembly reference scope" : "direct callers in selected assembly owner",
+                    reasons, refs.TotalCount, page.Items!, page.NextCursor, null, null,
+                    page.NextCursor is null ? null : "Continue this section with its resultCursor.",
+                    AnalysisComplete: refs.IsComplete && !incompleteClosure && !incompleteOwner,
+                    ResultContinuationAvailable: page.NextCursor is not null));
+                omissions.AddRange(reasons);
+            }
+        }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            sectionFailed = true;
+            sections = sections.Select(item => item is ContextSection section ? section with { Status = "partial" } : item).ToList();
+            omissions.Add("sectionError");
+            sections.Add(new ContextSection(currentSection ?? "unknown", "error", "analysis failed", ["sectionError"], 0,
+                Array.Empty<object>(), null, null, new ContextSectionError("CONTEXT_SECTION_FAILED",
+                    $"{exception.GetType().Name}: {exception.Message}"), AnalysisComplete: false));
+            var failedIndex = Array.IndexOf(active, currentSection);
+            foreach (var notRun in active.Skip(failedIndex + 1))
+                sections.Add(new ContextSection(notRun, "notAnalyzed", "not analyzed after an earlier section error",
+                    ["blockedBySectionError"], 0, Array.Empty<object>(), null, null,
+                    new ContextSectionError("SECTION_NOT_ANALYZED", "An earlier selected section failed."), AnalysisComplete: false));
+        }
+        var snapshotId = NavigationAnalysisMetadata.CreateSnapshotId("assembly", identity.ContentHash + scope.Context.ReferenceSnapshotHash);
+        declaration = declaration with { SnapshotId = snapshotId };
+        var hasPartialSection = sections.Any(item => item is ContextSection { Status: "partial" or "notAnalyzed" });
+        var result = new ContextResult(sectionFailed ? "error" : omissions.Count == 0 && !hasPartialSection ? "complete" : "partial", declaration, sections, continuationSection, omissions.Distinct(StringComparer.Ordinal).ToArray());
+        var response = NavigationToolSupport.Success(result, !sectionFailed && sections.Any(item => item is ContextSection { ResultCursor: not null }),
+            "Continue the selected result section with its resultCursor.");
+        if (sectionFailed) { response.IsError = true; return response; }
+        return NavigationToolSupport.WithAssemblyMetadata(response, identity,
+            $"get_context(symbol={identifier.Trim()}, sections={string.Join('|', selected)}, includeReferences={includeReferences}, maxResults={pageSize}, bodyStart={startLine}, bodyLines={bodyLines})",
+            omissions.ToArray(), sections.Any(item => item is ContextSection { ResultCursor: not null }));
+    }
+
+    private async Task<CallToolResult> BuildAssemblyContextWithReferencesAsync(AnalysisTarget target, string identifier,
+        string[] selected, string[] active, string requestBinding, int pageSize, int bodyLines, int startLine, string? internalCursor,
+        string? continuationSection, int bytes, int? tokens, CancellationToken ct)
+    {
+        var opened = await AssemblyReferenceClosureSession.OpenAsync(target.CanonicalPath, identifier, ct,
+            afterRawDiscovery: afterAssemblyClosureRawDiscovery,
+            afterRootScopeOpened: afterAssemblyClosureRootScopeOpened,
+            afterHandoffResolved: afterAssemblyClosureHandoffResolved,
+            beforeOwnerScopeOpen: BeforeAssemblyContextOwnerOpenForTesting).ConfigureAwait(false);
+        if (opened.Error is { } openError) return NavigationToolSupport.Failure(openError, bytes, tokens, opened.ErrorField);
+        await using var session = opened.Session!;
+        var owner = session.Owners.Single(item => string.Equals(item.TargetPath, session.HandoffOwnerPath, StringComparison.OrdinalIgnoreCase));
+        var symbol = session.HandoffSymbol;
+        var identity = owner.HandoffIdentity;
+        var formatter = session.CreateInternalFormatter(owner);
+        var internalHandoff = formatter(symbol);
+        var handoff = AssemblyReferenceClosureSession.Externalize(internalHandoff);
+        var declaration = BuildContextDeclaration(symbol, owner.Scope.Solution, identity, owner.TargetPath, "assembly");
+        var sections = new List<object>();
+        var omissions = new List<string>();
+        string? currentSection = null;
+        var sectionFailed = false;
+        try
+        {
+        if (selected.Contains("members", StringComparer.Ordinal) && symbol is not INamedTypeSymbol)
+            return McpToolResults.InvalidArgument("members requires a type target.", "$.sections",
+                "Select a type declaration or remove members.", maxResponseBytes: bytes, maxResponseTokens: tokens);
+        foreach (var section in active)
+        {
+            currentSection = section;
+            BeforeContextSectionForTesting?.Invoke(section);
+            if (section == "body")
+            {
+                var body = SourceSymbolBodyResolver.Resolve(symbol, bodyLines, startLine, handoffId: handoff);
+                var reasons = body.HasMore ? new[] { "maxBodyLines" } : Array.Empty<string>();
+                sections.Add(new ContextSection(section, body.HasMore ? "partial" : "complete", "selected assembly owner declaration", reasons, 1,
+                    new { body.Body, body.DisplayedStart, body.DisplayedEnd, body.TotalLines, body.HasMore, Availability = body.Availability, body.Hint }, null,
+                    body.HasMore ? body.DisplayedEnd + 1 : null, null,
+                    body.HasMore ? $"Continue with startLine={body.DisplayedEnd + 1} and the same maxBodyLines." : null,
+                    AnalysisComplete: true));
+                omissions.AddRange(reasons);
+            }
+            else if (section == "members")
+            {
+                var type = (INamedTypeSymbol)symbol;
+                var all = type.GetMembers().Where(member => !member.IsImplicitlyDeclared)
+                    .Select(member => new { Kind = member.Kind.ToString().ToLowerInvariant(), member.Name,
+                        Signature = member.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
+                        FilePath = member.Locations.FirstOrDefault(location => location.IsInSource)?.SourceTree?.FilePath ?? string.Empty,
+                        Line = member.Locations.FirstOrDefault(location => location.IsInSource)?.GetLineSpan().StartLinePosition.Line + 1 ?? 0,
+                        SpanStart = member.Locations.FirstOrDefault(location => location.IsInSource)?.SourceSpan.Start ?? int.MaxValue,
+                        HandoffId = AssemblyReferenceClosureSession.Externalize(formatter(member)) })
+                    .OrderBy(member => member.FilePath, StringComparer.OrdinalIgnoreCase).ThenBy(member => member.Line).ThenBy(member => member.SpanStart).ToArray();
+                var page = PageContextList(all, target.CanonicalPath, session.RootAnalysisIdentity.ContentHash + "|" + session.RootReferenceSnapshotHash + "|" + session.RootAnalysisIdentity.Generation,
+                    selected, section, pageSize, internalCursor, identifier, SymbolScopeType.All, true, false, null, null, requestBinding, bytes, tokens);
+                if (page.Error is not null) return page.Error;
+                sections.Add(new ContextSection(section, page.NextCursor is null ? "complete" : "partial", "direct declared members", [], all.Length, page.Items!, page.NextCursor, null, null,
+                    page.NextCursor is null ? null : "Continue this section with its resultCursor.",
+                    AnalysisComplete: true, ResultContinuationAvailable: page.NextCursor is not null));
+            }
+            else if (section == "callers")
+            {
+                var locations = new List<ReferenceLocationEntry>();
+                var total = 0;
+                var limited = session.OwnerLimitReached || session.HasFailedOwners || session.HasUnresolvedReferences;
+                foreach (var candidateOwner in session.Owners)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var ownerSymbol = session.ResolveDeclaration(candidateOwner, session.HandoffOwnerPath,
+                        session.DeclarationCommentId, session.HandoffIdentity);
+                    if (ownerSymbol is null) { limited = true; continue; }
+                    var result = await FindReferencesResolver.FindReferencesAsync(ownerSymbol, candidateOwner.Scope.Solution,
+                        int.MaxValue, 1, ct, scope: SymbolScopeType.All, includeGenerated: false,
+                        handoffFormatter: session.CreateInternalFormatter(candidateOwner), ownerTargetPath: candidateOwner.TargetPath).ConfigureAwait(false);
+                    total += result.TotalCount;
+                    limited |= !result.IsComplete;
+                    locations.AddRange(result.References);
+                }
+                var ordered = locations.DistinctBy(item => (item.OwnerTargetPath, item.FilePath, item.Line, item.Column, item.EnclosingSymbolHandoffId))
+                    .OrderBy(item => item.OwnerTargetPath, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(item => item.FilePath, StringComparer.OrdinalIgnoreCase).ThenBy(item => item.Line).ThenBy(item => item.Column).ToArray();
+                var page = PageContextList(ordered, target.CanonicalPath, session.RootAnalysisIdentity.ContentHash + "|" + session.RootReferenceSnapshotHash + "|" + session.RootAnalysisIdentity.Generation,
+                    selected, section, pageSize, internalCursor, identifier, SymbolScopeType.All, true, false, null, null, requestBinding, bytes, tokens);
+                if (page.Error is not null) return page.Error;
+                var reasons = limited ? new[] { "referenceClosureIncomplete" } : Array.Empty<string>();
+                sections.Add(new ContextSection(section, limited || page.NextCursor is not null ? "partial" : "complete", "direct incoming references in the selected reference closure",
+                    reasons, total, page.Items!, page.NextCursor, null, null,
+                    page.NextCursor is null ? null : "Continue this section with its resultCursor.",
+                    AnalysisComplete: !limited, ResultContinuationAvailable: page.NextCursor is not null));
+                omissions.AddRange(reasons);
+            }
+        }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            sectionFailed = true;
+            sections = sections.Select(item => item is ContextSection section ? section with { Status = "partial" } : item).ToList();
+            omissions.Add("sectionError");
+            sections.Add(new ContextSection(currentSection ?? "unknown", "error", "analysis failed", ["sectionError"], 0,
+                Array.Empty<object>(), null, null, new ContextSectionError("CONTEXT_SECTION_FAILED",
+                    $"{exception.GetType().Name}: {exception.Message}"), AnalysisComplete: false));
+            var failedIndex = Array.IndexOf(active, currentSection);
+            foreach (var notRun in active.Skip(failedIndex + 1))
+                sections.Add(new ContextSection(notRun, "notAnalyzed", "not analyzed after an earlier section error",
+                    ["blockedBySectionError"], 0, Array.Empty<object>(), null, null,
+                    new ContextSectionError("SECTION_NOT_ANALYZED", "An earlier selected section failed."), AnalysisComplete: false));
+        }
+        var closureSnapshot = session.RootAnalysisIdentity.ContentHash + "|" + session.RootReferenceSnapshotHash;
+        var snapshotId = NavigationAnalysisMetadata.CreateSnapshotId("assembly", closureSnapshot);
+        declaration = declaration with { SnapshotId = snapshotId };
+        var hasPartialSection = sections.Any(item => item is ContextSection { Status: "partial" or "notAnalyzed" });
+        var resultPayload = new ContextResult(sectionFailed ? "error" : omissions.Count == 0 && !hasPartialSection ? "complete" : "partial", declaration, sections,
+            continuationSection, omissions.Distinct(StringComparer.Ordinal).ToArray());
+        var hasCursor = !sectionFailed && sections.Any(item => item is ContextSection { ResultCursor: not null });
+        var response = NavigationToolSupport.Success(resultPayload, hasCursor, "Continue the selected result section with its resultCursor.");
+        if (sectionFailed) { response.IsError = true; return response; }
+        return NavigationToolSupport.WithAssemblyMetadata(response, session.RootAnalysisIdentity,
+            $"get_context(symbol={identifier.Trim()}, sections={string.Join('|', selected)}, includeReferences=true, maxResults={pageSize}, bodyStart={startLine}, bodyLines={bodyLines})",
+            omissions.ToArray(), hasCursor);
+    }
+
+    private (object[]? Items, string? NextCursor, CallToolResult? Error) PageContextList<T>(IReadOnlyList<T> items,
+        string target, string snapshot, string[] selected, string section, int pageSize, string? internalCursor,
+        string identifier, SymbolScopeType callerScope, bool? includeReferences, bool includeGenerated,
+        int? bodyLines, int? startLine, string requestBinding, int bytes, int? tokens)
+    {
+        var binding = BoundResultCursor.CreateBinding(target, snapshot, "get_context." + section,
+            identifier.Trim(), string.Join("\0", selected), callerScope.ToString(), includeReferences?.ToString(),
+            includeGenerated.ToString(), pageSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            bodyLines?.ToString(System.Globalization.CultureInfo.InvariantCulture), startLine?.ToString(System.Globalization.CultureInfo.InvariantCulture), requestBinding);
+        var cursor = UnwrapContextCursor(internalCursor, section, out var cursorError);
+        if (cursorError is not null)
+            return (null, null, McpToolResults.InvalidArgument(cursorError, "$.resultCursor", "Use the returned cursor for this section.", maxResponseBytes: bytes, maxResponseTokens: tokens));
+        var page = NavigationToolSupport.PageResults(items, pageSize, cursor, binding, bytes, tokens);
+        return (page.Items?.Cast<object>().ToArray(), page.NextCursor is null ? null : "ctx1:" + section + ":" + page.NextCursor, page.Error);
+    }
+
+    private static string? UnwrapContextCursor(string? cursor, string section, out string? error)
+    {
+        error = null;
+        if (cursor is null) return null;
+        var prefix = "ctx1:" + section + ":";
+        if (!cursor.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            error = "The resultCursor does not identify the requested context section.";
+            return null;
+        }
+        return cursor[prefix.Length..];
+    }
+
+    private static (string? Section, string? Error) ParseContextCursor(string? cursor, string[] selected)
+    {
+        if (cursor is null) return (null, null);
+        if (!cursor.StartsWith("ctx1:", StringComparison.Ordinal)) return (null, "The resultCursor is malformed.");
+        var end = cursor.IndexOf(':', 5);
+        if (end < 0) return (null, "The resultCursor is malformed.");
+        var section = cursor[5..end];
+        if (!selected.Contains(section, StringComparer.Ordinal)) return (null, "The resultCursor section is outside the original sections selection.");
+        return (section, null);
+    }
+
+    private static ContextDeclaration BuildContextDeclaration(ISymbol symbol, Solution solution, AnalysisSymbolIdentity identity,
+        string ownerPath, string targetKind, SyntaxReference? preferredDeclaration = null)
+    {
+        var location = preferredDeclaration is null
+            ? symbol.Locations.FirstOrDefault(item => item.IsInSource)
+            : Location.Create(preferredDeclaration.SyntaxTree, preferredDeclaration.Span);
+        var line = location?.GetLineSpan().StartLinePosition.Line + 1 ?? 0;
+        var internalId = targetKind == "source" ? identity.FormatHandoff(symbol, solution) : identity.FormatHandoff(symbol);
+        var handoff = internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
+        return new ContextDeclaration(symbol.Name, symbol.Kind.ToString().ToLowerInvariant(),
+            symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat), SymbolVisibilityResolver.ResolveVisibility(symbol),
+            location?.SourceTree?.FilePath ?? string.Empty, line, handoff, ownerPath, string.Empty);
+    }
+
+    private sealed record ContextDeclaration(string Name, string Kind, string Signature, string Visibility,
+        string FilePath, int Line, string? HandoffId, string OwnerTargetPath, string SnapshotId);
+    private sealed record ContextSectionError(string Code, string Message);
+    private sealed record ContextSection(string Name, string Status, string AnalyzedScope, IReadOnlyList<string> Omissions,
+        int TotalCount, object Items, string? ResultCursor, int? NextStartLine, ContextSectionError? Error,
+        string? NextAction = null, bool AnalysisComplete = true, bool ResultContinuationAvailable = false, object? Analysis = null);
+    private sealed record ContextResult(string Status, ContextDeclaration Target, IReadOnlyList<object> Sections,
+        string? ContinuationSection, IReadOnlyList<string> Omissions);
 
     private async Task<CallToolResult> WithSource(AnalysisTarget target,
         Func<Solution, NavigationToolSupport.SourceAnalysisContext, Task<CallToolResult>> operation,

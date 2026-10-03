@@ -60,7 +60,7 @@ public sealed class AssemblyNavigationSessionScope : IAsyncDisposable
         return Result<AssemblyNavigationSessionScope>.Success(Create(acquired.Value!));
     }
 
-    private static AssemblyNavigationSessionScope Create(AssemblyAnalysisSessionRegistry.AssemblySessionAccess sessionAccess)
+    internal static AssemblyNavigationSessionScope Create(AssemblyAnalysisSessionRegistry.AssemblySessionAccess sessionAccess)
     {
         var generation = sessionAccess.Generation;
 

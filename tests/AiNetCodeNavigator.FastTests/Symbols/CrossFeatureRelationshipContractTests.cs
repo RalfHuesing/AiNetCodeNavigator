@@ -284,19 +284,6 @@ public sealed class CrossFeatureRelationshipContractTests
         Assert.Equal(2, generatedRecommendations.TotalTestFixtures);
         Assert.Equal(0, productionRecommendations.TotalTestFixtures);
 
-        var featureAll = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(
-            fixture.Solution, run.GetDocumentationCommentId()!, MaxCallers: 1, MaxTests: 1, IncludeGenerated: true));
-        var featureProduction = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(
-            fixture.Solution, run.GetDocumentationCommentId()!, MaxCallers: 1, MaxTests: 1,
-            Scope: SymbolScopeType.Production, IncludeGenerated: true));
-        Assert.NotNull(featureAll);
-        Assert.NotNull(featureProduction);
-        Assert.Equal(5, featureAll.TotalCallers);
-        Assert.True(featureAll.CallersTruncated);
-        Assert.Equal(2, featureAll.TotalTests);
-        Assert.True(featureAll.TestsTruncated);
-        Assert.Equal(2, featureProduction.TotalCallers);
-        Assert.Equal(0, featureProduction.TotalTests);
     }
 
     [Fact]

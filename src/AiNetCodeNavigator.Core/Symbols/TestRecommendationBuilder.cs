@@ -155,8 +155,7 @@ public static class TestRecommendationBuilder
             ExpandedImplementationCount = expandedImplementations.Symbols.Count,
             ImplementationExpansionLimitReached = implementationLimitReached,
             CandidateExpansionLimitReached = candidateLimitReached,
-            ReferenceInspectionLimitReached = referenceLimitReached,
-            ReturnedTestFixtures = allCandidates.Count
+            ReferenceInspectionLimitReached = referenceLimitReached
         };
 
         async Task AddNameCandidatesAsync(ISymbol relatedSymbol, string evidenceType)

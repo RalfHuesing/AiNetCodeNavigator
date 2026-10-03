@@ -27,7 +27,7 @@ public sealed class FindReferencesResolverTests
 
         var greetMethod = greeterType.GetMembers("Greet").OfType<IMethodSymbol>().First();
 
-        var result = await FindReferencesResolver.FindReferencesAsync(greetMethod, fixture.Solution);
+        var result = await FindReferencesResolver.FindReferencesAsync(greetMethod, fixture.Solution, maxResults: 50, depth: 1);
 
         Assert.Equal("Greet", result.TargetSymbolName);
         Assert.True(result.TotalCount >= 2); // In ExecuteSingle, ExecuteMultiple, and GreetLoud
@@ -104,7 +104,7 @@ public sealed class FindReferencesResolverTests
             solution = workspace.CurrentSolution;
             var compilation = await solution.GetProject(contractsId)!.GetCompilationAsync();
             var target = compilation!.GetTypeByMetadataName("Contracts.Target")!.GetMembers("Run").OfType<IMethodSymbol>().Single();
-            var result = await FindReferencesResolver.FindReferencesAsync(target, solution, maxResults: 10);
+            var result = await FindReferencesResolver.FindReferencesAsync(target, solution, maxResults: 10, depth: 1);
             var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, solution, maxResults: 10);
             var referencesWithoutHandoffs = await FindReferencesResolver.FindReferencesAsync(
                 target, solution, maxResults: 10, depth: 1, handoffFormatter: _ => null);
@@ -302,7 +302,7 @@ public sealed class FindReferencesResolverTests
         Assert.NotNull(type);
         var method = type.GetMembers("Greet").OfType<IMethodSymbol>().Single();
 
-        var result = await FindReferencesResolver.FindReferencesAsync(method, fixture.Solution, maxResults);
+        var result = await FindReferencesResolver.FindReferencesAsync(method, fixture.Solution, maxResults, depth: 1);
 
         Assert.Single(result.References);
         Assert.True(result.IsTruncated);
@@ -337,8 +337,8 @@ public sealed class FindReferencesResolverTests
         Assert.NotNull(type);
         var method = type.GetMembers("Greet").OfType<IMethodSymbol>().Single();
 
-        await Assert.ThrowsAsync<System.ArgumentNullException>(() => FindReferencesResolver.FindReferencesAsync(null!, fixture.Solution));
-        await Assert.ThrowsAsync<System.ArgumentNullException>(() => FindReferencesResolver.FindReferencesAsync(method, null!));
+        await Assert.ThrowsAsync<System.ArgumentNullException>(() => FindReferencesResolver.FindReferencesAsync(null!, fixture.Solution, maxResults: 50, depth: 1));
+        await Assert.ThrowsAsync<System.ArgumentNullException>(() => FindReferencesResolver.FindReferencesAsync(method, null!, maxResults: 50, depth: 1));
         await Assert.ThrowsAsync<System.ArgumentNullException>(() => FindReferencesResolver.FindImplementationsAsync(null!, fixture.Solution));
         await Assert.ThrowsAsync<System.ArgumentNullException>(() => FindReferencesResolver.FindImplementationsAsync(type, null!));
     }
