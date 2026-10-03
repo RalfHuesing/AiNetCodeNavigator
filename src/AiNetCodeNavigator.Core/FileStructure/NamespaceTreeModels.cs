@@ -61,4 +61,5 @@ public sealed record NamespaceTreeScanOptions(
     bool IncludeTypes = true,
     bool IncludeProjectOverview = false,
     System.Func<INamedTypeSymbol, string?>? FormatTypeHandoff = null,
-    bool CollectAllInventory = false);
+    bool CollectAllInventory = false,
+    bool AllowProjectSelectionRecovery = true);

@@ -464,7 +464,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 {
                     var internalId = identity.FormatHandoff(symbol, solution);
                     return internalId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(internalId);
-                }, CollectAllInventory: true)).ConfigureAwait(false);
+                }, CollectAllInventory: true, AllowProjectSelectionRecovery: includeProjectOverview)).ConfigureAwait(false);
         if (payload.Error is not null)
             return payload.ErrorCode == NavigationErrorCodes.AmbiguousSymbol
                 ? McpToolResults.Recoverable(NavigationErrorCodes.AmbiguousSymbol, payload.Error,
@@ -500,9 +500,23 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             TruncatedBy = (payload.TruncatedBy ?? Array.Empty<string>()).Where(reason => reason != "maxResults").ToArray(),
             ResultCursor = page.NextCursor,
         };
-        return NavigationToolSupport.Success(response, payload.TruncatedBy?.Contains("maxDepth", StringComparer.Ordinal) == true,
-            payload.TruncatedBy?.Contains("maxDepth", StringComparer.Ordinal) == true
-                ? "Reduce namespacePrefix or depth to include more namespace levels." : null);
+        var depthLimited = payload.TruncatedBy?.Contains("maxDepth", StringComparer.Ordinal) == true;
+        return NavigationToolSupport.Success(response, depthLimited,
+            depthLimited ? GetNamespaceTreeNextAction(project, prefix, depth, includeProjectOverview) : null);
+    }
+
+    private static string GetNamespaceTreeNextAction(string? project, string? prefix, int depth, bool isSourceTarget)
+    {
+        var queryRecovery = !string.IsNullOrWhiteSpace(prefix)
+            ? depth < 3
+                ? $"increase depth to {depth + 1} for the selected namespacePrefix '{prefix.Trim()}'"
+                : $"set namespacePrefix to a deeper namespace shown in this result and keep depth at 3"
+            : !string.IsNullOrWhiteSpace(project)
+                ? $"set namespacePrefix within the selected project and use depth up to 3"
+                : isSourceTarget
+                    ? "select a project or namespacePrefix, then use depth up to 3"
+                    : "set namespacePrefix for the assembly and use depth up to 3";
+        return $"Read all outer response pages before using resultCursor, then {queryRecovery}.";
     }
 
     internal static string FormatClassStructure(ClassStructurePayload result)

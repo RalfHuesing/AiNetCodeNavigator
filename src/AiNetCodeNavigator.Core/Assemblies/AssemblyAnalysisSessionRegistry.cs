@@ -36,41 +36,58 @@ internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
     }
 
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "Successful accesses transfer ownership to the caller; idle session ownership stays with this registry until eviction.")]
-    internal async Task<Result<AssemblySessionAccess>> AcquireAsync(string assemblyPath, CancellationToken cancellationToken)
+    internal Task<Result<AssemblySessionAccess>> AcquireAsync(string assemblyPath, CancellationToken cancellationToken)
+        => AcquireAsync(assemblyPath, cancellationToken, requireResident: false);
+
+    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "A successful access transfers ownership of the resident snapshot lease to the caller.")]
+    internal Task<Result<AssemblySessionAccess>> AcquireResidentAsync(string assemblyPath, CancellationToken cancellationToken)
+        => AcquireAsync(assemblyPath, cancellationToken, requireResident: true);
+
+    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "A successful session access transfers its lease to the caller; created sessions remain owned by this registry until eviction.")]
+    private async Task<Result<AssemblySessionAccess>> AcquireAsync(string assemblyPath, CancellationToken cancellationToken, bool requireResident)
     {
         var fullPath = Path.GetFullPath(assemblyPath);
         Entry entry;
         List<Entry> retired;
         var capacityExceeded = false;
+        var ownerNotResident = false;
         lock (gate)
         {
             retired = RetireIdleSessions(DateTime.UtcNow);
             if (!sessions.TryGetValue(fullPath, out entry!))
             {
-                while (sessions.Count >= MaxResidentSessions)
-                {
-                    var oldest = sessions.Values
-                        .Where(candidate => candidate.ActiveAccesses == 0)
-                        .OrderBy(candidate => candidate.LastAccessUtc)
-                        .FirstOrDefault();
-                    if (oldest is null) break;
-                    sessions.Remove(oldest.Path);
-                    retired.Add(oldest);
-                }
-
-                if (sessions.Count >= MaxResidentSessions)
+                if (requireResident)
                 {
                     entry = null!;
-                    capacityExceeded = true;
+                    ownerNotResident = true;
                 }
                 else
                 {
-                    entry = new Entry(fullPath, new AssemblyAnalysisSession(fullPath));
-                    sessions.Add(fullPath, entry);
+                    while (sessions.Count >= MaxResidentSessions)
+                    {
+                        var oldest = sessions.Values
+                            .Where(candidate => candidate.ActiveAccesses == 0)
+                            .OrderBy(candidate => candidate.LastAccessUtc)
+                            .FirstOrDefault();
+                        if (oldest is null) break;
+                        sessions.Remove(oldest.Path);
+                        retired.Add(oldest);
+                    }
+
+                    if (sessions.Count >= MaxResidentSessions)
+                    {
+                        entry = null!;
+                        capacityExceeded = true;
+                    }
+                    else
+                    {
+                        entry = new Entry(fullPath, new AssemblyAnalysisSession(fullPath));
+                        sessions.Add(fullPath, entry);
+                    }
                 }
             }
 
-            if (!capacityExceeded)
+            if (!capacityExceeded && !ownerNotResident)
             {
                 entry.ActiveAccesses++;
                 entry.LastAccessUtc = DateTime.UtcNow;
@@ -78,6 +95,13 @@ internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
         }
 
         await DisposeEntriesAsync(retired).ConfigureAwait(false);
+        if (ownerNotResident)
+        {
+            return Result<AssemblySessionAccess>.Failure(
+                NavigationErrorCodes.HandoffOwnerUnresident,
+                "The assembly owner for this handoff is no longer resident in this server process.",
+                "Repeat the original discovery query on the owner target, then use its current ownerTargetPath and handoff.");
+        }
         if (capacityExceeded)
         {
             return Result<AssemblySessionAccess>.Failure(
@@ -143,17 +167,18 @@ internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
         if (matchingPath is null)
         {
             return Result<AssemblySessionAccess>.Failure(
-                NavigationErrorCodes.TargetMismatch,
-                "The assembly handoff belongs to an assembly that is not resident in this server process.");
+                NavigationErrorCodes.HandoffOwnerUnresident,
+                "The assembly owner for this handoff is no longer resident in this server process.",
+                "Repeat the original discovery query on the owner target, then use its current ownerTargetPath and handoff.");
         }
 
-        return await AcquireAsync(matchingPath, cancellationToken).ConfigureAwait(false);
+        return await AcquireResidentAsync(matchingPath, cancellationToken).ConfigureAwait(false);
     }
 
-    internal async Task ExpireIdleSessionsAsync(DateTime nowUtc)
+    internal async Task ExpireIdleSessionsAsync(DateTime nowUtc, string? assemblyPath = null)
     {
         List<Entry> retired;
-        lock (gate) retired = RetireIdleSessions(nowUtc);
+        lock (gate) retired = RetireIdleSessions(nowUtc, assemblyPath is null ? null : Path.GetFullPath(assemblyPath));
         await DisposeEntriesAsync(retired).ConfigureAwait(false);
     }
 
@@ -169,11 +194,12 @@ internal sealed class AssemblyAnalysisSessionRegistry : IAsyncDisposable
         await DisposeEntriesAsync(retired).ConfigureAwait(false);
     }
 
-    private List<Entry> RetireIdleSessions(DateTime nowUtc)
+    private List<Entry> RetireIdleSessions(DateTime nowUtc, string? assemblyPath = null)
     {
         var cutoff = nowUtc - IdleLifetime;
         var retired = sessions
-            .Where(pair => pair.Value.ActiveAccesses == 0 && pair.Value.LastAccessUtc < cutoff)
+            .Where(pair => pair.Value.ActiveAccesses == 0 && pair.Value.LastAccessUtc < cutoff
+                && (assemblyPath is null || string.Equals(pair.Key, assemblyPath, StringComparison.OrdinalIgnoreCase)))
             .Select(pair => pair.Value)
             .ToList();
         foreach (var entry in retired) sessions.Remove(entry.Path);

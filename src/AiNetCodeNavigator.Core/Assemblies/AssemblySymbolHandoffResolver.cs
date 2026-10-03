@@ -39,7 +39,7 @@ public static class AssemblySymbolHandoffResolver
             || !string.Equals(contentToken, identifier.ContentToken, StringComparison.Ordinal))
             return Result<ISymbol>.Failure(NavigationErrorCodes.StaleSnapshot,
                 "The assembly handoff does not belong to the pinned batch snapshot.",
-                "Repeat get_symbol_body with handles from the current assembly snapshot.");
+                "Repeat find_symbol against the current assembly snapshot, then use a handoff from that response.");
 
         var symbols = DocumentationCommentId.GetSymbolsForDeclarationId(identifier.DocumentationCommentId, scope.Context.Compilation)
             .Where(symbol => SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, scope.Context.Compilation.Assembly))

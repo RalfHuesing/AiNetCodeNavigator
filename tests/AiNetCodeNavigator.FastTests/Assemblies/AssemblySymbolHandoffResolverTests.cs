@@ -302,7 +302,8 @@ public sealed class AssemblySymbolHandoffResolverTests
         var expired = await registry.AcquireByTargetTokenAsync(targetToken, default);
 
         Assert.False(expired.IsSuccess);
-        Assert.Equal(NavigationErrorCodes.TargetMismatch, expired.Error!.Value.Code);
+        Assert.Equal(NavigationErrorCodes.HandoffOwnerUnresident, expired.Error!.Value.Code);
+        Assert.Contains("original discovery query", expired.Error.Value.Hint, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

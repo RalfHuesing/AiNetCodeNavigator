@@ -263,7 +263,14 @@ public sealed class NamespaceTreeScannerTests
 
         Assert.True(MaxDepth(payload.RootNamespaces) == 32, payload.FormattedText);
         Assert.Contains("maxDepth", payload.FormattedText);
-        Assert.Equal("Select a single project to narrow the namespace tree.", payload.NextAction);
+        Assert.Contains("namespacePrefix", payload.NextAction, StringComparison.Ordinal);
+        Assert.Contains("depth", payload.NextAction, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("select a single project", payload.NextAction, StringComparison.OrdinalIgnoreCase);
+
+        var selectedProject = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution, projectName: "Deep",
+            options: new NamespaceTreeScanOptions(MaxDepth: 1));
+        Assert.Contains("namespacePrefix", selectedProject.NextAction, StringComparison.Ordinal);
+        Assert.DoesNotContain("select a project", selectedProject.NextAction, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

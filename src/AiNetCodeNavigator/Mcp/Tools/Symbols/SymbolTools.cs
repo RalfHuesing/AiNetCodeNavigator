@@ -172,10 +172,10 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
             async (target, ct) =>
             {
                 var items = new List<object>();
+                var itemFailures = new List<string>();
                 var hasDomainGaps = false;
                 var hasSourceResolutionGaps = false;
                 var hasSourceBodyLimit = false;
-                var suggestedStartLine = startLine;
                 if (target.TargetType == AnalysisTargetType.Project)
                 {
                     var response = await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, source, token) =>
@@ -190,26 +190,27 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                             hasDomainGaps |= resolved.Error is not null || resolved.Body?.HasMore == true;
                             hasSourceResolutionGaps |= resolved.Error is not null;
                             hasSourceBodyLimit |= resolved.Body?.HasMore == true;
-                            if (resolved.Body?.HasMore == true)
-                                suggestedStartLine = Math.Max(suggestedStartLine, resolved.Body.DisplayedEnd + 1);
                             if (resolved.Error is { } error)
                             {
                                 firstSourceResolutionError ??= error;
                                 var candidates = resolved.ResolutionCandidates.Count == 0 ? string.Empty
                                     : $" Candidates: {string.Join(", ", resolved.ResolutionCandidates.Select(FormatResolutionCandidate))}.";
-                                items.Add($"Could not resolve {identifier}: {error.Code}: {error.Message}{candidates}");
+                                var failure = FormatResolutionFailure(identifier, error, candidates);
+                                items.Add(failure);
+                                itemFailures.Add(failure);
                             }
                             else if (resolved.Body is { } body)
                             {
                                 resolvedSourceBodies++;
-                                items.Add(FormatBody(identifier, body, target.CanonicalPath));
+                                items.Add(FormatBody(identifier, body, target.CanonicalPath, effectiveLines));
                             }
                         }
                         if (resolvedSourceBodies == 0 && firstSourceResolutionError is { } resolutionError)
-                            return NavigationToolSupport.Failure(resolutionError, maxResponseBytes, maxResponseTokens, "$.symbolIdentifiers");
+                            return NavigationToolSupport.Failure(AggregateResolutionFailures(resolutionError, itemFailures),
+                                maxResponseBytes, maxResponseTokens, "$.symbolIdentifiers");
 
                         var response = NavigationToolSupport.SuccessText(string.Join("\n\n", items), hasDomainGaps,
-                            hasDomainGaps ? $"Resolve item errors and repeat; for a body with more lines set startLine to {suggestedStartLine}." : null);
+                            hasDomainGaps ? "Use each item's stated next action. Read all outer response pages first, then continue each successful body from its own next body window." : null);
                         return source.WithMetadata(response,
                             $"symbolBody(identifiers={string.Join('|', symbolIdentifiers)}, lines={startLine}..{(endLine?.ToString() ?? $"+{effectiveLines}")})",
                             new[]
@@ -225,7 +226,34 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                 var resolvedAssemblyBodies = 0;
                 var hasAssemblyResolutionGaps = false;
                 var hasAssemblyBodyLimit = false;
-                var openedAssemblyScope = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
+                var matchingAssemblyHandoffs = symbolIdentifiers
+                    .Select(identifier => IsAssemblyHandoffForTarget(identifier, target.CanonicalPath))
+                    .ToArray();
+                var unresidentItems = new bool[symbolIdentifiers.Length];
+                Result<AssemblyNavigationSessionScope> openedAssemblyScope;
+                if (matchingAssemblyHandoffs.Any(static isAssemblyHandoff => isAssemblyHandoff))
+                {
+                    openedAssemblyScope = await AssemblyNavigationSessionScope.OpenResidentAsync(target.CanonicalPath, ct).ConfigureAwait(false);
+                    if (!openedAssemblyScope.IsSuccess
+                        && openedAssemblyScope.Error?.Code == NavigationErrorCodes.HandoffOwnerUnresident)
+                    {
+                        for (var index = 0; index < matchingAssemblyHandoffs.Length; index++)
+                            unresidentItems[index] = matchingAssemblyHandoffs[index];
+                        if (unresidentItems.All(static isUnresident => isUnresident))
+                        {
+                            var error = CreateUnresidentOwnerError();
+                            var failures = symbolIdentifiers.Select(identifier => FormatResolutionFailure(identifier, error, string.Empty)).ToArray();
+                            var aggregate = AggregateResolutionFailures(error, failures);
+                            return NavigationToolSupport.Failure(aggregate, maxResponseBytes, maxResponseTokens, "$.symbolIdentifiers");
+                        }
+
+                        openedAssemblyScope = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
+                    }
+                }
+                else
+                {
+                    openedAssemblyScope = await AssemblyNavigationSessionScope.OpenAsync(target.CanonicalPath, ct).ConfigureAwait(false);
+                }
                 if (!openedAssemblyScope.IsSuccess)
                     return NavigationToolSupport.Failure(openedAssemblyScope.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
                 await using var assemblyScope = openedAssemblyScope.Value!;
@@ -234,31 +262,34 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                     ct.ThrowIfCancellationRequested();
                     BeforeAssemblyBodyBatchItemForTesting?.Invoke(index);
                     var identifier = symbolIdentifiers[index];
-                    var resolved = await AssemblySymbolBodyScanner.GetAsync(
-                        identifier, effectiveLines, startLine, ct, expectedTargetPath: target.CanonicalPath, pinnedScope: assemblyScope).ConfigureAwait(false);
+                    var resolved = unresidentItems[index]
+                        ? new SymbolBodyResolutionResult(null, Array.Empty<SymbolResolutionCandidate>(), CreateUnresidentOwnerError())
+                        : await AssemblySymbolBodyScanner.GetAsync(
+                            identifier, effectiveLines, startLine, ct, expectedTargetPath: target.CanonicalPath, pinnedScope: assemblyScope).ConfigureAwait(false);
                     hasDomainGaps |= resolved.Error is not null || resolved.Body?.HasMore == true;
                     hasAssemblyResolutionGaps |= resolved.Error is not null;
                     hasAssemblyBodyLimit |= resolved.Body?.HasMore == true;
-                    if (resolved.Body?.HasMore == true)
-                        suggestedStartLine = Math.Max(suggestedStartLine, resolved.Body.DisplayedEnd + 1);
                     if (resolved.Error is { } error)
                     {
                         firstAssemblyResolutionError ??= error;
                         var candidates = resolved.ResolutionCandidates.Count == 0 ? string.Empty
                             : $" Candidates: {string.Join(", ", resolved.ResolutionCandidates.Select(FormatResolutionCandidate))}.";
-                        items.Add($"Could not resolve {identifier}: {error.Code}: {error.Message}{candidates}");
+                        var failure = FormatResolutionFailure(identifier, error, candidates);
+                        items.Add(failure);
+                        itemFailures.Add(failure);
                     }
                     else if (resolved.Body is { } body)
                     {
                         resolvedAssemblyBodies++;
-                        items.Add(FormatBody(identifier, body, target.CanonicalPath));
+                        items.Add(FormatBody(identifier, body, target.CanonicalPath, effectiveLines));
                     }
                 }
                 if (resolvedAssemblyBodies == 0 && firstAssemblyResolutionError is { } resolutionError)
-                    return NavigationToolSupport.Failure(resolutionError, maxResponseBytes, maxResponseTokens, "$.symbolIdentifiers");
+                    return NavigationToolSupport.Failure(AggregateResolutionFailures(resolutionError, itemFailures),
+                        maxResponseBytes, maxResponseTokens, "$.symbolIdentifiers");
 
                 var assemblyResponse = NavigationToolSupport.SuccessText(string.Join("\n\n", items), hasDomainGaps,
-                    hasDomainGaps ? $"Resolve item errors and repeat; for a body with more lines set startLine to {suggestedStartLine}." : null);
+                    hasDomainGaps ? "Use each item's stated next action. Read all outer response pages first, then continue each successful body from its own next body window." : null);
                 return NavigationToolSupport.WithAssemblyMetadata(assemblyResponse, AssemblySymbolInputResolver.CreateIdentity(assemblyScope),
                     $"symbolBody(identifiers={string.Join('|', symbolIdentifiers)}, lines={startLine}..{(endLine?.ToString() ?? $"+{effectiveLines}")})",
                     new[]
@@ -346,12 +377,52 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
             ? $"{candidate.Signature} at {candidate.FilePath}:{candidate.Line} [targetPath: `{ownerPath}`, handoffId: `{handoffId}`]"
             : candidate.Name;
 
-    private static string FormatBody(string identifier, SymbolBodyResult body, string targetPath)
+    private static string FormatBody(string identifier, SymbolBodyResult body, string targetPath, int windowLineCount)
     {
         var status = body.HasMore ? ", more lines available" : ", complete";
         var handoff = body.HandoffId is null ? string.Empty : $"\nHandoff: {body.HandoffId}\nOwner targetPath: {targetPath}";
-        return $"Symbol: {identifier}\nContent mode: {body.ContentMode}{handoff}\nLines: {body.DisplayedStart}-{body.DisplayedEnd} of {body.TotalLines}{status}\n{body.Body}";
+        var nextAction = body.HasMore
+            ? $"Next body window: startLine={body.DisplayedEnd + 1}, maxBodyLines={windowLineCount}; omit endLine and continue this item using its handoff."
+            : "Next action: none; this declaration window is complete.";
+        return $"Symbol: {identifier}\nResolution status: resolved (availability: {body.Availability})\nContent mode: {body.ContentMode}{handoff}\nLines: {body.DisplayedStart}-{body.DisplayedEnd} of {body.TotalLines}{status}\n{nextAction}\n{body.Body}";
     }
+
+    private static string FormatResolutionFailure(string identifier, ResultError error, string candidates)
+    {
+        var nextAction = error.Hint ?? error.Code switch
+        {
+            NavigationErrorCodes.TargetMismatch => "Rediscover the symbol on its owning target, then use that result's ownerTargetPath and handoff.",
+            NavigationErrorCodes.StaleSnapshot => "Repeat the original discovery query against the current target and use a handoff from that response.",
+            NavigationErrorCodes.HandoffOwnerUnresident => "Repeat the original discovery query against the owner target, then use its current ownerTargetPath and handoff.",
+            _ => "Repeat the original discovery query and use a current handoff from its result.",
+        };
+        return $"Symbol: {identifier}\nResolution status: failed ({error.Code})\nError: {error.Message}{candidates}\nNext action: {nextAction}";
+    }
+
+    private static ResultError CreateUnresidentOwnerError() => new(
+        NavigationErrorCodes.HandoffOwnerUnresident,
+        "The assembly owner for this handoff is no longer resident in this server process.",
+        "Repeat the original discovery query on the owner target, then use its current ownerTargetPath and handoff.");
+
+    private static bool IsAssemblyHandoffForTarget(string identifier, string targetPath)
+    {
+        var normalized = InputNormalizer.NormalizeSymbolIdentifier(identifier);
+        if (!InputNormalizer.HasOpaqueHandoffPrefix(normalized))
+            return false;
+
+        var restored = HandoffHandleRegistry.Default.RestoreInternalHandoffForInput(normalized);
+        if (!restored.IsSuccess || !SymbolHandoffIdentifier.TryParse(restored.Value!, out var parsed)
+            || parsed.Origin != SymbolHandoffOrigin.Assembly
+            || !SymbolHandoffToken.TryCreateTarget(targetPath, out var targetToken))
+            return false;
+
+        return string.Equals(parsed.TargetToken, targetToken, StringComparison.Ordinal);
+    }
+
+    private static ResultError AggregateResolutionFailures(ResultError primary, IReadOnlyList<string> itemFailures) =>
+        new(primary.Code,
+            $"Every requested body item failed resolution. Item results:{Environment.NewLine}{string.Join(Environment.NewLine + Environment.NewLine, itemFailures)}",
+            "Use the next action listed for each item, then repeat get_symbol_body with the current owner target and handoff.");
 
     private static bool TryKind(string? value, out SymbolKindFilter kind)
     {

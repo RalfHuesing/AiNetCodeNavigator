@@ -19,6 +19,7 @@ public static class NavigationErrorCodes
     public const string TargetUnreadable = "TARGET_UNREADABLE";
     public const string InvalidHandoff = "INVALID_HANDOFF";
     public const string HandoffUnknown = "HANDOFF_UNKNOWN";
+    public const string HandoffOwnerUnresident = "HANDOFF_OWNER_UNRESIDENT";
     public const string HandoffCounterUnavailable = "HANDOFF_COUNTER_UNAVAILABLE";
     public const string TargetMismatch = "TARGET_MISMATCH";
     public const string StaleSnapshot = "STALE_SNAPSHOT";

@@ -173,7 +173,8 @@ public static class NamespaceTreeScanner
         if (depthWasTruncated) truncatedBy.Add("maxDepth");
         if (resultLimitWasReached || typeLimitWasReached) truncatedBy.Add("maxResults");
 
-        var nextAction = GetNextAction(truncatedBy);
+        var nextAction = GetNextAction(truncatedBy, requestedProjectName, prefix, effectiveDepth, effectiveResults,
+            requestedOptions.AllowProjectSelectionRecovery);
         var formatted = FormatTree(solutionName, selectedProjectName, rootNodes, totalNamespaces, shownNamespaces, totalTypes,
             requestedOptions.IncludeGenerated, truncatedBy, nextAction);
         return CreatePayload(
@@ -594,20 +595,49 @@ public static class NamespaceTreeScanner
             RequestedMaxResults: requestedOptions.MaxResults,
             EffectiveMaxResults: effectiveResults,
             BoundsWereClamped: boundsWereClamped,
-            NextAction: GetNextAction(truncatedBy),
+            NextAction: GetNextAction(truncatedBy, projectName, requestedOptions.NamespacePrefix, effectiveDepth, effectiveResults,
+                requestedOptions.AllowProjectSelectionRecovery),
             IncludeGenerated: requestedOptions.IncludeGenerated,
             ErrorCode: errorCode);
     }
 
-    private static string? GetNextAction(IReadOnlyList<string> truncatedBy)
+    private static string? GetNextAction(
+        IReadOnlyList<string> truncatedBy,
+        string? projectName,
+        string? namespacePrefix,
+        int effectiveDepth,
+        int effectiveResults,
+        bool allowProjectSelection)
     {
         if (truncatedBy.Count == 0) return null;
         if (truncatedBy.Contains("maxResults", StringComparer.Ordinal))
         {
-            return $"Increase MaxResults (up to {MaxResultsCap}) or select a single project.";
+            if (effectiveResults < MaxResultsCap)
+                return $"Increase MaxResults up to {MaxResultsCap} or narrow the namespacePrefix or type selection.";
+            if (!string.IsNullOrWhiteSpace(namespacePrefix))
+                return "Narrow namespacePrefix or type selection to reduce this direct scanner result.";
+            if (!string.IsNullOrWhiteSpace(projectName))
+                return "Set namespacePrefix within the selected project to narrow this direct scanner result.";
+            return allowProjectSelection
+                ? "Select a project or namespacePrefix to narrow this direct scanner result."
+                : "Set namespacePrefix to narrow this assembly namespace result.";
         }
 
-        return "Select a single project to narrow the namespace tree.";
+        if (!string.IsNullOrWhiteSpace(namespacePrefix))
+        {
+            return effectiveDepth < MaxDepthCap
+                ? $"Increase depth from {effectiveDepth}, or set namespacePrefix to a deeper namespace shown in this result."
+                : $"Set namespacePrefix to a deeper namespace shown in this result; the direct scanner depth cap is {MaxDepthCap}.";
+        }
+        if (!string.IsNullOrWhiteSpace(projectName))
+            return "Set namespacePrefix within the selected project to continue from a deeper namespace.";
+        if (effectiveDepth < MaxDepthCap)
+            return allowProjectSelection
+                ? $"Select a project or namespacePrefix, then increase depth up to {MaxDepthCap}."
+                : $"Set namespacePrefix for the assembly, then increase depth up to {MaxDepthCap}.";
+        return allowProjectSelection
+            ? $"Select a project or namespacePrefix to focus deeper traversal; the direct scanner depth cap is {MaxDepthCap}."
+            : $"Set namespacePrefix to focus deeper assembly traversal; the direct scanner depth cap is {MaxDepthCap}.";
     }
 
     private static string FormatError(string solutionName, string? projectName, string error)

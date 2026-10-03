@@ -239,6 +239,8 @@ public sealed class SourceToolsContractTests
         using var fixture = TestTempDirectory.Create("ainet-source-tools-contract-");
         var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
         var appFile = Path.Combine(fixture.DirectoryPath, "src", "App", "Target.cs");
+        await File.WriteAllTextAsync(Path.Combine(fixture.DirectoryPath, "src", "App", "NamespaceRecovery.cs"),
+            "namespace ScopeProbe.Recovery.Deep { public sealed class NestedType { } }");
 
         var found = await symbols.FindSymbol(target, pattern: "Run", kind: "method", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(found, 16384, 1024);
@@ -266,11 +268,35 @@ public sealed class SourceToolsContractTests
         var body = await symbols.GetSymbolBody(target, [methodHandoff], maxBodyLines: 2, maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(body, 16384, 1024);
         Assert.Contains("Lines: 1-2 of", TextOf(body), StringComparison.Ordinal);
-        Assert.Contains("startLine to 3", TextOf(body), StringComparison.Ordinal);
-        var bodyRemainder = await symbols.GetSymbolBody(target, [methodHandoff], startLine: 3, maxBodyLines: 2,
-            maxResponseBytes: 16384, maxResponseTokens: 1024);
-        AssertSuccessWithinBudget(bodyRemainder, 16384, 1024);
-        Assert.Contains("Lines: 3-", TextOf(bodyRemainder), StringComparison.Ordinal);
+        Assert.Contains("Resolution status: resolved", TextOf(body), StringComparison.Ordinal);
+        Assert.Contains("Next body window: startLine=3", TextOf(body), StringComparison.Ordinal);
+        var bodyRanges = new List<(int Start, int End, int Total)> { ReadBodyRange(TextOf(body)) };
+        var nextStartLine = 3;
+        while (bodyRanges[^1].End < bodyRanges[^1].Total)
+        {
+            var bodyWindow = await symbols.GetSymbolBody(target, [methodHandoff], startLine: nextStartLine, maxBodyLines: 2,
+                maxResponseBytes: 16384, maxResponseTokens: 1024);
+            AssertSuccessWithinBudget(bodyWindow, 16384, 1024);
+            var windowText = TextOf(bodyWindow);
+            Assert.Contains("Resolution status: resolved", windowText, StringComparison.Ordinal);
+            var range = ReadBodyRange(windowText);
+            Assert.Equal(nextStartLine, range.Start);
+            Assert.Equal(bodyRanges[^1].End + 1, range.Start);
+            Assert.Equal(bodyRanges[0].Total, range.Total);
+            bodyRanges.Add(range);
+            if (range.End < range.Total)
+            {
+                Assert.Contains($"Next body window: startLine={range.End + 1}, maxBodyLines=2; omit endLine", windowText, StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.Contains("Next action: none; this declaration window is complete.", windowText, StringComparison.Ordinal);
+            }
+
+            nextStartLine = range.End + 1;
+        }
+
+        Assert.Equal(bodyRanges[0].Total, bodyRanges[^1].End);
 
         var longBodySymbol = await symbols.FindSymbol(target, pattern: "LargeBody", kind: "method",
             maxResponseBytes: 16384, maxResponseTokens: 1024);
@@ -285,13 +311,19 @@ public sealed class SourceToolsContractTests
         var tokenPagedBody = await ReadAllBodyPagesAsync(symbols, target, longBodyHandoff, 65536, 512);
         Assert.Equal(pagedBody.Text, tokenPagedBody.Text);
 
-        var mixedBody = await symbols.GetSymbolBody(target, [methodHandoff, "h:zzzz"], maxResponseBytes: 16384, maxResponseTokens: 1024);
+        var mixedBody = await symbols.GetSymbolBody(target, [methodHandoff, "h:zzzz"], maxBodyLines: 1,
+            maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(mixedBody, 16384, 1024);
         Assert.Contains("completeness=truncated", TextOf(mixedBody), StringComparison.Ordinal);
         Assert.Contains("HANDOFF_UNKNOWN", TextOf(mixedBody), StringComparison.Ordinal);
+        Assert.Contains("Resolution status: failed (HANDOFF_UNKNOWN)", TextOf(mixedBody), StringComparison.Ordinal);
+        Assert.Contains("Next action: Find the symbol again using find_symbol", TextOf(mixedBody), StringComparison.Ordinal);
+        Assert.Contains("Next body window: startLine=2", TextOf(mixedBody), StringComparison.Ordinal);
         Assert.Contains("Run", TextOf(mixedBody), StringComparison.Ordinal);
-        var allInvalidBody = await symbols.GetSymbolBody(target, ["h:zzzz"], maxResponseBytes: 16384, maxResponseTokens: 1024);
+        var allInvalidBody = await symbols.GetSymbolBody(target, ["h:zzzz", "h:aaaa"], maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(allInvalidBody, "HANDOFF_UNKNOWN", 16384, 1024);
+        Assert.Contains("Symbol: h:zzzz", TextOf(allInvalidBody), StringComparison.Ordinal);
+        Assert.Contains("Symbol: h:aaaa", TextOf(allInvalidBody), StringComparison.Ordinal);
 
         var skeleton = await structure.GetFileSkeleton(target, [appFile], maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(skeleton, 16384, 1024);
@@ -357,6 +389,14 @@ public sealed class SourceToolsContractTests
             Assert.Contains(items, item => item.GetProperty("kind").GetString() == "type"
                 && item.GetProperty("name").GetString() == "Target");
         }
+        var selectedProjectDepthRecovery = await structure.GetNamespaceTree(target,
+            project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
+            namespacePrefix: "ScopeProbe", depth: 1, maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(selectedProjectDepthRecovery, 16384, 1024);
+        var selectedProjectRecoveryText = TextOf(selectedProjectDepthRecovery);
+        Assert.Contains("completeness=truncated", selectedProjectRecoveryText, StringComparison.Ordinal);
+        Assert.Contains("increase depth to 2 for the selected namespacePrefix 'ScopeProbe'", selectedProjectRecoveryText, StringComparison.Ordinal);
+        Assert.DoesNotContain("select a project", selectedProjectRecoveryText, StringComparison.OrdinalIgnoreCase);
         var pagedNamespaceItems = new List<string>();
         string? namespaceCursor = null;
         var namespacePages = 0;
@@ -799,5 +839,13 @@ public sealed class SourceToolsContractTests
         var start = text.IndexOf('{');
         Assert.True(start >= 0, text);
         return text[start..];
+    }
+
+    private static (int Start, int End, int Total) ReadBodyRange(string text)
+    {
+        var line = text.Split('\n').First(value => value.StartsWith("Lines: ", StringComparison.Ordinal));
+        var parts = line[7..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var range = parts[0].Split('-');
+        return (int.Parse(range[0]), int.Parse(range[1]), int.Parse(parts[2].TrimEnd(',')));
     }
 }

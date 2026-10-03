@@ -2,6 +2,7 @@ using System.Text;
 using System.Reflection;
 using AiNetCodeNavigator.Core.Assemblies;
 using AiNetCodeNavigator.Core.Symbols;
+using AiNetCodeNavigator.Core.Workspace;
 using AiNetCodeNavigator.Mcp;
 using AiNetCodeNavigator.Mcp.Tools;
 using AiNetCodeNavigator.Mcp.Tools.Assemblies;
@@ -778,6 +779,98 @@ public sealed class AssemblyToolsContractTests
         var contextBody = await symbolTools.GetSymbolBody(assemblyPath, [contextHandoff]);
         AssertSuccessWithinBudget(contextBody, 16 * 1024, 4096);
         Assert.Contains("Zulu", TextOf(contextBody), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AssemblyNamespaceDepthRecoveryUsesAssemblyPrefixWithoutRequestingSourceProject()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        using var fixture = TestTempDirectory.Create("assembly-namespace-recovery-");
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "NamespaceRecoveryProbe", "namespace NamespaceRecoveryProbe.One.Two.Three; public sealed class Target { }");
+        var structure = new StructureTools(runtime);
+
+        var result = await structure.GetNamespaceTree(assemblyPath, namespacePrefix: "NamespaceRecoveryProbe", depth: 1,
+            maxResponseBytes: 16384, maxResponseTokens: 2048);
+
+        AssertSuccessWithinBudget(result, 16384, 2048);
+        var text = TextOf(result);
+        Assert.Contains("completeness=truncated", text, StringComparison.Ordinal);
+        Assert.Contains("nextAction:", text, StringComparison.Ordinal);
+        Assert.Contains("namespacePrefix", text, StringComparison.Ordinal);
+        Assert.Contains("increase depth", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("select a project", text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task AssemblyBodyRecoveryDistinguishesWrongOwnerStaleAndEvictedSessions()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        using var fixture = TestTempDirectory.Create("assembly-body-recovery-");
+        const string original = "namespace BodyRecoveryProbe; public sealed class Target { public int Read() { var value = 1; return value; } }";
+        const string replacement = "namespace BodyRecoveryProbe; public sealed class Target { public int Read() { var value = 2; return value; } }";
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "BodyRecoveryProbe", original);
+        var otherAssemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "OtherBodyRecoveryProbe", "namespace OtherBodyRecoveryProbe; public sealed class Other { public int Read() => 0; }");
+        var symbols = new SymbolTools(runtime);
+        var discovery = await symbols.FindSymbol(assemblyPath, pattern: "Target.Read", kind: "method", maxResponseBytes: 16384);
+        AssertOwnerResult(discovery, "Read");
+        var originalHandle = ReadAnyHandoff(TextOf(discovery));
+
+        var firstWindow = await symbols.GetSymbolBody(assemblyPath, [originalHandle], startLine: 1, endLine: 1,
+            maxResponseBytes: 16384, maxResponseTokens: 2048);
+        AssertSuccessWithinBudget(firstWindow, 16384, 2048);
+        Assert.Contains("Next body window: startLine=2, maxBodyLines=1; omit endLine", TextOf(firstWindow), StringComparison.Ordinal);
+        var secondWindow = await symbols.GetSymbolBody(assemblyPath, [originalHandle], startLine: 2, maxBodyLines: 1,
+            maxResponseBytes: 16384, maxResponseTokens: 2048);
+        AssertSuccessWithinBudget(secondWindow, 16384, 2048);
+        Assert.Contains("Resolution status: resolved", TextOf(secondWindow), StringComparison.Ordinal);
+
+        var wrongOwner = await symbols.GetSymbolBody(otherAssemblyPath, [originalHandle], maxResponseBytes: 16384);
+        AssertErrorWithinBudget(wrongOwner, "TARGET_MISMATCH", 16384, 4096);
+        Assert.Contains("Resolution status: failed (TARGET_MISMATCH)", TextOf(wrongOwner), StringComparison.Ordinal);
+        Assert.Contains("ownerTargetPath", TextOf(wrongOwner), StringComparison.Ordinal);
+
+        AssemblyTestHelper.EmitAssembly(fixture, "BodyRecoveryProbe", replacement);
+        var stale = await symbols.GetSymbolBody(assemblyPath, [originalHandle], maxResponseBytes: 16384);
+        AssertErrorWithinBudget(stale, "STALE_SNAPSHOT", 16384, 4096);
+        Assert.Contains("find_symbol", TextOf(stale), StringComparison.Ordinal);
+        var mixedFailures = await symbols.GetSymbolBody(assemblyPath, [originalHandle, "h:aaaa"], maxResponseBytes: 16384, maxResponseTokens: 4096);
+        AssertErrorWithinBudget(mixedFailures, "STALE_SNAPSHOT", 16384, 4096);
+        Assert.Contains("Resolution status: failed (STALE_SNAPSHOT)", TextOf(mixedFailures), StringComparison.Ordinal);
+        Assert.Contains("Resolution status: failed (HANDOFF_UNKNOWN)", TextOf(mixedFailures), StringComparison.Ordinal);
+        Assert.Contains("Repeat find_symbol against the current assembly snapshot", TextOf(mixedFailures), StringComparison.Ordinal);
+        Assert.Contains("Find the symbol again using find_symbol", TextOf(mixedFailures), StringComparison.Ordinal);
+
+        var currentDiscovery = await symbols.FindSymbol(assemblyPath, pattern: "Target.Read", kind: "method", maxResponseBytes: 16384);
+        AssertOwnerResult(currentDiscovery, "Read");
+        var currentHandle = ReadAnyHandoff(TextOf(currentDiscovery));
+        var otherDiscovery = await symbols.FindSymbol(otherAssemblyPath, pattern: "Other.Read", kind: "method", maxResponseBytes: 16384);
+        AssertOwnerResult(otherDiscovery, "Read");
+        var otherHandle = ReadAnyHandoff(TextOf(otherDiscovery));
+        await AssemblyAnalysisSessionRegistry.Default.ExpireIdleSessionsAsync(DateTime.UtcNow.AddMinutes(11), assemblyPath);
+
+        var mixedEviction = await symbols.GetSymbolBody(assemblyPath, [currentHandle, "BodyRecoveryProbe.Target.Read"],
+            maxResponseBytes: 16384, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(mixedEviction, 16384, 4096);
+        Assert.Contains("Resolution status: failed (HANDOFF_OWNER_UNRESIDENT)", TextOf(mixedEviction), StringComparison.Ordinal);
+        Assert.Contains("Resolution status: resolved", TextOf(mixedEviction), StringComparison.Ordinal);
+        Assert.Contains("return 2;", TextOf(mixedEviction), StringComparison.Ordinal);
+        var otherOwnerStillResident = await symbols.GetSymbolBody(otherAssemblyPath, [otherHandle], maxResponseBytes: 16384);
+        AssertOwnerResult(otherOwnerStillResident, "Read");
+
+        await AssemblyAnalysisSessionRegistry.Default.ExpireIdleSessionsAsync(DateTime.UtcNow.AddMinutes(11), assemblyPath);
+        var evicted = await symbols.GetSymbolBody(assemblyPath, [currentHandle], maxResponseBytes: 16384, maxResponseTokens: 4096);
+        AssertErrorWithinBudget(evicted, NavigationErrorCodes.HandoffOwnerUnresident, 16384, 4096);
+        Assert.Contains("Repeat the original discovery query on the owner target", TextOf(evicted), StringComparison.Ordinal);
+        Assert.DoesNotContain("STALE_SNAPSHOT", TextOf(evicted), StringComparison.Ordinal);
+
+        var rediscovered = await symbols.FindSymbol(assemblyPath, pattern: "Target.Read", kind: "method", maxResponseBytes: 16384);
+        AssertOwnerResult(rediscovered, "Read");
+        var rediscoveredHandle = ReadAnyHandoff(TextOf(rediscovered));
+        var recovered = await symbols.GetSymbolBody(assemblyPath, [rediscoveredHandle], maxResponseBytes: 16384);
+        AssertOwnerResult(recovered, "Read");
+        Assert.Contains("return 2;", TextOf(recovered), StringComparison.Ordinal);
     }
 
     [Fact]
