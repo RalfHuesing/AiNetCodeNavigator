@@ -38,8 +38,8 @@ public static class AssemblyPaging
         {
             referenceSnapshotHash, "inspect_assembly", arguments.Namespace, arguments.TypeName, arguments.MemberName,
             arguments.PublicOnly.ToString(), arguments.MaxResults.ToString(), arguments.ExactTypeName.ToString(),
-            arguments.MemberNames?.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), arguments.MaxMembers.ToString(),
-            arguments.IncludeReferences?.ToString(),
+            arguments.MemberNames?.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            arguments.IncludeReferences.ToString(),
         }.Concat(arguments.MemberNames?.Cast<string?>() ?? []).ToArray();
         return CreateBinding(canonicalPath, contentHash, queryParts);
     }
@@ -54,16 +54,24 @@ public static class AssemblyPaging
             contentHash,
             referenceSnapshotHash,
             "search_assembly",
-            arguments.SearchKind,
             arguments.Query,
             arguments.CaseSensitive.ToString(),
-            arguments.UseRegex?.ToString(),
+            arguments.UseRegex.ToString(),
             arguments.FileFilter,
             arguments.DeclarationOnly.ToString(),
             arguments.ContextLines.ToString(),
             arguments.MaxResults.ToString(),
             arguments.MaxFiles.ToString(),
             arguments.Kind);
+
+    public static string CreateExtensionsBinding(
+        string canonicalPath,
+        string contentHash,
+        string referenceSnapshotHash,
+        FindAssemblyExtensionsRequest arguments) =>
+        CreateBinding(canonicalPath, contentHash, referenceSnapshotHash, "find_assembly_extensions",
+            arguments.ReceiverType, arguments.ExtensionName, arguments.Namespace, arguments.IncludeReferences.ToString(),
+            arguments.MaxResults.ToString());
 
     public static bool TryReadBoundOffset(string? cursor, string binding, out int offset)
         => ReadBoundOffset(cursor, binding, out offset) == BoundCursorStatus.Valid;

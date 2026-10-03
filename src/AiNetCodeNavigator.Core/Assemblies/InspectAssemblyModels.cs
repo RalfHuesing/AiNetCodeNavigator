@@ -17,14 +17,10 @@ public sealed record InspectAssemblyRequest(
     int MaxResults = 100,
     bool ExactTypeName = false,
     IReadOnlyList<string>? MemberNames = null,
-    int MaxMembers = 100,
-    bool? IncludeReferences = null,
+    bool IncludeReferences = false,
     string? Cursor = null)
 {
-    public bool IncludeReferenceDetails => IncludeReferences ?? (
-        string.IsNullOrWhiteSpace(TypeName)
-        && string.IsNullOrWhiteSpace(MemberName)
-        && (MemberNames is null || MemberNames.All(string.IsNullOrWhiteSpace)));
+    public bool IncludeReferenceDetails => IncludeReferences;
 }
 
 public sealed record AssemblyTypeDto(
@@ -34,12 +30,11 @@ public sealed record AssemblyTypeDto(
     string Accessibility,
     IReadOnlyList<AssemblyMemberDto> Members,
     IReadOnlyList<string> Attributes,
-    int TotalMembers = 0,
-    bool MembersTruncated = false,
-    IReadOnlyList<string>? TruncatedBy = null,
-    string? Id = null,
+    [property: JsonIgnore] string? Id = null,
     bool Handoff = false,
-    IReadOnlyList<string>? AllowedFollowUpTools = null);
+    IReadOnlyList<string>? AllowedFollowUpTools = null,
+    string? HandoffId = null,
+    string? OwnerTargetPath = null);
 
 public sealed record AssemblyMemberDto(
     string Kind,
@@ -50,9 +45,11 @@ public sealed record AssemblyMemberDto(
     IReadOnlyList<string> GenericParameters,
     IReadOnlyList<string> Constraints,
     IReadOnlyList<string> Attributes,
-    string? Id = null,
+    [property: JsonIgnore] string? Id = null,
     bool Handoff = false,
-    IReadOnlyList<string>? AllowedFollowUpTools = null);
+    IReadOnlyList<string>? AllowedFollowUpTools = null,
+    string? HandoffId = null,
+    string? OwnerTargetPath = null);
 
 public sealed record AssemblyParameterDto(
     string Name,
@@ -86,7 +83,6 @@ public sealed record InspectAssemblyPayload(
     int TotalNamespaces = 0,
     string? DecompiledSourceRoot = null,
     [property: JsonPropertyName("resultCursor")] string? ResultCursor = null,
-    string FormattedText = "",
     NavigationAnalysisMetadata? Analysis = null)
 {
     public int TotalCount => TotalTypes;

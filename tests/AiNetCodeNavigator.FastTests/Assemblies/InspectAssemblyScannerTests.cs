@@ -3,7 +3,6 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Core.Assemblies;
@@ -16,24 +15,11 @@ using Xunit;
 namespace AiNetCodeNavigator.FastTests.Assemblies;
 
 // @covers InspectAssemblyScanner
-// @covers InspectAssemblyFormatter
 // @covers AssemblyPaging
 // @covers AssemblyAnalysisSession
 [Trait("Category", "Component")]
 public sealed class InspectAssemblyScannerTests
 {
-    private static readonly Regex ContinuationTokenPattern = new(
-        "resultCursor: `(?<token>[^`]+)`",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant,
-        TimeSpan.FromSeconds(1));
-
-    private static string ExtractContinuationToken(string text)
-    {
-        var match = ContinuationTokenPattern.Match(text);
-        Assert.True(match.Success, text);
-        return match.Groups["token"].Value;
-    }
-
     [Fact]
     public async Task InspectAssembly_ReturnsPublicApiWithOverloadsGenericsAndAttributes()
     {
@@ -62,19 +48,14 @@ public sealed class InspectAssemblyScannerTests
 
         Assert.True(result.IsSuccess);
         var payload = result.Value!;
-        var text = payload.FormattedText;
-
-        Assert.Contains("Completeness: `complete`", text, StringComparison.Ordinal);
-        Assert.Contains("Source: Decompilation", text, StringComparison.Ordinal);
-        Assert.Contains("`Probe.Api.PublicApi`; handoffId: `h:", text, StringComparison.Ordinal);
+        Assert.Equal("complete", payload.Completeness);
         var apiType = Assert.Single(payload.Types);
         Assert.True(apiType.Handoff);
         Assert.NotNull(apiType.Id);
-        var exposedHandle = Regex.Match(
-            text,
-            @"`Probe\.Api\.PublicApi`; handoffId: `(?<id>h:[A-Za-z0-9_-]+)`",
-            RegexOptions.CultureInvariant,
-            TimeSpan.FromSeconds(1)).Groups["id"].Value;
+        Assert.StartsWith("h:", apiType.HandoffId, StringComparison.Ordinal);
+        Assert.Equal(Path.GetFullPath(assemblyPath), apiType.OwnerTargetPath);
+        Assert.DoesNotContain("i:", apiType.HandoffId, StringComparison.Ordinal);
+        var exposedHandle = apiType.HandoffId!;
         var restored = AiNetCodeNavigator.Core.Symbols.HandoffHandleRegistry.Default.RestoreInternalHandoffForInput(exposedHandle);
         Assert.True(restored.IsSuccess);
         Assert.Equal(apiType.Id, restored.Value);
@@ -82,15 +63,12 @@ public sealed class InspectAssemblyScannerTests
         Assert.Equal(AiNetCodeNavigator.Core.Symbols.SymbolHandoffOrigin.Assembly, parsedHandoff.Origin);
         Assert.True(AiNetCodeNavigator.Core.Symbols.SymbolHandoffToken.TryCreateTarget(assemblyPath, out var expectedTarget));
         Assert.Equal(expectedTarget, parsedHandoff.TargetToken);
-        Assert.Contains("property: `Probe.Api.PublicApi.Name`", text, StringComparison.Ordinal);
-        Assert.Contains("event: `Probe.Api.PublicApi.Changed`", text, StringComparison.Ordinal);
-        Assert.Contains("Convert(string value)", text, StringComparison.Ordinal);
-        Assert.Contains("Convert(int value)", text, StringComparison.Ordinal);
-        Assert.Contains("Echo<T>(T value)", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("get_Name", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("set_Name", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("add_Changed", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("Hidden", text, StringComparison.Ordinal);
+        Assert.Contains(apiType.Members, member => member.Name == "Name");
+        Assert.Contains(apiType.Members, member => member.Name == "Changed");
+        Assert.Contains(apiType.Members, member => member.Signature.Contains("Convert(string value)", StringComparison.Ordinal));
+        Assert.Contains(apiType.Members, member => member.Signature.Contains("Convert(int value)", StringComparison.Ordinal));
+        Assert.Contains(apiType.Members, member => member.Signature.Contains("Echo<T>(T value)", StringComparison.Ordinal));
+        Assert.DoesNotContain(apiType.Members, member => member.Name is "get_Name" or "set_Name" or "add_Changed" or "Hidden");
     }
 
     [Fact]
@@ -118,8 +96,8 @@ public sealed class InspectAssemblyScannerTests
         [
             symbol,
             new InspectAssemblyRequest(@"C:\invalid.dll", PublicOnly: false),
-            50,
             AnalysisSymbolIdentity.ForAssembly(string.Empty, "invalid"),
+            @"C:\invalid.dll",
         ]));
         Assert.False(dto.Handoff);
         Assert.Null(dto.Id);
@@ -143,11 +121,11 @@ public sealed class InspectAssemblyScannerTests
             MaxResults: 1));
 
         Assert.True(result.IsSuccess);
-        var text = result.Value!.FormattedText;
-        Assert.Contains("Public API types: 1 of 2 (truncated: maxResults)", text, StringComparison.Ordinal);
-        Assert.StartsWith("v1.1.", ExtractContinuationToken(text), StringComparison.Ordinal);
-        Assert.Contains("Completeness: `complete`", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("unrelated.dll", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(result.Value!.Types);
+        Assert.Equal(2, result.Value.TotalTypes);
+        Assert.True(result.Value.Truncated);
+        Assert.StartsWith("v1.1.", result.Value.ResultCursor, StringComparison.Ordinal);
+        Assert.Equal("complete", result.Value.Completeness);
     }
 
     [Fact]
@@ -167,8 +145,7 @@ public sealed class InspectAssemblyScannerTests
             MaxResults: 1));
 
         Assert.True(first.IsSuccess);
-        var firstText = first.Value!.FormattedText;
-        var firstToken = ExtractContinuationToken(firstText);
+        var firstToken = first.Value!.ResultCursor;
 
         var second = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(
             assemblyPath,
@@ -177,13 +154,10 @@ public sealed class InspectAssemblyScannerTests
             Cursor: firstToken));
 
         Assert.True(second.IsSuccess);
-        var secondText = second.Value!.FormattedText;
-
-        Assert.Contains("`Probe.Alpha`", firstText, StringComparison.Ordinal);
-        Assert.DoesNotContain("`Probe.Alpha`", secondText, StringComparison.Ordinal);
-        Assert.Contains("`Probe.Beta`", secondText, StringComparison.Ordinal);
-        Assert.Contains("Public API types: 1 of 3", secondText, StringComparison.Ordinal);
-        Assert.StartsWith("v1.2.", ExtractContinuationToken(secondText), StringComparison.Ordinal);
+        Assert.Equal("Alpha", first.Value.Types.Single().Name);
+        Assert.Equal("Beta", second.Value!.Types.Single().Name);
+        Assert.Equal(3, second.Value.TotalTypes);
+        Assert.StartsWith("v1.2.", second.Value.ResultCursor, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -229,7 +203,7 @@ public sealed class InspectAssemblyScannerTests
         var dependency = AssemblyTestHelper.EmitAssembly(temp, "CursorDependency", "namespace Probe.Reference; public sealed class Dependency { public Probe.Leaf.Leaf? Value; }", leaf);
         var target = AssemblyTestHelper.EmitAssembly(temp, "CursorTarget", "public sealed class Alpha { public Probe.Reference.Dependency? Value; } public sealed class Beta { }", dependency);
 
-        var first = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(target, MaxResults: 1, MaxMembers: 20));
+        var first = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(target, MaxResults: 1));
         Assert.True(first.IsSuccess, first.Error?.ToString());
         Assert.NotNull(first.Value!.ResultCursor);
         var originalGeneration = first.Value.Generation;
@@ -241,7 +215,6 @@ public sealed class InspectAssemblyScannerTests
         var stale = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(
             target,
             MaxResults: 1,
-            MaxMembers: 20,
             Cursor: first.Value.ResultCursor));
 
         Assert.False(stale.IsSuccess);
@@ -290,12 +263,10 @@ public sealed class InspectAssemblyScannerTests
             MaxResults: 100));
 
         Assert.True(result.IsSuccess);
-        var text = result.Value!.FormattedText;
-        Assert.Contains("Assembly: `ManagedExeProbe`", text, StringComparison.Ordinal);
-        Assert.Contains("decompileRoot:", text, StringComparison.Ordinal);
-        Assert.DoesNotContain(assemblyPath, text, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Describe()", text, StringComparison.Ordinal);
-        Assert.Contains("Completeness: `complete`", text, StringComparison.Ordinal);
+        Assert.Equal("ManagedExeProbe", result.Value!.Identity!.Name);
+        Assert.NotNull(result.Value.DecompiledSourceRoot);
+        Assert.Contains("Describe", result.Value.Types.SelectMany(type => type.Members).Select(member => member.Name));
+        Assert.Equal("complete", result.Value.Completeness);
     }
 
     [Fact]
@@ -334,13 +305,13 @@ public sealed class InspectAssemblyScannerTests
             MaxResults: 100));
 
         Assert.True(result.IsSuccess);
-        var text = result.Value!.FormattedText;
-        Assert.Contains("Public Namespaces: 12", text, StringComparison.Ordinal);
-        Assert.Contains("Top 10 Namespaces and 2 more", text, StringComparison.Ordinal);
+        Assert.Equal(12, result.Value!.TotalNamespaces);
+        Assert.Equal(11, result.Value.Namespaces.Count);
+        Assert.Contains("Top 10 Namespaces and", result.Value.Namespaces[^1], StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task InspectAssembly_MaxMembersLimitingTruncatesOutput()
+    public async Task InspectAssembly_ReturnsAllKnownMembersWithoutDroppingThem()
     {
         using var temp = TestTempDirectory.Create("assembly-inspect-maxmembers-");
         var assemblyPath = AssemblyTestHelper.EmitAssembly(temp, "MembersProbe", """
@@ -359,12 +330,66 @@ public sealed class InspectAssemblyScannerTests
             assemblyPath,
             TypeName: "ManyMembers",
             PublicOnly: true,
-            MaxResults: 100,
-            MaxMembers: 2));
+            MaxResults: 100));
 
         Assert.True(result.IsSuccess);
-        var text = result.Value!.FormattedText;
-        Assert.Contains("Members 2 of 5 shown (truncated: maxMembers)", text, StringComparison.Ordinal);
+        var type = Assert.Single(result.Value!.Types);
+        Assert.Equal(5, type.Members.Count);
+    }
+
+    [Fact]
+    public async Task InspectAssembly_ResultCursorPagesTypesThenEveryReferenceExactlyOnce()
+    {
+        using var temp = TestTempDirectory.Create("assembly-inspect-reference-pages-");
+        const int dependencyCount = 36;
+        var dependencies = Enumerable.Range(0, dependencyCount)
+            .Select(index => AssemblyTestHelper.EmitAssembly(
+                temp,
+                $"ReferencePagesDependency{index:D2}",
+                $"namespace Probe.Reference; public sealed class Dependency{index:D2} {{ }}"))
+            .ToArray();
+        var fields = string.Join(Environment.NewLine, Enumerable.Range(0, dependencyCount)
+            .Select(index => $"public Probe.Reference.Dependency{index:D2}? Dependency{index:D2};"));
+        var target = AssemblyTestHelper.EmitAssembly(
+            temp,
+            "ReferencePagesProbe",
+            $"namespace Probe; public sealed class Target {{ {fields} }}",
+            dependencies);
+        const int pageSize = 7;
+        var first = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(
+            target, MaxResults: pageSize, IncludeReferences: true));
+        Assert.True(first.IsSuccess, first.Error?.ToString());
+        Assert.Single(first.Value!.Types);
+        Assert.Equal(pageSize - 1, first.Value.References.Count);
+        var broad = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(
+            target, MaxResults: 1_000, IncludeReferences: true));
+        Assert.True(broad.IsSuccess, broad.Error?.ToString());
+        Assert.Null(broad.Value!.ResultCursor);
+
+        var allTypes = first.Value.Types.Select(type => type.Name).ToList();
+        var allReferences = first.Value.References.ToList();
+        var cursor = first.Value.ResultCursor;
+        while (cursor is not null)
+        {
+            var page = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(
+                target, MaxResults: pageSize, IncludeReferences: true, Cursor: cursor));
+            Assert.True(page.IsSuccess, page.Error?.ToString());
+            allTypes.AddRange(page.Value!.Types.Select(type => type.Name));
+            allReferences.AddRange(page.Value.References);
+            cursor = page.Value.ResultCursor;
+        }
+
+        Assert.Equal(first.Value.TotalTypes, allTypes.Count);
+        var expectedReferences = Enumerable.Range(0, dependencyCount)
+            .Select(index => $"ReferencePagesDependency{index:D2}")
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        Assert.True(first.Value.ReferenceSummary!.TotalReferenceCount > 32);
+        Assert.All(expectedReferences, expected => Assert.Contains(allReferences, reference => reference.Name == expected));
+        Assert.Equal(first.Value.ReferenceSummary.TotalReferenceCount, allReferences.Count);
+        Assert.Equal(
+            broad.Value.References.Select(reference => (reference.Depth, reference.Name, reference.ResolvedPath)),
+            allReferences.Select(reference => (reference.Depth, reference.Name, reference.ResolvedPath)));
     }
 
     [Fact]
@@ -419,12 +444,13 @@ public sealed class InspectAssemblyScannerTests
             public sealed class AnyType { }
             """);
 
-        // When TypeName is specified, IncludeReferences defaults to false
+        // Reference details remain excluded by default, including with a type filter.
         var withoutRefs = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(
             assemblyPath,
             TypeName: "AnyType"));
         Assert.True(withoutRefs.IsSuccess);
-        Assert.Contains("- Reference details not requested", withoutRefs.Value!.FormattedText, StringComparison.Ordinal);
+        Assert.False(withoutRefs.Value!.ReferenceDetailsIncluded);
+        Assert.Empty(withoutRefs.Value.References);
 
         // When IncludeReferences is explicitly true
         var withRefs = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(
@@ -432,7 +458,7 @@ public sealed class InspectAssemblyScannerTests
             TypeName: "AnyType",
             IncludeReferences: true));
         Assert.True(withRefs.IsSuccess);
-        Assert.DoesNotContain("- Reference details not requested", withRefs.Value!.FormattedText, StringComparison.Ordinal);
+        Assert.True(withRefs.Value!.ReferenceDetailsIncluded);
         Assert.NotEmpty(withRefs.Value!.References);
     }
 }

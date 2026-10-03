@@ -27,9 +27,8 @@ public sealed record AssemblyContextPayload(
 public sealed record AssemblySearchRequest(
     string AssemblyPath,
     string? Query = null,
-    string SearchKind = "text",
     bool CaseSensitive = false,
-    bool? UseRegex = null,
+    bool UseRegex = false,
     string? FileFilter = null,
     bool DeclarationOnly = false,
     int ContextLines = 0,
@@ -49,7 +48,6 @@ public sealed record AssemblySearchHit(
 
 public sealed record AssemblySearchPayload(
     string AssemblyPath,
-    string SearchKind,
     string Query,
     IReadOnlyList<AssemblySearchHit> Results,
     int TotalCount,
@@ -65,7 +63,8 @@ public sealed record FindAssemblyExtensionsRequest(
     string? ExtensionName = null,
     string? Namespace = null,
     bool IncludeReferences = false,
-    int MaxResults = 100);
+    int MaxResults = 100,
+    string? Cursor = null);
 
 public sealed record AssemblyExtensionDto(
     string Namespace,
@@ -74,7 +73,10 @@ public sealed record AssemblyExtensionDto(
     string Signature,
     string ReceiverType,
     string ReturnType,
-    string AssemblyName);
+    string AssemblyName,
+    [property: JsonIgnore] string? SymbolId = null,
+    string? HandoffId = null,
+    string? OwnerTargetPath = null);
 
 public sealed record FindAssemblyExtensionsPayload(
     string AssemblyPath,
@@ -82,7 +84,8 @@ public sealed record FindAssemblyExtensionsPayload(
     int TotalCount,
     bool Truncated,
     IReadOnlyList<string> Diagnostics,
-    NavigationAnalysisMetadata? Analysis = null);
+    NavigationAnalysisMetadata? Analysis = null,
+    [property: JsonPropertyName("resultCursor")] string? ResultCursor = null);
 
 public sealed record ResolveTypeOriginRequest(
     string AssemblyPath,

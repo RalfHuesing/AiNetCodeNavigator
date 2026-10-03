@@ -44,7 +44,7 @@ public sealed class AssemblyNavigationScannerTests
     }
 
     [Fact]
-    public async Task Search_SupportsTextExternalCallsAndDataAccessWithResultBounds()
+    public async Task Search_UsesExplicitLiteralAndRegexModesWithResultBounds()
     {
         using var temp = TestTempDirectory.Create("assembly-search-");
         var path = AssemblyTestHelper.EmitAssembly(temp, "SearchProbe", """
@@ -53,6 +53,7 @@ public sealed class AssemblyNavigationScannerTests
             {
                 public string NeedleValue = "needle";
                 public const string NetworkMarker = "HttpClient";
+                // HttpClient in a comment is still an ordinary text hit.
                 public void Run() { NeedleValue.Trim(); }
                 public void ReadOne() { ExecuteReader(); }
                 public void ReadTwo() { ExecuteReader(); }
@@ -60,20 +61,28 @@ public sealed class AssemblyNavigationScannerTests
             }
             """);
 
-        var text = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "NeedleValue", SearchKind: "text"));
-        var external = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, SearchKind: "external_calls"));
-        var data = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, SearchKind: "data_access", MaxResults: 1));
-        var declaration = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "ExecuteReader", SearchKind: "data_access", DeclarationOnly: true));
+        var text = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "NeedleValue"));
+        var literal = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "ReadOne|ReadTwo"));
+        var regex = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "ReadOne|ReadTwo", UseRegex: true));
+        var boundedRegex = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "ReadOne|ReadTwo", UseRegex: true, MaxResults: 1));
+        var textHit = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "HttpClient"));
+        var declaration = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "ExecuteReader", DeclarationOnly: true));
         var invalidRegex = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "(", UseRegex: true));
 
         Assert.True(text.IsSuccess);
         Assert.Contains(text.Value!.Results, hit => hit.Text.Contains("NeedleValue", StringComparison.Ordinal));
-        Assert.True(external.IsSuccess);
-        Assert.Contains(external.Value!.Results, hit => hit.Text.Contains("HttpClient", StringComparison.Ordinal));
-        Assert.True(data.IsSuccess);
-        Assert.Single(data.Value!.Results);
-        Assert.True(data.Value.Truncated);
-        Assert.True(data.Value.TotalCount > data.Value.Results.Count);
+        Assert.True(literal.IsSuccess);
+        Assert.Empty(literal.Value!.Results);
+        Assert.True(regex.IsSuccess);
+        Assert.Equal(2, regex.Value!.Results.Count);
+        Assert.False(regex.Value.Truncated);
+        Assert.True(boundedRegex.IsSuccess);
+        Assert.Single(boundedRegex.Value!.Results);
+        Assert.True(boundedRegex.Value.Truncated);
+        Assert.True(boundedRegex.Value.TotalCount > boundedRegex.Value.Results.Count);
+        Assert.True(textHit.IsSuccess);
+        Assert.Contains(textHit.Value!.Results, hit => hit.Text.Contains("HttpClient", StringComparison.Ordinal));
+        Assert.All(textHit.Value.Results.Where(hit => hit.Text.Contains("HttpClient", StringComparison.Ordinal)), hit => Assert.Null(hit.HandoffId));
         Assert.True(declaration.IsSuccess);
         Assert.Single(declaration.Value!.Results);
         Assert.Contains("ExecuteReader", declaration.Value.Results[0].Text, StringComparison.Ordinal);
@@ -82,7 +91,7 @@ public sealed class AssemblyNavigationScannerTests
     }
 
     [Fact]
-    public async Task Search_AutoDetectsRegexAndAppliesFileAndDeclarationKindFilters()
+    public async Task Search_UsesExplicitRegexAndAppliesFileAndDeclarationKindFilters()
     {
         using var temp = TestTempDirectory.Create("assembly-search-filters-");
         var path = AssemblyTestHelper.EmitAssembly(temp, "SearchFilterProbe", """
@@ -98,6 +107,7 @@ public sealed class AssemblyNavigationScannerTests
         var result = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(
             path,
             Query: "Searchable|Missing",
+            UseRegex: true,
             FileFilter: "^.*$",
             MaxResults: 50,
             Kind: "type"));
@@ -113,9 +123,12 @@ public sealed class AssemblyNavigationScannerTests
         var methodHit = Assert.Single(methodHeader.Value!.Results);
         Assert.Equal("Run", methodHit.Symbol);
 
-        var wildcard = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, Query: "Searchable[*"));
-        Assert.True(wildcard.IsSuccess, wildcard.Error?.ToString());
-        Assert.Contains(wildcard.Value!.Results, match => match.Text.Contains("Searchable[", StringComparison.Ordinal));
+        var literal = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, Query: "Searchable[*"));
+        Assert.True(literal.IsSuccess, literal.Error?.ToString());
+        Assert.Empty(literal.Value!.Results);
+        var regex = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, Query: "Searchable\\[", UseRegex: true));
+        Assert.True(regex.IsSuccess, regex.Error?.ToString());
+        Assert.Contains(regex.Value!.Results, match => match.Text.Contains("Searchable[", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -241,7 +254,7 @@ public sealed class AssemblyNavigationScannerTests
     }
 
     [Fact]
-    public async Task Extensions_FindsMatchingReceiverAndHonorsLimit()
+    public async Task Extensions_FindsMatchingReceiverAndPagesEveryOwnerHandle()
     {
         using var temp = TestTempDirectory.Create("assembly-extensions-");
         var path = AssemblyTestHelper.EmitAssembly(temp, "ExtensionProbe", """
@@ -253,13 +266,51 @@ public sealed class AssemblyNavigationScannerTests
             }
             """);
 
-        var result = await FindAssemblyExtensionsScanner.FindAsync(new FindAssemblyExtensionsRequest(
+        var first = await FindAssemblyExtensionsScanner.FindAsync(new FindAssemblyExtensionsRequest(
             path, ReceiverType: "string", MaxResults: 1));
 
-        Assert.True(result.IsSuccess);
-        Assert.Single(result.Value!.Extensions);
-        Assert.True(result.Value.TotalCount >= 2);
-        Assert.True(result.Value.Truncated);
+        Assert.True(first.IsSuccess);
+        var firstItem = Assert.Single(first.Value!.Extensions);
+        Assert.StartsWith("h:", firstItem.HandoffId, StringComparison.Ordinal);
+        Assert.Equal(Path.GetFullPath(path), firstItem.OwnerTargetPath);
+        Assert.NotNull(first.Value.ResultCursor);
+
+        var next = await FindAssemblyExtensionsScanner.FindAsync(new FindAssemblyExtensionsRequest(
+            path, ReceiverType: "string", MaxResults: 1, Cursor: first.Value.ResultCursor));
+        Assert.True(next.IsSuccess, next.Error?.ToString());
+        var secondItem = Assert.Single(next.Value!.Extensions);
+        Assert.Null(next.Value.ResultCursor);
+        Assert.Equal(first.Value.TotalCount, next.Value.TotalCount);
+        Assert.Equal(2, first.Value.TotalCount);
+        Assert.NotEqual(firstItem.Signature, secondItem.Signature);
+        Assert.All(next.Value.Extensions, item => Assert.Equal(Path.GetFullPath(path), item.OwnerTargetPath));
+
+        var body = await AssemblySymbolBodyScanner.GetAsync(firstItem.HandoffId!);
+        Assert.Null(body.Error);
+        Assert.Contains(firstItem.Name, body.Body!.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Extensions_ResultCursorRejectsChangedReferencedOwnerSnapshot()
+    {
+        using var temp = TestTempDirectory.Create("assembly-extensions-reference-cursor-");
+        var owner = AssemblyTestHelper.EmitAssembly(temp, "ExtensionsOwner", "namespace Probe.Extensions; public static class NumberExtensions { public static int Twice(this int value) => value * 2; public static int Thrice(this int value) => value * 3; }");
+        var root = AssemblyTestHelper.EmitAssembly(temp, "ExtensionsRoot", "using Probe.Extensions; namespace Probe.Root; public sealed class Root { public int Call() => 1.Twice(); }", owner);
+
+        var first = await FindAssemblyExtensionsScanner.FindAsync(new FindAssemblyExtensionsRequest(
+            root, ReceiverType: "System.Int32", IncludeReferences: true, MaxResults: 1));
+        Assert.True(first.IsSuccess, first.Error?.ToString());
+        Assert.NotNull(first.Value!.ResultCursor);
+        Assert.Contains(first.Value.Extensions, extension => string.Equals(extension.OwnerTargetPath, Path.GetFullPath(owner), StringComparison.OrdinalIgnoreCase));
+
+        using var replacementTemp = TestTempDirectory.Create("assembly-extensions-reference-cursor-replacement-");
+        var replacement = AssemblyTestHelper.EmitAssembly(replacementTemp, "ExtensionsOwner", "namespace Probe.Extensions; public static class NumberExtensions { public static int Twice(this int value) => value * 2; public static int Thrice(this int value) => value * 3; public static int FourTimes(this int value) => value * 4; }");
+        File.Copy(replacement, owner, overwrite: true);
+
+        var stale = await FindAssemblyExtensionsScanner.FindAsync(new FindAssemblyExtensionsRequest(
+            root, ReceiverType: "System.Int32", IncludeReferences: true, MaxResults: 1, Cursor: first.Value.ResultCursor));
+        Assert.False(stale.IsSuccess);
+        Assert.Equal(AiNetCodeNavigator.Core.Workspace.NavigationErrorCodes.StaleSnapshot, stale.Error!.Value.Code);
     }
 
     [Fact]
@@ -396,7 +447,7 @@ public sealed class AssemblyNavigationScannerTests
         var originalBytes = await File.ReadAllBytesAsync(path);
 
         var context = AssemblyContextScanner.GetAsync(new AssemblyContextRequest(path));
-        var search = AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "Read", SearchKind: "text"));
+        var search = AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(path, "Read"));
         var extensions = FindAssemblyExtensionsScanner.FindAsync(new FindAssemblyExtensionsRequest(path, "string"));
         var origin = ResolveTypeOriginScanner.ResolveAsync(new ResolveTypeOriginRequest(path, "Probe.Concurrent.Target"));
         await Task.WhenAll(context, search, extensions, origin);
@@ -496,5 +547,7 @@ public sealed class AssemblyNavigationScannerTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             AssemblyContextScanner.GetAsync(new AssemblyContextRequest(path), cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            FindAssemblyExtensionsScanner.FindAsync(new FindAssemblyExtensionsRequest(path), cancellation.Token));
     }
 }

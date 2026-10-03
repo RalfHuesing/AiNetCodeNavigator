@@ -33,10 +33,12 @@ public sealed class AssemblySymbolHandoffResolverTests
         var member = Assert.Single(type.Members.Where(item => item.Name == "Read"));
         Assert.Equal(["get_symbol_body"], type.AllowedFollowUpTools);
         Assert.Equal(["get_symbol_body"], member.AllowedFollowUpTools);
-        var typeHandle = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(type.Id!);
-        var memberHandle = HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(member.Id!);
-        Assert.Contains($"handoffId: `{typeHandle}`", inspected.Value.FormattedText, StringComparison.Ordinal);
-        Assert.Contains($"handoffId: `{memberHandle}`", inspected.Value.FormattedText, StringComparison.Ordinal);
+        var typeHandle = type.HandoffId!;
+        var memberHandle = member.HandoffId!;
+        Assert.StartsWith("h:", typeHandle, StringComparison.Ordinal);
+        Assert.StartsWith("h:", memberHandle, StringComparison.Ordinal);
+        Assert.Equal(Path.GetFullPath(path), type.OwnerTargetPath);
+        Assert.Equal(Path.GetFullPath(path), member.OwnerTargetPath);
 
         var scopeResult = await AssemblyNavigationSessionScope.OpenAsync(path, default);
         Assert.True(scopeResult.IsSuccess, scopeResult.Error?.ToString());

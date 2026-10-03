@@ -29,12 +29,6 @@ public static class AssemblySearchScanner
     public const int MaxFiles = 2000;
     public const int MaxContextLines = 5;
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(250);
-    private static readonly IReadOnlyDictionary<string, string> BuiltInPatterns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-    {
-        ["data_access"] = @"\b(DbContext|DbSet|IDbConnection|DbCommand|SqlConnection|NpgsqlConnection|MySqlConnection|SqliteConnection|Execute(?:Reader|NonQuery|Scalar|Sql|SqlRaw|Interpolated|Async)?|FromSql(?:Raw|Interpolated)?|SaveChanges(?:Async)?|BeginTransaction(?:Async)?|TransactionScope|Dapper|DataContext|SELECT\s+.*?\s+FROM|INSERT\s+INTO|UPDATE\s+.*?\s+SET|DELETE\s+FROM|EXEC(?:UTE)?\s+[a-zA-Z0-9_#]+|File\.(?:Read|Write|Open)\w*|Directory\.\w+)\b",
-        ["external_calls"] = @"\b(HttpClient|HttpRequestMessage|WebClient|RestClient|GrpcChannel|ChannelBase|Socket|TcpClient|Process\.Start|Assembly\.Load)\b",
-    };
-
     public static Task<Result<AssemblySearchPayload>> SearchAsync(
         AssemblySearchRequest request,
         CancellationToken cancellationToken = default) =>
@@ -47,19 +41,9 @@ public static class AssemblySearchScanner
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(handoffRegistry);
-        var kind = string.IsNullOrWhiteSpace(request.SearchKind)
-            ? "text"
-            : request.SearchKind.Trim().ToLowerInvariant();
-        if (kind is not ("text" or "external_calls" or "data_access"))
+        if (string.IsNullOrWhiteSpace(request.Query))
         {
-            return Result<AssemblySearchPayload>.Failure(
-                NavigationErrorCodes.InvalidArgument,
-                "searchKind must be text, external_calls, or data_access.");
-        }
-
-        if (kind == "text" && string.IsNullOrWhiteSpace(request.Query))
-        {
-            return Result<AssemblySearchPayload>.Failure(NavigationErrorCodes.InvalidArgument, "query must not be empty for text search.");
+            return Result<AssemblySearchPayload>.Failure(NavigationErrorCodes.InvalidArgument, "query must not be empty.");
         }
 
         if (request.ContextLines < 0)
@@ -73,7 +57,7 @@ public static class AssemblySearchScanner
         if (request.MaxFiles < 0)
             return Result<AssemblySearchPayload>.Failure(NavigationErrorCodes.InvalidArgument, "maxFiles must be zero or greater.");
 
-        var pattern = string.IsNullOrWhiteSpace(request.Query) ? BuiltInPatterns[kind] : request.Query;
+        var pattern = request.Query;
         var qualifiedTypeName = TryGetQualifiedTypeName(pattern, request) ? pattern.Trim() : null;
         var searchPattern = qualifiedTypeName is null ? pattern : pattern[(pattern.LastIndexOf('.') + 1)..];
         var opened = await AssemblyNavigationSessionScope.OpenAsync(request.AssemblyPath, cancellationToken).ConfigureAwait(false);
@@ -116,22 +100,9 @@ public static class AssemblySearchScanner
         var limit = InspectAssemblyScanner.NormalizeLimit(request.MaxResults, DefaultMaxResults, MaxResults);
         var contextLineLimit = Math.Clamp(request.ContextLines, 0, MaxContextLines);
         var declarationOnly = request.DeclarationOnly || !string.IsNullOrWhiteSpace(request.Kind);
-        var initialRegex = qualifiedTypeName is not null
-            ? false
-            : string.IsNullOrWhiteSpace(request.Query) || (request.UseRegex ?? RegexAutoDetector.IsLikelyRegex(searchPattern));
+        var initialRegex = qualifiedTypeName is null && request.UseRegex;
         var scan = await ScanAsync(initialRegex).ConfigureAwait(false);
         if (scan.Error is not null) return Result<AssemblySearchPayload>.Failure(scan.Error.Value);
-        if (qualifiedTypeName is null && request.UseRegex is null && !string.IsNullOrWhiteSpace(request.Query) && !initialRegex
-            && scan.TotalCount == 0 && RegexAutoDetector.HasRegexMetaCharacters(searchPattern)
-            && (RegexAutoDetector.IsValidRegex(searchPattern, out _) || searchPattern.Contains('*') || searchPattern.Contains('?')))
-        {
-            var promotedPattern = RegexAutoDetector.IsValidRegex(searchPattern, out _)
-                ? searchPattern
-                : RegexAutoDetector.ConvertWildcardToRegex(searchPattern);
-            var promoted = await ScanAsync(useRegex: true, promotedPattern).ConfigureAwait(false);
-            if (promoted.Error is not null) return Result<AssemblySearchPayload>.Failure(promoted.Error.Value);
-            if (promoted.TotalCount > 0) scan = promoted;
-        }
         if (request.Cursor is not null && offset >= scan.TotalCount)
             return Result<AssemblySearchPayload>.Failure(NavigationErrorCodes.StaleSnapshot,
                 "resultCursor is beyond the remaining search results.",
@@ -194,6 +165,10 @@ public static class AssemblySearchScanner
 
         var truncatedBy = new List<string>(2);
         if (request.MaxFiles > 0 && scan.HitFileCount > maxFiles) truncatedBy.Add("maxFiles");
+        var incompleteRelationships = context.References.Any(reference => !reference.Resolved
+            || reference.ResolutionState is "depth_limit" or "invalid")
+            || context.Status is AssemblySessionStatus.Partial or AssemblySessionStatus.Degraded;
+        if (incompleteRelationships) truncatedBy.Add("incompleteRelationships");
         var pageResults = scan.Results.Skip(offset).Take(limit).Select(candidate =>
         {
             if (request.Kind is not ("type" or "method") || candidate.DeclaredSymbol is null)
@@ -214,7 +189,6 @@ public static class AssemblySearchScanner
         var resultCursor = hasMorePages ? AssemblyPaging.CreateToken(offset + pageResults.Count, binding) : null;
         return Result<AssemblySearchPayload>.Success(new AssemblySearchPayload(
             context.Origin.CanonicalPath,
-            kind,
             string.IsNullOrWhiteSpace(request.Query) ? pattern : request.Query,
             pageResults,
             scan.TotalCount,
@@ -224,9 +198,9 @@ public static class AssemblySearchScanner
             resultCursor,
             new NavigationAnalysisMetadata(
                 NavigationAnalysisMetadata.CreateSnapshotId("assembly", handoffIdentity.ContentHash),
-                $"search(kind={kind}, query={request.Query ?? request.SearchKind}, fileFilter={request.FileFilter ?? "*"}, declarationOnly={declarationOnly}, kindFilter={request.Kind ?? "*"}, maxFiles={maxFiles}, maxResults={limit})",
-                truncatedBy.Where(static reason => reason != "maxResults").ToArray(),
-                truncatedBy.Contains("maxFiles", StringComparer.Ordinal) ? "partial" : "complete",
+                $"search(regex={request.UseRegex},file={request.FileFilter ?? "*"},decl={declarationOnly},kind={request.Kind ?? "*"},files={maxFiles},page={limit})",
+                truncatedBy.Where(static reason => reason is "maxFiles" or "incompleteRelationships").ToArray(),
+                truncatedBy.Any(static reason => reason is "maxFiles" or "incompleteRelationships") ? "partial" : "complete",
                 hasMorePages)));
     }
 

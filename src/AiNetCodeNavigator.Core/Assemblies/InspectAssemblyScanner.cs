@@ -18,8 +18,6 @@ public static class InspectAssemblyScanner
 {
     public const int DefaultMaxResults = 100;
     public const int MaxResults = 1000;
-    public const int DefaultMaxMembers = 100;
-    public const int MaxMembers = 1000;
 
     public static async Task<Result<InspectAssemblyPayload>> InspectAsync(
         InspectAssemblyRequest request,
@@ -60,7 +58,11 @@ public static class InspectAssemblyScanner
         }
 
         var maxResults = NormalizeLimit(request.MaxResults, DefaultMaxResults, MaxResults);
-        var maxMembers = NormalizeLimit(request.MaxMembers, DefaultMaxMembers, MaxMembers);
+        var referencesInventory = request.IncludeReferences
+            ? context.References.OrderBy(reference => reference.Depth)
+                .ThenBy(reference => reference.Name, StringComparer.Ordinal)
+                .ThenBy(reference => reference.ResolvedPath, StringComparer.OrdinalIgnoreCase).ToList()
+            : [];
 
         var allTypes = AssemblyAnalysisSymbolTraversal.GetAllTypes(context.Assembly.GlobalNamespace)
             .Where(type => !request.PublicOnly || IsPublicApi(type))
@@ -70,7 +72,17 @@ public static class InspectAssemblyScanner
             .ThenBy(type => type.ToDisplayString(), StringComparer.Ordinal)
             .ToList();
 
-        var limitedTypes = allTypes.Skip(Math.Max(0, offset)).Take(maxResults).ToList();
+        var totalEntries = allTypes.Count + referencesInventory.Count;
+        if (request.Cursor is not null && offset >= totalEntries)
+            return Result<InspectAssemblyPayload>.Failure(NavigationErrorCodes.StaleSnapshot,
+                "resultCursor is beyond the inspection inventory.", "Use a resultCursor from a nonfinal inspection page.");
+        var typeOffset = Math.Min(offset, allTypes.Count);
+        var limitedTypes = allTypes.Skip(typeOffset).Take(maxResults).ToList();
+        var remainingPageSize = maxResults - limitedTypes.Count;
+        var referenceOffset = Math.Max(0, offset - allTypes.Count);
+        var references = remainingPageSize > 0 && request.IncludeReferences
+            ? referencesInventory.Skip(referenceOffset).Take(remainingPageSize).ToList()
+            : [];
         var handoffIdentity = AnalysisSymbolIdentity.ForAssembly(
             context.Origin.CanonicalPath,
             context.Origin.ContentHash,
@@ -78,7 +90,7 @@ public static class InspectAssemblyScanner
             context.ReferenceSnapshotHash);
 
         var typeDtos = limitedTypes
-            .Select(type => ToTypeDto(type, request, maxMembers, handoffIdentity))
+            .Select(type => ToTypeDto(type, request, handoffIdentity, context.Origin.CanonicalPath))
             .ToList();
 
         var namespaces = allTypes
@@ -88,25 +100,26 @@ public static class InspectAssemblyScanner
             .OrderBy(ns => ns, StringComparer.Ordinal)
             .ToList();
 
-        var isTruncated = Math.Max(0, offset) + limitedTypes.Count < allTypes.Count;
+        var nextOffset = offset + limitedTypes.Count + references.Count;
+        var isTruncated = nextOffset < totalEntries;
         var resultCursor = isTruncated
-            ? AssemblyPaging.CreateToken(Math.Max(0, offset) + limitedTypes.Count, binding)
+            ? AssemblyPaging.CreateToken(nextOffset, binding)
             : null;
 
         var includeReferences = request.IncludeReferenceDetails;
-        IReadOnlyList<AssemblyReferenceDto> references = includeReferences
-            ? context.References.Take(32).ToList()
-            : Array.Empty<AssemblyReferenceDto>();
-
         var referenceSummary = new AssemblyReferenceSummary(
             context.References.Count,
-            includeReferences ? Math.Min(context.References.Count, 32) : 0,
-            includeReferences ? context.References.Count > 32 : context.References.Count > 0);
+            includeReferences ? references.Count : 0,
+            includeReferences && referenceOffset + references.Count < referencesInventory.Count);
+        var incompleteRelationships = context.References.Any(reference => !reference.Resolved)
+            || context.Status is AssemblySessionStatus.Partial or AssemblySessionStatus.Degraded;
+        var analysisLimitations = new List<string>();
+        if (incompleteRelationships) analysisLimitations.Add("incompleteRelationships");
 
         var payload = new InspectAssemblyPayload(
             fullPath,
             context.Identity,
-            InspectAssemblyFormatter.CompactNamespaces(namespaces),
+            CompactNamespaces(namespaces),
             references,
             typeDtos,
             context.Diagnostics,
@@ -125,13 +138,12 @@ public static class InspectAssemblyScanner
             resultCursor,
             Analysis: new NavigationAnalysisMetadata(
                 NavigationAnalysisMetadata.CreateSnapshotId("assembly", handoffIdentity.ContentHash),
-                $"types(namespace={request.Namespace ?? "*"}, typeName={request.TypeName ?? "*"}, memberName={request.MemberName ?? "*"}, publicOnly={request.PublicOnly}, includeReferences={includeReferences}, maxResults={maxResults}, maxMembers={maxMembers})",
-                referenceSummary.ReferencesTruncated && includeReferences ? ["referenceDetailsLimit"] : [],
-                referenceSummary.ReferencesTruncated && includeReferences ? "partial" : "complete",
+                $"types(namespace={request.Namespace ?? "*"}, typeName={request.TypeName ?? "*"}, memberName={request.MemberName ?? "*"}, publicOnly={request.PublicOnly}, includeReferences={includeReferences}, maxResults={maxResults})",
+                analysisLimitations,
+                analysisLimitations.Count > 0 ? "partial" : "complete",
                 isTruncated));
 
-        var formattedText = InspectAssemblyFormatter.FormatText(payload, request.PublicOnly);
-        return Result<InspectAssemblyPayload>.Success(payload with { FormattedText = formattedText });
+        return Result<InspectAssemblyPayload>.Success(payload);
     }
 
     public static bool TryValidatePath(string? assemblyPath, out string fullPath, out string error)
@@ -180,11 +192,15 @@ public static class InspectAssemblyScanner
     public static int NormalizeLimit(int requested, int defaultValue, int maxValue) =>
         requested <= 0 ? defaultValue : Math.Clamp(requested, 1, maxValue);
 
+    private static IReadOnlyList<string> CompactNamespaces(IReadOnlyList<string> namespaces) => namespaces.Count <= 10
+        ? namespaces
+        : namespaces.Take(10).Append($"Top 10 Namespaces and {namespaces.Count - 10} more").ToArray();
+
     private static AssemblyTypeDto ToTypeDto(
         INamedTypeSymbol type,
         InspectAssemblyRequest request,
-        int maxMembers,
-        AnalysisSymbolIdentity handoffIdentity)
+        AnalysisSymbolIdentity handoffIdentity,
+        string ownerTargetPath)
     {
         var matchingMembers = type.GetMembers()
             .Where(member => !member.IsImplicitlyDeclared)
@@ -196,11 +212,9 @@ public static class InspectAssemblyScanner
             .ThenBy(member => member.Signature, StringComparer.Ordinal)
             .ToList();
 
-        var members = matchingMembers
-            .Take(maxMembers)
-            .ToList();
-
+        var members = matchingMembers;
         var stableId = StableId(type, handoffIdentity);
+        var handoffId = stableId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(stableId);
         return new AssemblyTypeDto(
             type.ContainingNamespace.ToDisplayString(),
             TypeName(type),
@@ -208,12 +222,11 @@ public static class InspectAssemblyScanner
             type.DeclaredAccessibility.ToString(),
             members,
             Attributes(type),
-            matchingMembers.Count,
-            members.Count < matchingMembers.Count,
-            members.Count < matchingMembers.Count ? ["maxMembers"] : [],
             stableId,
             Handoff: stableId is not null,
-            AllowedFollowUpTools: stableId is null ? Array.Empty<string>() : HandoffFollowUpTools.ForAssembly(type));
+            AllowedFollowUpTools: stableId is null ? Array.Empty<string>() : HandoffFollowUpTools.ForAssembly(type),
+            HandoffId: handoffId,
+            OwnerTargetPath: stableId is null ? null : ownerTargetPath);
     }
 
     private static AssemblyMemberDto ToMemberDto(ISymbol member, AnalysisSymbolIdentity handoffIdentity)
@@ -227,6 +240,7 @@ public static class InspectAssemblyScanner
         };
 
         var stableId = StableId(member, handoffIdentity);
+        var handoffId = stableId is null ? null : HandoffHandleRegistry.Default.GetOpaqueHandleForOutputOrThrow(stableId);
         return new AssemblyMemberDto(
             MemberKind(member),
             member.Name,
@@ -238,7 +252,9 @@ public static class InspectAssemblyScanner
             Attributes(member),
             stableId,
             Handoff: stableId is not null,
-            AllowedFollowUpTools: stableId is null ? Array.Empty<string>() : HandoffFollowUpTools.ForAssembly(member));
+            AllowedFollowUpTools: stableId is null ? Array.Empty<string>() : HandoffFollowUpTools.ForAssembly(member),
+            HandoffId: handoffId,
+            OwnerTargetPath: stableId is null ? null : handoffIdentity.CanonicalPath);
     }
 
     private static string? StableId(ISymbol symbol, AnalysisSymbolIdentity? handoffIdentity) =>

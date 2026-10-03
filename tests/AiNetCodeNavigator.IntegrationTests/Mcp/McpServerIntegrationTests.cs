@@ -47,13 +47,23 @@ public sealed class McpServerIntegrationTests
             AssertPropertyDescriptionContains(registered["find_symbol"], "kind", "record class", "record struct", "delegate");
             Assert.DoesNotContain("get_file_tree", registered.Keys);
             AssertPropertyDescriptionContains(registered["get_namespace_tree"], "kind", "all", "class", "interface", "record", "struct", "enum");
-            AssertPropertyDescriptionContains(registered["inspect_assembly"], "detailLevel", "compact", "standard", "full");
-            AssertPropertyDescriptionContains(registered["search_assembly"], "detailLevel", "compact", "standard", "full");
-            AssertPropertyDescriptionContains(registered["find_assembly_extensions"], "detailLevel", "compact", "standard", "full");
+            AssertPropertyDescriptionContains(registered["inspect_assembly"], "includeReferences", "false", "independently");
+            AssertPropertyDescriptionContains(registered["inspect_assembly"], "includeDiagnostics", "false", "detailed");
+            AssertPropertyDescriptionContains(registered["search_assembly"], "includeDiagnostics", "false", "detailed");
+            AssertPropertyDescriptionContains(registered["find_assembly_extensions"], "includeDiagnostics", "false", "detailed");
             AssertPropertyDescriptionContains(registered["get_assembly_context"], "detailLevel", "compact", "standard", "full");
-            AssertPropertyDescriptionContains(registered["inspect_assembly"], "includeReferences", "omitted", "typeName", "memberNames");
-            AssertPropertyDescriptionContains(registered["search_assembly"], "isRegex", "null", "false", "literal");
-            AssertPropertyDescriptionContains(registered["search_assembly"], "searchKind", "text", "external_calls", "data_access");
+            AssertPropertyDescriptionContains(registered["search_assembly"], "isRegex", "false", "literal", "true");
+            var inspectProperties = registered["inspect_assembly"].GetProperty("inputSchema").GetProperty("properties");
+            var searchProperties = registered["search_assembly"].GetProperty("inputSchema").GetProperty("properties");
+            var extensionProperties = registered["find_assembly_extensions"].GetProperty("inputSchema").GetProperty("properties");
+            Assert.False(inspectProperties.TryGetProperty("maxMembers", out _));
+            Assert.False(inspectProperties.TryGetProperty("detailLevel", out _));
+            Assert.False(searchProperties.TryGetProperty("searchKind", out _));
+            Assert.False(searchProperties.TryGetProperty("detailLevel", out _));
+            Assert.False(extensionProperties.TryGetProperty("detailLevel", out _));
+            foreach (var properties in new[] { inspectProperties, searchProperties, extensionProperties })
+                Assert.True(properties.TryGetProperty("includeDiagnostics", out _));
+            Assert.True(extensionProperties.TryGetProperty("resultCursor", out _));
 
             process.StandardInput.Close();
             await process.WaitForExitAsync(timeout.Token);
@@ -131,7 +141,7 @@ public sealed class McpServerIntegrationTests
             await SendRequestAsync(process, 6, "tools/call", new
             {
                 name = "inspect_assembly",
-                arguments = new { targetPath = assemblyPath, includeReferences = false, maxResults = 0, maxMembers = 0, maxResponseBytes = 0 },
+                arguments = new { targetPath = assemblyPath, includeReferences = false, maxResults = 0, maxResponseBytes = 0 },
             }, timeout.Token);
             var zeroInspect = await ReadResponseAsync(process, 6, timeout.Token);
             var zeroInspectText = GetFirstText(zeroInspect);
@@ -146,7 +156,7 @@ public sealed class McpServerIntegrationTests
             await SendRequestAsync(process, 3, "tools/call", new
             {
                 name = "search_assembly",
-                arguments = new { targetPath = assemblyPath, searchKind = "text", pattern = "Read", declarationOnly = true, kind = "method", isRegex = false },
+                arguments = new { targetPath = assemblyPath, pattern = "Read", declarationOnly = true, kind = "method", isRegex = false },
             }, timeout.Token);
             var search = await ReadResponseAsync(process, 3, timeout.Token);
             var searchText = GetFirstText(search);
@@ -157,7 +167,7 @@ public sealed class McpServerIntegrationTests
             await SendRequestAsync(process, 7, "tools/call", new
             {
                 name = "search_assembly",
-                arguments = new { targetPath = assemblyPath, searchKind = "text", pattern = "Read", declarationOnly = true, kind = "method", isRegex = false, maxResults = 0, maxFiles = 0, maxResponseBytes = 0 },
+                arguments = new { targetPath = assemblyPath, pattern = "Read", declarationOnly = true, kind = "method", isRegex = false, maxResults = 0, maxFiles = 0, maxResponseBytes = 0 },
             }, timeout.Token);
             var zeroSearch = await ReadResponseAsync(process, 7, timeout.Token);
             var zeroSearchText = GetFirstText(zeroSearch);
@@ -381,11 +391,11 @@ public sealed class McpServerIntegrationTests
 
             await SendRequestAsync(process, 103, "tools/call", new
             {
-                name = "inspect_assembly",
-                arguments = new { targetPath = GetHostAssemblyPath(repositoryRoot), detailLevel = "unsupported", maxResponseTokens = 1 },
+                name = "search_assembly",
+                arguments = new { targetPath = GetHostAssemblyPath(repositoryRoot), pattern = "(", isRegex = true, maxResponseTokens = 1 },
             }, timeout.Token);
-            var invalidAssemblyDetail = await ReadResponseAsync(process, 103, timeout.Token);
-            AssertTinyBudgetErrorIsSanitized(invalidAssemblyDetail);
+            var invalidAssemblyRegex = await ReadResponseAsync(process, 103, timeout.Token);
+            AssertTinyBudgetErrorIsSanitized(invalidAssemblyRegex);
 
             await SendRequestAsync(process, 105, "tools/call", new
             {
@@ -405,19 +415,19 @@ public sealed class McpServerIntegrationTests
 
             await SendRequestAsync(process, 107, "tools/call", new
             {
-                name = "inspect_assembly",
-                arguments = new { targetPath = GetHostAssemblyPath(repositoryRoot), detailLevel = "unsupported", maxResponseTokens = 16 },
+                name = "search_assembly",
+                arguments = new { targetPath = GetHostAssemblyPath(repositoryRoot), pattern = "(", isRegex = true, maxResponseTokens = 16 },
             }, timeout.Token);
-            var narrowInvalidAssemblyDetail = await ReadResponseAsync(process, 107, timeout.Token);
-            AssertTinyBudgetErrorIsSanitized(narrowInvalidAssemblyDetail);
+            var narrowInvalidAssemblyRegex = await ReadResponseAsync(process, 107, timeout.Token);
+            AssertTinyBudgetErrorIsSanitized(narrowInvalidAssemblyRegex);
 
             await SendRequestAsync(process, 108, "tools/call", new
             {
-                name = "inspect_assembly",
-                arguments = new { targetPath = GetHostAssemblyPath(repositoryRoot), detailLevel = "unsupported", maxResponseTokens = 32 },
+                name = "search_assembly",
+                arguments = new { targetPath = GetHostAssemblyPath(repositoryRoot), pattern = "(", isRegex = true, maxResponseTokens = 32 },
             }, timeout.Token);
-            var mediumInvalidAssemblyDetail = await ReadResponseAsync(process, 108, timeout.Token);
-            AssertTinyBudgetErrorIsSanitized(mediumInvalidAssemblyDetail);
+            var mediumInvalidAssemblyRegex = await ReadResponseAsync(process, 108, timeout.Token);
+            AssertTinyBudgetErrorIsSanitized(mediumInvalidAssemblyRegex);
 
             process.StandardInput.Close();
             await process.WaitForExitAsync(timeout.Token);
@@ -600,9 +610,9 @@ public sealed class McpServerIntegrationTests
                 ("dependency_graph", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath }, "INVALID_ARGUMENT"),
                 ("resolve_type_origin", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "", ["typeName"] = "" }, "INVALID_ARGUMENT"),
                 ("get_assembly_context", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown", ["detailLevel"] = "unsupported" }, "INVALID_ARGUMENT"),
-                ("inspect_assembly", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["detailLevel"] = "unsupported" }, "INVALID_ARGUMENT"),
-                ("search_assembly", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["pattern"] = "Counter", ["searchKind"] = "unsupported" }, "INVALID_ARGUMENT"),
-                ("find_assembly_extensions", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["detailLevel"] = "unsupported" }, "INVALID_ARGUMENT"),
+                ("inspect_assembly", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["maxResults"] = -1 }, "INVALID_ARGUMENT"),
+                ("search_assembly", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["pattern"] = null }, "INVALID_ARGUMENT"),
+                ("find_assembly_extensions", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["maxResults"] = -1 }, "INVALID_ARGUMENT"),
                 ("get_feature_context", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "" }, "INVALID_ARGUMENT"),
                 ("get_test_context", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "" }, "INVALID_ARGUMENT"),
             };
@@ -985,7 +995,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             await SendRequestAsync(process, 17, "tools/call", new
             {
                 name = "inspect_assembly",
-                arguments = new { targetPath = fixtureAssemblyPath, typeName = "NavigationFixture.Counter", exactTypeName = true, maxResults = 1000, maxMembers = 20, maxResponseBytes = 512 },
+                arguments = new { targetPath = fixtureAssemblyPath, typeName = "NavigationFixture.Counter", exactTypeName = true, maxResults = 1000, maxResponseBytes = 512 },
             }, timeout.Token);
             var assemblyInspection = await ReadResponseAsync(process, 17, timeout.Token);
             var inspectionText = GetFirstText(assemblyInspection);
@@ -1004,7 +1014,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                     await SendRequestAsync(process, pageRequestId++, "tools/call", new
                     {
                         name = "inspect_assembly",
-                        arguments = new { targetPath = fixtureAssemblyPath, typeName = "NavigationFixture.Counter", exactTypeName = true, maxResults = 1000, maxMembers = 20, maxResponseBytes = pageBudget, continuationToken = pageToken },
+                        arguments = new { targetPath = fixtureAssemblyPath, typeName = "NavigationFixture.Counter", exactTypeName = true, maxResults = 1000, maxResponseBytes = pageBudget, continuationToken = pageToken },
                     }, timeout.Token);
                     page = await ReadResponseAsync(process, pageRequestId - 1, timeout.Token);
                     if (!page.GetProperty("result").GetProperty("isError").GetBoolean()) break;
@@ -1026,7 +1036,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             await SendRequestAsync(process, 50, "tools/call", new
             {
                 name = "inspect_assembly",
-                arguments = new { targetPath = fixtureAssemblyPath, maxResults = 1, maxMembers = 20, includeReferences = false },
+                arguments = new { targetPath = fixtureAssemblyPath, maxResults = 1, includeReferences = false },
             }, timeout.Token);
             var firstDomainPage = await ReadResponseAsync(process, 50, timeout.Token);
             var firstDomainText = GetFirstText(firstDomainPage);
@@ -1040,7 +1050,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             var domainNames = new List<string>();
             var domainIds = new List<string>();
             domainNames.AddRange(firstDomainJson.GetProperty("types").EnumerateArray().Select(type => type.GetProperty("name").GetString()!));
-            domainIds.AddRange(firstDomainJson.GetProperty("types").EnumerateArray().Select(type => type.GetProperty("id").GetString()!));
+            domainIds.AddRange(firstDomainJson.GetProperty("types").EnumerateArray().Select(type => type.GetProperty("handoffId").GetString()!));
             var expectedDomainTypeCount = firstDomainJson.GetProperty("totalTypes").GetInt32();
             var finalDomainText = firstDomainText;
             var domainPageCount = 0;
@@ -1049,7 +1059,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                 await SendRequestAsync(process, 51 + domainPageCount, "tools/call", new
                 {
                     name = "inspect_assembly",
-                    arguments = new { targetPath = fixtureAssemblyPath, maxResults = 1, maxMembers = 20, includeReferences = false, resultCursor = domainCursor },
+                    arguments = new { targetPath = fixtureAssemblyPath, maxResults = 1, includeReferences = false, resultCursor = domainCursor },
                 }, timeout.Token);
                 var domainPage = await ReadResponseAsync(process, 51 + domainPageCount, timeout.Token);
                 var domainText = GetFirstText(domainPage);
@@ -1057,7 +1067,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                 finalDomainText = domainText;
                 var payload = ParsePayload(domainText);
                 domainNames.AddRange(payload.GetProperty("types").EnumerateArray().Select(type => type.GetProperty("name").GetString()!));
-                domainIds.AddRange(payload.GetProperty("types").EnumerateArray().Select(type => type.GetProperty("id").GetString()!));
+                domainIds.AddRange(payload.GetProperty("types").EnumerateArray().Select(type => type.GetProperty("handoffId").GetString()!));
                 domainCursor = payload.TryGetProperty("resultCursor", out var nextCursor)
                     && nextCursor.ValueKind != JsonValueKind.Null
                     ? nextCursor.GetString()
@@ -1076,23 +1086,23 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             await SendRequestAsync(process, 70, "tools/call", new
             {
                 name = "inspect_assembly",
-                arguments = new { targetPath = fixtureAssemblyPath, maxResults = 1, maxMembers = 20, includeReferences = false, resultCursor = firstDomainJson.GetProperty("resultCursor").GetString() },
+                arguments = new { targetPath = fixtureAssemblyPath, maxResults = 1, includeReferences = false, resultCursor = firstDomainJson.GetProperty("resultCursor").GetString() },
             }, timeout.Token);
             var replayedDomainPage = await ReadResponseAsync(process, 70, timeout.Token);
             Assert.False(replayedDomainPage.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(replayedDomainPage));
             var replayedDomainPayload = ParsePayload(GetFirstText(replayedDomainPage));
             Assert.Contains("Status: operation=ok, completeness=truncated", GetFirstText(replayedDomainPage), StringComparison.Ordinal);
             Assert.Equal(domainNames[1], replayedDomainPayload.GetProperty("types")[0].GetProperty("name").GetString());
-            Assert.Equal(domainIds[1], replayedDomainPayload.GetProperty("types")[0].GetProperty("id").GetString());
+            Assert.Equal(domainIds[1], replayedDomainPayload.GetProperty("types")[0].GetProperty("handoffId").GetString());
 
             await SendRequestAsync(process, 71, "tools/call", new
             {
                 name = "inspect_assembly",
-                arguments = new { targetPath = fixtureAssemblyPath, maxResults = 2, maxMembers = 20, includeReferences = false, resultCursor = firstDomainJson.GetProperty("resultCursor").GetString() },
+                arguments = new { targetPath = fixtureAssemblyPath, maxResults = 2, includeReferences = false, resultCursor = firstDomainJson.GetProperty("resultCursor").GetString() },
             }, timeout.Token);
             var mismatchedDomainPage = await ReadResponseAsync(process, 71, timeout.Token);
             Assert.True(mismatchedDomainPage.GetProperty("result").GetProperty("isError").GetBoolean());
-            Assert.Contains("INVALID_ARGUMENT", GetFirstText(mismatchedDomainPage), StringComparison.Ordinal);
+            Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", GetFirstText(mismatchedDomainPage), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 19, "tools/call", new { name = "get_assembly_context", arguments = new { targetPath = fixtureAssemblyPath, symbolIdentifier = assemblyHandle, includeBody = true, maxResults = 10 } }, timeout.Token);
             var assemblyContext = await ReadResponseAsync(process, 19, timeout.Token);

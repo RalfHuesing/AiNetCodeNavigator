@@ -1,10 +1,10 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Linq;
 using System.Collections.Generic;
 using System.Security.Cryptography;
-using System.Text;
 using AiNetCodeNavigator.Core.Common;
 using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Core.Symbols;
@@ -23,6 +23,12 @@ internal static class NavigationToolSupport
         WriteIndented = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
+    private static readonly JsonSerializerOptions CompactJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = false,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
 
     internal static CallToolResult Success(object payload, bool domainTruncated = false, string? nextAction = null)
     {
@@ -30,6 +36,59 @@ internal static class NavigationToolSupport
         return domainTruncated
             ? McpToolResults.DomainTruncated(text, nextAction ?? "Increase a supported result or traversal limit and repeat the query.")
             : McpToolResults.TextResult(text, isError: false);
+    }
+
+    internal static CallToolResult SuccessCompact(object payload, bool domainTruncated = false, string? nextAction = null)
+    {
+        var compactJson = JsonSerializer.Serialize(payload, CompactJsonOptions);
+        using var document = JsonDocument.Parse(compactJson);
+        var text = FormatCompactJson(document.RootElement);
+        return domainTruncated
+            ? McpToolResults.DomainTruncated(text, nextAction ?? "Increase a supported result or traversal limit and repeat the query.")
+            : McpToolResults.TextResult(text, isError: false);
+    }
+
+    private static string FormatCompactJson(JsonElement root)
+    {
+        var output = new StringBuilder();
+        WriteCompactJson(root, output);
+        return output.ToString();
+    }
+
+    private static void WriteCompactJson(JsonElement element, StringBuilder output)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                output.Append('{');
+                var firstProperty = true;
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (!firstProperty) output.Append(',');
+                    output.Append('\n').Append(JsonSerializer.Serialize(property.Name, CompactJsonOptions)).Append(':');
+                    WriteCompactJson(property.Value, output);
+                    firstProperty = false;
+                }
+                if (!firstProperty) output.Append('\n');
+                output.Append('}');
+                break;
+            case JsonValueKind.Array:
+                output.Append('[');
+                var firstItem = true;
+                foreach (var item in element.EnumerateArray())
+                {
+                    if (!firstItem) output.Append(',');
+                    output.Append('\n');
+                    WriteCompactJson(item, output);
+                    firstItem = false;
+                }
+                if (!firstItem) output.Append('\n');
+                output.Append(']');
+                break;
+            default:
+                output.Append(element.GetRawText());
+                break;
+        }
     }
 
     internal static CallToolResult SuccessText(string text, bool domainTruncated = false, string? nextAction = null) =>
