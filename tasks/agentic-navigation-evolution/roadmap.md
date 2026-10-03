@@ -1,12 +1,12 @@
 # Sequential implementation roadmap
 
-Status: implementation execution started on 2026-10-03 by the explicitly invoked orchestrator. R01 is in progress; no point is complete. Specifications were consolidated on 2026-10-03 from the approved discussion.
+Status: implementation execution started on 2026-10-03 by the explicitly invoked orchestrator. R01 is complete after verified implementation and independent audit; R02–R08 remain open. Specifications were consolidated on 2026-10-03 from the approved discussion.
 
 Read the [shared execution contract, completion rules and verification policy](roadmap/execution.md) before starting any point. Then read that point's file and linked specifications. The orchestrator executes the points in order.
 
 ## Progress index
 
-- [ ] R01 — [Reference primitives and exact resolvers](roadmap/R01-reference-primitives.md)
+- [x] R01 — [Reference primitives and exact resolvers](roadmap/R01-reference-primitives.md)
 - [ ] R02 — [Switch every public route and remove handles](roadmap/R02-public-reference-migration.md)
 - [ ] R03 — [Fresh snapshot identity once](roadmap/R03-snapshot-identity.md)
 - [ ] R04 — [Collect each document batch once](roadmap/R04-single-collection.md)
@@ -15,7 +15,7 @@ Read the [shared execution contract, completion rules and verification policy](r
 - [ ] R07 — [Short polls, progress and transport diagnosis](roadmap/R07-polling-and-transport.md)
 - [ ] R08 — [Final gates and completed handoff](roadmap/R08-final-verification.md)
 
-These eight checkboxes are the authoritative point completion state. Only the orchestrator changes them after reviewing every acceptance checkbox and the actual evidence in that point's file. All remain unchecked; see R01 for current execution evidence.
+These eight checkboxes are the authoritative point completion state. Only the orchestrator changes them after reviewing every acceptance checkbox and the actual evidence in that point's file. See each point for its current execution evidence.
 
 Each point file owns its scope, acceptance, verification, four detailed checkboxes and execution evidence. Record working state, implementation commits, executed commands/results, measurements and blockers there. The index remains a compact overview.
 

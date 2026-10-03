@@ -23,7 +23,7 @@ If new evidence contradicts a specified requirement or exposes an architectural 
 
 ## Completion and evidence ownership
 
-The eight point checkboxes in the [index](../roadmap.md#progress-index) are the authoritative completion state. All are unchecked because no implementation has started. Record Pending, In progress or Blocked and its concrete next action in the current point file's Execution evidence section while the point remains unchecked. Complete means its top-level checkbox is checked.
+The eight point checkboxes in the [index](../roadmap.md#progress-index) are the authoritative completion state. Read their current state and each point's execution evidence; implementation work alone is not completion. Record Pending, In progress or Blocked and its concrete next action in the current point file's Execution evidence section while the point remains unchecked. Complete means its top-level checkbox is checked.
 
 Only the orchestrator changes checkbox states, including point-specific items; workers report evidence without ticking boxes. The orchestrator explicitly reviews each checklist item in that point's file, records executed evidence and verified implementation commit(s), then changes that point's top-level `[ ]` to `[x]`. A worker's completion message, code changes alone, tests merely defined, or a commit with missing checks never authorizes a tick. The next point cannot start until that tick is recorded. Do not pre-check future steps or tick several points from one general success statement.
 
