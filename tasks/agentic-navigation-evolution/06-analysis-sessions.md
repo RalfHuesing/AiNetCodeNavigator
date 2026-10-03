@@ -1,5 +1,9 @@
 # Optional analysis sessions
 
+## Current discussion priority, 2026-10-03
+
+After removal of the dedicated workflow-verification and output-format topics, this is the next optional discussion point. A fixed session could keep multiple navigation requests on the same analysis version despite concurrent external edits. Recommend deferring the added session lifecycle until a concrete need is established, and proceeding with the already approved stability and performance package. The session proposal is not approved; the user has not yet decided whether to defer or remove it.
+
 ## Idea under discussion
 
 An optional session could hold one immutable source snapshot for a connected sequence of body, relationship and context requests. A caller would explicitly switch to current analysis after editing. This could support consistent comparisons and concurrent investigation.

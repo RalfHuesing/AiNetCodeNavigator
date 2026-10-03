@@ -2,7 +2,7 @@
 
 ## User decision, 2026-10-03
 
-The user has approved eliminating repeated semantic collection for internal relationship pages: analyze each document batch once and derive all needed pages from that collected result. They have subsequently approved reuse of collected relationships across requests against the same unchanged analysis snapshot and scope, and targeted outgoing analysis limited to the requested traversal. Implementation is pending. First establish a focused reproduction and verify one collection per document batch. These approvals cover steps 1 through 3 below; a separate incoming-edge index remains a proposal for later discussion. Preserve the output presentation selected in [topic 07](07-output-format-and-token-efficiency.md).
+The user has approved eliminating repeated semantic collection for internal relationship pages: analyze each document batch once and derive all needed pages from that collected result. They have subsequently approved reuse of collected relationships across requests against the same unchanged analysis snapshot and scope, and targeted outgoing analysis limited to the requested traversal. Implementation is pending. First establish a focused reproduction and verify one collection per document batch. These approvals cover steps 1 through 3 below; a separate incoming-edge index remains a proposal for later discussion. Preserve existing output presentation.
 
 ## Approved targeted outgoing analysis
 

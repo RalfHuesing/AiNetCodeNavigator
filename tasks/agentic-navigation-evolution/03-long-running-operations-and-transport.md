@@ -2,7 +2,7 @@
 
 ## User decision and agent compatibility, 2026-10-03
 
-The user conditionally approved this point if agents can handle it. The existing result-based polling route supports that condition in principle: the audit agent already issued two polls, current schemas expose operationToken, and the repository navigation instructions tell agents to repeat the same tool/target/query with the returned token. Record diagnosis of the EOF/timeout, shorter status polls and concrete progress as approved, with implementation and actual-client verification pending. The observed 15-second poll wait is not a proven cause of disconnection. Rendering redesign remains excluded by topic 07.
+The user conditionally approved this point if agents can handle it. The existing result-based polling route supports that condition in principle: the audit agent already issued two polls, current schemas expose operationToken, and the repository navigation instructions tell agents to repeat the same tool/target/query with the returned token. Record diagnosis of the EOF/timeout, shorter status polls and concrete progress as approved, with implementation and actual-client verification pending. The observed 15-second poll wait is not a proven cause of disconnection. Preserve existing output presentation.
 
 Keep the existing ordinary tool-result route: operation=running, the same operationToken, useful progress when measurable, and an explicit next action including a bounded suggested wait. Agents must preserve query identity; a running result is not a successful analysis. Short response time must not create uncontrolled tight polling loops. The exact wait/progress fields remain contract design work.
 

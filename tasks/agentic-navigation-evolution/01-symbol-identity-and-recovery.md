@@ -49,4 +49,4 @@ Bare DocCommentIds are insufficient for exact ownership. File/line identifiers a
 
 Discovery followed by body edit, unrelated source edit and server restart must reach the intended unchanged declaration through the returned public reference. Duplicate project declarations must remain distinct. Deleted or renamed declarations must never silently resolve to another symbol. Pages and cursors must preserve their own snapshot consistency. Existing strict `h:` behavior remains current until a new contract is implemented and verified.
 
-Token tradeoffs and local measurement are recorded in [topic 07](07-output-format-and-token-efficiency.md). Optional fixed analysis sessions are recorded in [topic 06](06-analysis-sessions.md).
+Optional fixed analysis sessions are recorded in [topic 06](06-analysis-sessions.md).
