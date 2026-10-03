@@ -1,6 +1,6 @@
 # Sequential implementation roadmap
 
-Status: implementation execution started on 2026-10-03 by the explicitly invoked orchestrator. R01 is complete after verified implementation and independent audit; R02–R08 remain open. Specifications were consolidated on 2026-10-03 from the approved discussion.
+Status: implementation execution started on 2026-10-03 by the explicitly invoked orchestrator. R01 is complete after verified implementation and independent audit; R02 is in progress and R03–R08 remain open. Specifications were consolidated on 2026-10-03 from the approved discussion.
 
 Read the [shared execution contract, completion rules and verification policy](roadmap/execution.md) before starting any point. Then read that point's file and linked specifications. The orchestrator executes the points in order.
 

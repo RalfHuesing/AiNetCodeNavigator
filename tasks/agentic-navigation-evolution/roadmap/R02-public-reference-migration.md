@@ -29,8 +29,18 @@ The orchestrator records this point's implementation evidence here under the [sh
 
 | Field | Recorded evidence |
 | --- | --- |
-| Working state | Pending |
+| Working state | In progress; started from clean verified R01 HEAD `19e9dd128375d13cea4bf15cd13d9f1916a91e75` |
 | Implementation commit(s) | — |
 | Executed verification | Not run |
 | Measurements / artifacts | — |
-| Blocker / next action | Implementation has not started |
+| Blocker / next action | Complete the production and test/documentation migration, then run official gates and an independent read-only audit; no blocker established |
+
+### Assignment and prerequisite evidence
+
+R01 production commit `538291c9bd6671d3164caa48b80923fafa7db34a` and completion/evidence commit `19e9dd128375d13cea4bf15cd13d9f1916a91e75` are present. R01's four acceptance boxes and index box are checked after official gates and independent audit round 3 PASS. The working tree was clean before R02's production assignment; later edits belong to the assigned workers.
+
+- `/root/r02_implementation`: explicitly configured `gpt-6-luna`, reasoning `high`; owns production `src/**` and the complete producer/consumer/runtime removal disposition.
+- `/root/r02_tests_docs`: explicitly configured `gpt-6-luna`, reasoning `high`; owns `tests/**`, current-state `docs/**`, root `README.md` and navigation rule 08. Coordinates exact public APIs with the production worker.
+- The orchestrator owns all verification runs, task/specification evidence, checkbox changes and commits. Both workers must pause before any build/test; no concurrent verification is permitted in this checkout. The separate Sol audit starts against the actual completed candidate.
+
+Both assignments include the full R02 contract, specification 01, R01's verified inventory, all linked repository rules, preserved snapshot/evidence/lease boundaries, complete legacy removal, negative reference-input coverage, public follow-up acceptance and required eligible test categories. R02 remains unchecked until actual verification and independent audit pass.
