@@ -19,6 +19,12 @@ Every completed point must include:
 
 A point may use several coherent commits when needed, but its successor starts only after all point-level acceptance has passed. R01 is the only intentionally internal preparatory point: the public reference switch and full old-handle removal happen together in R02.
 
+## Implementation structure and checkpoint review
+
+User steering during R02 requires the remaining points to centralize shared semantics and extract independently owned responsibilities where appropriate. New behavioral contracts must have narrowly executable tests; preservation tests must retain meaningful independent assertions rather than mirror implementation details.
+
+At the next verified checkpoint, the orchestrator records a concrete assessment of remaining structure problems in `RelationshipTools` and the large handler contract test classes in that point's evidence. Separate required roadmap integration/semantic extraction from broader refactoring that remains outside this task. This review does not authorize a blanket rewrite, acceptance changes, or delaying an otherwise verified point for unrelated cleanup. Subsequent points follow the same ownership and verification rules.
+
 If new evidence contradicts a specified requirement or exposes an architectural conflict, record the exact conflict and request a decision before dependent implementation. Routine implementation choices within the contract require no additional approval. A test stall follows the repository's five-minute rule: open a named diagnosis/correction subpoint under the current point before further feature work.
 
 ## Completion and evidence ownership
