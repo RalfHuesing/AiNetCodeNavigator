@@ -230,7 +230,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
                         return new ResidentSolutionSnapshot(null, loadFailure);
                     }
 
-                    return new ResidentSolutionSnapshot(currentSolution, loadFailure);
+                    return new ResidentSolutionSnapshot(currentSolution, loadFailure, structureInputs?.ConfiguredTargetFrameworks);
                 }
             }
 
@@ -279,7 +279,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
                     return new ResidentSolutionSnapshot(null, loadFailure);
                 }
 
-                return new ResidentSolutionSnapshot(currentSolution, loadFailure);
+                return new ResidentSolutionSnapshot(currentSolution, loadFailure, structureInputs?.ConfiguredTargetFrameworks);
             }
         }
         finally

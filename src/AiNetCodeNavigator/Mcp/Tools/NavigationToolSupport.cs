@@ -2,6 +2,9 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Linq;
+using System.Collections.Generic;
+using System.Security.Cryptography;
+using System.Text;
 using AiNetCodeNavigator.Core.Common;
 using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Core.Symbols;
@@ -254,19 +257,22 @@ internal static class NavigationToolSupport
         var sourceSolution = snapshot.Solution!;
         var identity = await AnalysisSymbolIdentity.ForSourceAsync(sourceSolution, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("The loaded source solution has no analysis identity.");
-        return await operation(sourceSolution, new SourceAnalysisContext(identity), cancellationToken).ConfigureAwait(false);
+        return await operation(sourceSolution,
+            new SourceAnalysisContext(identity, snapshot.ConfiguredTargetFrameworks), cancellationToken).ConfigureAwait(false);
     }
 
-    internal sealed class SourceAnalysisContext(AnalysisSymbolIdentity identity)
+    internal sealed class SourceAnalysisContext(AnalysisSymbolIdentity identity,
+        IReadOnlyDictionary<string, AiNetCodeNavigator.Core.Workspace.ConfiguredTargetFrameworks>? configuredTargetFrameworks = null)
     {
         internal AnalysisSymbolIdentity Identity { get; } = identity;
+        internal IReadOnlyDictionary<string, AiNetCodeNavigator.Core.Workspace.ConfiguredTargetFrameworks>? ConfiguredTargetFrameworks { get; } = configuredTargetFrameworks;
 
         internal CallToolResult WithMetadata(CallToolResult response, string analyzedScope, string[]? omissionReasons = null,
-            bool resultContinuationAvailable = false)
+            bool resultContinuationAvailable = false, string? snapshotContentHash = null)
         {
             if (response.IsError == true) return response;
             var reasons = omissionReasons ?? Array.Empty<string>();
-            var metadata = new NavigationAnalysisMetadata(NavigationAnalysisMetadata.CreateSnapshotId("source", Identity.ContentHash), analyzedScope,
+            var metadata = new NavigationAnalysisMetadata(NavigationAnalysisMetadata.CreateSnapshotId("source", snapshotContentHash ?? Identity.ContentHash), analyzedScope,
                 reasons.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(),
                 reasons.Length == 0 ? "complete" : "partial", resultContinuationAvailable);
             response.Meta ??= new JsonObject();
@@ -279,6 +285,15 @@ internal static class NavigationToolSupport
             }
             response.Meta["navigationAnalysis"] = JsonSerializer.SerializeToNode(metadata, JsonOptions);
             return response;
+        }
+
+        internal string CreateIndexScopeSnapshotHash()
+        {
+            var configured = ConfiguredTargetFrameworks ?? new Dictionary<string, AiNetCodeNavigator.Core.Workspace.ConfiguredTargetFrameworks>();
+            var metadata = string.Join("\n", configured.OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(entry => entry.Key, StringComparer.Ordinal)
+                .Select(entry => $"{entry.Key}\0{entry.Value.IsKnown}\0{string.Join(";", entry.Value.Values)}"));
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{Identity.ContentHash}\0{metadata}")));
         }
     }
 }

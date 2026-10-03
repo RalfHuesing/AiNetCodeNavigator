@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Symbols;
+using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.FileStructure;
@@ -58,6 +59,9 @@ public static class IndexScopeScanner
 
         try
         {
+            var configuredFrameworksByProject = requested.ConfiguredFrameworksByProject
+                ?? new Dictionary<string, ConfiguredTargetFrameworks>(StringComparer.OrdinalIgnoreCase);
+            var loadedFrameworksByProject = GetLoadedFrameworksByProject(solution);
             foreach (var project in scopedProjects)
             {
                 ct.ThrowIfCancellationRequested();
@@ -94,15 +98,26 @@ public static class IndexScopeScanner
                     }
                 }
 
+                var projectPath = GetStableProjectPath(project);
+                var loadedFramework = GetLoadedFrameworkContext(project);
+                configuredFrameworksByProject.TryGetValue(projectPath ?? string.Empty, out var configuredFrameworks);
+                loadedFrameworksByProject.TryGetValue(projectPath ?? string.Empty, out var loadedFrameworks);
+                var notAnalyzedFrameworks = GetConfiguredFrameworksNotAnalyzed(
+                    configuredFrameworks?.IsKnown == true,
+                    configuredFrameworks?.Values,
+                    loadedFrameworks);
+
                 projectEntries.Add(new ProjectScopeEntry(
                     Name: project.Name,
                     DocumentCount: documents.Count,
                     IsTestProject: isTestProject,
                     CSharpDocumentCount: projectCSharpDocumentCount,
                     IsCSharpProject: isCSharpProject,
-                    ProjectPath: GetStableProjectPath(project),
-                    LoadedFrameworkContext: GetLoadedFrameworkContext(project),
-                    Exclusions: BuildExclusions(projectGeneratedDocumentCount)));
+                    ProjectPath: projectPath,
+                    LoadedFrameworkContext: loadedFramework,
+                    Exclusions: BuildExclusions(projectGeneratedDocumentCount),
+                    ConfiguredFrameworksNotAnalyzed: notAnalyzedFrameworks,
+                    ConfiguredFrameworksKnown: configuredFrameworks?.IsKnown == true));
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -188,6 +203,31 @@ public static class IndexScopeScanner
             return framework.Trim();
         return null;
     }
+
+    internal static IReadOnlyList<string> GetConfiguredFrameworksNotAnalyzed(
+        bool configuredFrameworksKnown,
+        IReadOnlyList<string>? configuredFrameworks,
+        IReadOnlyList<string>? loadedFrameworks)
+    {
+        if (!configuredFrameworksKnown || configuredFrameworks is null)
+            return Array.Empty<string>();
+
+        var loaded = new HashSet<string>(loadedFrameworks ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        return configuredFrameworks
+            .Where(framework => !loaded.Contains(framework))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(framework => framework, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(framework => framework, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static Dictionary<string, string[]> GetLoadedFrameworksByProject(Solution solution) => solution.Projects
+        .Select(project => new { Path = GetStableProjectPath(project), Framework = GetLoadedFrameworkContext(project) })
+        .Where(entry => entry.Path is not null && !string.IsNullOrWhiteSpace(entry.Framework))
+        .GroupBy(entry => entry.Path!, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(group => group.Key,
+            group => group.Select(entry => entry.Framework!).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            StringComparer.OrdinalIgnoreCase);
 
     private static IReadOnlyList<string> BuildExclusions(int generatedDocumentCount)
     {

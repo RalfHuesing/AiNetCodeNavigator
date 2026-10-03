@@ -32,13 +32,14 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         [System.ComponentModel.Description("Opaque cursor for the next page of the complete loaded-solution inventory.")] string? resultCursor = null,
         CancellationToken cancellationToken = default)
     {
-        return NavigationToolSupport.RouteAsync(runtime, "get_index_scope", targetPath, new { }, operationToken, continuationToken,
+        return NavigationToolSupport.RouteAsync(runtime, "get_index_scope", targetPath, new { maxResults }, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens,
             async (target, coreCursor, ct) => await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, source, token) =>
             {
                 var result = await IndexScopeScanner.ScanAsync(solution, token,
                     new IndexScopeScanOptions(MaxProjects: IndexScopeScanner.MaxProjectsCap,
-                        MaxFileTypes: IndexScopeScanner.MaxFileTypesCap, CollectAllInventory: true)).ConfigureAwait(false);
+                        MaxFileTypes: IndexScopeScanner.MaxFileTypesCap, CollectAllInventory: true,
+                        ConfiguredFrameworksByProject: source.ConfiguredTargetFrameworks)).ConfigureAwait(false);
                 if (!result.ScanCompleted)
                     return McpToolResults.Recoverable("INDEX_SCOPE_FAILED", result.Error ?? "The source index scope could not be scanned.",
                         "Check the loaded solution and repeat the query.");
@@ -48,11 +49,15 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                         ProjectIdentity = $"{entry.ProjectPath ?? entry.Name}::{entry.LoadedFrameworkContext ?? "unknown"}",
                         entry.DocumentCount, entry.CSharpDocumentCount, entry.IsTestProject, entry.IsCSharpProject,
                         LoadedFrameworkContext = entry.LoadedFrameworkContext ?? "unknown",
-                        Exclusions = entry.Exclusions ?? Array.Empty<string>() });
+                        Exclusions = entry.Exclusions ?? Array.Empty<string>(),
+                        entry.ConfiguredFrameworksKnown,
+                        ConfiguredFrameworksNotAnalyzed = entry.ConfiguredFrameworksNotAnalyzed ?? Array.Empty<string>() });
                 foreach (var entry in result.FileTypes)
                     items.Add(new { Kind = "fileType", entry.Extension, entry.Count, entry.SymbolGraphCovered });
-                var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
-                    "get_index_scope.inventory", "allProjectsAndFileTypes");
+                var indexScopeSnapshotHash = source.CreateIndexScopeSnapshotHash();
+                var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, indexScopeSnapshotHash,
+                    "get_index_scope.inventory", "allProjectsAndFileTypes",
+                    maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 var page = NavigationToolSupport.PageResults(items, maxResults, coreCursor, binding,
                     maxResponseBytes, maxResponseTokens);
                 if (page.Error is not null) return page.Error;
@@ -65,7 +70,8 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 });
                 return source.WithMetadata(response,
                     $"indexScope(project=*, pageSize={maxResults}, loadedProjects={result.ProjectCount}, loadedFileTypes={result.TotalFileTypeCount})",
-                    resultContinuationAvailable: page.NextCursor is not null);
+                    resultContinuationAvailable: page.NextCursor is not null,
+                    snapshotContentHash: indexScopeSnapshotHash);
             }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false),
             AnalysisTargetType.Project, cancellationToken, resultCursor, "get_index_scope.inventory");
     }

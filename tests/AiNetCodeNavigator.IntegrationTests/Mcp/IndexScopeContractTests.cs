@@ -112,6 +112,7 @@ public sealed class IndexScopeContractTests
         var inventory = new List<string>();
         var projectIdentities = new List<string>();
         string? inventoryCursor = null;
+        string? firstInventoryCursor = null;
         var inventoryPages = 0;
         do
         {
@@ -129,6 +130,9 @@ public sealed class IndexScopeContractTests
             Assert.False(page.IsError ?? false, TextOf(page));
             using var inventoryDocument = JsonDocument.Parse(JsonPayload(TextOf(page)));
             var rootElement = inventoryDocument.RootElement;
+            Assert.Equal(8, rootElement.GetProperty("totalDocumentCount").GetInt32());
+            Assert.Equal(4, rootElement.GetProperty("generatedDocumentCount").GetInt32());
+            Assert.Equal(5, rootElement.GetProperty("totalItems").GetInt32());
             foreach (var item in rootElement.GetProperty("items").EnumerateArray())
             {
                 var itemKind = item.GetProperty("kind").GetString();
@@ -139,7 +143,13 @@ public sealed class IndexScopeContractTests
                     Assert.StartsWith(Path.GetFullPath(solutionPath[..solutionPath.LastIndexOf(Path.DirectorySeparatorChar)]).Replace('\\', '/'),
                         projectIdentity, StringComparison.OrdinalIgnoreCase);
                     Assert.Equal("net10.0", item.GetProperty("loadedFrameworkContext").GetString());
-                    Assert.True(item.TryGetProperty("exclusions", out _));
+                    Assert.Equal(2, item.GetProperty("documentCount").GetInt32());
+                    Assert.Equal(2, item.GetProperty("cSharpDocumentCount").GetInt32());
+                    Assert.True(item.GetProperty("configuredFrameworksKnown").GetBoolean());
+                    Assert.Contains("generatedSourceExcludedFromDefaultSymbolSearch",
+                        item.GetProperty("exclusions").EnumerateArray().Select(value => value.GetString()));
+                    Assert.Equal(new[] { "net9.0" }, item.GetProperty("configuredFrameworksNotAnalyzed")
+                        .EnumerateArray().Select(value => value.GetString()).ToArray());
                     inventory.Add($"project:{projectIdentity}");
                     projectIdentities.Add(projectIdentity!);
                 }
@@ -147,12 +157,25 @@ public sealed class IndexScopeContractTests
             }
             inventoryCursor = rootElement.TryGetProperty("resultCursor", out var cursorValue)
                 && cursorValue.ValueKind == JsonValueKind.String ? cursorValue.GetString() : null;
+            firstInventoryCursor ??= inventoryCursor;
             inventoryPages++;
             Assert.InRange(inventoryPages, 1, 10);
         } while (inventoryCursor is not null);
         Assert.Equal(3, inventoryPages);
         Assert.Equal(5, inventory.Count);
         Assert.Equal(5, inventory.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Equal(projectIdentities.Select(identity => $"project:{identity}").Append("fileType:.cs"), inventory);
+
+        Assert.NotNull(firstInventoryCursor);
+        var changedPageSize = await GetIndexScopeUntilCompleteAsync(tools, solutionPath, 3, firstInventoryCursor);
+        Assert.True(changedPageSize.IsError, TextOf(changedPageSize));
+        Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(changedPageSize), StringComparison.Ordinal);
+
+        var alternateSolutionPath = Path.Combine(fixture.DirectoryPath, "AlternateIndexScope.slnx");
+        File.Copy(solutionPath, alternateSolutionPath);
+        var changedTarget = await GetIndexScopeUntilCompleteAsync(tools, alternateSolutionPath, 2, firstInventoryCursor);
+        Assert.True(changedTarget.IsError, TextOf(changedTarget));
+        Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(changedTarget), StringComparison.Ordinal);
 
         await using (var reloadedRuntime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>()))
         {
@@ -172,10 +195,43 @@ public sealed class IndexScopeContractTests
                 .Select(item =>
                 {
                     Assert.Equal("net10.0", item.GetProperty("loadedFrameworkContext").GetString());
+                    Assert.True(item.GetProperty("configuredFrameworksKnown").GetBoolean());
+                    Assert.Equal(new[] { "net9.0" }, item.GetProperty("configuredFrameworksNotAnalyzed")
+                        .EnumerateArray().Select(value => value.GetString()).ToArray());
                     return item.GetProperty("projectIdentity").GetString()!;
                 }).ToArray();
             Assert.Equal(projectIdentities.Order(StringComparer.Ordinal), reloadedProjectItems.Order(StringComparer.Ordinal));
         }
+
+        var firstProjectName = "IndexScopeProject00" + new string('P', 65);
+        var firstProjectFile = Path.Combine(fixture.DirectoryPath, "p0", firstProjectName + ".csproj");
+        await File.WriteAllTextAsync(firstProjectFile,
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFrameworks>net10.0;net8.0</TargetFrameworks><ImplicitUsings>disable</ImplicitUsings><Nullable>enable</Nullable><GenerateAssemblyInfo>false</GenerateAssemblyInfo><GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute></PropertyGroup></Project>");
+        var updatedConfiguration = await GetIndexScopeUntilCompleteAsync(tools, solutionPath, 100, null);
+        Assert.False(updatedConfiguration.IsError ?? false, TextOf(updatedConfiguration));
+        using (var updatedDocument = JsonDocument.Parse(JsonPayload(TextOf(updatedConfiguration))))
+        {
+            var updatedProject = updatedDocument.RootElement.GetProperty("items").EnumerateArray()
+                .Single(item => item.GetProperty("kind").GetString() == "project"
+                    && item.GetProperty("name").GetString() == firstProjectName);
+            Assert.Equal("net10.0", updatedProject.GetProperty("loadedFrameworkContext").GetString());
+            Assert.Equal(new[] { "net8.0" }, updatedProject.GetProperty("configuredFrameworksNotAnalyzed")
+                .EnumerateArray().Select(value => value.GetString()).ToArray());
+        }
+        var changedFrameworkConfiguration = await GetIndexScopeUntilCompleteAsync(tools, solutionPath, 2, firstInventoryCursor);
+        Assert.True(changedFrameworkConfiguration.IsError, TextOf(changedFrameworkConfiguration));
+        Assert.Contains("STALE_SNAPSHOT", TextOf(changedFrameworkConfiguration), StringComparison.Ordinal);
+
+        var freshPageAfterConfigurationChange = await GetIndexScopeUntilCompleteAsync(tools, solutionPath, 2, null);
+        Assert.False(freshPageAfterConfigurationChange.IsError ?? false, TextOf(freshPageAfterConfigurationChange));
+        using var freshPageDocument = JsonDocument.Parse(JsonPayload(TextOf(freshPageAfterConfigurationChange)));
+        var freshSourceCursor = freshPageDocument.RootElement.GetProperty("resultCursor").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(freshSourceCursor));
+        await File.WriteAllTextAsync(Path.Combine(fixture.DirectoryPath, "p0", firstProjectName + ".cs"),
+            "namespace Updated; public sealed class Probe { public int Value => 2; }");
+        var changedSnapshot = await GetIndexScopeUntilCompleteAsync(tools, solutionPath, 2, freshSourceCursor);
+        Assert.True(changedSnapshot.IsError, TextOf(changedSnapshot));
+        Assert.Contains("STALE_SNAPSHOT", TextOf(changedSnapshot), StringComparison.Ordinal);
 
         var assemblyTools = new AssemblyTools(runtime);
         var assemblyPath = typeof(TestTempDirectory).Assembly.Location;
@@ -230,6 +286,28 @@ public sealed class IndexScopeContractTests
 
     private static string TextOf(ModelContextProtocol.Protocol.CallToolResult result) =>
         Assert.IsType<ModelContextProtocol.Protocol.TextContentBlock>(Assert.Single(result.Content)).Text;
+
+    private static async Task<ModelContextProtocol.Protocol.CallToolResult> GetIndexScopeUntilCompleteAsync(
+        StructureTools tools,
+        string solutionPath,
+        int maxResults,
+        string? resultCursor)
+    {
+        string? operation = null;
+        ModelContextProtocol.Protocol.CallToolResult result = new();
+        for (var poll = 0; poll < 100; poll++)
+        {
+            result = await tools.GetIndexScope(solutionPath, maxResults: maxResults,
+                maxResponseBytes: 16384, maxResponseTokens: 2048, operationToken: operation,
+                resultCursor: resultCursor);
+            if (!TextOf(result).StartsWith(McpToolResults.RunningStatusPrefix, StringComparison.Ordinal))
+                return result;
+            operation = ReadOperationToken(TextOf(result));
+            await Task.Delay(20);
+        }
+
+        return result;
+    }
 
     private static string JsonPayload(string text)
     {
@@ -471,8 +549,9 @@ public sealed class IndexScopeContractTests
             var projectDirectory = Path.Combine(root, $"p{index}");
             Directory.CreateDirectory(projectDirectory);
             await File.WriteAllTextAsync(Path.Combine(projectDirectory, name + ".csproj"),
-                "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>");
+                "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFrameworks>net10.0;net9.0</TargetFrameworks><ImplicitUsings>disable</ImplicitUsings><Nullable>enable</Nullable><GenerateAssemblyInfo>false</GenerateAssemblyInfo><GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute></PropertyGroup></Project>");
             await File.WriteAllTextAsync(Path.Combine(projectDirectory, name + ".cs"), $"namespace {name}; public sealed class Probe {{ public int Value => 1; }}");
+            await File.WriteAllTextAsync(Path.Combine(projectDirectory, "Generated.g.cs"), $"// <auto-generated />{Environment.NewLine}namespace {name}; public sealed class GeneratedProbe {{ }}");
         }
 
         var nugetConfigPath = Path.Combine(root, "NuGet.Config");

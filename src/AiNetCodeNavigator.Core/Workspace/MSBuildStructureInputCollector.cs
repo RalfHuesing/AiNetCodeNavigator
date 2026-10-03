@@ -16,7 +16,8 @@ internal sealed record SolutionStructureInputs(
     IReadOnlyCollection<string> PotentialImportPaths,
     IReadOnlyCollection<string> CompileGlobRoots,
     IReadOnlyCollection<string> WildcardImportPatterns,
-    IReadOnlyCollection<string> UnresolvedExpressions)
+    IReadOnlyCollection<string> UnresolvedExpressions,
+    IReadOnlyDictionary<string, ConfiguredTargetFrameworks> ConfiguredTargetFrameworks)
 {
     internal bool HasUnexpandedExpressions => UnresolvedExpressions.Count > 0;
 }
@@ -34,6 +35,7 @@ internal static class MSBuildStructureInputCollector
         var compileGlobRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var wildcardImportPatterns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var unresolvedExpressions = new HashSet<string>(StringComparer.Ordinal);
+        var configuredTargetFrameworks = new Dictionary<string, ConfiguredTargetFrameworks>(StringComparer.OrdinalIgnoreCase);
         var projectPaths = solution.Projects
             .Select(project => project.FilePath)
             .Where(path => !string.IsNullOrWhiteSpace(path))
@@ -44,6 +46,15 @@ internal static class MSBuildStructureInputCollector
         foreach (var projectPath in projectPaths)
         {
             var project = collection.LoadProject(projectPath);
+            var frameworks = project.GetPropertyValue("TargetFrameworks");
+            if (string.IsNullOrWhiteSpace(frameworks))
+                frameworks = project.GetPropertyValue("TargetFramework");
+            configuredTargetFrameworks[NormalizeProjectPath(projectPath)] = new ConfiguredTargetFrameworks(true,
+                frameworks.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Order(StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(value => value, StringComparer.Ordinal)
+                    .ToArray());
             var importedProjectFiles = project.Imports
                 .Select(import => import.ImportedProject)
                 .ToArray();
@@ -69,8 +80,11 @@ internal static class MSBuildStructureInputCollector
             potentialImportPaths.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
             compileGlobRoots.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
             wildcardImportPatterns.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
-            unresolvedExpressions.Order(StringComparer.Ordinal).ToArray());
+            unresolvedExpressions.Order(StringComparer.Ordinal).ToArray(),
+            configuredTargetFrameworks);
     }
+
+    private static string NormalizeProjectPath(string projectPath) => Path.GetFullPath(projectPath).Replace('\\', '/');
 
     private static void AddPotentialImportPaths(
         Microsoft.Build.Evaluation.Project evaluatedProject,

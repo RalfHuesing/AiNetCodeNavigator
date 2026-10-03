@@ -1,13 +1,18 @@
 #nullable enable
 
+using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.FileStructure;
+using AiNetCodeNavigator.Core.Workspace;
 using AiNetCodeNavigator.TestKit.Builders;
 using AiNetCodeNavigator.TestKit.Fixtures;
 using Xunit;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Text;
 
 namespace AiNetCodeNavigator.FastTests.FileStructure;
 
@@ -26,6 +31,7 @@ public sealed class IndexScopeScannerTests
         Assert.True(payload.CSharpFileCount >= 5);
         Assert.Contains(payload.Projects, p => p.Name == "Sample.Core");
         Assert.Contains(payload.Projects, p => p.Name == "Sample.App");
+        Assert.All(payload.Projects, project => Assert.False(project.ConfiguredFrameworksKnown));
 
         // Breakdown has .cs extension covered
         var csEntry = payload.FileTypes.FirstOrDefault(f => f.Extension == ".cs");
@@ -227,5 +233,56 @@ public sealed class IndexScopeScannerTests
 
         await Assert.ThrowsAnyAsync<System.OperationCanceledException>(() =>
             IndexScopeScanner.ScanAsync(fixture.Solution, cancellation.Token));
+    }
+
+    [Fact]
+    public async Task ScanAsync_ReportsOnlyConfiguredFrameworksAbsentFromLoadedProjectContexts()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\virtual\FrameworkScope.slnx",
+            new ProjectSpec("FrameworkNet10", [("Source.cs", "namespace Frameworks; public sealed class Net10 {}")]),
+            new ProjectSpec("FrameworkNet9", [("Source.cs", "namespace Frameworks; public sealed class Net9 {}") ]));
+        var projects = fixture.Solution.Projects.ToArray();
+        const string sharedProjectPath = @"C:\virtual\Shared\FrameworkScope.csproj";
+        var solution = fixture.Solution
+            .WithProjectFilePath(projects[0].Id, sharedProjectPath)
+            .WithProjectFilePath(projects[1].Id, sharedProjectPath);
+        solution = AddLoadedFramework(solution, projects[0].Id, "net10.0");
+        solution = AddLoadedFramework(solution, projects[1].Id, "net9.0");
+        var configured = new Dictionary<string, ConfiguredTargetFrameworks>(StringComparer.OrdinalIgnoreCase)
+        {
+            [sharedProjectPath.Replace('\\', '/')] = new(true, ["net8.0", "net9.0", "net10.0"]),
+        };
+
+        var bothContexts = await IndexScopeScanner.ScanAsync(solution,
+            options: new IndexScopeScanOptions(ConfiguredFrameworksByProject: configured));
+        Assert.All(bothContexts.Projects, project =>
+        {
+            Assert.True(project.ConfiguredFrameworksKnown);
+            Assert.Equal(new[] { "net8.0" }, project.ConfiguredFrameworksNotAnalyzed);
+        });
+
+        var oneContext = await IndexScopeScanner.ScanAsync(solution.RemoveProject(projects[1].Id),
+            options: new IndexScopeScanOptions(ConfiguredFrameworksByProject: configured));
+        var onlyProject = Assert.Single(oneContext.Projects);
+        Assert.True(onlyProject.ConfiguredFrameworksKnown);
+        Assert.Equal(new[] { "net8.0", "net9.0" }, onlyProject.ConfiguredFrameworksNotAnalyzed);
+
+        var loadedOnly = new Dictionary<string, ConfiguredTargetFrameworks>(StringComparer.OrdinalIgnoreCase)
+        {
+            [sharedProjectPath.Replace('\\', '/')] = new(true, ["net10.0"]),
+        };
+        var loadedOnlyScope = await IndexScopeScanner.ScanAsync(solution.RemoveProject(projects[1].Id),
+            options: new IndexScopeScanOptions(ConfiguredFrameworksByProject: loadedOnly));
+        Assert.Empty(Assert.Single(loadedOnlyScope.Projects).ConfiguredFrameworksNotAnalyzed!);
+    }
+
+    private static Solution AddLoadedFramework(Solution solution, ProjectId projectId, string framework)
+    {
+        var project = solution.GetProject(projectId)!;
+        return project.AddAnalyzerConfigDocument(".globalconfig",
+            SourceText.From($"is_global = true{Environment.NewLine}build_property.TargetFramework = {framework}"),
+            filePath: Path.Combine(Path.GetDirectoryName(project.FilePath) ?? @"C:\virtual", framework + ".globalconfig"))
+            .Project.Solution;
     }
 }

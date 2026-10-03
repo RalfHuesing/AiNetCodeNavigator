@@ -12,7 +12,9 @@ public sealed record ProjectScopeEntry(
     bool IsCSharpProject = true,
     string? ProjectPath = null,
     string? LoadedFrameworkContext = null,
-    IReadOnlyList<string>? Exclusions = null);
+    IReadOnlyList<string>? Exclusions = null,
+    IReadOnlyList<string>? ConfiguredFrameworksNotAnalyzed = null,
+    bool ConfiguredFrameworksKnown = false);
 
 public sealed record FileTypeScopeEntry(
     string Extension,
@@ -49,4 +51,5 @@ public sealed record IndexScopeScanOptions(
     string? ProjectName = null,
     int MaxProjects = IndexScopeScanner.DefaultMaxProjects,
     int MaxFileTypes = IndexScopeScanner.DefaultMaxFileTypes,
-    bool CollectAllInventory = false);
+    bool CollectAllInventory = false,
+    IReadOnlyDictionary<string, AiNetCodeNavigator.Core.Workspace.ConfiguredTargetFrameworks>? ConfiguredFrameworksByProject = null);

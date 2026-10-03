@@ -1,5 +1,6 @@
 #nullable enable
 
+using System.Collections.Generic;
 using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.Workspace;
@@ -9,7 +10,8 @@ namespace AiNetCodeNavigator.Core.Workspace;
 /// </summary>
 public sealed record ResidentSolutionSnapshot(
     Solution? Solution,
-    ResidentSolutionLoadError? Error)
+    ResidentSolutionLoadError? Error,
+    IReadOnlyDictionary<string, ConfiguredTargetFrameworks>? ConfiguredTargetFrameworks = null)
 {
     public bool Succeeded => Solution is not null && Error is null;
 }

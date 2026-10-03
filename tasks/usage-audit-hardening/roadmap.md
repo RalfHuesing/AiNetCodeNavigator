@@ -38,7 +38,7 @@ Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept 
   - [x] **[M2-T1.3 — Referenzen und Implementierungen vollständig nachladen](roadmap/M2-T1.3.md)**
   - [x] **[M2-T1.4 — Typ-, Datei- und Namespaceinventare vollständig nachladen](roadmap/M2-T1.4.md)**
   - [x] **[M2-T1.5 — Hierarchie- und Impactlisten samt Budgetregression abschließen](roadmap/M2-T1.5.md)**
-  - [ ] **[M2-T1.6 — Indexscope und Projektidentität belegen](roadmap/M2-T1.6.md)**
+  - [x] **[M2-T1.6 — Indexscope und Projektidentität belegen](roadmap/M2-T1.6.md)**
   - [ ] **[M2-T1.7 — Unterpunkte und gemeinsamen Abschlussnachweis abgleichen](roadmap/M2-T1.7.md)**
 - [ ] **[M2-T2 — Assembly-Ausgaben und Suchvertrag vereinfachen](roadmap/M2-T2.md)**
 - [ ] **[M2-T3 — Body- und Namespace-Recovery präzisieren](roadmap/M2-T3.md)**
