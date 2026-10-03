@@ -19,7 +19,7 @@ Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept 
 ## Reihenfolge
 
 - [x] **[M1 — Vergleichsgrundlage und konsistente Analyse](#m1--vergleichsgrundlage-und-konsistente-analyse)**
-- [ ] **[M2 — Nachladbare, kompakte Navigation und gemeinsamer Kontext](#m2--nachladbare-kompakte-navigation-und-gemeinsamer-kontext)**
+- [x] **[M2 — Nachladbare, kompakte Navigation und gemeinsamer Kontext](#m2--nachladbare-kompakte-navigation-und-gemeinsamer-kontext)**
 - [ ] **[M3 — Gesamtabnahme und begrenzter Praxisvergleich](#m3--gesamtabnahme-und-begrenzter-praxisvergleich)**
 
 ## M1 — Vergleichsgrundlage und konsistente Analyse
@@ -45,7 +45,7 @@ Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept 
 - [x] **[M2-T4 — Testkandidaten semantisch ergänzen](roadmap/M2-T4.md)**
 - [x] **[M2-T5 — Gemeinsamen Kontext einführen und drei Routen entfernen](roadmap/M2-T5.md)**
 - [x] **[M2-T6 — Releasezuordnung, Katalog und Agentenanleitung abschließen](roadmap/M2-T6.md)**
-- [ ] **[M2-A — Audit der Agentenoberfläche](roadmap/M2-A.md)**
+- [x] **[M2-A — Audit der Agentenoberfläche](roadmap/M2-A.md)**
 
 ## M3 — Gesamtabnahme und begrenzter Praxisvergleich
 

@@ -195,29 +195,4 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
     }
 
     private CallToolResult Invalid(string field, string hint) => McpToolResults.InvalidArgument("The requested value is not supported.", "$." + field, hint);
-    private static bool TryDetail(string value) => TryGetDetailBudget(value, null, out _);
-
-    private static bool TryGetDetailBudget(string value, int? requestedBytes, out int budget)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            budget = McpResponseBudgetLimits.DefaultBytes;
-            return false;
-        }
-        var normalized = value.Trim();
-        if (normalized.Equals("compact", StringComparison.OrdinalIgnoreCase))
-            budget = 32_768;
-        else if (normalized.Equals("standard", StringComparison.OrdinalIgnoreCase))
-            budget = 32_768;
-        else if (normalized.Equals("full", StringComparison.OrdinalIgnoreCase))
-            budget = McpResponseBudgetLimits.MaximumBytes;
-        else
-        {
-            budget = McpResponseBudgetLimits.DefaultBytes;
-            return false;
-        }
-
-        if (requestedBytes is > 0) budget = requestedBytes.Value;
-        return true;
-    }
 }
