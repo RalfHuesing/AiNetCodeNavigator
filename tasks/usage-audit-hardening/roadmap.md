@@ -49,7 +49,7 @@ Ein Audit arbeitet nur lesend und bewertet den Milestone-Diff gegen das Konzept 
 
 ## M3 — Gesamtabnahme und begrenzter Praxisvergleich
 
-- [ ] **[M3-T1 — Konsolidierte technische Abnahme](roadmap/M3-T1.md)**
+- [x] **[M3-T1 — Konsolidierte technische Abnahme](roadmap/M3-T1.md)**
 - [ ] **[M3-T2 — Abschlussmessung und Effizienzbefund](roadmap/M3-T2.md)**
 - [ ] **[M3-A — Finale Abnahmeprüfung](roadmap/M3-A.md)**
 
