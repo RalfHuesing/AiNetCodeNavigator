@@ -29,8 +29,16 @@ The orchestrator records this point's implementation evidence here under the [sh
 
 | Field | Recorded evidence |
 | --- | --- |
-| Working state | Pending |
+| Working state | In progress; implementation round 1 assigned to a separate `gpt-6-luna` / high agent on 2026-10-03 |
 | Implementation commit(s) | — |
 | Executed verification | Not run |
 | Measurements / artifacts | — |
-| Blocker / next action | Implementation has not started |
+| Blocker / next action | No blocker identified. Complete internal primitives and inventory, execute official gates, then independent `gpt-6.1-sol` / medium read-only audit |
+
+### Initial inspection
+
+- Starting HEAD: `4729bb8f27816af0f5244284bacbd0a88b407f85` (`main`); working tree and index clean.
+- R01 is the first unchecked point; no implementation completion evidence exists for R01–R08.
+- Read AGENTS.md, all eight linked repository rules, the task README/index/shared execution contract, R01 and specifications 01/04.
+- The existing public source/assembly paths still use `HandoffHandleRegistry`, snapshot-bound identifiers and their existing resolvers. R01 preserves that public behavior; R02 owns the switch.
+- Only the orchestrator runs verification scripts, stages/commits or edits checkboxes. The implementation agent has explicit internal-only file boundaries and must report a complete removal inventory and actual test selections.
