@@ -31,7 +31,7 @@ The orchestrator records this point's implementation evidence here under the [sh
 | Implementation commit(s) | — |
 | Executed verification | Original reference freshness regressions failed as required before correction; first candidate build failed (see rounds below); candidate acceptance gates remain pending |
 | Measurements / artifacts | — |
-| Blocker / next action | Coordinate immutable image/provenance inputs, add focused regressions before existing freshness corrections, then implement full R03 and execute official gates/audit |
+| Blocker / next action | Finish authorized P01/P02 corrections, shared fresh-boundary budget and provider lifetime/binding semantics; freeze all workers, execute complete affected gates and separate measurements, then independent Sol audit |
 
 ### Prerequisites and independent ownership
 
@@ -92,3 +92,11 @@ Root also requires provider provenance to cover `CompilationOptions.SyntaxTreeOp
 - `pwsh -File ./scripts/test-fast.ps1 -Filter 'FullyQualifiedName~ResidentSolutionMetadataFreshnessTests.GetCurrentSnapshot_WhenAdditionalAndAnalyzerConfigFilesChangeWithSameTimestamp_RefreshesLoadedText' --logger 'console;verbosity=normal'`: actual FAIL, exit 1, one completed failing test / zero skipped, 1.3025 seconds test-run time (354 ms test). Both initially cached texts and explicit equal UTF-8/file-size/restored-time assertions pass. The next fresh snapshot still returns the identical old Solution, failing `Assert.NotSame` at line 172. Later changed-text assertions remain required and are not claimed executed in this baseline.
 - Artifacts: `temp/roadmap-evidence/R03/text-input-baseline-run1/{build.log,test-fast.log,FastTests.trx}`. No stall or orphan. Root now authorizes the owning Luna to centralize regular/additional/analyzer-config text refresh and its known provider-provenance transitions, retaining atomic publication and linked-file behavior.
 - Root working review also leaves three concrete candidate obligations open: remove the obsolete null-returning identity factory/parallel hash helpers while preserving independent test semantics; admit proven normal-loader providers while rejecting untracked custom binding state; avoid global strong provenance retention and preserve metadata documentation providers across immutable image rebinding. These are assigned to the existing separate production owners before full acceptance gates and independent audit.
+
+### Final candidate source review — required follow-up, unverified
+
+Root found that a successful structural `TryReloadAsync` already captures references and refreshes texts, yet the caller then captures again. The new R03 implementation must share one boundary attempt budget and distinct-image map, publish only a fully validated pair, and return the validated reload without a redundant capture. The workspace owner is assigned focused actual resident/reload capture-count and total-three-attempt tests, alongside physical multi-module binding/lifetime and documentation preservation.
+
+The encoder's per-project context must preserve reference-to-owner association in a transitive graph. The controlled encoder fixture tests two same-path/option child contexts with different metadata images, assigned to distinct left/right root aliases: swapping image bindings must change the root owner-context fingerprint, while an enumeration permutation with unchanged binding must not. This is separate from normal-loader provenance tests and does not claim MSBuild loads multiple contexts naturally. The identity owner and separate test owner coordinate this fixture without weakening ambiguity rules.
+
+The service tests must exercise the completed memo hit after concurrent calls, transient computation cancellation followed by retry, caller-only wait cancellation, runtime-owned shutdown and weak-key collection. Current-state docs and provider provenance remain pending reconciliation with the final code. All candidate acceptance, measurements, independent audit and completion boxes remain open; only the failing baselines and buildability recorded above are verified.
