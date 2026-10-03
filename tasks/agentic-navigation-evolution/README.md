@@ -2,7 +2,7 @@
 
 This directory is the implementation basis and maintained knowledge store for the improvements approved on 2026-10-03. The user authorized consolidation and a sequential roadmap; production implementation has not started.
 
-Start at [roadmap.md](roadmap.md). It owns execution order, status and evidence. The four specifications below own their contracts; the roadmap links to them instead of duplicating them.
+Start at [roadmap.md](roadmap.md). This compact index owns execution order and the eight completion checkboxes. Read the [shared execution rules](roadmap/execution.md); each linked point file under `roadmap/` owns its detailed checklist and implementation evidence. The four specifications below own their contracts; the roadmap links to them instead of duplicating them.
 
 | Specification | Authoritative subject |
 | --- | --- |
@@ -29,4 +29,4 @@ The subsequent [Luna concept review](reviews/luna-concept-review.md) records ind
 
 ## Maintenance
 
-Keep each requirement in its owning specification. Record implementation status, commits, executed checks, measurements and concrete blockers in the roadmap. Update current-state `docs/` and affected agent navigation rules only in the implementation commits that establish and verify their new behavior. Keep chat updates short.
+Keep each requirement in its owning specification. Record working status, implementation commits, executed checks, measurements and concrete blockers in the corresponding roadmap point file; the orchestrator updates the index checkbox only after verifying that evidence. Update current-state `docs/` and affected agent navigation rules only in the implementation commits that establish and verify their new behavior. Keep chat updates short.

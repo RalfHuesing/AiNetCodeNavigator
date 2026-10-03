@@ -1,6 +1,6 @@
 # Stable symbol references
 
-Status: specified for implementation. Execution: [R01 and R02](roadmap.md#r01--reference-primitives-and-exact-resolvers).
+Status: specified for implementation. Execution: [R01](roadmap/R01-reference-primitives.md) and [R02](roadmap/R02-public-reference-migration.md).
 
 ## Required behavior
 

@@ -1,6 +1,6 @@
 # Long-running operations and transport
 
-Status: specified for implementation. Execution: [R07](roadmap.md#r07--short-polls-progress-and-transport-diagnosis).
+Status: specified for implementation. Execution: [R07](roadmap/R07-polling-and-transport.md).
 
 ## One operation and ordinary tool results
 
@@ -78,7 +78,7 @@ The audit agent already issued polls; this is evidence that the route is usable 
 
 Required slow-operation fixtures are deterministic and bounded; a user's large solution is not the timing mechanism. Preserve existing official exclusions for complete E2E/client handshake tests. Required checks are the bounded fixture transport, transport-free actual routes and recorded connected-agent round-trip above.
 
-Store the tracked evidence summary at `tasks/agentic-navigation-evolution/evidence/R07.md`; create it during R07, not during planning. Store ignored raw frames, monotonic timing records and stderr/process evidence at `temp/agentic-navigation-evolution/R07/<run-id>/`, where run-id is UTC yyyyMMddTHHmmssfffZ plus a GUID suffix. The summary links to those actual artifacts and states their ignored/nonportable nature. The R07 roadmap evidence row links to the tracked summary and records executed commands/results. Manual product evidence is separate from automated eligible gates.
+Store the tracked evidence summary at `tasks/agentic-navigation-evolution/evidence/R07.md`; create it during R07, not during planning. Store ignored raw frames, monotonic timing records and stderr/process evidence at `temp/agentic-navigation-evolution/R07/<run-id>/`, where run-id is UTC yyyyMMddTHHmmssfffZ plus a GUID suffix. The summary links to those actual artifacts and states their ignored/nonportable nature. The [R07 point's evidence section](roadmap/R07-polling-and-transport.md#execution-evidence) links to the tracked summary and records executed commands/results. Manual product evidence is separate from automated eligible gates.
 
 ## EOF/timeout investigation
 

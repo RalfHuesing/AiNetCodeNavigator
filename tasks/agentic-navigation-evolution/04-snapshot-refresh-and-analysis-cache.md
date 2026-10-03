@@ -1,6 +1,6 @@
 # Fresh snapshots and reusable analysis
 
-Status: specified for implementation. Execution: [R03](roadmap.md#r03--fresh-snapshot-identity-once) and [R05](roadmap.md#r05--bounded-reuse-of-immutable-dependency-facts).
+Status: specified for implementation. Execution: [R03](roadmap/R03-snapshot-identity.md) and [R05](roadmap/R05-dependency-cache.md).
 
 ## Fresh analysis boundary
 

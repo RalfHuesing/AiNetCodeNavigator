@@ -1,6 +1,6 @@
 # Dependency collection and traversal
 
-Status: specified for implementation. Execution: [R04–R06](roadmap.md#r04--collect-each-document-batch-once). Cache ownership and bounds: [specification 04](04-snapshot-refresh-and-analysis-cache.md).
+Status: specified for implementation. Execution: [R04](roadmap/R04-single-collection.md), [R05](roadmap/R05-dependency-cache.md) and [R06](roadmap/R06-targeted-outgoing.md). Cache ownership and bounds: [specification 04](04-snapshot-refresh-and-analysis-cache.md).
 
 ## Required separation
 
