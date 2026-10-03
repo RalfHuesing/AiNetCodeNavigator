@@ -29,7 +29,9 @@ Stable declaration selection should survive body edits, unrelated edits and serv
 
 Prefer one primary public symbol reference that can be resolved without a process-local handle registry. For source, its conceptual identity is the selected solution plus an owning project selector and a Roslyn declaration ID. Return analysis snapshot information separately. Target-path repetition can be avoided where the request or response already establishes the owner, but cross-assembly results must preserve the actual owner.
 
-The wire representation is undecided: a string with an explicitly defined escaping grammar, a typed selector object, or another self-contained representation. Examples discussed in chat describe this conceptual identity and are not existing accepted input syntax.
+The wire representation is undecided. The next discussion recommendation is one readable string carrying an exact owning-project selector and the Roslyn declaration ID for source, while the selected target remains request context and assembly follow-ups retain their actual owner target. This can preserve string-based symbolIdentifier inputs and avoid a second public selection mechanism. A typed selector object remains an alternative until this decision is resolved. Examples discussed in chat describe conceptual identity and are not existing accepted input syntax.
+
+Define the string grammar, escaping and canonicalization before implementation. Source project paths must distinguish equally named projects and should be relative to the selected solution where unambiguous. Define framework/configuration ambiguity and declarations without DocCommentIds explicitly. Keep analysis content hashes outside the reusable declaration identity. The readable-string choice is a pending contract decision, not an additional approved feature.
 
 Keeping the `h:` spelling or adding a stable reference alongside the ephemeral handle was considered earlier and is now rejected by the user's decision. Removal must cover producers, consumers, registry/counter/alphabet infrastructure, runtime/configuration wiring, tests and documentation where they exist solely for this mechanism. Review shared uses before deleting any component; preserve independent snapshot and cursor consistency behavior.
 
@@ -48,5 +50,3 @@ Bare DocCommentIds are insufficient for exact ownership. File/line identifiers a
 ## Proposed acceptance evidence
 
 Discovery followed by body edit, unrelated source edit and server restart must reach the intended unchanged declaration through the returned public reference. Duplicate project declarations must remain distinct. Deleted or renamed declarations must never silently resolve to another symbol. Pages and cursors must preserve their own snapshot consistency. Existing strict `h:` behavior remains current until a new contract is implemented and verified.
-
-Optional fixed analysis sessions are recorded in [topic 06](06-analysis-sessions.md).
