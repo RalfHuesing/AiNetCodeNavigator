@@ -13,7 +13,7 @@ The solution `AiNetCodeNavigator.slnx` contains five projects:
 - `src/AiNetCodeNavigator/`: MCP server host executable and Serilog logging bootstrap.
 - `tests/AiNetCodeNavigator.TestKit/`: Shared test support infrastructure, sample code fixtures, and workspace builders.
 - `tests/AiNetCodeNavigator.FastTests/`: Fast unit and component test suite. It retains one E2E MCP SDK stream fixture, which performs a protocol handshake and remains excluded from routine gates.
-- `tests/AiNetCodeNavigator.IntegrationTests/`: Workspace-loading and transport-free source/assembly handler contract tests, including budgets, recovery, domain paging, and owner handoffs. Retained stdio/JSON-RPC host cases are categorized `E2EIntegration` and excluded from current completion gates.
+- `tests/AiNetCodeNavigator.IntegrationTests/`: Workspace-loading and transport-free source/assembly handler contract tests, including budgets, recovery, domain paging, and owner handoffs. Bounded traffic-capture component tests exercise the SDK host with in-memory streams and fixture tools. Retained complete stdio/client product flows are categorized `E2EIntegration` and excluded from current completion gates.
 
 Core, Host, and TestKit expose internal members to the test assemblies via `InternalsVisibleTo`.
 
@@ -82,7 +82,7 @@ pwsh -File ./scripts/deploy.ps1 -OutputDir C:\Tools\AiNetCodeNavigator
 
 - Builds the solution (`AiNetCodeNavigator.slnx`), runs tests, and publishes `src/AiNetCodeNavigator/` via `dotnet publish`.
 - The default destination directory `<RepoRoot>/deploy` is ignored in `.gitignore`.
-- Generates a default `hostsettings.json` if missing and outputs ready-to-copy JSON configuration snippets for MCP clients (Cursor, Claude Desktop, Antigravity IDE).
+- Copies the repository's complete default `hostsettings.json` if the destination has no settings file, preserves existing settings, and outputs ready-to-copy JSON configuration snippets for MCP clients (Cursor, Claude Desktop, Antigravity IDE).
 - Console output is streamed directly to `temp/deploy.log`.
 
 ## Running Tests
@@ -116,6 +116,8 @@ For agent handling of slow or stalled tests, follow the [verification rule](../.
 `scripts/test-integration.ps1` and `scripts/test.ps1` exclude `Category=ExtendedIntegration` by default; `-IncludeExtended` removes only that exclusion. All ordinary script invocations exclude `Category=E2EIntegration`. `scripts/test-fast.ps1 -ReviewReportsOnly` remains available to select `AiNetCodeNavigator.FastTests.Reporting.RepositoryAuditReportTests.Review_PublishesRepositoryReportsWithoutBaseline` directly. Supplied filters are parenthesized and AND-combined with exclusions, so an OR filter cannot bypass them. `-ReviewReportsOnly` cannot be combined with `-Filter`. Use the scripts' `-Filter` parameter rather than passing `--filter` through additional arguments. Direct `dotnet test` calls do not apply the scripts' exclusions.
 
 `McpServerIntegrationTests` and `McpArgumentValidationFilterTests` carry the E2E category because they run a child stdio host or a client/server stream handshake. `RepositoryAuditReportTests` runs unconditionally in the fast test suite without an E2E category trait. `McpInputSchemaTests` and the transport-free contract tests exercise original definitions, validators, and handlers without MCP transport and remain eligible. Select affected `ExtendedIntegration` tests for shared host, workspace, symbol-analysis, or response-processing changes only when they are not `E2EIntegration`. Include eligible extended tests only for release verification or an explicitly requested complete gate.
+
+`TrafficCaptureTransportIntegrationTests` is an eligible bounded capture component integration: it uses an in-process SDK host, explicit in-memory streams, and fixture tools to check the capture boundary. It does not launch a client or child server process, load a workspace, or execute a complete navigation flow. See [MCP Traffic Capture](../mcp-traffic-capture.md) for the recorded artifacts and measurement scope.
 
 ### Automatic audit reports
 

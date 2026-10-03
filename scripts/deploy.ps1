@@ -177,12 +177,7 @@ if (-not (Test-Path $exePath)) {
 # Ensure hostsettings.json exists in target directory
 $settingsPath = Join-Path $resolvedOutputDir 'hostsettings.json'
 if (-not (Test-Path $settingsPath)) {
-    $defaultSettings = @"
-{
-  "minimumLogLevel": "Information"
-}
-"@
-    Set-Content -Path $settingsPath -Value $defaultSettings -Encoding utf8
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'hostsettings.json') -Destination $settingsPath
 }
 
 $escapedExePath = $exePath.Replace('\', '\\')

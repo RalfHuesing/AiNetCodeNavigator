@@ -46,6 +46,60 @@ public sealed class NavigatorHostConfigurationTests
         Assert.True(result.Succeeded);
         Assert.Equal(expectedLevel, result.MinimumLogLevel);
         Assert.Equal(expectedLevel, fixture.LevelSwitch.MinimumLevel);
+        Assert.Equal(TrafficCaptureOptions.Default, result.TrafficCapture);
+    }
+
+    [Fact]
+    public async Task StartupLoadsTrafficCaptureOptionsAndUsesDefaultsForOmittedNestedFields()
+    {
+        using var fixture = new ConfigurationFixture();
+        await File.WriteAllTextAsync(fixture.Path,
+            "{\"minimumLogLevel\":\"Warning\",\"trafficCapture\":{\"enabled\":true,\"retentionDays\":14,\"maxTotalBytes\":1073741824}}");
+
+        var result = await fixture.Configuration.LoadStartupAsync(CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(new TrafficCaptureOptions(true, 14, 1_073_741_824), result.TrafficCapture);
+        Assert.Equal(LogEventLevel.Warning, result.MinimumLogLevel);
+    }
+
+    [Fact]
+    public async Task StartupAllowsPartialTrafficCaptureObjectUsingBuiltInValues()
+    {
+        using var fixture = new ConfigurationFixture();
+        await File.WriteAllTextAsync(fixture.Path, "{\"minimumLogLevel\":\"Debug\",\"trafficCapture\":{\"enabled\":true}}");
+
+        var result = await fixture.Configuration.LoadStartupAsync(CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(new TrafficCaptureOptions(true, 7, 536_870_912), result.TrafficCapture);
+    }
+
+    [Fact]
+    public async Task ShippedHostSettingsUsesDisabledCaptureDefaults()
+    {
+        var configPath = FindRepositoryFile("hostsettings.json");
+        var levelSwitch = new LoggingLevelSwitch(LogEventLevel.Information);
+        var configuration = new NavigatorHostConfiguration(configPath, isDefaultPath: false, levelSwitch);
+
+        var result = await configuration.LoadStartupAsync(CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(LogEventLevel.Information, result.MinimumLogLevel);
+        Assert.Equal(new TrafficCaptureOptions(false, 7, 536_870_912), result.TrafficCapture);
+    }
+
+    [Fact]
+    public async Task TrafficCaptureAcceptsConfiguredUpperBounds()
+    {
+        using var fixture = new ConfigurationFixture();
+        await File.WriteAllTextAsync(fixture.Path,
+            "{\"minimumLogLevel\":\"Information\",\"trafficCapture\":{\"enabled\":true,\"retentionDays\":365,\"maxTotalBytes\":10737418240}}");
+
+        var result = await fixture.Configuration.LoadStartupAsync(CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(new TrafficCaptureOptions(true, 365, 10_737_418_240), result.TrafficCapture);
     }
 
     [Theory]
@@ -56,6 +110,20 @@ public sealed class NavigatorHostConfigurationTests
     [InlineData("{\"minimumLogLevel\":\"Debug\",\"unknown\":true}")]
     [InlineData("{\"minimumLogLevel\":\"Debug\",\"minimumLogLevel\":\"Error\"}")]
     [InlineData("{\"minimumLogLevel\":2}")]
+    [InlineData("{\"minimumLogLevel\":\"Debug\",\"trafficCapture\":null}")]
+    [InlineData("{\"minimumLogLevel\":\"Debug\",\"trafficCapture\":{},\"trafficCapture\":{}}")]
+    [InlineData("{\"minimumLogLevel\":\"Debug\",\"trafficCapture\":[]}")]
+    [InlineData("{\"minimumLogLevel\":\"Debug\",\"trafficCapture\":{\"enabled\":1}}")]
+    [InlineData("{\"minimumLogLevel\":\"Debug\",\"trafficCapture\":{\"enabled\":true,\"enabled\":false}}")]
+    [InlineData("{\"minimumLogLevel\":\"Debug\",\"trafficCapture\":{\"unknown\":true}}")]
+    [InlineData("{\"minimumLogLevel\":\"Debug\",\"trafficCapture\":{\"retentionDays\":0}}")]
+    [InlineData("{\"minimumLogLevel\":\"Debug\",\"trafficCapture\":{\"retentionDays\":366}}")]
+    [InlineData("{\"minimumLogLevel\":\"Debug\",\"trafficCapture\":{\"retentionDays\":2147483648}}")]
+    [InlineData("{\"minimumLogLevel\":\"Debug\",\"trafficCapture\":{\"retentionDays\":1.5}}")]
+    [InlineData("{\"minimumLogLevel\":\"Debug\",\"trafficCapture\":{\"maxTotalBytes\":0}}")]
+    [InlineData("{\"minimumLogLevel\":\"Debug\",\"trafficCapture\":{\"maxTotalBytes\":10737418241}}")]
+    [InlineData("{\"minimumLogLevel\":\"Debug\",\"trafficCapture\":{\"maxTotalBytes\":9223372036854775808}}")]
+    [InlineData("{\"minimumLogLevel\":\"Debug\",\"trafficCapture\":{\"maxTotalBytes\":1.5}}")]
     [InlineData("{}")]
     [InlineData("{")]
     [InlineData("[]")]
@@ -81,6 +149,7 @@ public sealed class NavigatorHostConfigurationTests
 
         Assert.True(result.Succeeded);
         Assert.Equal(LogEventLevel.Information, result.MinimumLogLevel);
+        Assert.Equal(TrafficCaptureOptions.Default, result.TrafficCapture);
         Assert.Equal(LogEventLevel.Information, fixture.LevelSwitch.MinimumLevel);
     }
 
@@ -167,5 +236,25 @@ public sealed class NavigatorHostConfigurationTests
         internal NavigatorHostConfiguration Configuration { get; }
 
         public void Dispose() => Directory.Delete(directory, recursive: true);
+    }
+
+    private static string FindRepositoryFile(string fileName)
+    {
+        foreach (var startPath in new[] { Environment.CurrentDirectory, AppContext.BaseDirectory })
+        {
+            var directory = new DirectoryInfo(startPath);
+            while (directory is not null)
+            {
+                var candidate = System.IO.Path.Combine(directory.FullName, fileName);
+                if (File.Exists(candidate) && File.Exists(System.IO.Path.Combine(directory.FullName, "AiNetCodeNavigator.slnx")))
+                {
+                    return candidate;
+                }
+
+                directory = directory.Parent;
+            }
+        }
+
+        throw new DirectoryNotFoundException("Could not locate the repository root containing hostsettings.json.");
     }
 }

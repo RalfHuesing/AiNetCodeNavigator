@@ -1,0 +1,8 @@
+{
+  "minimumLogLevel": "Information",
+  "trafficCapture": {
+    "enabled": false,
+    "retentionDays": 7,
+    "maxTotalBytes": 536870912
+  }
+}

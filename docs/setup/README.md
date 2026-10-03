@@ -12,15 +12,24 @@ The included `hostsettings.json` is used only when selected with `--config`; pla
 
 Clients start the executable as a child process. Set `command` to the executable's absolute path, and pass each CLI argument as its own string in `args`. The server reads MCP JSON-RPC from standard input and writes only protocol messages to standard output. Startup/configuration errors go to standard error. Logging goes to daily rolling files in `<exe-directory>\logs` by default; error and fatal log events are also written to standard error. Set `AINET_CODE_NAVIGATOR_LOG_DIRECTORY` in the server process environment to select another log directory.
 
-The optional server argument `--config <absolute-path>` selects a host-settings JSON file. If omitted, the default is `%LOCALAPPDATA%\AiNetCodeNavigator\hostsettings.json`; if that default file does not exist, startup uses built-in `Information` logging. A settings file contains only a supported `minimumLogLevel` value:
+The optional server argument `--config <absolute-path>` selects a host-settings JSON file. If omitted, the default is `%LOCALAPPDATA%\AiNetCodeNavigator\hostsettings.json`; if that default file does not exist, startup uses built-in `Information` logging with traffic capture disabled. The supplied [hostsettings.json](../../hostsettings.json) includes every supported option:
 
 ```json
 {
-  "minimumLogLevel": "Warning"
+  "minimumLogLevel": "Information",
+  "trafficCapture": {
+    "enabled": false,
+    "retentionDays": 7,
+    "maxTotalBytes": 536870912
+  }
 }
 ```
 
-Valid values are `Verbose`, `Debug`, `Information`, `Warning`, `Error`, and `Fatal`. The server reads the file at startup, does not create or watch it, and requires a process restart to apply changes.
+Valid log levels are `Verbose`, `Debug`, `Information`, `Warning`, `Error`, and `Fatal`. `trafficCapture.enabled` is a boolean; `retentionDays` is an integer from 1 through 365; `maxTotalBytes` is an integer from 1 through 10,737,418,240 (10 GiB). Omitted capture fields use the defaults shown above, and existing files containing only `minimumLogLevel` remain supported. Unknown or duplicate fields, invalid types, and unsupported values fail startup. The server reads the file at startup, does not create or watch it, and requires a process restart to apply changes.
+
+The local deployment script copies the supplied defaults only when the destination has no `hostsettings.json`; it preserves an existing settings file. Select that destination file explicitly with `--config`, or copy the supplied file to the default settings-file path.
+
+Set `trafficCapture.enabled` to `true` to record raw tool-call requests and responses under `<log-directory>/traffic`. [MCP Traffic Capture](../mcp-traffic-capture.md) describes the session layout, live JSONL summaries, byte/token measurements, and storage limits.
 
 Use this process entry for a client that accepts an MCP `mcpServers` JSON configuration:
 

@@ -6,6 +6,7 @@ using AiNetCodeNavigator.Mcp.Tools.Assemblies;
 using AiNetCodeNavigator.Mcp.Tools.Symbols;
 using AiNetCodeNavigator.Mcp.Tools;
 using AiNetCodeNavigator.Mcp.Validation;
+using AiNetCodeNavigator.Mcp.TrafficCapture;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -43,9 +44,11 @@ internal static class McpServerHost
             builder.Services.AddSingleton<NavigatorHostRuntime>(serviceProvider => new NavigatorHostRuntime(
                 serviceProvider.GetRequiredService<IHostApplicationLifetime>()));
 
-            builder.Services
-                .AddMcpServer(options => options.ServerInfo = serverInfo)
-                .WithStdioServerTransport()
+            await using var captureSession = CreateCaptureSession(startup.TrafficCapture, serverInfo.Name, serverInfo.Version);
+
+            var mcpServerBuilder = builder.Services
+                .AddMcpServer(options => options.ServerInfo = serverInfo);
+            ConfigureTransport(mcpServerBuilder, captureSession)
                 .WithTools<SymbolTools>()
                 .WithTools<StructureTools>()
                 .WithTools<RelationshipTools>()
@@ -72,6 +75,54 @@ internal static class McpServerHost
         {
             await LoggingSetup.CloseAndFlushAsync().ConfigureAwait(false);
         }
+    }
+
+    private static TrafficCaptureSession? CreateCaptureSession(
+        AiNetCodeNavigator.Configuration.TrafficCaptureOptions options,
+        string serverName,
+        string serverVersion)
+    {
+        if (!options.Enabled) return null;
+        try
+        {
+            return new TrafficCaptureSession(
+                LoggingSetup.ActiveLogDirectory ?? Path.Combine(AppContext.BaseDirectory, "logs"),
+                options,
+                serverName,
+                serverVersion);
+        }
+        catch (Exception exception)
+        {
+            Log.Warning(exception, "MCP traffic capture could not start; continuing without capture.");
+            return null;
+        }
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "The MCP stream transport owns and disposes the wrappers when its host stops.")]
+    internal static IMcpServerBuilder ConfigureTransport(
+        IMcpServerBuilder builder,
+        TrafficCaptureSession? captureSession,
+        Stream? inputStream = null,
+        Stream? outputStream = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        if (captureSession is null)
+        {
+            if (inputStream is not null || outputStream is not null)
+            {
+                if (inputStream is null || outputStream is null) throw new ArgumentException("Both test transport streams must be supplied.");
+                return builder.WithStreamServerTransport(inputStream, outputStream);
+            }
+
+            return builder.WithStdioServerTransport();
+        }
+
+        var maxFrameBytes = captureSession.MaximumFrameBytes;
+        var input = inputStream ?? Console.OpenStandardInput();
+        var output = outputStream ?? Console.OpenStandardOutput();
+        return builder.WithStreamServerTransport(
+            new TrafficCaptureStream(input, captureSession.RecordInbound, maxFrameBytes, leaveOpen: true, captureSession.StopForOversizedFrame),
+            new TrafficCaptureStream(output, captureSession.RecordOutbound, maxFrameBytes, leaveOpen: true, captureSession.StopForOversizedFrame));
     }
 
     private static string GetDefaultConfigurationPath()

@@ -9,7 +9,13 @@ internal sealed record NavigatorHostConfigurationLoadResult(
     bool Succeeded,
     LogEventLevel MinimumLogLevel,
     string? ErrorCode = null,
-    string? Message = null);
+    string? Message = null,
+    TrafficCaptureOptions TrafficCapture = default);
+
+internal readonly record struct TrafficCaptureOptions(bool Enabled, int RetentionDays, long MaxTotalBytes)
+{
+    internal static TrafficCaptureOptions Default { get; } = new(false, 7, 536_870_912);
+}
 
 internal sealed class NavigatorHostConfiguration
 {
@@ -31,7 +37,7 @@ internal sealed class NavigatorHostConfiguration
         if (isDefaultPath && !File.Exists(path))
         {
             LoggingSetup.SetMinimumLevel(minimumLevelSwitch, LogEventLevel.Information);
-            return new NavigatorHostConfigurationLoadResult(true, LogEventLevel.Information);
+            return new NavigatorHostConfigurationLoadResult(true, LogEventLevel.Information, TrafficCapture: TrafficCaptureOptions.Default);
         }
 
         if (!File.Exists(path))
@@ -40,6 +46,7 @@ internal sealed class NavigatorHostConfiguration
         }
 
         string? minimumLogLevel;
+        var trafficCapture = TrafficCaptureOptions.Default;
         try
         {
             await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096,
@@ -51,21 +58,33 @@ internal sealed class NavigatorHostConfiguration
             }
 
             var seenMinimumLogLevel = false;
+            var seenTrafficCapture = false;
             minimumLogLevel = null;
             foreach (var property in document.RootElement.EnumerateObject())
             {
-                if (!string.Equals(property.Name, "minimumLogLevel", StringComparison.Ordinal) || seenMinimumLogLevel)
+                if (string.Equals(property.Name, "minimumLogLevel", StringComparison.Ordinal) && !seenMinimumLogLevel)
+                {
+                    if (property.Value.ValueKind != JsonValueKind.String)
+                    {
+                        return Failure("CONFIG_INVALID", "minimumLogLevel must be a string.");
+                    }
+
+                    seenMinimumLogLevel = true;
+                    minimumLogLevel = property.Value.GetString();
+                }
+                else if (string.Equals(property.Name, "trafficCapture", StringComparison.Ordinal) && !seenTrafficCapture)
+                {
+                    if (!TryReadTrafficCapture(property.Value, out trafficCapture))
+                    {
+                        return Failure("CONFIG_INVALID", "trafficCapture must contain only enabled, retentionDays, and maxTotalBytes with supported values.");
+                    }
+
+                    seenTrafficCapture = true;
+                }
+                else
                 {
                     return Failure("CONFIG_INVALID", "The host settings contain an unsupported or duplicate field.");
                 }
-
-                if (property.Value.ValueKind != JsonValueKind.String)
-                {
-                    return Failure("CONFIG_INVALID", "minimumLogLevel must be a string.");
-                }
-
-                seenMinimumLogLevel = true;
-                minimumLogLevel = property.Value.GetString();
             }
 
             if (!seenMinimumLogLevel)
@@ -88,7 +107,7 @@ internal sealed class NavigatorHostConfiguration
         }
 
         LoggingSetup.SetMinimumLevel(minimumLevelSwitch, level);
-        return new NavigatorHostConfigurationLoadResult(true, level);
+        return new NavigatorHostConfigurationLoadResult(true, level, TrafficCapture: trafficCapture);
     }
 
     private static NavigatorHostConfigurationLoadResult Failure(string code, string message) =>
@@ -107,5 +126,47 @@ internal sealed class NavigatorHostConfiguration
 
         level = default;
         return false;
+    }
+
+    private static bool TryReadTrafficCapture(JsonElement element, out TrafficCaptureOptions options)
+    {
+        options = TrafficCaptureOptions.Default;
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        var enabled = options.Enabled;
+        var retentionDays = options.RetentionDays;
+        var maxTotalBytes = options.MaxTotalBytes;
+        var seenEnabled = false;
+        var seenRetentionDays = false;
+        var seenMaxTotalBytes = false;
+
+        foreach (var property in element.EnumerateObject())
+        {
+            switch (property.Name)
+            {
+                case "enabled" when !seenEnabled && property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False:
+                    enabled = property.Value.GetBoolean();
+                    seenEnabled = true;
+                    break;
+                case "retentionDays" when !seenRetentionDays && property.Value.ValueKind == JsonValueKind.Number &&
+                    property.Value.TryGetInt32(out var parsedRetentionDays) && parsedRetentionDays is >= 1 and <= 365:
+                    retentionDays = parsedRetentionDays;
+                    seenRetentionDays = true;
+                    break;
+                case "maxTotalBytes" when !seenMaxTotalBytes && property.Value.ValueKind == JsonValueKind.Number &&
+                    property.Value.TryGetInt64(out var parsedMaxTotalBytes) && parsedMaxTotalBytes is >= 1 and <= 10_737_418_240:
+                    maxTotalBytes = parsedMaxTotalBytes;
+                    seenMaxTotalBytes = true;
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        options = new TrafficCaptureOptions(enabled, retentionDays, maxTotalBytes);
+        return true;
     }
 }

@@ -38,7 +38,7 @@ jobs:
           if (Test-Path "hostsettings.json") {
             Copy-Item "hostsettings.json" "./publish/hostsettings.json"
           } else {
-            Set-Content -Path "./publish/hostsettings.json" -Value "{`n  `"minimumLogLevel`": `"Information`"`n}" -Encoding utf8
+            throw "Repository default hostsettings.json is missing."
           }
 
           # README.md ins Publish-Verzeichnis kopieren
