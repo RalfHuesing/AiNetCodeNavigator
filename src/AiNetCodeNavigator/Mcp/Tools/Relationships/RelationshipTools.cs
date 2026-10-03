@@ -803,11 +803,18 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 var identity = source.Identity;
                 var payload = await FeatureContextScanner.ScanAsync(new FeatureContextRequest(solution, symbolIdentifier, maxCallers, maxTests, scope, identity, includeGenerated), ct).ConfigureAwait(false);
                 if (payload?.Error is { } error) return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
-                var response = NavigationToolSupport.Success(payload!, payload!.CallersTruncated || payload.TestsTruncated,
-                    "Increase maxCallers or maxTests and repeat the query.");
+                var testAnalysisLimited = payload!.TestImplementationExpansionLimitReached ||
+                    payload.TestCandidateExpansionLimitReached || payload.TestReferenceInspectionLimitReached;
+                var response = NavigationToolSupport.Success(payload, payload.CallersTruncated || payload.TestsTruncated || testAnalysisLimited,
+                    testAnalysisLimited
+                        ? "Static test-candidate analysis reached a fixed bound; choose a narrower symbol to reduce its candidate set."
+                        : "Increase maxCallers or maxTests and repeat the query.");
                 var omissions = new List<string>();
                 if (payload.CallersTruncated) omissions.Add("maxCallers");
                 if (payload.TestsTruncated) omissions.Add("maxTests");
+                if (payload.TestImplementationExpansionLimitReached) omissions.Add("testImplementationExpansionLimit");
+                if (payload.TestCandidateExpansionLimitReached) omissions.Add("testCandidateExpansionLimit");
+                if (payload.TestReferenceInspectionLimitReached) omissions.Add("testReferenceInspectionLimit");
                 return source.WithMetadata(response,
                     $"featureContext(symbol={symbolIdentifier.Trim()}, scope={scope}, includeGenerated={includeGenerated}, maxCallers={maxCallers}, maxTests={maxTests})",
                     omissions.ToArray());
@@ -817,9 +824,11 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     [McpServerTool(Name = "get_test_context", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [System.ComponentModel.Description("Find source tests and related context for a selected symbol.")]
     public async Task<CallToolResult> GetTestContext([Required, System.ComponentModel.Description("Absolute path to an existing source solution.")] string targetPath, [Required, System.ComponentModel.Description("Source type or member identifier used to locate related tests.")] string symbolIdentifier,
-        [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", [System.ComponentModel.Description("Include declarations from generated source files.")] bool includeGenerated = false, [Range(1, 100), System.ComponentModel.Description("Maximum related test entries to return.")] int maxResults = 30,
+        [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", [System.ComponentModel.Description("Include declarations from generated source files.")] bool includeGenerated = false, [Range(1, 100), System.ComponentModel.Description("Maximum test fixture page size.")] int maxResults = 30,
         [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
-        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
+        [System.ComponentModel.Description("Opaque cursor for the next page of discovered test fixtures. Read all outer response pages before using it.")] string? resultCursor = null,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(symbolIdentifier))
             return McpToolResults.InvalidArgument("symbolIdentifier must be a non-empty symbol identifier.", "$.symbolIdentifier",
@@ -829,19 +838,43 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         return await NavigationToolSupport.RouteAsync(runtime, "get_test_context", targetPath,
             new { symbolIdentifier, scopeType, includeGenerated, maxResults }, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens,
-            async (target, ct) => await WithSource(target, async (solution, source) =>
+            async (target, coreCursor, ct) => await WithSource(target, async (solution, source) =>
             {
                 var resolved = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
                 if (resolved.Error is not null) return NavigationToolSupport.Failure(resolved.Error.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
-                var payload = await TestRecommendationBuilder.BuildAsync(resolved.Symbol!, solution, ct, includeGenerated, scope).ConfigureAwait(false);
-                var fixtures = payload.TestFixtures.Take(maxResults).ToArray();
-                var shown = payload with { TestFixtures = fixtures };
-                var truncated = fixtures.Length < payload.TestFixtures.Count;
-                var response = NavigationToolSupport.Success(shown, truncated, "Increase maxResults and repeat the query.");
+                var payload = await TestRecommendationBuilder.BuildAsync(resolved.Symbol!, solution, source.Identity, ct, includeGenerated, scope).ConfigureAwait(false);
+                var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
+                    "get_test_context.candidates", symbolIdentifier.Trim(), scope.ToString(), includeGenerated.ToString(),
+                    maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                var page = NavigationToolSupport.PageResults(payload.TestFixtures, maxResults, coreCursor, binding,
+                    maxResponseBytes, maxResponseTokens);
+                if (page.Error is not null) return page.Error;
+                var scanLimited = payload.ImplementationExpansionLimitReached || payload.CandidateExpansionLimitReached ||
+                    payload.ReferenceInspectionLimitReached;
+                var shown = payload with
+                {
+                    TestFixtures = page.Items,
+                    ReturnedTestFixtures = page.Items.Length,
+                    ResultCursor = page.NextCursor,
+                    AnalysisNextAction = scanLimited
+                        ? "The static candidate analysis reached a fixed bound; select a narrower symbol to inspect a smaller candidate set."
+                        : null
+                };
+                // Domain analysis limits are reported through source analysis metadata. Reserve the
+                // response-level truncated status for a page that has more domain results.
+                var truncated = page.NextCursor is not null;
+                var nextAction = page.NextCursor is not null
+                    ? "Read all outer response pages, then continue with resultCursor."
+                    : null;
+                var response = NavigationToolSupport.Success(shown, truncated, nextAction);
+                var omissions = new List<string>();
+                if (payload.ImplementationExpansionLimitReached) omissions.Add("implementationExpansionLimit");
+                if (payload.CandidateExpansionLimitReached) omissions.Add("candidateExpansionLimit");
+                if (payload.ReferenceInspectionLimitReached) omissions.Add("referenceInspectionLimit");
                 return source.WithMetadata(response,
                     $"testContext(symbol={symbolIdentifier.Trim()}, scope={scope}, includeGenerated={includeGenerated}, maxResults={maxResults})",
-                    truncated ? ["maxResults"] : []);
-            }, maxResponseBytes, maxResponseTokens, ct), AnalysisTargetType.Project, cancellationToken).ConfigureAwait(false);
+                    omissions.ToArray(), page.NextCursor is not null);
+            }, maxResponseBytes, maxResponseTokens, ct), AnalysisTargetType.Project, cancellationToken, resultCursor, "get_test_context.candidates").ConfigureAwait(false);
     }
 
     private async Task<CallToolResult> WithSource(AnalysisTarget target,

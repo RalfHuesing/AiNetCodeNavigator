@@ -8,6 +8,17 @@ namespace AiNetCodeNavigator.Core.Symbols;
 public sealed record TestMethodMatch(
     string MethodName,
     int Line,
+    string? HandoffId = null,
+    IReadOnlyList<TestCandidateEvidence>? Evidence = null);
+
+/// <summary>A source-located static reason why a test fixture or method was returned as a candidate.</summary>
+public sealed record TestCandidateEvidence(
+    string EvidenceType,
+    string SourceSymbol,
+    string FilePath,
+    int Line,
+    int Column,
+    string? ProjectIdentity = null,
     string? HandoffId = null);
 
 /// <summary>
@@ -20,7 +31,9 @@ public sealed record TestFixtureMatch(
     string Framework,
     IReadOnlyList<TestMethodMatch> Methods,
     string? HandoffId = null,
-    string? ProjectName = null)
+    string? ProjectName = null,
+    IReadOnlyList<TestCandidateEvidence>? Evidence = null,
+    string? ProjectIdentity = null)
 {
     internal ProjectId? SourceProjectId { get; init; }
 }
@@ -39,4 +52,12 @@ public sealed record TestContextPayload(
 
     /// <summary>Identifies the payload as static heuristic candidates, not execution or coverage evidence.</summary>
     public string EvidenceMode { get; } = StaticTestCandidatesOnlyEvidenceMode;
+
+    public int ExpandedImplementationCount { get; init; }
+    public bool ImplementationExpansionLimitReached { get; init; }
+    public bool CandidateExpansionLimitReached { get; init; }
+    public bool ReferenceInspectionLimitReached { get; init; }
+    public string? AnalysisNextAction { get; init; }
+    public int ReturnedTestFixtures { get; init; }
+    public string? ResultCursor { get; init; }
 }

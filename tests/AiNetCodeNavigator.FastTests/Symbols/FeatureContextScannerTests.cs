@@ -144,8 +144,11 @@ public sealed class FeatureContextScannerTests
         Assert.NotNull(tests);
         Assert.Contains(production.Callers, caller => caller.CallerName.EndsWith("Invoke", StringComparison.Ordinal));
         Assert.DoesNotContain(production.Callers, caller => caller.CallerName.EndsWith("ExercisesTarget", StringComparison.Ordinal));
+        Assert.Contains(production.Tests, test => test.TestMethod == "ExercisesTarget");
         Assert.Contains(tests.Callers, caller => caller.CallerName.EndsWith("ExercisesTarget", StringComparison.Ordinal));
         Assert.DoesNotContain(tests.Callers, caller => caller.CallerName.EndsWith("Invoke", StringComparison.Ordinal));
+        Assert.Equal(production.Tests.Select(test => (test.FixtureName, test.TestMethod, test.FilePath)),
+            tests.Tests.Select(test => (test.FixtureName, test.TestMethod, test.FilePath)));
     }
 
     [Fact]
@@ -184,7 +187,7 @@ public sealed class FeatureContextScannerTests
     }
 
     [Fact]
-    public async Task ScanAsync_FiltersTestRecommendationsByScopeBeforeCounting()
+    public async Task ScanAsync_CollectsTestRecommendationsIndependentlyOfCallerScope()
     {
         const string fixtureSources = "using System; namespace Xunit { public sealed class FactAttribute : Attribute { } } namespace Sample.Tests { public class TargetServiceTest { [Xunit.Fact] public void Single() { } } public class TargetServiceTests { [Xunit.Fact] public void Plural() { } } }";
         const string pathFixtureSource = "using System; namespace Xunit { public sealed class FactAttribute : Attribute { } } namespace Sample.PathProject { public class TargetServiceSpec { [Xunit.Fact] public void PathBased() { } } }";
@@ -207,9 +210,9 @@ public sealed class FeatureContextScannerTests
         Assert.Equal(3, all.TotalTests);
         Assert.Single(all.Tests);
         Assert.True(all.TestsTruncated);
-        Assert.Empty(production.Tests);
-        Assert.Equal(0, production.TotalTests);
-        Assert.False(production.TestsTruncated);
+        Assert.Equal(3, production.TotalTests);
+        Assert.Single(production.Tests);
+        Assert.True(production.TestsTruncated);
         Assert.Equal(3, tests.TotalTests);
         Assert.Single(tests.Tests);
         Assert.True(tests.TestsTruncated);

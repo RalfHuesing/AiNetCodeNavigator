@@ -78,8 +78,9 @@ public static class FeatureContextScanner
         var callersTruncated = orderedCallers.Count > maxCallers;
         var shownCallers = orderedCallers.Take(maxCallers).ToList();
 
-        var testContext = await TestRecommendationBuilder.BuildAsync(symbol, request.Solution, ct, request.IncludeGenerated, request.Scope).ConfigureAwait(false);
-        var allTests = FlattenTestRecommendations(testContext, request.Solution, request.Scope)
+        var testContext = await TestRecommendationBuilder.BuildAsync(symbol, request.Solution, identity, ct,
+            request.IncludeGenerated, SymbolScopeType.All).ConfigureAwait(false);
+        var allTests = FlattenTestRecommendations(testContext)
             .OrderBy(t => PathNormalizer.NormalizeSeparators(t.FilePath), StringComparer.OrdinalIgnoreCase)
             .ThenBy(t => t.Line)
             .ThenBy(t => t.FixtureName, StringComparer.Ordinal)
@@ -96,7 +97,12 @@ public static class FeatureContextScanner
             TotalCallers: orderedCallers.Count,
             TotalTests: allTests.Count,
             CallersTruncated: callersTruncated,
-            TestsTruncated: testsTruncated);
+            TestsTruncated: testsTruncated)
+        {
+            TestImplementationExpansionLimitReached = testContext.ImplementationExpansionLimitReached,
+            TestCandidateExpansionLimitReached = testContext.CandidateExpansionLimitReached,
+            TestReferenceInspectionLimitReached = testContext.ReferenceInspectionLimitReached
+        };
     }
 
     public static async Task<ISymbol?> ResolveSymbolAsync(
@@ -262,20 +268,11 @@ public static class FeatureContextScanner
                TestDetector.IsTestFile(relativePath);
     }
 
-    private static List<FeatureContextTestRecommendation> FlattenTestRecommendations(
-        TestContextPayload testContext,
-        Solution solution,
-        SymbolScopeType scope)
+    private static List<FeatureContextTestRecommendation> FlattenTestRecommendations(TestContextPayload testContext)
     {
         var result = new List<FeatureContextTestRecommendation>();
         foreach (var fixture in testContext.TestFixtures)
         {
-            var isTest = TestDetector.IsTestFile(fixture.FilePath) ||
-                         (fixture.SourceProjectId is { } projectId &&
-                          solution.GetProject(projectId) is { } project &&
-                          TestDetector.IsTestProject(project));
-            if (!MatchesScope(isTest, scope)) continue;
-
             if (fixture.Methods.Count == 0)
             {
                 result.Add(new FeatureContextTestRecommendation(
@@ -284,7 +281,8 @@ public static class FeatureContextScanner
                     FilePath: fixture.FilePath,
                     Line: fixture.Line,
                     Framework: fixture.Framework,
-                    HandoffId: fixture.HandoffId));
+                    HandoffId: fixture.HandoffId,
+                    Evidence: fixture.Evidence));
             }
             else
             {
@@ -296,7 +294,11 @@ public static class FeatureContextScanner
                         FilePath: fixture.FilePath,
                         Line: method.Line,
                         Framework: fixture.Framework,
-                        HandoffId: method.HandoffId));
+                        HandoffId: method.HandoffId,
+                        Evidence: (fixture.Evidence ?? Array.Empty<TestCandidateEvidence>())
+                            .Concat(method.Evidence ?? Array.Empty<TestCandidateEvidence>())
+                            .Distinct()
+                            .ToArray()));
                 }
             }
         }
@@ -361,11 +363,24 @@ public static class FeatureContextScanner
             {
                 var handoff = t.HandoffId != null ? $" [handoff: `{t.HandoffId}`]" : "";
                 sb.AppendLine($"- `[{t.Framework}] {t.FixtureName}.{t.TestMethod}` in `{t.FilePath}:{t.Line}`{handoff}");
+                foreach (var evidence in t.Evidence ?? Array.Empty<TestCandidateEvidence>())
+                {
+                    sb.AppendLine($"  - Evidence: `{evidence.EvidenceType}` for `{evidence.SourceSymbol}` at `{evidence.FilePath}:{evidence.Line}:{evidence.Column}` ({evidence.ProjectIdentity})");
+                }
             }
             if (p.TestsTruncated)
             {
                 sb.AppendLine($"... ({p.TotalTests - p.Tests.Count} more tests truncated)");
             }
+        }
+
+        if (p.TestImplementationExpansionLimitReached || p.TestCandidateExpansionLimitReached || p.TestReferenceInspectionLimitReached)
+        {
+            var limits = new List<string>();
+            if (p.TestImplementationExpansionLimitReached) limits.Add("implementation expansion");
+            if (p.TestCandidateExpansionLimitReached) limits.Add("candidate expansion");
+            if (p.TestReferenceInspectionLimitReached) limits.Add("reference inspection");
+            sb.AppendLine($"Test-candidate analysis was partial because it reached: {string.Join(", ", limits)}.");
         }
 
         return sb.ToString().TrimEnd();

@@ -32,7 +32,8 @@ public sealed record FeatureContextTestRecommendation(
     string FilePath,
     int Line,
     string Framework,
-    string? HandoffId = null);
+    string? HandoffId = null,
+    IReadOnlyList<TestCandidateEvidence>? Evidence = null);
 
 public sealed record FeatureContextPayload(
     FeatureContextDeclaration Declaration,
@@ -45,6 +46,9 @@ public sealed record FeatureContextPayload(
     ResultError? Error = null)
 {
     public IReadOnlyList<SymbolResolutionCandidate> ResolutionCandidates { get; init; } = Array.Empty<SymbolResolutionCandidate>();
+    public bool TestImplementationExpansionLimitReached { get; init; }
+    public bool TestCandidateExpansionLimitReached { get; init; }
+    public bool TestReferenceInspectionLimitReached { get; init; }
 
     /// <summary>Identifies test recommendations as static heuristic candidates, not execution or coverage evidence.</summary>
     public string EvidenceMode { get; } = TestContextPayload.StaticTestCandidatesOnlyEvidenceMode;
