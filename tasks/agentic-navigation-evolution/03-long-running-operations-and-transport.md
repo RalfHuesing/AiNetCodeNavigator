@@ -1,5 +1,9 @@
 # Long-running operations and transport failures
 
+## Current discussion priority, 2026-10-03
+
+This is the next recommended discussion point after approval of the one-scan-per-document-batch optimization. Recommend diagnosing the observed EOF/timeout and evaluating short status polls with genuine progress information for long analyses. The observed 15-second poll wait is current behavior, not a proven cause of the disconnection. No polling/progress contract change has yet been approved; rendering redesign remains excluded by topic 07.
+
 ## Evidence and limits
 
 The [large-target graph response](../../temp/mcp-test-360/raw_calls/02_source_san/10_dependency_graph_poll_eof_response.txt) records an initial running control, two approximately 15-second running polls and then an EOF/timeout description. The dump does not establish whether the client timed out, the server exited, or transport failed for another reason. It also does not preserve separate complete request/response frames for each poll or a server exit code.

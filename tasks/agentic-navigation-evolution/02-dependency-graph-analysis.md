@@ -1,8 +1,8 @@
 # Dependency graph analysis
 
-## Current discussion priority, 2026-10-03
+## User decision, 2026-10-03
 
-After the handle-removal and unchanged-output decisions, the next recommended substantive improvement is eliminating repeated semantic collection for internal relationship pages. First establish a focused reproduction and verify one collection per document batch. Discuss broader caching and targeted traversal afterward. This is a recommendation pending user decision, not a completed optimization. Preserve the output presentation selected in [topic 07](07-output-format-and-token-efficiency.md).
+The user has approved eliminating repeated semantic collection for internal relationship pages: analyze each document batch once and derive all needed pages from that collected result. Implementation is pending. First establish a focused reproduction and verify one collection per document batch. This approval covers step 1 below; broader caching, targeted traversal and an incoming-edge index remain proposals for later discussion. Preserve the output presentation selected in [topic 07](07-output-format-and-token-efficiency.md).
 
 ## Verified current behavior
 
@@ -16,9 +16,9 @@ The public graph is type-oriented: selecting a member chooses its containing typ
 
 The large-target request was already `depth: 1` and `maxResults: 20`. It returned running controls before an ambiguous EOF/timeout observation. This establishes a slow/incomplete workflow, not the exact performance bottleneck or transport failure cause. Switching to `outgoing` or a file selector is not a demonstrated collection-cost fix in the inspected implementation.
 
-## Proposed sequence
+## Implementation direction and remaining proposals
 
-1. Collect each document batch once and project all needed relationship pages from that collected result.
+1. Approved: collect each document batch once and project all needed relationship pages from that collected result.
 2. Reuse collected relationships for subsequent queries against the same immutable snapshot and scope.
 3. Add a targeted outgoing path using all relevant declaration documents, including partial declarations. Only expand to further declarations when the requested depth requires them.
 4. Evaluate a reusable incoming-edge index with explicit coverage and invalidation rules.
