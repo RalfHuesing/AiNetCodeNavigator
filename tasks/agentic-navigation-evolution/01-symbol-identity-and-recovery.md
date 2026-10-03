@@ -37,14 +37,20 @@ Keeping the `h:` spelling or adding a stable reference alongside the ephemeral h
 
 Bare DocCommentIds are insufficient for exact ownership. File/line identifiers are not durable under inserted lines. A content hash changes on edits; a stateless hash of identity alone cannot resolve itself without an index or embedded identity. Random GUIDs require durable state or source annotations, which conflict with the server's read-only boundary if inserted into analyzed source.
 
-## Next decision: rename and signature changes
+## Approved rename and signature-change behavior
 
-Recommend that a declaration whose semantic identity changes receive a new symbol ID. Resolve the old ID exactly against current source; if its declaration no longer exists, return a clear not-found result with an action to rediscover the intended declaration. Do not automatically redirect based on similar names, file positions or bodies. Body edits and unrelated edits should continue to preserve IDs. This recommendation does not create a guarantee of persistent entity identity through arbitrary refactorings, nor does it prove continuity if a declaration is deleted and recreated under the same exact identity. Rename/signature-change behavior is not yet approved.
+The user has approved that a declaration whose semantic identity changes receive a new symbol ID. Resolve the old ID exactly against current source; if its declaration no longer exists, return a clear not-found result with an action to rediscover the intended declaration. Do not automatically redirect based on similar names, file positions or bodies. Body edits and unrelated edits preserve unchanged declaration IDs. This does not create a guarantee of persistent entity identity through arbitrary refactorings, nor does it prove continuity if a declaration is deleted and recreated under the same exact identity. Implementation is pending.
+
+## Next decision: stable assembly reference
+
+Assemblies lack a source project path, so the approved source owner representation needs an assembly counterpart when the public handles are removed. Recommend a readable assembly simple name plus Roslyn declaration ID, with the exact owner DLL retained as separate target context in follow-up requests and owner fields. Do not embed an absolute path, binary content hash, generation, MVID or assembly version in the reusable declaration reference. Current analysis must still validate the selected owner and use current binary/reference contents; unchanged declared API can resolve after reopening or rebuilding, while a missing declaration receives the approved exact-resolution error.
+
+This assembly representation is not yet approved. A simple assembly name does not select one physical binary by itself: equal names must remain disambiguated through the selected exact owner target, including cross-assembly hopping. Never resolve a reference to the first matching name across loaded owners. Define assembly-reference grammar and same-name/wrong-owner behavior before implementation. Local-function/decompiler identity limitations remain separate contract work.
 
 ## Stability boundaries and open decisions
 
 - Renaming a declaration, moving it between owners, or changing a signature can change its semantic declaration identity. Body-edit stability must not be presented as universal refactoring stability.
-- Decide whether rename/signature-change tracking is required. If so, define explicit reconciliation with ambiguity and deletion results; do not silently select a similar declaration.
+- Approved: no automatic rename/signature tracking or similarity-based reassignment. A changed declaration uses its new ID; an absent exact declaration returns an actionable failure.
 - Define source owner/configuration identity, including duplicate namespaces/types, overloaded and generic members, linked files and loaded framework contexts.
 - Define assembly owner selection and behavior when a binary is replaced with the same or a changed API.
 - Define supported declarations without a canonical DocCommentId, including local functions; existing location fallbacks are not durable under arbitrary edits.

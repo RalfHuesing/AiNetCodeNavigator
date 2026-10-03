@@ -8,7 +8,7 @@ Created: 2026-10-03. Initial source inspection: HEAD `a670e57d02654c04c833c61fcc
 
 | Topic | Current status / priority | Discussion file |
 | --- | --- | --- |
-| Symbol identity, snapshot binding and recovery | Readable repository-relative reference approved; next decision: rename/signature changes | [01](01-symbol-identity-and-recovery.md) |
+| Symbol identity, snapshot binding and recovery | Source reference and rename behavior approved; next decision: assembly reference | [01](01-symbol-identity-and-recovery.md) |
 | Dependency graph collection and targeted traversal | Collection, reuse and targeted outgoing analysis approved | [02](02-dependency-graph-analysis.md) |
 | Long-running operations, polling and transport failure | Approved; actual-client verification required | [03](03-long-running-operations-and-transport.md) |
 | Snapshot refresh, hashing and reusable analysis | Dependency and source-identity reuse approved | [04](04-snapshot-refresh-and-analysis-cache.md) |
@@ -26,7 +26,8 @@ The source evidence is the local [360-degree audit](../../temp/mcp-test-360/summ
 - The user has approved targeted outgoing dependency analysis, starting from the selected type's declaration documents and expanding only as needed for the requested depth. This addresses initial queries when no reusable full graph exists. Full incoming/both coverage and completeness must be preserved; implementation is pending.
 - The user has approved computing source analysis identity once per unchanged immutable Roslyn snapshot and reusing it across navigation calls. Fresh workspace/content checks remain required; implementation is pending.
 - The user has removed the dedicated workflow-verification proposal, output-format discussion and optional fixed analysis sessions completely from this knowledge store. Do not recreate these topics unless requested. Existing repository verification rules still apply to implementation.
-- The next recommended decision is handling rename and signature changes: a changed declaration identity gets a new symbol ID, and an obsolete ID returns an explicit resolution failure with a discovery action. Automatic similarity-based reassignment is not recommended. This boundary is not yet approved.
+- The user has approved rename/signature-change behavior: a changed declaration identity gets a new symbol ID; an old ID whose exact declaration no longer exists returns an explicit failure and a discovery action. Do not redirect based on similarity. Body/unrelated edits preserve unchanged declaration IDs.
+- The next recommended decision is the stable reference for assembly symbols: a readable assembly name plus Roslyn declaration ID, with exact DLL owner target kept separate. No absolute path, content hash, generation or version is embedded in that proposed declaration reference. This assembly representation is not yet approved.
 - Keep chat responses short and discuss one priority at a time; the user explicitly finds long explanations overwhelming.
 
 See the remaining topic files for the decisions and supporting evidence. Current-state `docs/` remain unchanged because this work only records discussion and decisions under `tasks/`; no production behavior has changed.
