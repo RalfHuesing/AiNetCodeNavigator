@@ -1,5 +1,9 @@
 # Dependency graph analysis
 
+## Current discussion priority, 2026-10-03
+
+After the handle-removal and unchanged-output decisions, the next recommended substantive improvement is eliminating repeated semantic collection for internal relationship pages. First establish a focused reproduction and verify one collection per document batch. Discuss broader caching and targeted traversal afterward. This is a recommendation pending user decision, not a completed optimization. Preserve the output presentation selected in [topic 07](07-output-format-and-token-efficiency.md).
+
 ## Verified current behavior
 
 [RelationshipTools.ScanSourceDependencyGraphAcrossDocumentsAsync](../../src/AiNetCodeNavigator/Mcp/Tools/Relationships/RelationshipTools.cs) drains document windows and relationship windows through the Core scanner, then applies the requested traversal with `MergeAndTraverse`. Target selectors are cleared during the collection stage. Consequently, small `depth`, `maxResults`, `filePath` and `direction: outgoing` do not currently bound the initial source collection to the selected neighborhood.

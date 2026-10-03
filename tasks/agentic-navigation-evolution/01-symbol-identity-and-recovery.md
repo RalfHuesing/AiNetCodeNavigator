@@ -10,9 +10,9 @@
 - The audit's stale class-structure request failed, while its subsequent DocCommentId request succeeded. During this discussion's initial analysis, a discovered handle also failed with `STALE_SNAPSHOT`; a method body was subsequently resolved through its documentation ID. Neither observation alone identifies the intervening file change.
 - [NavigationToolSupport.Failure](../../src/AiNetCodeNavigator/Mcp/Tools/NavigationToolSupport.cs) currently uses a generic recovery message when no specific hint is supplied.
 
-## User position, 2026-10-03
+## User decision, 2026-10-03
 
-The user considers invalidation during the find/edit/follow-up development loop a potentially major problem. They propose removing `h:` handles completely and outputting stable symbol identifiers, accepting extra tokens. This is an option under discussion, not authorization to implement a replacement immediately.
+The user has approved replacing the current ephemeral handle semantics and explicitly requires complete removal of the Base62 `h:` handle mechanism. Stable, self-describing symbol references are the selected direction, accepting additional tokens for reliable navigation after edits and restarts. Do not retain `h:` handles as an optional mode, compatibility route or second public navigation identity. This is an approved design decision; production implementation is pending and the exact replacement contract remains open.
 
 ## Assessment
 
@@ -25,13 +25,13 @@ Separate two questions:
 
 Stable declaration selection should survive body edits, unrelated edits and server restarts when owner and declaration identity remain the same. Snapshot identity should continue to bind analysis evidence and cursors. An explicit expected-snapshot constraint could express strict consistency when needed.
 
-## Proposed direction, not approved
+## Approved direction and remaining contract design
 
 Prefer one primary public symbol reference that can be resolved without a process-local handle registry. For source, its conceptual identity is the selected solution plus an owning project selector and a Roslyn declaration ID. Return analysis snapshot information separately. Target-path repetition can be avoided where the request or response already establishes the owner, but cross-assembly results must preserve the actual owner.
 
 The wire representation is undecided: a string with an explicitly defined escaping grammar, a typed selector object, or another self-contained representation. Examples discussed in chat describe this conceptual identity and are not existing accepted input syntax.
 
-Keeping the `h:` spelling with redesigned durable semantics could also work, but retaining both an ephemeral handle and a stable reference by default would increase output and agent choices. The preferred discussion direction is to replace the public ephemeral handoff rather than add a second mandatory identifier.
+Keeping the `h:` spelling or adding a stable reference alongside the ephemeral handle was considered earlier and is now rejected by the user's decision. Removal must cover producers, consumers, registry/counter/alphabet infrastructure, runtime/configuration wiring, tests and documentation where they exist solely for this mechanism. Review shared uses before deleting any component; preserve independent snapshot and cursor consistency behavior.
 
 Bare DocCommentIds are insufficient for exact ownership. File/line identifiers are not durable under inserted lines. A content hash changes on edits; a stateless hash of identity alone cannot resolve itself without an index or embedded identity. Random GUIDs require durable state or source annotations, which conflict with the server's read-only boundary if inserted into analyzed source.
 

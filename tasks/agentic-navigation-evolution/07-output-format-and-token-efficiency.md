@@ -1,8 +1,8 @@
 # Output format and token efficiency
 
-## User question, 2026-10-03
+## User decision, 2026-10-03
 
-The user asks whether the large JSON output is token-efficient and whether Markdown would be better. They accept some extra identifier tokens if it makes navigation reliable after edits; see [topic 01](01-symbol-identity-and-recovery.md).
+After discussing the JSON/Markdown tradeoff, the user explicitly decided to make no changes here and preserve the existing output. This topic is closed for the current improvement scope. Do not introduce Markdown conversion, JSON minification, new presentation switches or the broader payload/presentation optimizations explored below. Required symbol-reference changes from [topic 01](01-symbol-identity-and-recovery.md) remain selected; this decision does not freeze the obsolete handle fields.
 
 ## Verified current behavior
 
@@ -26,9 +26,9 @@ These are counts for one response, not an end-to-end benchmark, a production for
 
 In the same tokenizer, `h:fWSM` costs 4 tokens and `T:AiNetCodeNavigator.Core.CallTree.CallTreeBuilder` costs 12. The eight-token difference concerns this one declaration ID only; exact project ownership costs additional tokens and long generic member signatures can cost substantially more. Current find_symbol already outputs both of these values, so replacement cost cannot be calculated as adding the full DocCommentId length to every existing result. Recovery calls, rediscovery responses and repeated graph endpoints count toward total workflow cost.
 
-## Current recommendation, not approved
+## Earlier options, not selected
 
-Design small purpose-specific projections from typed internal results and measure before adopting a universal output syntax. Compare compact JSON with deliberate paging units, grouped Markdown/tables and a consistent compact text format on the same evidence and completeness.
+The following options are retained as historical discussion evidence only. They are not active recommendations or implementation work after the user's decision to preserve the existing output.
 
 - Keep owner, stable declaration reference, scope, analysis version, evidence kind, omissions and continuation/recovery information.
 - Group shared target/project/path context once when unambiguous.
@@ -39,6 +39,6 @@ Design small purpose-specific projections from typed internal results and measur
 - Determine how clients consume structured content before selecting any text/structured dual representation.
 - Preserve atomic status/recovery controls and complete, safe outer/domain paging.
 
-## Open decisions and proposed acceptance
+## Deferred evaluation if explicitly reopened
 
-Decide the default presentation, required fields, optional detail selection and machine-consumer requirements. Avoid adding many format switches without a demonstrated need. Measure full successful agent workflows and equivalent semantic scope, including all pages and errors; verify extraction of exact identifiers, ambiguous owners and evidence kinds. A Markdown conversion that omits fields cannot be credited as a pure format saving.
+If the user later reopens this topic, decide the default presentation, required fields, optional detail selection and machine-consumer requirements. Avoid adding many format switches without a demonstrated need. Measure full successful agent workflows and equivalent semantic scope, including all pages and errors; verify extraction of exact identifiers, ambiguous owners and evidence kinds. A Markdown conversion that omits fields cannot be credited as a pure format saving.
