@@ -119,7 +119,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     {
         if (!TryScope(scopeType, out var scope)) return Invalid("scopeType", "Use all, production, or tests.");
         return await NavigationToolSupport.RouteAsync(runtime, "find_references", targetPath,
-            new { symbolIdentifier, depth, scopeType, includeGenerated, includeReferences }, operationToken,
+            new { symbolIdentifier, depth, scopeType, includeGenerated, includeReferences, maxResults }, operationToken,
             continuationToken, maxResponseBytes, maxResponseTokens,
             async (target, coreCursor, ct) =>
             {
@@ -135,7 +135,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         var closureBinding = BoundResultCursor.CreateBinding(target.CanonicalPath,
                             closureIdentity.ContentHash,
                             "find_references.references", symbolIdentifier.Trim(), depth.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                            scope.ToString(), includeGenerated.ToString(), "includeReferences=true");
+                            scope.ToString(), includeGenerated.ToString(), "includeReferences=true",
+                            maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
                         var closurePage = NavigationToolSupport.PageResults(closure.References!.References, maxResults, coreCursor,
                             closureBinding, maxResponseBytes, maxResponseTokens);
                         if (closurePage.Error is not null) return closurePage.Error;
@@ -158,7 +159,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
                         access.Generation, access.ReferenceSnapshotHash);
                     var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, identity.ContentHash + "|" + access.ReferenceSnapshotHash,
-                        "find_references.references", symbolIdentifier.Trim(), depth.ToString(System.Globalization.CultureInfo.InvariantCulture), scope.ToString(), includeGenerated.ToString());
+                        "find_references.references", symbolIdentifier.Trim(), depth.ToString(System.Globalization.CultureInfo.InvariantCulture), scope.ToString(), includeGenerated.ToString(),
+                        maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
                     var page = NavigationToolSupport.PageResults(result.References, maxResults, coreCursor, binding,
                         maxResponseBytes, maxResponseTokens);
                     if (page.Error is not null) return page.Error;
@@ -182,7 +184,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 var result = await FindReferencesResolver.FindReferencesAsync(symbol.Symbol!, solution, int.MaxValue, depth, ct,
                     scope: scope, includeGenerated: includeGenerated).ConfigureAwait(false);
                 var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
-                    "find_references.references", symbolIdentifier.Trim(), depth.ToString(System.Globalization.CultureInfo.InvariantCulture), scope.ToString(), includeGenerated.ToString());
+                    "find_references.references", symbolIdentifier.Trim(), depth.ToString(System.Globalization.CultureInfo.InvariantCulture), scope.ToString(), includeGenerated.ToString(),
+                    maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 var page = NavigationToolSupport.PageResults(result.References, maxResults, coreCursor, binding,
                     maxResponseBytes, maxResponseTokens);
                 if (page.Error is not null) return page.Error;
@@ -287,7 +290,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     {
         if (!TryScope(scopeType, out var scope)) return Invalid("scopeType", "Use all, production, or tests.");
         return await NavigationToolSupport.RouteAsync(runtime, "find_implementations", targetPath,
-            new { symbolIdentifier, scopeType, includeGenerated }, operationToken, continuationToken,
+            new { symbolIdentifier, scopeType, includeGenerated, maxResults }, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens,
             async (target, coreCursor, ct) =>
             {
@@ -306,7 +309,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
                         access.Generation, access.ReferenceSnapshotHash);
                     var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, identity.ContentHash + "|" + access.ReferenceSnapshotHash,
-                        "find_implementations.implementations", symbolIdentifier.Trim(), scope.ToString(), includeGenerated.ToString());
+                        "find_implementations.implementations", symbolIdentifier.Trim(), scope.ToString(), includeGenerated.ToString(),
+                        maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
                     var page = NavigationToolSupport.PageResults(assemblyResult.Implementations, maxResults, coreCursor, binding,
                         maxResponseBytes, maxResponseTokens);
                     if (page.Error is not null) return page.Error;
@@ -324,7 +328,8 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 var result = await FindReferencesResolver.FindImplementationsAsync(symbol.Symbol!, solution, int.MaxValue, ct, scope, includeGenerated).ConfigureAwait(false);
                 if (result.ErrorMessage is not null) return McpToolResults.InvalidArgument(result.ErrorMessage, "$.symbolIdentifier", "Use an interface, abstract/virtual member, or overridable class.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                 var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
-                    "find_implementations.implementations", symbolIdentifier.Trim(), scope.ToString(), includeGenerated.ToString());
+                    "find_implementations.implementations", symbolIdentifier.Trim(), scope.ToString(), includeGenerated.ToString(),
+                    maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 var page = NavigationToolSupport.PageResults(result.Implementations, maxResults, coreCursor, binding,
                     maxResponseBytes, maxResponseTokens);
                 if (page.Error is not null) return page.Error;

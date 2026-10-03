@@ -203,10 +203,19 @@ public sealed class AssemblyToolsContractTests
         seen.Clear();
         cursor = null;
         pages = 0;
+        string? firstReferenceCursor = null;
+        var broadReferences = await relationships.FindReferences(assemblyPath, "M:AssemblyImpactPages.Target.Read",
+            maxResults: 100, maxResponseBytes: 32768, maxResponseTokens: 4096);
+        Assert.False(broadReferences.IsError ?? false, TextOf(broadReferences));
+        using var broadReferencesDocument = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(broadReferences)));
+        var expectedReferences = broadReferencesDocument.RootElement.GetProperty("references").EnumerateArray()
+            .Select(item => $"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("enclosingSymbolName").GetString()}")
+            .ToArray();
         do
         {
             var response = await relationships.FindReferences(assemblyPath, "M:AssemblyImpactPages.Target.Read",
-                maxResults: 2, resultCursor: cursor, maxResponseBytes: 32768, maxResponseTokens: 4096);
+                maxResults: 2, resultCursor: cursor, maxResponseBytes: cursor is null ? 32768 : 65536,
+                maxResponseTokens: cursor is null ? 4096 : 8192);
             Assert.False(response.IsError ?? false, TextOf(response));
             using var document = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(response)));
             var root = document.RootElement;
@@ -214,12 +223,32 @@ public sealed class AssemblyToolsContractTests
                 seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("enclosingSymbolName").GetString()}");
             cursor = root.TryGetProperty("resultCursor", out var cursorValue)
                 && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
+            firstReferenceCursor ??= cursor;
             pages++;
             Assert.InRange(pages, 1, 10);
         } while (cursor is not null);
         Assert.Equal(4, pages);
         Assert.Equal(8, seen.Count);
         Assert.Equal(8, seen.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(expectedReferences, seen);
+        Assert.NotNull(firstReferenceCursor);
+        AssertErrorWithinBudget(await relationships.FindReferences(assemblyPath, "M:AssemblyImpactPages.Target.Read",
+            maxResults: 3, resultCursor: firstReferenceCursor, maxResponseBytes: 16384, maxResponseTokens: 2048),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 2048);
+        AssertErrorWithinBudget(await relationships.FindReferences(assemblyPath, "M:AssemblyImpactPages.Caller00.Invoke",
+            maxResults: 2, resultCursor: firstReferenceCursor, maxResponseBytes: 16384, maxResponseTokens: 2048),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 2048);
+        AssertErrorWithinBudget(await relationships.FindReferences(assemblyPath, "M:AssemblyImpactPages.Target.Read",
+            scopeType: "tests", maxResults: 2, resultCursor: firstReferenceCursor, maxResponseBytes: 16384, maxResponseTokens: 2048),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 2048);
+        AssertErrorWithinBudget(await relationships.FindReferences(assemblyPath, "M:AssemblyImpactPages.Target.Read",
+            maxResults: 2, resultCursor: "malformed-cursor", maxResponseBytes: 16384, maxResponseTokens: 2048),
+            "RESULT_CURSOR_EXPIRED", 16384, 2048);
+        var referenceCopyPath = Path.Combine(Path.GetDirectoryName(assemblyPath)!, "AssemblyImpactPages-copy.dll");
+        File.Copy(assemblyPath, referenceCopyPath);
+        AssertErrorWithinBudget(await relationships.FindReferences(referenceCopyPath, "M:AssemblyImpactPages.Target.Read",
+            maxResults: 2, resultCursor: firstReferenceCursor, maxResponseBytes: 16384, maxResponseTokens: 2048),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 2048);
 
         seen.Clear();
         cursor = null;
@@ -249,6 +278,7 @@ public sealed class AssemblyToolsContractTests
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var relationships = new RelationshipTools(runtime);
+        var symbols = new SymbolTools(runtime);
         using var fixture = TestTempDirectory.Create("ainet-assembly-implementation-pages-");
         var readers = string.Join("\n", Enumerable.Range(0, 5).Select(index =>
             $"public sealed class Reader{index:D2} : IReadable {{ public int Read() => {index}; public string Label => \"reader\"; }}"));
@@ -261,18 +291,29 @@ public sealed class AssemblyToolsContractTests
 
         var seen = new List<string>();
         string? cursor = null;
+        string? firstImplementationCursor = null;
         var pages = 0;
+        var broadImplementations = await relationships.FindImplementations(assemblyPath, "T:AssemblyImplementationPages.IReadable",
+            maxResults: 100, maxResponseBytes: 32768, maxResponseTokens: 4096);
+        Assert.False(broadImplementations.IsError ?? false, TextOf(broadImplementations));
+        using var broadImplementationsDocument = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(broadImplementations)));
+        var expectedImplementations = broadImplementationsDocument.RootElement.GetProperty("implementations").EnumerateArray()
+            .Select(item => $"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("symbolName").GetString()}")
+            .ToArray();
         do
         {
             var response = await relationships.FindImplementations(assemblyPath, "T:AssemblyImplementationPages.IReadable",
-                maxResults: 2, resultCursor: cursor, maxResponseBytes: 32768, maxResponseTokens: 4096);
+                maxResults: 2, resultCursor: cursor, maxResponseBytes: cursor is null ? 32768 : 65536,
+                maxResponseTokens: cursor is null ? 4096 : 8192);
             Assert.False(response.IsError ?? false, TextOf(response));
+            await FollowAssemblyHandoffAsync(symbols, assemblyPath, response);
             using var document = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(response)));
             var root = document.RootElement;
             foreach (var item in root.GetProperty("implementations").EnumerateArray())
                 seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("symbolName").GetString()}");
             cursor = root.TryGetProperty("resultCursor", out var cursorValue)
                 && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
+            firstImplementationCursor ??= cursor;
             pages++;
             Assert.InRange(pages, 1, 10);
         } while (cursor is not null);
@@ -280,6 +321,34 @@ public sealed class AssemblyToolsContractTests
         Assert.Equal(3, pages);
         Assert.Equal(6, seen.Count);
         Assert.Equal(6, seen.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(expectedImplementations, seen);
+        Assert.NotNull(firstImplementationCursor);
+        AssertErrorWithinBudget(await relationships.FindImplementations(assemblyPath, "T:AssemblyImplementationPages.IReadable",
+            maxResults: 3, resultCursor: firstImplementationCursor, maxResponseBytes: 16384, maxResponseTokens: 2048),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 2048);
+        AssertErrorWithinBudget(await relationships.FindImplementations(assemblyPath, "M:AssemblyImplementationPages.IReadable.Read",
+            maxResults: 2, resultCursor: firstImplementationCursor, maxResponseBytes: 16384, maxResponseTokens: 2048),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 2048);
+        AssertErrorWithinBudget(await relationships.FindImplementations(assemblyPath, "T:AssemblyImplementationPages.IReadable",
+            scopeType: "tests", maxResults: 2, resultCursor: firstImplementationCursor, maxResponseBytes: 16384, maxResponseTokens: 2048),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 2048);
+        AssertErrorWithinBudget(await relationships.FindImplementations(assemblyPath, "T:AssemblyImplementationPages.IReadable",
+            maxResults: 2, resultCursor: "malformed-cursor", maxResponseBytes: 16384, maxResponseTokens: 2048),
+            "RESULT_CURSOR_EXPIRED", 16384, 2048);
+        var implementationCopyPath = Path.Combine(Path.GetDirectoryName(assemblyPath)!, "AssemblyImplementationPages-copy.dll");
+        File.Copy(assemblyPath, implementationCopyPath);
+        AssertErrorWithinBudget(await relationships.FindImplementations(implementationCopyPath, "T:AssemblyImplementationPages.IReadable",
+            maxResults: 2, resultCursor: firstImplementationCursor, maxResponseBytes: 16384, maxResponseTokens: 2048),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 2048);
+        var changedAssemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "AssemblyImplementationPagesChanged", """
+            namespace AssemblyImplementationPages;
+            public interface IReadable { int Read(); string Label { get; } }
+            public sealed class Replacement : IReadable { public int Read() => 9; public string Label => "replacement"; }
+            """);
+        File.Copy(changedAssemblyPath, assemblyPath, overwrite: true);
+        AssertErrorWithinBudget(await relationships.FindImplementations(assemblyPath, "T:AssemblyImplementationPages.IReadable",
+            maxResults: 2, resultCursor: firstImplementationCursor, maxResponseBytes: 16384, maxResponseTokens: 2048),
+            "STALE_SNAPSHOT", 16384, 2048);
     }
 
     [Fact]
@@ -694,7 +763,8 @@ public sealed class AssemblyToolsContractTests
         var interfaceHandle = ReadAnyHandoff(TextOf(foundInterface));
         var foundRead = await symbols.FindSymbol(assemblyPath, pattern: "Probe.Read", kind: "method", maxResponseBytes: 32768);
         AssertOwnerResult(foundRead, "Probe.Read");
-        var readHandle = ReadHandoff(TextOf(foundRead), "Probe.Read");
+        var readHandle = ReadHandoffByDocumentationId(TextOf(foundRead),
+            "M:AssemblyRouteProbe.Probe.Read", assemblyPath);
 
         AssertOwnerResult(await symbols.GetSymbolBody(assemblyPath, [entryHandle], maxResponseBytes: 32768), "Entry");
         var inspectedProbe = await assemblies.InspectAssembly(assemblyPath, typeName: "AssemblyRouteProbe.Probe",
@@ -747,7 +817,16 @@ public sealed class AssemblyToolsContractTests
             format: "mermaid", maxResponseBytes: 32768);
         AssertOwnerResult(mermaidCallTree, "flowchart TD");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, mermaidCallTree);
-        AssertOwnerResult(await relationships.FindReferences(assemblyPath, "M:AssemblyRouteProbe.Probe.Read", maxResponseBytes: 32768), "Entry");
+        var probeReferences = await relationships.FindReferences(assemblyPath, readHandle, maxResponseBytes: 32768);
+        AssertOwnerResult(probeReferences, "Probe.Read");
+        using (var probeReferencesDocument = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(probeReferences))))
+        {
+            var references = probeReferencesDocument.RootElement.GetProperty("references").EnumerateArray().ToArray();
+            Assert.NotEmpty(references);
+            Assert.All(references, reference => Assert.Equal("Probe.Read",
+                reference.GetProperty("reachedFromSymbolName").GetString()));
+            Assert.Contains(references, reference => reference.GetProperty("enclosingSymbolName").GetString() == "Probe.Entry");
+        }
         var hierarchy = await relationships.GetTypeHierarchy(assemblyPath, typeHandle, maxResponseBytes: 32768);
         AssertOwnerResult(hierarchy, "Probe");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, hierarchy);
@@ -1311,6 +1390,21 @@ public sealed class AssemblyToolsContractTests
         var end = line.IndexOf(']', start + 10);
         Assert.True(start >= 0 && end > start, line);
         return line[(start + 10)..end];
+    }
+
+    private static string ReadHandoffByDocumentationId(string text, string documentationId, string ownerTargetPath)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(BodyOf(text));
+        var entries = document.RootElement.GetProperty("results").EnumerateArray()
+            .SelectMany(result => result.GetProperty("entries").EnumerateArray());
+        var selected = Assert.Single(entries.Where(entry =>
+            string.Equals(entry.GetProperty("docCommentId").GetString(), documentationId, StringComparison.Ordinal)
+            && string.Equals(Path.GetFullPath(entry.GetProperty("ownerTargetPath").GetString()!),
+                Path.GetFullPath(ownerTargetPath), StringComparison.OrdinalIgnoreCase)));
+        var handoff = selected.GetProperty("handoffId").GetString();
+        Assert.True(handoff?.StartsWith("h:", StringComparison.Ordinal) == true,
+            $"The selected owner result for {documentationId} did not include a handoff.");
+        return handoff!;
     }
 
     private static string ReadCallTreeHandoff(string text, string name, string expectedOwnerPath)
