@@ -12,7 +12,7 @@
 
 ## User decision, 2026-10-03
 
-The user has approved replacing the current ephemeral handle semantics and explicitly requires complete removal of the Base62 `h:` handle mechanism. Stable, self-describing symbol references are the selected direction, accepting additional tokens for reliable navigation after edits and restarts. Do not retain `h:` handles as an optional mode, compatibility route or second public navigation identity. This is an approved design decision; production implementation is pending and the exact replacement contract remains open.
+The user has approved replacing the current ephemeral handle semantics and explicitly requires complete removal of the Base62 `h:` handle mechanism. Stable, self-describing symbol references are the selected direction, accepting additional tokens for reliable navigation after edits and restarts. Do not retain `h:` handles as an optional mode, compatibility route or second public navigation identity. They have also approved a readable string composed of the source project path and Roslyn declaration ID, with the explicit constraint that the path is relative to the repository, not absolute. Snapshot identity remains separate. Production implementation is pending; exact grammar, repository-base selection and remaining identity boundaries are open.
 
 ## Assessment
 
@@ -27,15 +27,19 @@ Stable declaration selection should survive body edits, unrelated edits and serv
 
 ## Approved direction and remaining contract design
 
-Prefer one primary public symbol reference that can be resolved without a process-local handle registry. For source, its conceptual identity is the selected solution plus an owning project selector and a Roslyn declaration ID. Return analysis snapshot information separately. Target-path repetition can be avoided where the request or response already establishes the owner, but cross-assembly results must preserve the actual owner.
+Use one primary public symbol reference that can be resolved without a process-local handle registry. For source, its conceptual identity is the selected target context plus a repository-relative owning project path and a Roslyn declaration ID. Return analysis snapshot information separately. Target-path repetition can be avoided where the request or response already establishes the owner, but cross-assembly results must preserve the actual owner.
 
-The wire representation is undecided. The next discussion recommendation is one readable string carrying an exact owning-project selector and the Roslyn declaration ID for source, while the selected target remains request context and assembly follow-ups retain their actual owner target. This can preserve string-based symbolIdentifier inputs and avoid a second public selection mechanism. A typed selector object remains an alternative until this decision is resolved. Examples discussed in chat describe conceptual identity and are not existing accepted input syntax.
+The user has selected a readable string carrying the repository-relative owning-project path and the Roslyn declaration ID for source. Preserve string-based symbolIdentifier inputs. The selected target remains request context and assembly follow-ups retain their actual owner target. This decision does not change the existing absolute targetPath request parameter; it forbids absolute paths embedded in the proposed symbol ID. Examples discussed in chat describe conceptual identity and are not existing accepted input syntax.
 
-Define the string grammar, escaping and canonicalization before implementation. Source project paths must distinguish equally named projects and should be relative to the selected solution where unambiguous. Define framework/configuration ambiguity and declarations without DocCommentIds explicitly. Keep analysis content hashes outside the reusable declaration identity. The readable-string choice is a pending contract decision, not an additional approved feature.
+Define the string grammar, escaping and canonicalization before implementation. Source project paths must distinguish equally named projects and be relative to the repository root, including when the selected solution is nested below that root. Root selection must be deterministic and independent of the caller's current directory. Define behavior for non-Git targets, projects outside the repository, multiple framework contexts and declarations without DocCommentIds. Assembly-owner encoding for binaries without a repository project remains separate contract work; do not invent a source project owner. Keep analysis content hashes outside the reusable declaration identity. The readable-string and repository-relative path decisions are approved.
 
 Keeping the `h:` spelling or adding a stable reference alongside the ephemeral handle was considered earlier and is now rejected by the user's decision. Removal must cover producers, consumers, registry/counter/alphabet infrastructure, runtime/configuration wiring, tests and documentation where they exist solely for this mechanism. Review shared uses before deleting any component; preserve independent snapshot and cursor consistency behavior.
 
 Bare DocCommentIds are insufficient for exact ownership. File/line identifiers are not durable under inserted lines. A content hash changes on edits; a stateless hash of identity alone cannot resolve itself without an index or embedded identity. Random GUIDs require durable state or source annotations, which conflict with the server's read-only boundary if inserted into analyzed source.
+
+## Next decision: rename and signature changes
+
+Recommend that a declaration whose semantic identity changes receive a new symbol ID. Resolve the old ID exactly against current source; if its declaration no longer exists, return a clear not-found result with an action to rediscover the intended declaration. Do not automatically redirect based on similar names, file positions or bodies. Body edits and unrelated edits should continue to preserve IDs. This recommendation does not create a guarantee of persistent entity identity through arbitrary refactorings, nor does it prove continuity if a declaration is deleted and recreated under the same exact identity. Rename/signature-change behavior is not yet approved.
 
 ## Stability boundaries and open decisions
 
