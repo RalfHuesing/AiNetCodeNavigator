@@ -36,9 +36,21 @@ totalDocuments: <non-negative integer, only when known>
 nextAction: Wait at least 1000 ms, then repeat the same tool, target and query with this operationToken; preserve an active resultCursor and omit continuationToken.
 ```
 
-Allowed phases, in order, are `loading`, `refreshing`, `identifying`, `analyzing`, `formatting`. Skip phases that do not apply. Do not regress the phase within an operation. Initialize to `loading`; before invoking analysis without a more precise event, advance to `analyzing`. `elapsedMilliseconds` is measured from operation admission and excludes no hidden stages.
+Phases have this fixed order/mapping:
 
-Publish immutable, thread-safe progress records through a host adapter; Core may report typed phase/counter events without depending on MCP types. `processedDocuments` counts distinct semantic document needs successfully satisfied for this operation by new collection, shared in-flight collection or valid cached facts. It measures processed coverage, not the number of fresh scans. Keep actual scanner counts separate for performance evidence. Include `totalDocuments` only when the denominator for that operation's selected collection is fixed and known; omit it for growing outgoing frontiers or scans that cannot measure it. Counts must be monotonic and never exceed a published total. Failures remain analysis evidence in the final result.
+| Phase | Boundary |
+| --- | --- |
+| loading | Target/owner acquisition and initial materialization |
+| refreshing | Source freshness verification and reload |
+| identifying | Snapshot/reference fingerprint creation or memo lookup |
+| analyzing | Symbol resolution, semantic collection and traversal |
+| formatting | Final result projection, serialization and response formatting |
+
+The published phase is the highest boundary reached, including when later cross-owner work re-enters loading. Skip inapplicable boundaries; initialize to loading and advance to analyzing before an analysis delegate without more detailed events. Never regress. elapsedMilliseconds is monotonic elapsed time since admission, represented as a non-negative Int64 with saturation at Int64.MaxValue.
+
+Publish immutable thread-safe records through a host adapter; Core reports typed events without MCP dependencies. For source dependency collection, processedDocuments counts each (snapshot ticket, ProjectId, DocumentId) need once when satisfied by new/shared collection or valid cached facts. It describes covered needs, not fresh scans. Do not reset it at phase transitions. Other tools may omit document counters entirely.
+
+Publish totalDocuments only when the final required need set is known and cannot grow (for example broad eligible coverage or known depth-1 roots). Once published, it never changes. If frontier discovery can grow needs, omit totalDocuments throughout that operation. Counts never decrease or exceed a published total. Failed needs do not increase processedDocuments; final omissions remain separate.
 
 Progress describes actual completed work. Do not derive percentage or ETA from elapsed time, fabricate progress during waits, or infer a stall solely from repeated running responses.
 
@@ -48,7 +60,7 @@ A running control is atomic: status, usable operation token, elapsed time, phase
 
 Before admitting first-call work, reserve its actual operation-token value without starting/registering a job. Preflight the required control with that token, the maximum non-negative Int64 elapsed value, each allowed phase and the fixed action. Use the maximum measured UTF-8 bytes and maximum measured tokens across those phase variants, applying the existing public minimum-byte floor, as the admission minima. Decimal token width must have fixed measured tokenizer cost; phase cost is measured separately for every allowed value. If either budget is insufficient, return `RESPONSE_BUDGET_TOO_SMALL` with that exact measured admission pair, and instruct a fresh unchanged call with those budgets. The fresh token has the same cost, so the offered pair is executable. No job has started, so this retry cannot duplicate work. Preserve existing validation/error-envelope behavior for budgets too small even to represent an error; such a request must not admit work.
 
-For a poll whose actual required control cannot fit its changed budgets, return the existing atomic budget error with exact measured minima and retain the operation and caller-supplied token. The next action repeats that same token/query with the offered budgets. Initial preflight must guarantee that an admitted job can always expose its usable token; budget failures must never orphan an operation.
+For a poll whose actual required control cannot fit changed budgets, offer the same fixed admission pair, not a temporary smaller elapsed/phase minimum that might fail on the next poll. Return the atomic budget error and retain the operation and caller-supplied token. Every admission/poll budget error includes both minimumResponseBytes and minimumResponseTokens plus the complete next action. The retry uses exactly that offered pair and unchanged query; first-call retry creates one job, poll retry stays on the same job. Optional counters may disappear at tight budgets. Verify the required control and error envelope independently; budgets unable even to carry the existing error envelope never admit work. Initial preflight guarantees that an admitted job can expose its usable token.
 
 Cancelling the initial request cancels its owned work. Cancelling a poll stops only that wait. If the operation awaits a shared cached computation, cancellation releases that operation's subscription according to specification 04; it must not cancel another subscriber's analysis. Expiry or shutdown cancels owned work, releases subscriptions and awaits cleanup. Exceptions remain recoverable errors, never running successes.
 
@@ -61,10 +73,12 @@ A client waits at least the supplied interval after a running response and repea
 The audit agent already issued polls; this is evidence that the route is usable in principle, not proof about every model/client. Implementation acceptance requires:
 
 1. Store/component and transport-free handler tests proving one retained job, both windows, progress, budget recovery and token/query invariants.
-2. An SDK in-memory transport/client exchange with per-call timeout 5 seconds for polls and 20 seconds for the first call, exercising repeated running controls and final retrieval through the actual registered route. Do not relabel a complete product client flow merely to evade repository E2E exclusions.
-3. A recorded manual agent round-trip through the then-connected AiNetCodeNavigator client used by the implementation task: unchanged query/token, observed waiting, final result/error and no false completion claim. Record client/version where exposed and server build identity. If this client is unavailable, leave R07 blocked for that concrete verification; do not substitute a claim of universal support.
+2. A bounded SDK transport component in the new IntegrationTests class `AiNetCodeNavigator.IntegrationTests.Mcp.LongRunningTransportComponentTests`, with no ExtendedIntegration/E2EIntegration trait. Follow the existing traffic-capture component boundary: in-process SDK host, explicitly written/read in-memory JSON-RPC frames and a registered fixture tool delegating to the real operation store/control formatter. No SDK client object, child stdio server, MSBuild workspace load or complete navigation product flow. First-call frame timeout is 20 seconds; poll-frame timeout is 5 seconds. Exercise repeated running controls and final retrieval. Actual Navigator tool definitions/validators/handlers are verified separately without transport under item 1. Select this component with `pwsh -File ./scripts/test-integration.ps1 -Filter 'FullyQualifiedName~AiNetCodeNavigator.IntegrationTests.Mcp.LongRunningTransportComponentTests'`. It is not a claim that an excluded E2E suite passed.
+3. A recorded agent round-trip through the connected AiNetCodeNavigator client used by the implementation task, on the new verified server build. The client waits at least the announced interval, retains the exact query/token, retrieves final result/error and follows outer pages before domain cursors. Record client identity and version (`unavailable` with reason if not exposed), exact server build identity and every running response/poll's monotonic timestamps. The measured interval from client receiving a running response to starting its next poll is at least retryAfterMilliseconds. Record normalized tool/target/semantic arguments and explicit argument presence, operationToken and active resultCursor equality; continuationToken is absent on polls. An unavailable connected client or build identity prevents completion of R07, not just a universal compatibility claim.
 
-Required slow-operation fixtures must be deterministic and bounded; do not rely on loading a user's large solution to produce a test delay.
+Required slow-operation fixtures are deterministic and bounded; a user's large solution is not the timing mechanism. Preserve existing official exclusions for complete E2E/client handshake tests. Required checks are the bounded fixture transport, transport-free actual routes and recorded connected-agent round-trip above.
+
+Store the tracked evidence summary at `tasks/agentic-navigation-evolution/evidence/R07.md`; create it during R07, not during planning. Store ignored raw frames, monotonic timing records and stderr/process evidence at `temp/agentic-navigation-evolution/R07/<run-id>/`, where run-id is UTC yyyyMMddTHHmmssfffZ plus a GUID suffix. The summary links to those actual artifacts and states their ignored/nonportable nature. The R07 roadmap evidence row links to the tracked summary and records executed commands/results. Manual product evidence is separate from automated eligible gates.
 
 ## EOF/timeout investigation
 
@@ -72,7 +86,7 @@ The [audit trace](../../temp/mcp-test-360/raw_calls/02_source_san/10_dependency_
 
 Use the existing traffic-capture/lifecycle facilities, recording exact build, target/scope/document counts, client version and timeouts, request IDs, complete frames, monotonic timings, stderr/file logs, server PID/lifetime and exit code. Compare a controlled long-operation fixture with a generated large source fixture and, only if available, the original target. Diagnose client timeout, server exit/crash, cancellation and framing/transport failures separately.
 
-A reproducible product defect requires a failing regression and cause-level correction within this point. If the historical EOF cannot be reproduced, the acceptable recorded outcome is: audited cause undetermined, bounded controlled/current-client exchanges completed without disconnection, and exact environment/attempts captured. Never claim the historical cause was fixed merely because polls got shorter.
+A reproducible defect requires a failing regression and cause-level correction. The evidence summary records original-target availability (`unavailable` plus reason when missing), each controlled/generated/current-client attempt, complete request/response frames, timing and process/exit outcome. If historical EOF cannot be reproduced, the accepted outcome is explicitly `historicalCause=undetermined`, with all required controlled/current-client checks successful and environment/attempts/artifact paths recorded. Never call the historical cause fixed merely because polls got shorter.
 
 ## Inspected entry points
 

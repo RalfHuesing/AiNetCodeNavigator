@@ -25,6 +25,8 @@ The [360-degree audit](../../temp/mcp-test-360/summary_findings.md) and raw call
 
 The contracts were reconciled with local source at HEAD `1d18f0bcd38d752146bc3d03bc96b1ab47b721a9`. Earlier inspection began at `a670e57d02654c04c833c61fcc15794f8eac7c1f`. A live discovery/poll completed during consolidation and still emitted `h:` handles; the live process was not independently matched to either commit. Source links identify implementation entry points, not proof that this plan is implemented.
 
+The subsequent [Luna concept review](reviews/luna-concept-review.md) records independent comprehension checks, corrected findings and re-review outcomes. It is documentation evidence; implementation completion still requires the roadmap's executed gates and deliberate orchestrator checkmarks.
+
 ## Maintenance
 
 Keep each requirement in its owning specification. Record implementation status, commits, executed checks, measurements and concrete blockers in the roadmap. Update current-state `docs/` and affected agent navigation rules only in the implementation commits that establish and verify their new behavior. Keep chat updates short.
