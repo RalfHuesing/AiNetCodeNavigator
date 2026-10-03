@@ -23,6 +23,8 @@ Core, Host, and TestKit expose internal members to the test assemblies via `Inte
 
 `SampleCodeFixtures` contains compilable examples for callers, interfaces and implementations, inheritance, records, record structs, and extension methods. `NavigationAssertions` checks symbol names, handoff identifiers using the core product alphabet, line ranges, and result text patterns. Fast tests verify these helpers against real Roslyn syntax trees, compilations, and symbols.
 
+`AssemblyTestHelper.EmitMetadataInterface` writes small managed assemblies with public interfaces and explicit interface references, without a framework reference closure. Assembly paging, reference-depth, and session-capacity tests use these fixtures to exercise the real scanners and session registry with only the dependency graph required by each test. Source and method-body tests continue to use compiled C# fixtures.
+
 `IntegrationMcpAssertions` belongs to the IntegrationTests project. It extracts MCP text responses, removes continuation headers while reconstructing response bodies, reads continuation and budget fields, and checks UTF-8 and `cl100k_base` limits using SharpToken directly. These assertions measure returned text independently of the production formatter's token counter.
 
 The source, source-relationship, relationship, and index-scope contract fixtures share a restore helper that disables persistent build servers, limits each restore process to two minutes, and bounds redirected output-stream completion to ten seconds. A timed-out restore process tree is terminated before the test reports failure.

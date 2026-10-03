@@ -467,10 +467,20 @@ public sealed class TestDetectorTests
     [Fact]
     public async Task TestRecommendationBuilder_ReportsReferenceInspectionLimitWithoutDroppingFoundEvidence()
     {
-        var calls = string.Join(" ", Enumerable.Repeat("target.Run();", TestRecommendationBuilder.MaxReferenceLocations + 1));
+        // Keep semantic inspection in smaller method bodies while retaining all 4,097 reference locations needed to hit the limit.
+        const int callsPerMethod = 64;
+        var testMethods = string.Join("\n", Enumerable.Range(0, TestRecommendationBuilder.MaxReferenceLocations + 1)
+            .Chunk(callsPerMethod)
+            .Select((calls, index) =>
+                $"[Xunit.Fact] public void CallsTarget{index:D3}(Sample.Core.Target target) {{ {string.Join(" ", Enumerable.Repeat("target.Run();", calls.Length))} }}"));
         using var handle = TestWorkspaceBuilder.CreateSolution(
+            Path.Combine(Path.GetTempPath(), "TestRecommendationBuilder_ReferenceLimit.sln"),
             new ProjectSpec("Sample.Core", [("Target.cs", "namespace Sample.Core; public sealed class Target { public void Run() { } }")]),
-            new ProjectSpec("Sample.Tests", [("TargetChecks.cs", $"using System; namespace Xunit {{ public sealed class FactAttribute : Attribute {{ }} }} public sealed class TargetChecks {{ [Xunit.Fact] public void CallsTarget(Sample.Core.Target target) {{ {calls} }} }}")], ProjectReferences: ["Sample.Core"]));
+            new ProjectSpec("Sample.Tests",
+                [
+                    ("ATargetChecks.cs", $"using System; namespace Xunit {{ public sealed class FactAttribute : Attribute {{ }} }} public sealed class TargetChecks {{ {testMethods} }}")
+                ],
+                ProjectReferences: ["Sample.Core"]));
         var compilation = await handle.Solution.Projects.Single(project => project.Name == "Sample.Core").GetCompilationAsync();
         Assert.NotNull(compilation);
         var target = compilation.GetTypeByMetadataName("Sample.Core.Target")?.GetMembers("Run").OfType<IMethodSymbol>().Single();
@@ -479,8 +489,20 @@ public sealed class TestDetectorTests
         var recommendation = await TestRecommendationBuilder.BuildAsync(target, handle.Solution);
 
         var fixture = Assert.Single(recommendation.TestFixtures);
-        var method = Assert.Single(fixture.Methods);
-        Assert.Equal(TestRecommendationBuilder.MaxReferenceLocations, method.Evidence!.Count);
+        var expectedEvidenceMethodCount = (TestRecommendationBuilder.MaxReferenceLocations + callsPerMethod - 1) / callsPerMethod;
+        var lastEvidenceMethodIndex = (TestRecommendationBuilder.MaxReferenceLocations - 1) / callsPerMethod;
+        var methodPastLimitIndex = TestRecommendationBuilder.MaxReferenceLocations / callsPerMethod;
+        Assert.Equal(expectedEvidenceMethodCount, fixture.Methods.Count);
+        var allEvidence = fixture.Methods.SelectMany(method => method.Evidence!).ToArray();
+        Assert.Equal(TestRecommendationBuilder.MaxReferenceLocations, allEvidence.Length);
+        Assert.Equal(TestRecommendationBuilder.MaxReferenceLocations, allEvidence.Distinct().Count());
+        var firstMethod = fixture.Methods.Single(method => method.MethodName == "CallsTarget000");
+        var lastMethodWithEvidence = fixture.Methods.Single(method => method.MethodName == $"CallsTarget{lastEvidenceMethodIndex:D3}");
+        Assert.Equal(callsPerMethod, firstMethod.Evidence!.Count);
+        Assert.Equal("direct-target-use", firstMethod.Evidence!.First().EvidenceType);
+        Assert.Equal(callsPerMethod, lastMethodWithEvidence.Evidence!.Count);
+        Assert.Equal("direct-target-use", lastMethodWithEvidence.Evidence!.Last().EvidenceType);
+        Assert.DoesNotContain(fixture.Methods, method => method.MethodName == $"CallsTarget{methodPastLimitIndex:D3}");
         Assert.True(recommendation.ReferenceInspectionLimitReached);
         Assert.False(recommendation.CandidateExpansionLimitReached);
     }

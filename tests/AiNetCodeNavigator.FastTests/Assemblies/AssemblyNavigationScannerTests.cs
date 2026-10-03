@@ -440,16 +440,21 @@ public sealed class AssemblyNavigationScannerTests
     public async Task FindSymbol_RejectsOwnerWhoseClosureExceedsRootSnapshotBoundary()
     {
         using var temp = TestTempDirectory.Create("assembly-find-batch-reference-boundary-");
-        var root = AssemblyTestHelper.EmitAssembly(temp, "DepthNode00", "namespace Depth; public sealed class Node00 { }");
+        var root = AssemblyTestHelper.EmitMetadataInterface(temp, "DepthNode00", "Depth", "DepthNode00");
         for (var index = 1; index <= AssemblyReferenceResolver.MaxReferenceDepth + 2; index++)
         {
-            root = AssemblyTestHelper.EmitAssembly(temp, $"DepthNode{index:D2}",
-                $"namespace Depth; public sealed class Node{index:D2} {{ public Node{index - 1:D2}? Value; }}", root);
+            var previousAssembly = $"DepthNode{index - 1:D2}";
+            root = AssemblyTestHelper.EmitMetadataInterface(temp, $"DepthNode{index:D2}", "Depth", $"DepthNode{index:D2}",
+                [new AssemblyMetadataInterfaceReference(previousAssembly, "Depth", previousAssembly)]);
         }
 
         var opened = await AssemblyNavigationSessionScope.OpenAsync(root, default);
         Assert.True(opened.IsSuccess, opened.Error?.ToString());
         await using var pinnedRoot = opened.Value!;
+        Assert.Contains(pinnedRoot.Context.References, reference =>
+            reference.ResolvedPath is not null
+            && Path.GetFileNameWithoutExtension(reference.ResolvedPath) == "DepthNode02"
+            && reference.Resolved);
         Assert.Contains(pinnedRoot.Context.References, reference =>
             reference.SourceAssemblyPath is not null
             && Path.GetFileNameWithoutExtension(reference.SourceAssemblyPath) == "DepthNode02"
@@ -461,9 +466,8 @@ public sealed class AssemblyNavigationScannerTests
         Assert.Null(result.Error);
         Assert.True(result.IsTruncated);
         Assert.Contains("unresolvedReferences", result.TruncatedBy);
-        Assert.DoesNotContain(result.Entries, entry =>
-            entry.OwnerTargetPath is not null
-            && Path.GetFileNameWithoutExtension(entry.OwnerTargetPath) is "DepthNode00" or "DepthNode01");
+        var rootEntry = Assert.Single(result.Entries);
+        Assert.Equal(Path.GetFullPath(root), Path.GetFullPath(rootEntry.OwnerTargetPath!));
     }
 
     [Fact]

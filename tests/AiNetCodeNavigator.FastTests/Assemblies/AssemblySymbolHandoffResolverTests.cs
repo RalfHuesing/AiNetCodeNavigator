@@ -310,7 +310,7 @@ public sealed class AssemblySymbolHandoffResolverTests
     public async Task SessionRegistry_RejectsThirtyThirdTargetWhenThirtyTwoLeasesAreActive()
     {
         using var temp = TestTempDirectory.Create("assembly-session-capacity-");
-        var template = AssemblyTestHelper.EmitAssembly(temp, "CapacityTarget", "public sealed class Target { }");
+        var template = AssemblyTestHelper.EmitMetadataInterface(temp, "CapacityTarget", "Capacity", "Target");
         await using var registry = new AssemblyAnalysisSessionRegistry();
         var leases = new System.Collections.Generic.List<AssemblyAnalysisSessionRegistry.AssemblySessionAccess>();
         AssemblyAnalysisSessionRegistry.AssemblySessionAccess? overflowLease = null;

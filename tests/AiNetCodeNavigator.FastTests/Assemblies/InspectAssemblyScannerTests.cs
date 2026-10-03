@@ -342,19 +342,26 @@ public sealed class InspectAssemblyScannerTests
     {
         using var temp = TestTempDirectory.Create("assembly-inspect-reference-pages-");
         const int dependencyCount = 36;
-        var dependencies = Enumerable.Range(0, dependencyCount)
-            .Select(index => AssemblyTestHelper.EmitAssembly(
-                temp,
-                $"ReferencePagesDependency{index:D2}",
-                $"namespace Probe.Reference; public sealed class Dependency{index:D2} {{ }}"))
+        var dependencyNames = Enumerable.Range(0, dependencyCount)
+            .Select(index => $"ReferencePagesDependency{index:D2}")
             .ToArray();
-        var fields = string.Join(Environment.NewLine, Enumerable.Range(0, dependencyCount)
-            .Select(index => $"public Probe.Reference.Dependency{index:D2}? Dependency{index:D2};"));
-        var target = AssemblyTestHelper.EmitAssembly(
+        foreach (var index in Enumerable.Range(0, dependencyCount))
+        {
+            AssemblyTestHelper.EmitMetadataInterface(
+                temp,
+                dependencyNames[index],
+                "Probe.Reference",
+                $"Dependency{index:D2}");
+        }
+        var target = AssemblyTestHelper.EmitMetadataInterface(
             temp,
             "ReferencePagesProbe",
-            $"namespace Probe; public sealed class Target {{ {fields} }}",
-            dependencies);
+            "Probe",
+            "Target",
+            dependencyNames.Select((name, index) => new AssemblyMetadataInterfaceReference(
+                name,
+                "Probe.Reference",
+                $"Dependency{index:D2}")).ToArray());
         const int pageSize = 7;
         var first = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(
             target, MaxResults: pageSize, IncludeReferences: true));
@@ -385,7 +392,8 @@ public sealed class InspectAssemblyScannerTests
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
         Assert.True(first.Value.ReferenceSummary!.TotalReferenceCount > 32);
-        Assert.All(expectedReferences, expected => Assert.Contains(allReferences, reference => reference.Name == expected));
+        Assert.All(expectedReferences, expected => Assert.Single(allReferences, reference => reference.Name == expected));
+        Assert.All(allReferences, reference => Assert.True(reference.Resolved));
         Assert.Equal(first.Value.ReferenceSummary.TotalReferenceCount, allReferences.Count);
         Assert.Equal(
             broad.Value.References.Select(reference => (reference.Depth, reference.Name, reference.ResolvedPath)),
