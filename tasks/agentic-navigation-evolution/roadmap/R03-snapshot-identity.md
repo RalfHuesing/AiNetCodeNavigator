@@ -27,8 +27,18 @@ The orchestrator records this point's implementation evidence here under the [sh
 
 | Field | Recorded evidence |
 | --- | --- |
-| Working state | Pending |
+| Working state | In progress; started from clean verified R02 HEAD `671496d` on 2026-10-04 |
 | Implementation commit(s) | — |
 | Executed verification | Not run |
 | Measurements / artifacts | — |
-| Blocker / next action | Implementation has not started |
+| Blocker / next action | Coordinate immutable image/provenance inputs, add focused regressions before existing freshness corrections, then implement full R03 and execute official gates/audit |
+
+### Prerequisites and independent ownership
+
+R02 product commit `9c1c3951649a16fbdb1b5a065bd8d2a00a79aa44` and verified evidence commit `671496d` are present; all R02 detail boxes and index checkbox are checked. The working tree and index were clean before R03 assignment. Root reread the full specification 04, specification 02 canonical paths, execution rules, all repository rules, R03 and existing identity call-site inventory. R02's verified structural checkpoint governs this point.
+
+- `/root/r03_identity`: newly explicitly configured `gpt-6-luna`, reasoning `high`; owns strict typed fingerprint encoding, weak-key runtime identity memoization/tickets, all remaining identity consumers, request-owned projection separation, Host runtime/support wiring and focused Symbols/MCP Fast tests. Core Workspace, Integration tests and current-state docs are excluded from its ownership.
+- `/root/r02_implementation`: reused with its original explicitly configured `gpt-6-luna`, reasoning `high`; new R03 freshness assignment owns Core Workspace capture/fingerprint/refresh/load integration and focused Workspace Fast tests, with narrowly necessary TestKit capture fixtures. It coordinates immutable image bytes/hash and supported binding provenance with the identity owner. Existing reproducible freshness defects require official failing regressions before correction.
+- `/root/r02_tests_docs`: reused with its original explicitly configured `gpt-6-luna`, reasoning `high`; owns focused eligible Integration tests, separate refresh/identity measurement fixtures and current-state documentation/root README/navigation rule updates against actual code. Shared helpers retain meaningful independent assertions; existing large contract classes are not globally reorganized.
+
+Root owns all verification, diagnosis, progress/checkboxes and commits. Workers do not execute competing gates. A separate explicitly configured Sol/medium read-only full audit follows actual completed gates. No R03 completion is implied by these assignments or unrun new tests.
