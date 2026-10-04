@@ -63,19 +63,21 @@ internal sealed class SourceMetadataRelationshipScanner
                 if (sourceType.TypeKind is not (TypeKind.Class or TypeKind.Struct)) continue;
                 if (root is INamedTypeSymbol)
                 {
-                    if (scanner.interfaceContract ? scanner.FindInterface(sourceType, owner) is not null
+                    if (scanner.interfaceContract ? scanner.FindInterfaces(sourceType, owner).Count > 0
                         : sourceType.TypeKind == TypeKind.Class && scanner.DerivesFrom(sourceType, owner))
                         Add(sourceType, owner);
                 }
                 else if (scanner.interfaceContract)
                 {
-                    if (scanner.FindInterface(sourceType, owner) is not { } binding) continue;
-                    var member = binding.Interface.GetMembers().SingleOrDefault(member =>
-                        DocumentationCommentId.CreateDeclarationId(member.OriginalDefinition) == contract.DeclarationId);
-                    if (member is null) continue;
-                    var implementation = binding.Type.FindImplementationForInterfaceMember(member);
-                    if (implementation is not null && scanner.SourceOwner(implementation) is { } actual)
-                        Add(actual.Symbol, actual.Owner);
+                    foreach (var binding in scanner.FindInterfaces(sourceType, owner))
+                    {
+                        var member = binding.Interface.GetMembers().SingleOrDefault(member =>
+                            DocumentationCommentId.CreateDeclarationId(member.OriginalDefinition) == contract.DeclarationId);
+                        if (member is null) continue;
+                        var implementation = binding.Type.FindImplementationForInterfaceMember(member);
+                        if (implementation is not null && scanner.SourceOwner(implementation) is { } actual)
+                            Add(actual.Symbol, actual.Owner);
+                    }
                 }
                 else
                 {
@@ -115,20 +117,24 @@ internal sealed class SourceMetadataRelationshipScanner
         return contract.Occurrences.Any(occurrence => occurrence.Images.SequenceEqual(evidence.Images));
     }
 
-    private (INamedTypeSymbol Type, INamedTypeSymbol Interface)? FindInterface(INamedTypeSymbol type, Owner owner)
+    private IReadOnlyList<(INamedTypeSymbol Type, INamedTypeSymbol Interface)> FindInterfaces(INamedTypeSymbol type, Owner owner)
     {
+        var bindings = new List<(INamedTypeSymbol Type, INamedTypeSymbol Interface)>();
         var unknown = false;
         foreach (var iface in type.AllInterfaces.Where(iface => DocumentationCommentId.CreateDeclarationId(iface.OriginalDefinition) == typeId))
         {
             var selected = HasSelectedImage(iface, owner);
-            if (selected == true) return (type, iface);
+            if (selected == true) bindings.Add((type, iface));
             unknown |= selected is null;
         }
-        if (!unknown) return null;
-        if (type.BaseType is { } sourceBase && SourceOwner(sourceBase) is { Symbol: INamedTypeSymbol original, Owner: var baseOwner })
-            return FindInterface(original, baseOwner);
-        missingProof = "The metadata interface binding cannot be traced to a captured owner image.";
-        return null;
+        if (unknown)
+        {
+            if (type.BaseType is { } sourceBase && SourceOwner(sourceBase) is { Symbol: INamedTypeSymbol original, Owner: var baseOwner })
+                bindings.AddRange(FindInterfaces(original, baseOwner));
+            else
+                missingProof = "The metadata interface binding cannot be traced to a captured owner image.";
+        }
+        return bindings;
     }
 
     private bool DerivesFrom(INamedTypeSymbol type, Owner owner)

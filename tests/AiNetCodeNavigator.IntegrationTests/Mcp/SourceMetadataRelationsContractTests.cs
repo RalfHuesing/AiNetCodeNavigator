@@ -32,6 +32,50 @@ public sealed class SourceMetadataRelationsContractTests
     private const string Worker = "public class Worker : External.IContract { public void Run(int value) { } public void Run(string value) { } public string Name => \"worker\"; public event System.Action Changed { add { } remove { } } }";
 
     [Fact]
+    public async Task DualGenericMetadataPropertiesPageWithDistinctExactSourceHandoffs()
+    {
+        using var fixture = TestTempDirectory.Create("metadata-public-dual-generic-");
+        var path = AssemblyTestHelper.EmitAssembly(fixture, "DualContracts", "namespace External; public interface IValue<T> { T Value { get; } }");
+        var target = fixture.CreateFile("Source.slnx", "<Solution />");
+        var project = Materialize(fixture, new ProjectSpec("App", [("Value.cs", """
+            public class DualValue : External.IValue<int>, External.IValue<string>
+            {
+                int External.IValue<int>.Value => 42;
+                string External.IValue<string>.Value => "both";
+            }
+            """)], AdditionalReferences: [MetadataReference.CreateFromFile(path)]));
+        await using var host = InMemorySourceTestHost.Create(target, [project]);
+        var relations = new RelationshipTools(host.Runtime);
+        string? cursor = null;
+        var refs = new List<string>();
+        var signatures = new List<string>();
+        do
+        {
+            var response = await relations.GetTypeRelations(target, "P:External.IValue`1.Value", "implementations",
+                metadataOwnerPath: path, maxResults: 1, resultCursor: cursor, maxResponseBytes: 65536);
+            Assert.False(response.IsError, TextOf(response));
+            using var page = JsonDocument.Parse(JsonBody(TextOf(response)));
+            Assert.Equal(2, page.RootElement.GetProperty("totalCount").GetInt32());
+            Assert.Equal(target, page.RootElement.GetProperty("implementationOwnerTargetPath").GetString());
+            var entry = Assert.Single(page.RootElement.GetProperty("implementations").EnumerateArray());
+            refs.Add(entry.GetProperty("handoffId").GetString()!);
+            signatures.Add(entry.GetProperty("signature").GetString()!);
+            cursor = page.RootElement.TryGetProperty("resultCursor", out var next) ? next.GetString() : null;
+            Assert.InRange(refs.Count, 1, 2);
+        } while (cursor is not null);
+        Assert.Equal(2, refs.Distinct().Count());
+        Assert.Contains(signatures, signature => signature.Contains("int", StringComparison.Ordinal));
+        Assert.Contains(signatures, signature => signature.Contains("string", StringComparison.Ordinal));
+        foreach (var reference in refs)
+        {
+            Assert.StartsWith("src:", reference, StringComparison.Ordinal);
+            var body = await new SymbolTools(host.Runtime).GetSymbolBody(target, [reference], maxResponseBytes: 65536);
+            Assert.False(body.IsError, TextOf(body));
+            Assert.Contains("Value", TextOf(body), StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public async Task MetadataOwnersPreserveSourcePagingScopeAndSeparateExactBodyFollowups()
     {
         using var first = TestTempDirectory.Create("metadata-public-first-");

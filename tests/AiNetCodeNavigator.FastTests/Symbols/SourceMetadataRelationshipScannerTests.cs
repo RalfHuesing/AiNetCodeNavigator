@@ -112,6 +112,29 @@ public sealed class SourceMetadataRelationshipScannerTests
     }
 
     [Fact]
+    public async Task DualClosedGenericInterfacesReturnBothExplicitProperties()
+    {
+        using var directory = TestTempDirectory.Create("metadata-relationships-dual-generic-");
+        var path = AssemblyTestHelper.EmitAssembly(directory, "DualContracts", "namespace External; public interface IValue<T> { T Value { get; } }");
+        using var workspace = TestWorkspaceBuilder.CreateSolution(@"C:\VirtualRepo\DualGeneric.slnx", new ProjectSpec("App",
+            [("Value.cs", "public class DualValue : External.IValue<int>, External.IValue<string> { int External.IValue<int>.Value => 42; string External.IValue<string>.Value => \"both\"; }")],
+            AdditionalReferences: [MetadataReference.CreateFromFile(path)]));
+        var snapshot = Capture(workspace.Solution);
+        var selected = await SourceMetadataContractResolver.ResolveAsync(snapshot, "P:External.IValue`1.Value", path);
+        Assert.True(selected.IsSuccess, selected.Error?.Message);
+        var result = await SourceMetadataRelationshipScanner.CollectAsync(snapshot, selected.Selected!, false, default);
+        Assert.True(result.IsSuccess, result.Error?.Message);
+        Assert.Equal(2, result.Value.Length);
+        Assert.Equal(new[] { SpecialType.System_Int32, SpecialType.System_String },
+            result.Value.OfType<IPropertySymbol>().Select(property => property.Type.SpecialType).OrderBy(value => value));
+        var projected = await FindReferencesResolver.ProjectImplementationsAsync(selected.Selected!.Occurrences[0].Symbol,
+            snapshot.Solution, result.Value, 10, default, SymbolScopeType.All, false, null);
+        Assert.Equal(2, projected.TotalCount);
+        Assert.Equal(2, projected.Implementations.Select(entry => entry.HandoffId).Distinct().Count());
+        Assert.All(projected.Implementations, entry => Assert.StartsWith("src:", entry.HandoffId, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task VirtualInterfaceMappingPreservesExistingSemanticSearch()
     {
         using var directory = TestTempDirectory.Create("metadata-relationships-interface-override-");

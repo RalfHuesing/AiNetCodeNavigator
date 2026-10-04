@@ -1863,6 +1863,8 @@ public sealed class AssemblyToolsContractTests
         Assert.Contains("incompleteRelationships", TextOf(compactExtensions), StringComparison.Ordinal);
         Assert.DoesNotContain(Path.GetFileName(dependency), TextOf(compactExtensions), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("MissingOwner", TextOf(detailedExtensions), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Restore missing assembly references", TextOf(compactExtensions), StringComparison.Ordinal);
+        Assert.DoesNotContain("Increase maxResults", TextOf(compactExtensions), StringComparison.Ordinal);
 
         var relationships = new RelationshipTools(runtime);
         var defaultReferences = await relationships.FindReferences(target, "M:UsableOwner.Root.Read", maxResponseBytes: 65536);
@@ -1908,6 +1910,7 @@ public sealed class AssemblyToolsContractTests
             receiverType: "System.Int32", includeReferences: true, maxResults: 1,
             maxResponseBytes: 65536, maxResponseTokens: 4096, operationToken: operation));
         AssertOwnerPage(TextOf(first));
+        Assert.Contains("Use resultCursor after reading all outer response pages", TextOf(first), StringComparison.Ordinal);
         var cursor = ReadDomainCursor(TextOf(first));
         Assert.False(string.IsNullOrWhiteSpace(cursor));
 

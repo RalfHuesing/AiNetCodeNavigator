@@ -393,8 +393,12 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
             results[index].Entries.Select(ProjectFindSymbolEntry).ToArray(), results[index].TotalMatches, results[index].ReturnedMatches,
             results[index].TruncatedBy, results[index].KindAlternatives)).ToArray(), resultCursor,
             results.SelectMany(result => result.Diagnostics ?? []).Distinct(StringComparer.Ordinal).ToArray());
-        return NavigationToolSupport.Success(payload, truncated,
-            truncated ? resultCursor is not null ? "Use resultCursor after reading all outer response pages." : "Increase maxResults up to 1000 and repeat the same pattern query." : null);
+        var omissions = results.SelectMany(result => result.TruncatedBy).ToArray();
+        var nextAction = resultCursor is not null ? "Use resultCursor after reading all outer response pages."
+            : omissions.Contains("incompleteRelationships", StringComparer.Ordinal) ? "Restore missing assembly references, then retry the same query."
+            : omissions.Contains("maxResults", StringComparer.Ordinal) ? "Increase maxResults up to 1000 and repeat the same pattern query."
+            : "Review the reported omission reasons and restore required owner/reference evidence, then retry the same query.";
+        return NavigationToolSupport.Success(payload, truncated, truncated ? nextAction : null);
     }
 
     private static (IReadOnlyList<FindSymbolScanResult> Results, string? ResultCursor, ResultError? Error) PageFindResults(
