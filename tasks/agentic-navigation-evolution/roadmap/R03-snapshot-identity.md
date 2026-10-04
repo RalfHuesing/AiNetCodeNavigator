@@ -29,9 +29,9 @@ The orchestrator records this point's implementation evidence here under the [sh
 | --- | --- |
 | Working state | In progress; started from clean verified R02 HEAD `671496d` on 2026-10-04 |
 | Implementation commit(s) | — |
-| Executed verification | Original P01/P02 freshness regressions failed before correction and now pass; latest focused selection has 74 passed / one fixture failure; full affected acceptance gates remain pending |
+| Executed verification | Original P01/P02 regressions now pass in the 75-test focused selection; valid P03 dependency baseline fails and three normal-loader handler contracts fail; full affected acceptance remains pending |
 | Measurements / artifacts | — |
-| Blocker / next action | Execute P03 private generator dependency baseline and required binding correction; finish the syntax-provider fixture, then run complete affected gates, separate measurements and independent Sol audit |
+| Blocker / next action | Finish authorized complete-byte analyzer capture and normal metadata-resolver integration, then run complete affected gates, separate measurements and independent Sol audit |
 
 ### Prerequisites and independent ownership
 
@@ -163,3 +163,19 @@ Workspace Luna/high owns a new focused Workspace fixture only: emit a real file 
 - Existing six-class focused Fast command: PASS, exit 0, 75 completed tests / zero skipped, 5.4529 seconds, saved in `temp/roadmap-evidence/R03/focused-fast-pre-P03/`. P03 remains failing and explicitly outside that passing selection; no point completion is inferred.
 - `pwsh -File ./scripts/test-integration.ps1 -Filter 'FullyQualifiedName~SourceSnapshotIdentityContractTests' --logger 'console;verbosity=normal'`: actual FAIL, exit 1, three completed failures / zero skipped, 6.9820 seconds. All normal MSBuild source handlers fail on the capture owner's blanket rejection of every non-null MetadataReferenceResolver before metadata/options/inventory acceptance assertions. The prescribed normal-loader contract requires complete actual captured binding evidence or a specific genuinely unsupported input diagnostic, not blanket rejection of its normal resolver. Artifacts: `temp/roadmap-evidence/R03/source-handler-candidate-run1/{test-integration.log,IntegrationTests.trx}`.
 - All gates terminate normally; no stall. Workspace Luna is released for the narrow P03 complete-byte/closure-or-diagnostic correction and normal-loader metadata-resolver integration. Tests, docs, final affected gates and independent audit remain required; acceptance is unchanged.
+
+### Authorized P03 correction boundary — still unverified
+
+Specification 04 permits complete immutable capture and actual binding, or a concrete WORKSPACE_DIAGNOSTIC for untracked inputs. The workspace owner proposes an independent analyzer-image capture responsibility: establish a deterministic supported managed dependency closure, capture all affecting image/configuration inputs, and bind new references from the same captured bytes. An adjacent private dependency may then become tracked; its positive regression must assert its actual SHA and generated output, not merely change the expected error to success. Preserve a separately executable unresolved/unproven dependency negative and same-path replacement binding/lifetime proof. The original failing baseline remains recorded above.
+
+Root explicitly requires capture of any dependency resolver configuration that influences selection, no arbitrary alternative DLL selection, diagnostics for ambiguous/custom loader input, and a concrete failed-binding outcome before identity publication when Roslyn catches generator exceptions. The normal MetadataReferenceResolver boundary must also cover public ResolveMissingAssemblies/ResolveMissingAssembly, not assume #r is its only consumer. Actual normal public values and complete supported inputs remain to be verified. No private type-name inference or reflection is authorized.
+
+The separate Luna test/documentation owner is assigned a small normal-MSBuild public-handler generator contract in `SourceAnalyzerIdentityContractTests`: emit/capture version 17, preserve the exact returned stable reference, replace the same generator path with version 18 while preserving size/timestamp and proving changed SHA, then require a fresh snapshot and the actual generated body 18. Existing SDK defaults/outer budgets remain. This tests a new behavior independently of the existing large handler classes; general test/class restructuring remains outside scope. All new candidate code/tests, measurements, full affected gates and Sol audit remain pending.
+
+### P03 integration follow-up — implementation still open
+
+The workspace owner has wired the independent analyzer capture into the candidate immutable reference rewrite and added separately executable tracked-private-dependency, unresolved-private-dependency and same-path generator replacement tests. These edits have not yet been built or tested. Root source review requires the shared runtime/Roslyn assembly boundary to exclude arbitrary loaded user assemblies, captured dependency-manifest selection, and explicit loader failure observation after Roslyn materialization rather than silently accepting swallowed generator exceptions.
+
+The identity Luna owner is separately assigned structured active `#r` validation, coordinated with the workspace owner's normal metadata resolver proof. Inactive directives, quoted strings and comments must remain unaffected. Public `ResolveMissingAssemblies == true` remains unsupported without complete captured resolver output. The normal MSBuild public resolver value and negative custom resolver remain actual test obligations.
+
+The normal-MSBuild public generator handler fixture and current-state documentation are frozen by the test/documentation owner; no gate has run for that new class. The separate Sol/medium auditor is assigned contract preparation only; its complete read-only actual-code audit follows frozen implementation and official gates. No R03 acceptance checkbox is checked.
