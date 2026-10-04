@@ -11,7 +11,7 @@ Start the later execution task with: `Implement tasks/agentic-navigation-tool-co
 Execute the first open child point, in order. A parent closes only after its implementation points, independent review, required fixes, and verification are complete.
 
 - [x] **M0 — [Baseline and implementation readiness](roadmap/00-baseline.md)**: concept P0; identify current code, useful reproductions, consumers, and existing regression coverage.
-- [ ] **M1 — [References, context uses, and evidence](roadmap/01-references-and-evidence.md)**: concept P1.
+- [x] **M1 — [References, context uses, and evidence](roadmap/01-references-and-evidence.md)**: concept P1.
 - [ ] **M2 — [Consolidated navigation entry points](roadmap/02-entry-points.md)**: concept P2; intermediate catalog of thirteen tools.
 - [ ] **M3 — [Discovery and metadata ownership](roadmap/03-discovery-and-metadata.md)**: concept P3; final catalog of twelve tools.
 - [ ] **M4 — [Focused dependencies and assembly output](roadmap/04-focused-output.md)**: concept P4.
