@@ -27,11 +27,11 @@ The orchestrator records this point's implementation evidence here under the [sh
 
 | Field | Recorded evidence |
 | --- | --- |
-| Working state | In progress; started from clean verified R02 HEAD `671496d` on 2026-10-04 |
+| Working state | Blocked on the supported generator-creator input contract; started from clean verified R02 HEAD `671496d` on 2026-10-04 |
 | Implementation commit(s) | — |
-| Executed verification | Original P01/P02 regressions now pass in the 75-test focused selection; valid P03 dependency baseline fails and three normal-loader handler contracts fail; full affected acceptance remains pending |
+| Executed verification | Latest build and narrow normal MSBuild resolver check pass; P03-D01 actually fails and is independently confirmed; earlier passing/failed selections are recorded below; full affected acceptance remains pending |
 | Measurements / artifacts | — |
-| Blocker / next action | Finish authorized complete-byte analyzer capture and normal metadata-resolver integration, then run complete affected gates, separate measurements and independent Sol audit |
+| Blocker / next action | Obtain the required supported generator-creator contract decision, implement the full proof-or-diagnostic boundary through Luna, then complete all affected gates, measurements and independent full Sol audit |
 
 ### Prerequisites and independent ownership
 
@@ -209,3 +209,25 @@ Sol additionally records that Windows read-handle sharing plausibly stabilizes t
 - `pwsh -File ./scripts/test-fast.ps1 -Filter 'FullyQualifiedName~ResidentSolutionAnalyzerFreshnessTests.GeneratorDefaultLoadContextExternalDependencyIsNotCapturedAndMustFailClosed' --logger 'console;verbosity=normal'`: actual FAIL, exit 1, one completed failing test / zero skipped, 2.9771 seconds. A uniquely named external assembly exposes a runtime getter; the emitted generator has no static AssemblyRef to it, loads its actual path through Default.LoadFromAssemblyPath and invokes that getter. Materialized Value17, primary captured SHA and omission of the external input all pass. Identity then incorrectly succeeds at Assert.False line 125. The later diagnostic assertions are not claimed executed. Artifacts: `temp/roadmap-evidence/R03/default-context-baseline1/{build.log,test-fast.log,FastTests.trx}`. This validates the independent Sol finding before its correction.
 - `pwsh -File ./scripts/test-fast.ps1 -Filter 'FullyQualifiedName~ResidentSolutionAnalyzerFreshnessTests.NormalMsBuildMetadataResolverIsCapturedWhenMissingAssemblyResolutionIsDisabled' --logger 'console;verbosity=normal'`: FAIL, exit 1, one completed failure / zero skipped, 2.5295 seconds. Normal SDK binding now resolves versions but a repeated System.Composition.AttributedModel request still incorrectly compares the selected newer assembly against an older exact requested version and reports ambiguity. Artifacts: `temp/roadmap-evidence/R03/default-binding-normal-run1/{test-fast.log,FastTests.trx}`.
 - No stall or orphan. The workspace owner is assigned both actual findings. Complete captured creating-owner proof or a concrete unsupported-input diagnostic remains mandatory; the custom ALC is not a general sandbox. No generic audit platform or silent contract replacement is authorized. R03 completion remains open.
+
+### R03-B01 — missing supported generator-creator boundary
+
+The reused independent Sol/medium auditor reviewed the actual D01 code and executed artifacts and confirms a P1 violation of specification 04: successful identity with an actually consumed, untracked external generator image. Its assessment is a bounded diagnosis, not the required complete R03 acceptance audit. A direct MemberReference API guard does not prove a complete creating-owner input contract; reflection-based loading, Assembly.Load from external bytes and external text reads are additional concrete code-supported scenarios, not executed regressions in this round.
+
+`WorkspaceInputProvenance.ProjectInputProof` currently establishes loader/provider origins, not a complete generator-input capability. Static PE/manifest closure and observations in the owned load context cannot justify supporting opaque external generator behavior. The proposed isolated API guard was held and its temporary hunks/changed diagnostic assertion removed; the original failing D01 invariant remains. General code auditing is forbidden by repository rule 03, and a new sandbox or hooking platform is outside this roadmap's bounded implementation. Root therefore requests a supported creator-boundary decision under AGENTS.md and execution.md rather than substituting static closure for the complete-input requirement.
+
+Concrete proposed decision: explicitly specify and implement an internal creating-owner contract supplying every effective immutable generator input and fresh-boundary validation; reject generators without that complete proof using WORKSPACE_DIAGNOSTIC. Normal MSBuild origin alone must not count as that proof. Preserve required supported positive generator/handler tests with real creator evidence, not synthetic flags, and retain all negative untracked-input acceptance. No public configuration or dependency change is implicitly approved by this proposal. The alternative is to keep R03 blocked pending a separate specification. Root requested the decision; no answer or approval is inferred from elapsed time.
+
+The independently fixable normal resolver correction is frozen and narrowly verified:
+
+- `pwsh -File ./scripts/build.ps1`: PASS, exit 0, zero warnings/errors, 7.38 seconds.
+- `pwsh -File ./scripts/test-fast.ps1 -Filter 'FullyQualifiedName~ResidentSolutionAnalyzerFreshnessTests.NormalMsBuildMetadataResolverIsCapturedWhenMissingAssemblyResolutionIsDisabled' --logger 'console;verbosity=normal'`: PASS, exit 0, one completed test / zero skipped, 3.5154 seconds. The actual public MSBuild resolver has missing-assembly resolution disabled and capture/identity succeeds with normal SDK dependencies. A repeated lower-version request is accepted only when public Default resolution selects the same already captured file and exact captured identity; adjacent/manifest private selection remains strict.
+- Artifacts: `temp/roadmap-evidence/R03/default-binding-normal-run2/{build.log,test-fast.log,FastTests.trx}`. D01 remains open; the normal check does not validate arbitrary generator inputs.
+
+No R03 product commit or completion box is recorded. Candidate product/tests/current-state documentation remain uncommitted for further correction. Full affected Fast/Integration/targeted Extended selections, separate five-run measurements, complete independent audit and final orchestrator acceptance remain required. R04–R08 have not started. No build/test process remains running; there is no test stall, push or deployment.
+
+### Structure review at the blocked boundary
+
+R02's verified structural checkpoint remains authoritative; a new verified R03 checkpoint has not been reached. Current read-only counts are RelationshipTools 1,572 lines, SourceToolsContractTests 1,337, SourceRelationshipToolsContractTests 769, RelationshipToolsContractTests 324 and AssemblyToolsContractTests 2,404. Request snapshot/identity ownership is centralized in the R03 candidate and newly executable generator/directive contracts are separated; full verification is pending.
+
+Still required within this roadmap: R04 shared typed dependency collection/projection, R05 retained fact ownership, R06 outgoing traversal, and R07 operation/progress responsibilities. Outside this task: blanket handler rewrites or registration reorganization, class splits driven only by line counts, global fixture/parser/test-framework restructuring and E2E test rewrites. These exclusions do not exempt any confirmed integration or regression finding. Reassess concrete remaining responsibilities at the next actually verified point.
