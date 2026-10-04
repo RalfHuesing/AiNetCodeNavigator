@@ -560,6 +560,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 string? typeName = null;
                 string? typeId = null;
                 IReadOnlyCollection<string>? fileTypeIds = null;
+                IReadOnlyList<INamedTypeSymbol> outgoingRoots = [];
                 if (symbolIdentifier is not null)
                 {
                     var resolved = await Resolve(solution, symbolIdentifier, source.IdentityRequest, ct).ConfigureAwait(false);
@@ -573,21 +574,28 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         generatedDocumentOwners = await ExactSourceSymbolResolver.GetSourceGeneratedDocumentOwnersAsync(solution, ct).ConfigureAwait(false);
                     typeId = DependencyGraphScanner.GetSourceTypeId(solution, type,
                         source.IdentityRequest.OwnerContextFingerprints, generatedDocumentOwners);
+                    outgoingRoots = [type.OriginalDefinition];
                 }
                 else if (filePath is not null)
                 {
                     var selectedDocument = await ResolveDependencyDocumentAsync(solution, filePath, ct).ConfigureAwait(false);
                     if (selectedDocument.Document is null)
                         return McpToolResults.InvalidArgument("The requested source file could not be selected.", "$.filePath", selectedDocument.Error!, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-                    fileTypeIds = await DependencyGraphScanner.GetDocumentTypeIdsAsync(selectedDocument.Document,
-                        ct, source.IdentityRequest.OwnerContextFingerprints).ConfigureAwait(false);
+                    outgoingRoots = await DependencyGraphScanner.GetDocumentNamedTypesAsync(selectedDocument.Document, ct).ConfigureAwait(false);
+                    var generatedOwners = selectedDocument.Document is SourceGeneratedDocument
+                        ? await ExactSourceSymbolResolver.GetSourceGeneratedDocumentOwnersAsync(solution, ct).ConfigureAwait(false)
+                        : null;
+                    fileTypeIds = outgoingRoots.Select(type => DependencyGraphScanner.GetSourceTypeId(solution, type,
+                        source.IdentityRequest.OwnerContextFingerprints, generatedOwners)).Distinct(StringComparer.Ordinal).ToArray();
                 }
                 var scan = await CollectAndProjectSourceDependencyGraphAsync(runtime, target.CanonicalPath, solution,
                     new DependencyGraphProjectionOptions(TargetFilePath: filePath,
                         TargetTypeName: typeName, Direction: parsedDirection, Depth: depth,
                         PageSize: maxResults, TargetTypeId: typeId, TargetTypeIds: fileTypeIds),
-                    parsedScope, includeGenerated, source.IdentityRequest, ct).ConfigureAwait(false);
-                var response = NavigationToolSupport.Success(scan, scan.IsTruncated, "Increase maxResults, depth, or document coverage and repeat the query.");
+                    parsedScope, includeGenerated, outgoingRoots, source.IdentityRequest, ct).ConfigureAwait(false);
+                var response = NavigationToolSupport.Success(scan, scan.IsTruncated, scan.ContinuationInputIncomplete
+                    ? "Rediscover a unique owner-bound declaration with find_symbol and repeat the query."
+                    : "Increase maxResults, depth, or document coverage and repeat the query.");
                 var omissions = new List<string>();
                 if (scan.IsDepthClamped) omissions.Add("depthLimit");
                 if (scan.NodeLimitReached) omissions.Add("nodeLimit");
@@ -629,13 +637,18 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         DependencyGraphProjectionOptions projectionOptions,
         SymbolScopeType scopeType,
         bool includeGenerated,
+        IReadOnlyList<INamedTypeSymbol> outgoingRoots,
         SourceIdentityRequest sourceIdentityRequest,
         CancellationToken cancellationToken)
     {
-        var collection = await runtime.DependencyGraphCache.CollectAsync(solution,
-            new DependencyGraphCollectionOptions(scopeType, includeGenerated), canonicalTargetPath,
-            sourceIdentityRequest.SnapshotTicket, cancellationToken,
-            sourceIdentityRequest.OwnerContextFingerprints).ConfigureAwait(false);
+        var collectionOptions = new DependencyGraphCollectionOptions(scopeType, includeGenerated);
+        var collection = projectionOptions.Direction == DependencyGraphDirection.Outgoing
+            ? await DependencyGraphOutgoingCollector.CollectAsync(runtime.DependencyGraphCache, solution,
+                collectionOptions, projectionOptions, outgoingRoots, canonicalTargetPath, sourceIdentityRequest.SnapshotTicket,
+                sourceIdentityRequest.OwnerContextFingerprints, cancellationToken).ConfigureAwait(false)
+            : await runtime.DependencyGraphCache.CollectAsync(solution, collectionOptions, canonicalTargetPath,
+                sourceIdentityRequest.SnapshotTicket, cancellationToken,
+                sourceIdentityRequest.OwnerContextFingerprints).ConfigureAwait(false);
         var payload = DependencyGraphScanner.Project(collection, projectionOptions);
         return await DependencyGraphScanner.FormatVisibleHandoffsAsync(collection, payload, solution,
             sourceIdentityRequest.OwnerContextFingerprints,

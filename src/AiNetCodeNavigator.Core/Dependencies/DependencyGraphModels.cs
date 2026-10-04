@@ -79,7 +79,10 @@ internal sealed record DependencyGraphCollection(
     SymbolScopeType ScopeType,
     bool IncludeGenerated,
     string SolutionDirectory,
-    bool ContinuationInputIncomplete = false);
+    bool ContinuationInputIncomplete = false)
+{
+    internal ImmutableArray<DependencyDocumentFact> DocumentFacts { get; init; } = ImmutableArray<DependencyDocumentFact>.Empty;
+}
 
 internal sealed record DependencyDocumentIdentity(
     string OwnerProjectPath,

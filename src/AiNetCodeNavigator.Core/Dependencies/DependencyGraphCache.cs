@@ -156,8 +156,40 @@ internal sealed class DependencyGraphCache : IAsyncDisposable
         var targetPath = CanonicalizeTarget(canonicalTargetPath);
         var plan = await DependencyGraphScanner.PrepareCollectionPlanAsync(solution, options, ownerContextFingerprints, requestToken)
             .ConfigureAwait(false);
+        return await CollectPlanAsync(plan, targetPath, snapshotTicket, requestToken).ConfigureAwait(false);
+    }
+
+    internal DependencyGraphCollection? GetFullRetainedCollection(
+        DependencyGraphCollectionPlan plan, string targetPath, long snapshotTicket)
+    {
+        var key = new BucketKey(CanonicalizeTarget(targetPath), snapshotTicket, plan.ScopeType, plan.IncludeGenerated);
+        var facts = new List<DependencyDocumentFact>();
+        lock (gate)
+        {
+            ObjectDisposedException.ThrowIf(disposeStarted, this);
+            shutdown.Token.ThrowIfCancellationRequested();
+            ExpireBucketsLocked(timeProvider.GetTimestamp());
+            if (targetRetirements.Any(retirement => retirement.TargetPath == key.TargetPath && snapshotTicket <= retirement.MaximumTicket)
+                || !retainedBuckets.TryGetValue(key, out var bucket)) return null;
+            bucket.LastAccess = timeProvider.GetTimestamp();
+            foreach (var item in plan.RequiredDocuments)
+            {
+                if (!bucket.Facts.TryGetValue(item.Identity, out var fact)) return null;
+                facts.Add(fact);
+            }
+        }
+        return DependencyGraphScanner.CreateCollectionFromFacts(plan, facts, [], 0);
+    }
+
+    internal async Task<DependencyGraphCollection> CollectPlanAsync(
+        DependencyGraphCollectionPlan plan, string targetPath, long snapshotTicket,
+        CancellationToken cancellationToken = default)
+    {
+        using var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, shutdown.Token);
+        var requestToken = requestCancellation.Token;
+        targetPath = CanonicalizeTarget(targetPath);
         requestToken.ThrowIfCancellationRequested();
-        var bucketKey = new BucketKey(targetPath, snapshotTicket, options.ScopeType, options.IncludeGenerated);
+        var bucketKey = new BucketKey(targetPath, snapshotTicket, plan.ScopeType, plan.IncludeGenerated);
         var facts = new Dictionary<DependencyDocumentIdentity, DependencyDocumentFact>(DependencyDocumentIdentityComparer.Instance);
         var outcomes = new Dictionary<DependencyDocumentIdentity, Task<DependencyDocumentScanOutcome>>(DependencyDocumentIdentityComparer.Instance);
         var subscriptions = new List<NeedSlot>();
@@ -225,16 +257,14 @@ internal sealed class DependencyGraphCache : IAsyncDisposable
         if (retirementWaits.Length > 0)
         {
             await Task.WhenAll(retirementWaits).WaitAsync(requestToken).ConfigureAwait(false);
-            return await CollectAsync(solution, options, canonicalTargetPath, snapshotTicket,
-                requestToken, ownerContextFingerprints).ConfigureAwait(false);
+            return await CollectPlanAsync(plan, targetPath, snapshotTicket, requestToken).ConfigureAwait(false);
         }
 
         if (quiescing.Length > 0)
         {
             foreach (var slot in quiescingSlots) observer?.QuiescingWait?.Invoke(slot.Item.Document);
             await Task.WhenAll(quiescing).WaitAsync(requestToken).ConfigureAwait(false);
-            return await CollectAsync(solution, options, canonicalTargetPath, snapshotTicket,
-                requestToken, ownerContextFingerprints).ConfigureAwait(false);
+            return await CollectPlanAsync(plan, targetPath, snapshotTicket, requestToken).ConfigureAwait(false);
         }
 
         var retry = false;
@@ -278,8 +308,7 @@ internal sealed class DependencyGraphCache : IAsyncDisposable
         }
 
         if (retry)
-            return await CollectAsync(solution, options, canonicalTargetPath, snapshotTicket,
-                requestToken, ownerContextFingerprints).ConfigureAwait(false);
+            return await CollectPlanAsync(plan, targetPath, snapshotTicket, requestToken).ConfigureAwait(false);
         throw new InvalidOperationException("Dependency collection completed without a result.");
     }
 

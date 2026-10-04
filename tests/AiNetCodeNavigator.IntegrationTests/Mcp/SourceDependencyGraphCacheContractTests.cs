@@ -33,7 +33,7 @@ public sealed class SourceDependencyGraphCacheContractTests
         var cold = await relationships.DependencyGraph(target, symbolIdentifier: "T:CacheProbe.Root",
             direction: "outgoing", depth: 1, maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(cold, 65536, 4096);
-        Assert.Equal(2, Volatile.Read(ref collectedDocumentCount));
+        Assert.Equal(1, Volatile.Read(ref collectedDocumentCount));
         var coldEdge = ReadEdge(cold, "Root", "Dependency");
         var rootHandoff = RequiredHandoff(coldEdge, "fromHandoffId");
         var dependencyHandoff = RequiredHandoff(coldEdge, "toHandoffId");
@@ -79,7 +79,7 @@ public sealed class SourceDependencyGraphCacheContractTests
         var refreshed = await relationships.DependencyGraph(target, symbolIdentifier: "T:CacheProbe.Root",
             direction: "outgoing", depth: 1, maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(refreshed, 65536, 4096);
-        Assert.Equal(8, Volatile.Read(ref collectedDocumentCount));
+        Assert.Equal(7, Volatile.Read(ref collectedDocumentCount));
         using var payload = JsonDocument.Parse(JsonBody(TextOf(refreshed)));
         Assert.True(payload.RootElement.GetProperty("isComplete").GetBoolean(), TextOf(refreshed));
     }

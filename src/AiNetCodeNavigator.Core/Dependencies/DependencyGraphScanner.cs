@@ -225,7 +225,10 @@ public static class DependencyGraphScanner
             plan.ScopeType,
             plan.IncludeGenerated,
             plan.SolutionDirectory,
-            plan.ContinuationInputIncomplete);
+            plan.ContinuationInputIncomplete)
+        {
+            DocumentFacts = orderedFacts.ToImmutableArray()
+        };
     }
 
     private static string GetCollectionDocumentKey(DependencyDocumentIdentity identity)
@@ -871,13 +874,13 @@ public static class DependencyGraphScanner
         var discovered = new Dictionary<(string From, string To), DependencyTypeReference>();
         var hiddenEdges = new HashSet<(string From, string To)>();
         var nodeLimitReached = false;
-        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var distances = new Dictionary<string, int>(StringComparer.Ordinal);
         var frontier = new List<string>();
         foreach (var seed in seeds.OrderBy(seed => seed, StringComparer.Ordinal))
         {
-            if (visited.Count < maxNodes)
+            if (distances.Count < maxNodes)
             {
-                visited.Add(seed);
+                distances.Add(seed, 0);
                 frontier.Add(seed);
             }
             else
@@ -899,20 +902,20 @@ public static class DependencyGraphScanner
                     var outgoing = edge.FromTypeId == node;
                     var key = (edge.FromTypeId, edge.ToTypeId);
                     var neighbor = outgoing ? edge.ToTypeId : edge.FromTypeId;
-                    if (visited.Contains(neighbor))
+                    if (distances.ContainsKey(neighbor))
                     {
                         if (!discovered.ContainsKey(key)) discovered[key] = edge with { Depth = depth };
                         continue;
                     }
 
-                    if (visited.Count >= maxNodes)
+                    if (distances.Count >= maxNodes)
                     {
                         nodeLimitReached = true;
                         hiddenEdges.Add(key);
                         continue;
                     }
 
-                    visited.Add(neighbor);
+                    distances.Add(neighbor, depth);
                     next.Add(neighbor);
                     if (!discovered.ContainsKey(key)) discovered[key] = edge with { Depth = depth };
                 }
@@ -926,7 +929,10 @@ public static class DependencyGraphScanner
             .ThenBy(edge => edge.FromTypeId, StringComparer.Ordinal).ThenBy(edge => edge.ToTypeId, StringComparer.Ordinal)
             .ToList();
         hiddenEdges.ExceptWith(discovered.Keys);
-        return new DependencyGraphTraversalOutcome(sorted, visited.Count, nodeLimitReached, hiddenEdges.Count);
+        return new DependencyGraphTraversalOutcome(sorted, distances.Count, nodeLimitReached, hiddenEdges.Count)
+        {
+            AdmittedDistances = distances
+        };
     }
 
     internal static string NormalizeTargetPath(string? targetFilePath, string solutionDir)
@@ -999,21 +1005,28 @@ public static class DependencyGraphScanner
         CancellationToken ct,
         IReadOnlyDictionary<ProjectId, string>? ownerContextFingerprints)
     {
+        var types = await GetDocumentNamedTypesAsync(document, ct).ConfigureAwait(false);
+        var projectIdentity = GetProjectIdentity(document.Project, ownerContextFingerprints?.GetValueOrDefault(document.Project.Id));
+        return types.Select(type => CreateTypeId(type, projectIdentity)).Distinct(StringComparer.Ordinal).ToArray();
+    }
+
+    internal static async Task<IReadOnlyList<INamedTypeSymbol>> GetDocumentNamedTypesAsync(
+        Document document, CancellationToken ct)
+    {
         ArgumentNullException.ThrowIfNull(document);
         var tree = await document.GetSyntaxTreeAsync(ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException("Source document was unavailable.");
         var root = await tree.GetRootAsync(ct).ConfigureAwait(false);
         var model = await document.GetSemanticModelAsync(ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException("Source semantic model was unavailable.");
-        var projectIdentity = GetProjectIdentity(document.Project, ownerContextFingerprints?.GetValueOrDefault(document.Project.Id));
-        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var types = new List<INamedTypeSymbol>();
         foreach (var declaration in root.DescendantNodes().Where(node => node is BaseTypeDeclarationSyntax or DelegateDeclarationSyntax))
         {
             ct.ThrowIfCancellationRequested();
             if (model.GetDeclaredSymbol(declaration, ct) is INamedTypeSymbol type)
-                ids.Add(CreateTypeId(type, projectIdentity));
+                types.Add(type.OriginalDefinition);
         }
-        return ids;
+        return types;
     }
 
     private static string GetProjectIdentity(Project project, string? ownerContextFingerprint = null)
@@ -1052,4 +1065,7 @@ internal sealed record DependencyGraphTraversalOutcome(
     IReadOnlyList<DependencyTypeReference> Edges,
     int VisitedTypeCount,
     bool NodeLimitReached,
-    int HiddenTypeDependencyCount);
+    int HiddenTypeDependencyCount)
+{
+    internal IReadOnlyDictionary<string, int> AdmittedDistances { get; init; } = ImmutableDictionary<string, int>.Empty;
+}
