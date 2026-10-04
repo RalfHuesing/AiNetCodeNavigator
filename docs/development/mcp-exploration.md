@@ -6,11 +6,14 @@ Use this small runner to inspect actual local MCP tool output while implementing
 pwsh -File ./scripts/explore.ps1 -List
 pwsh -File ./scripts/explore.ps1 -Scenario ExploreFindSymbol
 pwsh -File ./scripts/explore.ps1 -Scenario ExploreSymbolBody
+pwsh -File ./scripts/explore.ps1 -Scenario ExploreConsolidationBaseline
 ```
 
 The script builds and runs the standalone `tools/AiNetCodeNavigator.Exploration` executable. `ExploreFindSymbol` discovers the production `NavigatorHostRuntime` class in this repository. `ExploreSymbolBody` discovers that same class, selects its exact returned declaration identity, then passes its unchanged `handoffId` to `get_symbol_body`. If discovery has no unique usable match, it records a note and skips the follow-up; an empty successful result is not a technical failure.
 
 ## Adding a scenario
+
+`ExploreConsolidationBaseline` discovers `StableSymbolReferenceCodec`, follows its source reference through two body windows, reads depth-one outgoing production dependencies, and reads two five-item direct-use context pages. It inspects the exact public type in the runner's own Core assembly and follows the returned owner/reference through two decompiled body windows. Body windows and context pages are deliberately sampled; inspect reported continuations before claiming complete content. The dependency and assembly requests provide compact fixed samples for comparing delivered output after contract changes.
 
 Add a method to `tools/AiNetCodeNavigator.Exploration/Scenarios.cs` and register it in `Scenarios.All`:
 
