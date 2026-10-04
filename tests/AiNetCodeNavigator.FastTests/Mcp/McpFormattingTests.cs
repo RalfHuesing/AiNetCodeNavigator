@@ -147,8 +147,7 @@ public sealed class McpFormattingTests
     {
         var text = "{\n  \"items\": [\n" + string.Join(",\n", Enumerable.Range(0, 20).Select(index => $"    \"item-{index:D2}\"")) + "\n  ]\n}";
         var responsePrefix = "Status: operation=ok\nsnapshotId=source:0123456789abcdef01234567\n"
-            + $"analyzedScope=findSymbol(pattern={new string('s', 600)})\nanalysisCompleteness=complete\n"
-            + "resultContinuation=none\nomissions=none\n";
+            + $"analyzedScope=findSymbol(pattern={new string('s', 600)})\nanalysisCompleteness=complete\n";
 
         foreach (var tokenBudget in new[] { 80, 120 })
         {

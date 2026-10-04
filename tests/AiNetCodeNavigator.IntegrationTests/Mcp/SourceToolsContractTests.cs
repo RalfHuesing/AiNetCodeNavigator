@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Mcp;
 using AiNetCodeNavigator.Mcp.Tools;
@@ -14,6 +15,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
 using ModelContextProtocol.Protocol;
+using Xunit;
 using static AiNetCodeNavigator.IntegrationTests.Mcp.IntegrationMcpAssertions;
 
 namespace AiNetCodeNavigator.IntegrationTests.Mcp;
@@ -21,6 +23,76 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 [Trait("Category", "Integration")]
 public sealed class SourceToolsContractTests
 {
+    private readonly Xunit.ITestOutputHelper _output;
+
+    public SourceToolsContractTests(Xunit.ITestOutputHelper output) => _output = output;
+
+    [Fact]
+    public async Task FindSymbolProjectionMeasuresFiftyGenericSingleLocationMatches()
+    {
+        using var fixture = TestTempDirectory.Create("find-symbol-token-projection-");
+        var target = fixture.CreateFile("TokenFixture.slnx", "<Solution />");
+        var declarations = string.Join(Environment.NewLine, Enumerable.Range(0, 50)
+            .Select(index => $"    public void TokenEntry{index:D2}() {{ }}"));
+        var source = $"namespace TokenFixture; public sealed class EntrySet {{{Environment.NewLine}{declarations}{Environment.NewLine}}}";
+        var sourcePath = fixture.CreateFile("src/EntrySet.cs", source);
+        var project = new ProjectSpec("TokenFixture", [(sourcePath, source)], VirtualProjectDirectory: "src");
+        await using var testHost = InMemorySourceTestHost.Create(target, [project]);
+
+        var result = await new SymbolTools(testHost.Runtime).FindSymbol(target, pattern: "TokenEntry", kind: "method",
+            maxResults: 50, maxResponseBytes: 65536, maxResponseTokens: 8192);
+        AssertSuccessWithinBudget(result, 65536, 8192);
+
+        var visibleText = TextOf(result);
+        var projectedJson = BodyOf(visibleText);
+        using var projectedDocument = JsonDocument.Parse(projectedJson);
+        var entries = projectedDocument.RootElement.GetProperty("results").EnumerateArray()
+            .SelectMany(patternResult => patternResult.GetProperty("entries").EnumerateArray()).ToArray();
+        Assert.True(entries.Length == 50,
+            $"Expected 50 generic fixture matches; actual={entries.Length}. Visible response: {visibleText}");
+        Assert.All(entries, entry =>
+        {
+            Assert.False(entry.TryGetProperty("locations", out _));
+            var handoff = Assert.IsType<string>(entry.GetProperty("handoffId").GetString());
+            var docCommentId = Assert.IsType<string>(entry.GetProperty("docCommentId").GetString());
+            Assert.StartsWith("src:", handoff);
+            Assert.StartsWith("M:", docCommentId, StringComparison.Ordinal);
+        });
+
+        var baseline = JsonNode.Parse(projectedJson)!.AsObject();
+        foreach (var entry in baseline["results"]!.AsArray()
+            .SelectMany(patternResult => patternResult!["entries"]!.AsArray()))
+        {
+            entry!["locations"] = new JsonArray(new JsonObject
+            {
+                ["filePath"] = entry["filePath"]!.DeepClone(),
+                ["line"] = entry["line"]!.DeepClone(),
+                ["endLine"] = entry["endLine"]!.DeepClone(),
+                ["projectName"] = entry["projectName"]!.DeepClone(),
+            });
+        }
+
+        var baselineJson = baseline.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        var payloadOffset = visibleText.IndexOf(projectedJson, StringComparison.Ordinal);
+        Assert.True(payloadOffset >= 0, "The visible response should contain the JSON payload after its shared header.");
+        var baselineHeader = visibleText[..payloadOffset];
+        if (!baselineHeader.Contains("resultContinuation=", StringComparison.Ordinal))
+            baselineHeader += "resultContinuation=none\n";
+        if (!baselineHeader.Contains("omissions=", StringComparison.Ordinal))
+            baselineHeader += "omissions=none\n";
+        var baselineText = baselineHeader + baselineJson;
+        var baselineTokens = TokenCount(baselineText);
+        var projectedTokens = TokenCount(visibleText);
+        var tokensSaved = baselineTokens - projectedTokens;
+        var baselineBytes = Encoding.UTF8.GetByteCount(baselineText);
+        var projectedBytes = Encoding.UTF8.GetByteCount(visibleText);
+
+        _output.WriteLine($"50 generic one-location find_symbol results: reconstructed prior pretty-JSON/negative-header baseline={baselineTokens} cl100k_base tokens/{baselineBytes} UTF-8 bytes; projected compact response={projectedTokens} tokens/{projectedBytes} bytes; saved={tokensSaved} tokens ({tokensSaved * 100.0 / baselineTokens:F1}%).");
+        Assert.Contains("\n\"results\":[\n", projectedJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"results\": [", projectedJson, StringComparison.Ordinal);
+        Assert.True(tokensSaved > 0, "Omitting duplicated singleton locations should reduce visible token count.");
+    }
+
     [Fact]
     public async Task StructureInventoriesReachEntriesBeyondThePreviousTwoHundredEntryCaps()
     {
@@ -138,8 +210,8 @@ public sealed class SourceToolsContractTests
                 namePatterns: ["BeforeVersion", "AfterVersion"], kind: "class", maxResponseBytes: 16384);
 
             AssertSuccessWithinBudget(result, 16384, 1024);
-            Assert.Contains("\"name\": \"BeforeVersion\"", TextOf(result), StringComparison.Ordinal);
-            Assert.DoesNotContain("\"name\": \"AfterVersion\"", TextOf(result), StringComparison.Ordinal);
+            Assert.Contains("\"name\":\"BeforeVersion\"", TextOf(result), StringComparison.Ordinal);
+            Assert.DoesNotContain("\"name\":\"AfterVersion\"", TextOf(result), StringComparison.Ordinal);
             Assert.Equal(1, editCount);
         }
     }
@@ -425,23 +497,34 @@ public sealed class SourceToolsContractTests
 
         var found = await symbols.FindSymbol(target, pattern: "Run", kind: "method", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(found, 16384, 1024);
-        Assert.Contains("\"name\": \"Run\"", TextOf(found), StringComparison.Ordinal);
+        Assert.Contains("\"name\":\"Run\"", TextOf(found), StringComparison.Ordinal);
+        string runDocCommentId;
+        using (var findDocument = JsonDocument.Parse(BodyOf(TextOf(found))))
+        {
+            var runEntry = Assert.Single(findDocument.RootElement.GetProperty("results").EnumerateArray()
+                .SelectMany(result => result.GetProperty("entries").EnumerateArray())
+                .Where(entry => entry.GetProperty("name").GetString() == "Run"));
+            runDocCommentId = runEntry.GetProperty("docCommentId").GetString()!;
+            Assert.False(runEntry.TryGetProperty("locations", out _),
+                "A one-location result should use its top-level primary location without repeating it in locations.");
+        }
         Assert.Contains("snapshotId=source:", TextOf(found), StringComparison.Ordinal);
         Assert.Contains("analyzedScope=findSymbol(pattern=Run", TextOf(found), StringComparison.Ordinal);
         Assert.Contains("analysisCompleteness=complete", TextOf(found), StringComparison.Ordinal);
-        Assert.Contains("resultContinuation=none", TextOf(found), StringComparison.Ordinal);
+        Assert.DoesNotContain("resultContinuation=none", TextOf(found), StringComparison.Ordinal);
+        Assert.DoesNotContain("omissions=none", TextOf(found), StringComparison.Ordinal);
         var methodHandoff = ReadHandoff(TextOf(found), "method Run in");
         var generatedExcluded = await symbols.FindSymbol(target, pattern: "GeneratedProbe", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(generatedExcluded, 16384, 1024);
-        Assert.DoesNotContain("\"name\": \"GeneratedProbe\"", TextOf(generatedExcluded), StringComparison.Ordinal);
+        Assert.DoesNotContain("\"name\":\"GeneratedProbe\"", TextOf(generatedExcluded), StringComparison.Ordinal);
         var generatedIncluded = await symbols.FindSymbol(target, pattern: "GeneratedProbe", includeGenerated: true,
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(generatedIncluded, 16384, 1024);
-        Assert.Contains("\"name\": \"GeneratedProbe\"", TextOf(generatedIncluded), StringComparison.Ordinal);
+        Assert.Contains("\"name\":\"GeneratedProbe\"", TextOf(generatedIncluded), StringComparison.Ordinal);
 
         var pagedFind = await ReadAllFindSymbolPagesAsync(symbols, target, "PageEntry", 1024, 4096);
         Assert.True(pagedFind.Pages > 1);
-        Assert.Equal(16, pagedFind.Text.Split("\"name\": \"PageEntry", StringSplitOptions.None).Length - 1);
+        Assert.Equal(16, pagedFind.Text.Split("\"name\":\"PageEntry", StringSplitOptions.None).Length - 1);
         Assert.Contains("PageEntry15", pagedFind.Text, StringComparison.Ordinal);
         var tokenPagedFind = await ReadAllFindSymbolPagesAsync(symbols, target, "PageEntry", 65536, 512);
         Assert.Equal(pagedFind.Text, tokenPagedFind.Text);
@@ -450,7 +533,14 @@ public sealed class SourceToolsContractTests
         AssertSuccessWithinBudget(body, 16384, 1024);
         Assert.Contains("Lines: 1-2 of", TextOf(body), StringComparison.Ordinal);
         Assert.Contains("Resolution status: resolved", TextOf(body), StringComparison.Ordinal);
+        Assert.DoesNotContain($"Symbol: {methodHandoff}", TextOf(body), StringComparison.Ordinal);
+        Assert.Contains($"Handoff: {methodHandoff}", TextOf(body), StringComparison.Ordinal);
         Assert.Contains("Next body window: startLine=3", TextOf(body), StringComparison.Ordinal);
+        var rawSelectorBody = await symbols.GetSymbolBody(target, [runDocCommentId], maxBodyLines: 2,
+            maxResponseBytes: 16384, maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(rawSelectorBody, 16384, 1024);
+        Assert.Contains($"Symbol: {runDocCommentId}", TextOf(rawSelectorBody), StringComparison.Ordinal);
+        Assert.Contains($"Handoff: {methodHandoff}", TextOf(rawSelectorBody), StringComparison.Ordinal);
         var bodyRanges = new List<(int Start, int End, int Total)> { ReadBodyRange(TextOf(body)) };
         var nextStartLine = 3;
         while (bodyRanges[^1].End < bodyRanges[^1].Total)
@@ -471,13 +561,22 @@ public sealed class SourceToolsContractTests
             }
             else
             {
-                Assert.Contains("Next action: none; this declaration window is complete.", windowText, StringComparison.Ordinal);
+                Assert.DoesNotContain("Next action: none; this declaration window is complete.", windowText, StringComparison.Ordinal);
             }
 
             nextStartLine = range.End + 1;
         }
 
         Assert.Equal(bodyRanges[0].Total, bodyRanges[^1].End);
+
+        var unavailableSearch = await symbols.FindSymbol(target, pattern: "Execute", kind: "method",
+            maxResponseBytes: 16384, maxResponseTokens: 1024);
+        var unavailableHandoff = ReadHandoff(TextOf(unavailableSearch), "Execute");
+        var unavailableBody = await symbols.GetSymbolBody(target, [unavailableHandoff], maxResponseBytes: 16384,
+            maxResponseTokens: 1024);
+        AssertSuccessWithinBudget(unavailableBody, 16384, 1024);
+        Assert.Contains("availability: unavailable", TextOf(unavailableBody), StringComparison.Ordinal);
+        Assert.Contains("Hint: Interfaces do not provide an executable body for this symbol.", TextOf(unavailableBody), StringComparison.Ordinal);
 
         var longBodySymbol = await symbols.FindSymbol(target, pattern: "LargeBody", kind: "method",
             maxResponseBytes: 16384, maxResponseTokens: 1024);
@@ -522,6 +621,19 @@ public sealed class SourceToolsContractTests
         var partialTypeSearch = await symbols.FindSymbol(target, pattern: "OrderProbe", kind: "class", includeGenerated: true,
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(partialTypeSearch, 16384, 1024);
+        using (var partialFindDocument = JsonDocument.Parse(BodyOf(TextOf(partialTypeSearch))))
+        {
+            var partialEntry = Assert.Single(partialFindDocument.RootElement.GetProperty("results").EnumerateArray()
+                .SelectMany(result => result.GetProperty("entries").EnumerateArray())
+                .Where(entry => entry.GetProperty("name").GetString() == "OrderProbe"));
+            var primary = partialEntry.GetProperty("locations")[0];
+            Assert.True(partialEntry.GetProperty("locations").GetArrayLength() > 1,
+                "A partial declaration must retain every visible declaring location.");
+            Assert.Equal(primary.GetProperty("filePath").GetString(), partialEntry.GetProperty("filePath").GetString());
+            Assert.Equal(primary.GetProperty("line").GetInt32(), partialEntry.GetProperty("line").GetInt32());
+            Assert.Equal(primary.GetProperty("endLine").GetInt32(), partialEntry.GetProperty("endLine").GetInt32());
+            Assert.Equal(primary.GetProperty("projectName").GetString(), partialEntry.GetProperty("projectName").GetString());
+        }
         var partialTypeReference = ReadHandoff(TextOf(partialTypeSearch), "OrderProbe");
         var partialSkeleton = await structure.GetFileSkeleton(target, [partialTypeReference],
             maxResponseBytes: 16384, maxResponseTokens: 1024);
@@ -632,8 +744,8 @@ public sealed class SourceToolsContractTests
             Assert.InRange(namespacePages, 1, 10);
         } while (namespaceCursor is not null);
         Assert.Equal(3, namespacePages);
-        Assert.Equal(5, pagedNamespaceItems.Count);
-        Assert.Equal(5, pagedNamespaceItems.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(6, pagedNamespaceItems.Count);
+        Assert.Equal(6, pagedNamespaceItems.Distinct(StringComparer.Ordinal).Count());
         var namespaceBytes = await structure.GetNamespaceTree(target,
             project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
             namespacePrefix: "ScopeProbe", depth: 1, includeTypes: false, maxResults: 1,
@@ -1254,6 +1366,7 @@ public sealed class SourceToolsContractTests
                     // body-end
                 }
             }
+            public interface IUnavailableTarget { void Execute(); }
             public partial class OrderProbe
             {
                 public void Zebra() { }

@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using SharpToken;
 
 namespace AiNetCodeNavigator.Mcp.Formatting;
@@ -7,6 +8,55 @@ internal static class McpResponseFormatter
 {
     private const string EncodingName = "cl100k_base";
     private static readonly GptEncoding TokenEncoding = GptEncoding.GetEncoding(EncodingName);
+
+    internal static string FormatCompactJson(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return FormatCompactJson(document.RootElement);
+    }
+
+    internal static string FormatCompactJson(JsonElement root)
+    {
+        var output = new StringBuilder();
+        WriteCompactJson(root, output);
+        return output.ToString();
+    }
+
+    private static void WriteCompactJson(JsonElement element, StringBuilder output)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                output.Append('{');
+                var firstProperty = true;
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (!firstProperty) output.Append(',');
+                    output.Append('\n').Append(JsonSerializer.Serialize(property.Name)).Append(':');
+                    WriteCompactJson(property.Value, output);
+                    firstProperty = false;
+                }
+                if (!firstProperty) output.Append('\n');
+                output.Append('}');
+                break;
+            case JsonValueKind.Array:
+                output.Append('[');
+                var firstItem = true;
+                foreach (var item in element.EnumerateArray())
+                {
+                    if (!firstItem) output.Append(',');
+                    output.Append('\n');
+                    WriteCompactJson(item, output);
+                    firstItem = false;
+                }
+                if (!firstItem) output.Append('\n');
+                output.Append(']');
+                break;
+            default:
+                output.Append(element.GetRawText());
+                break;
+        }
+    }
 
     internal static int CountTokens(string text)
     {

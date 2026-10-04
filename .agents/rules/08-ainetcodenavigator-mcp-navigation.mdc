@@ -56,7 +56,7 @@ Preserve the same tool, target and query for polling/paging, including options a
 | `RESPONSE_BUDGET_TOO_SMALL` | Retry unchanged request, retaining its active token, with exact offered `minimumResponseBytes` and `minimumResponseTokens` as `maxResponseBytes` / `maxResponseTokens`. If unsupported, narrow a fresh query. |
 
 - Outer pages deliver one immutable response; result cursors page known results without expanding analysis. For `get_context`, each cursor continues exactly one section; preserve the original full section selection, options, explicit argument presence and page size. Another section needs its own cursor or a fresh query.
-- Separate outer `completeness`, `resultContinuation` and `analysisCompleteness` / `omissions`; inspect section status too. A fully delivered page can represent partial analysis. Without a cursor, follow `nextAction` to narrow or change a supported traversal/scanner limit in a fresh query. Larger response budgets do not expand analysis.
+- Separate outer `completeness`, `resultContinuation` and `analysisCompleteness` / `omissions`; inspect section status too. In the text preamble, absent `resultContinuation` means no domain continuation, and absent `omissions` means no analysis omissions. A fully delivered page can represent partial analysis. Without a cursor, follow `nextAction` to narrow or change a supported traversal/scanner limit in a fresh query. Larger response budgets do not expand analysis.
 
 ## Recovery and evidence
 

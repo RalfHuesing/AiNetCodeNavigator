@@ -32,6 +32,99 @@ public sealed class LongRunningToolCallStoreTests
     }
 
     [Fact]
+    public async Task RegisteredDomainCursorKeepsCompactJsonPropertyBoundaries()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
+        var metadata = new NavigationAnalysisMetadata(
+            "assembly:0123456789abcdef01234567",
+            "inspectAssembly(maxResults=50)",
+            Array.Empty<string>());
+        var result = await store.RunAsync(new LongRunningToolCallRequest(
+            "inspect_assembly", "target", "query=members", (_, _) => Task.FromResult(new CallToolResult
+            {
+                Content = [new TextContentBlock { Text = "{\n\"types\":[\n{\n\"name\":\"Widget\",\n\"members\":[\n{\n\"name\":\"Run\"}\n],\n\"resultCursor\":\"core-cursor\"}\n]\n}" }],
+                Meta = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["navigationAnalysis"] = JsonSerializer.SerializeToNode(metadata,
+                        new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }),
+                },
+            })));
+
+        var text = TextOf(result);
+        var body = BodyOf(result);
+        using var parsed = JsonDocument.Parse(body);
+
+        Assert.False(result.IsError ?? false, text);
+        Assert.Contains("\n\"types\":[\n", body, StringComparison.Ordinal);
+        Assert.Contains("\n\"resultCursor\":", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\n  \"types\": [", body, StringComparison.Ordinal);
+        var cursor = parsed.RootElement.GetProperty("types")[0].GetProperty("resultCursor").GetString();
+        Assert.NotNull(cursor);
+        Assert.Equal(39, cursor.Length);
+        Assert.All(cursor, character => Assert.InRange(character, '0', '9'));
+        Assert.Contains("snapshotId=assembly:0123456789abcdef01234567", text, StringComparison.Ordinal);
+        Assert.Contains("analyzedScope=inspectAssembly(maxResults=50)", text, StringComparison.Ordinal);
+        Assert.Contains("analysisCompleteness=complete", text, StringComparison.Ordinal);
+        Assert.Equal("Widget", parsed.RootElement.GetProperty("types")[0].GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task CompleteAnalysisHeaderOmitsNegativeDefaults()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
+        var metadata = new NavigationAnalysisMetadata(
+            "assembly:0123456789abcdef01234567",
+            "inspectAssembly(maxResults=50)",
+            Array.Empty<string>());
+        var result = await store.RunAsync(new LongRunningToolCallRequest(
+            "inspect_assembly", "target", "query=members", (_, _) => Task.FromResult(new CallToolResult
+            {
+                Content = [new TextContentBlock { Text = "{\"types\":[]}" }],
+                Meta = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["navigationAnalysis"] = JsonSerializer.SerializeToNode(metadata,
+                        new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }),
+                },
+            })));
+        var text = TextOf(result);
+
+        Assert.Contains("snapshotId=assembly:0123456789abcdef01234567", text, StringComparison.Ordinal);
+        Assert.Contains("analyzedScope=inspectAssembly(maxResults=50)", text, StringComparison.Ordinal);
+        Assert.Contains("analysisCompleteness=complete", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("resultContinuation=none", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("omissions=none", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PartialAnalysisHeaderKeepsPositiveCursorAndOmissionFields()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
+        var metadata = new NavigationAnalysisMetadata(
+            "assembly:0123456789abcdef01234567",
+            "inspectAssembly(maxFiles=3)",
+            ["maxFiles"],
+            "partial",
+            ResultContinuationAvailable: true);
+        var response = new CallToolResult
+        {
+            Content = [new TextContentBlock { Text = "{\"types\":[],\"resultCursor\":\"core-cursor\"}" }],
+            Meta = new System.Text.Json.Nodes.JsonObject
+            {
+                ["navigationAnalysis"] = JsonSerializer.SerializeToNode(metadata,
+                    new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }),
+            },
+        };
+        var result = await store.RunAsync(new LongRunningToolCallRequest(
+            "inspect_assembly", "target", "query=partial", (_, _) => Task.FromResult(response)));
+        var text = TextOf(result);
+
+        Assert.Contains("analysisCompleteness=partial", text, StringComparison.Ordinal);
+        Assert.Contains("resultContinuation=available", text, StringComparison.Ordinal);
+        Assert.Contains("omissions=maxFiles", text, StringComparison.Ordinal);
+        Assert.Contains("resultCursor", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task FastSuccessReturnsFormattedResultWithoutStartingAgain()
     {
         await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
@@ -188,7 +281,7 @@ public sealed class LongRunningToolCallStoreTests
         {
             Assert.False(page.IsError ?? false, TextOf(page));
             var pageText = TextOf(page);
-            const string cursorMarker = "\"resultCursor\": \"";
+            const string cursorMarker = "\"resultCursor\":\"";
             var cursorStart = pageText.IndexOf(cursorMarker, StringComparison.Ordinal);
             if (cursorStart >= 0)
             {
@@ -1177,6 +1270,7 @@ public sealed class LongRunningToolCallStoreTests
         while (firstContentLine < lines.Length && (lines[firstContentLine].StartsWith("snapshotId=", StringComparison.Ordinal)
             || lines[firstContentLine].StartsWith("analyzedScope=", StringComparison.Ordinal)
             || lines[firstContentLine].StartsWith("analysisCompleteness=", StringComparison.Ordinal)
+            || lines[firstContentLine].StartsWith("resultContinuation=", StringComparison.Ordinal)
             || lines[firstContentLine].StartsWith("omissions=", StringComparison.Ordinal)
             || lines[firstContentLine].StartsWith("nextAction: ", StringComparison.Ordinal)
             || lines[firstContentLine].StartsWith("continuationToken=", StringComparison.Ordinal))) firstContentLine++;

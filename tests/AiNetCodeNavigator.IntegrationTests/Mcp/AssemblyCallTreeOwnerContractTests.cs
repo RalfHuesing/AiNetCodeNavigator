@@ -45,7 +45,7 @@ public sealed class AssemblyCallTreeOwnerContractTests
         Assert.Contains("CallTreeBridge", graphText, StringComparison.Ordinal);
         Assert.Contains("CallTreeRoot", graphText, StringComparison.Ordinal);
         Assert.Contains("analysisCompleteness=complete", graphText, StringComparison.Ordinal);
-        Assert.Contains("omissions=none", graphText, StringComparison.Ordinal);
+        Assert.DoesNotContain("omissions=none", graphText, StringComparison.Ordinal);
 
         var leafReference = ReadOwnerReference(graphText, leafPath, "M:CallTreeLeaf.Leaf.Run~System.Int32");
         var bridgeReference = ReadOwnerReference(graphText, bridgePath, "M:CallTreeBridge.Bridge.Run~System.Int32");

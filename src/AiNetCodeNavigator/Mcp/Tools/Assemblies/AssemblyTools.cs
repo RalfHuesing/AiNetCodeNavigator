@@ -75,7 +75,7 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                 var result = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(target.CanonicalPath, @namespace,
                     typeName, memberName, publicOnly, effectiveMaxResults, exactTypeName, memberNames, includeReferences,
                     Cursor: coreCursor), ct).ConfigureAwait(false);
-                return result.IsSuccess ? NavigationToolSupport.SuccessCompact(ProjectInspect(result.Value!, includeDiagnostics), result.Value!.Truncated,
+                return result.IsSuccess ? NavigationToolSupport.Success(ProjectInspect(result.Value!, includeDiagnostics), result.Value!.Truncated,
                     result.Value.ResultCursor is null ? null : "Repeat the query with the returned resultCursor.")
                     : NavigationToolSupport.Failure(result.Error!.Value, effectiveResponseBytes, maxResponseTokens, "$.targetPath");
             }, AnalysisTargetType.Assembly, cancellationToken, resultCursor, "assembly.inspect.types");
@@ -104,7 +104,7 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                 var result = await AssemblySearchScanner.SearchAsync(new AssemblySearchRequest(target.CanonicalPath, pattern,
                     caseSensitive, isRegex, fileFilter, declarationOnly, contextLines, maxResults == 0 ? 50 : maxResults, maxFiles, kind,
                     Cursor: coreCursor), ct).ConfigureAwait(false);
-                return result.IsSuccess ? NavigationToolSupport.SuccessCompact(ProjectSearch(result.Value!, includeDiagnostics), result.Value!.Truncated,
+                return result.IsSuccess ? NavigationToolSupport.Success(ProjectSearch(result.Value!, includeDiagnostics), result.Value!.Truncated,
                     result.Value.ResultCursor is not null
                         ? "Repeat the same query with the returned resultCursor; increase maxFiles to include additional matching files."
                         : result.Value.TruncatedBy?.Contains("incompleteRelationships", StringComparer.Ordinal) == true
@@ -135,7 +135,7 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
                 var effectiveMaxResults = maxResults == 0 ? 100 : maxResults;
                 var result = await FindAssemblyExtensionsScanner.FindAsync(new FindAssemblyExtensionsRequest(target.CanonicalPath,
                     receiverType, extensionName, @namespace, includeReferences, effectiveMaxResults, coreCursor), ct).ConfigureAwait(false);
-                return result.IsSuccess ? NavigationToolSupport.SuccessCompact(ProjectExtensions(result.Value!, includeDiagnostics), result.Value!.Truncated,
+                return result.IsSuccess ? NavigationToolSupport.Success(ProjectExtensions(result.Value!, includeDiagnostics), result.Value!.Truncated,
                     result.Value.ResultCursor is not null ? "Repeat the query with the returned resultCursor."
                     : result.Value.Analysis?.OmissionReasons.Contains("incompleteRelationships", StringComparer.Ordinal) == true
                         ? "Restore missing assembly references, then retry."

@@ -303,7 +303,11 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                     return NavigationToolSupport.Failure(AggregateResolutionFailures(resolutionError, itemFailures),
                         maxResponseBytes, maxResponseTokens, "$.symbolIdentifiers");
 
-                var assemblyResponse = NavigationToolSupport.SuccessText(string.Join("\n\n", items), hasDomainGaps,
+                var decompiledSourceRoot = assemblyScope.Context.DecompiledProjectPaths?.DecompiledSourceRoot;
+                var responseText = string.Join("\n\n", items);
+                if (resolvedAssemblyBodies > 0 && !string.IsNullOrWhiteSpace(decompiledSourceRoot))
+                    responseText = $"Decompiled source root: {decompiledSourceRoot}\n\n{responseText}";
+                var assemblyResponse = NavigationToolSupport.SuccessText(responseText, hasDomainGaps,
                     hasDomainGaps ? "Use each item's stated next action. Read all outer response pages first, then continue each successful body from its own next body window." : null);
                 return NavigationToolSupport.WithAssemblyMetadata(assemblyResponse, AssemblySymbolInputResolver.CreateIdentity(assemblyScope),
                     $"symbolBody(identifiers={string.Join('|', symbolIdentifiers)}, lines={startLine}..{(endLine?.ToString() ?? $"+{effectiveLines}")})",
@@ -329,7 +333,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
 
         var truncated = resultCursor is not null || results.Any(result => result.IsTruncated);
         var payload = new FindSymbolBatchResponse(patterns.Select((pattern, index) => new FindSymbolPatternResponse(pattern,
-            results[index].Entries, results[index].TotalMatches, results[index].ReturnedMatches,
+            results[index].Entries.Select(ProjectFindSymbolEntry).ToArray(), results[index].TotalMatches, results[index].ReturnedMatches,
             results[index].TruncatedBy, results[index].KindAlternatives)).ToArray(), resultCursor);
         return NavigationToolSupport.Success(payload, truncated,
             truncated ? resultCursor is not null ? "Use resultCursor after reading all outer response pages." : "Increase maxResults up to 1000 and repeat the same pattern query." : null);
@@ -374,6 +378,20 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
     private sealed record FindSymbolBatchResponse(IReadOnlyList<FindSymbolPatternResponse> Results, string? ResultCursor);
     private sealed record FindSymbolPatternResponse(string Pattern, IReadOnlyList<SymbolLocationEntry> Entries, int TotalMatches,
         int ReturnedMatches, IReadOnlyList<string> TruncatedBy, IReadOnlyList<string> KindAlternatives);
+
+    private static SymbolLocationEntry ProjectFindSymbolEntry(SymbolLocationEntry entry)
+    {
+        if (entry.Locations is not { Count: 1 } locations)
+            return entry;
+
+        var primary = locations[0];
+        return string.Equals(primary.FilePath, entry.FilePath, StringComparison.Ordinal)
+            && primary.Line == entry.Line
+            && primary.EndLine == entry.EndLine
+            && string.Equals(primary.ProjectName, entry.ProjectName, StringComparison.Ordinal)
+                ? entry with { Locations = null }
+                : entry;
+    }
 
     private static bool TryScope(string value, out SymbolScopeType scope)
     {
@@ -425,12 +443,15 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
     {
         var status = body.HasMore ? ", more lines available" : ", complete";
         var handoff = body.HandoffId is null ? string.Empty : $"\nHandoff: {body.HandoffId}\nOwner targetPath: {targetPath}";
+        var symbol = string.Equals(identifier, body.HandoffId, StringComparison.Ordinal) ? string.Empty : $"Symbol: {identifier}\n";
+        var hint = string.IsNullOrWhiteSpace(body.Hint) ? string.Empty : $"\nHint: {body.Hint}";
         var nextAction = body.HasMore
             ? body.HandoffId is not null
                 ? $"Next body window: startLine={body.DisplayedEnd + 1}, maxBodyLines={windowLineCount}; omit endLine and continue this item using its handoff."
                 : $"Next body window: startLine={body.DisplayedEnd + 1}, maxBodyLines={windowLineCount}; repeat the original symbolIdentifier with the same targetPath."
-            : "Next action: none; this declaration window is complete.";
-        return $"Symbol: {identifier}\nResolution status: resolved (availability: {body.Availability})\nContent mode: {body.ContentMode}{handoff}\nLines: {body.DisplayedStart}-{body.DisplayedEnd} of {body.TotalLines}{status}\n{nextAction}\n{body.Body}";
+            : string.Empty;
+        var nextActionLine = nextAction.Length == 0 ? string.Empty : $"{nextAction}\n";
+        return $"{symbol}Resolution status: resolved (availability: {body.Availability})\nContent mode: {body.ContentMode}{handoff}\nLines: {body.DisplayedStart}-{body.DisplayedEnd} of {body.TotalLines}{status}{hint}\n{nextActionLine}{body.Body}";
     }
 
     private static string FormatResolutionFailure(string identifier, ResultError error, string candidates)

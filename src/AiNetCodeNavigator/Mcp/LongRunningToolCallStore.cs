@@ -686,7 +686,7 @@ internal sealed class McpResponseContinuationStore : IDisposable
                     cursor.Property.Parent[cursor.Property.Name] = cursor.PublicToken;
                 }
             }
-            return (document.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), insertedTokens, null);
+            return (McpResponseFormatter.FormatCompactJson(document.ToJsonString()), insertedTokens, null);
         }
         catch (JsonException)
         {
@@ -833,14 +833,13 @@ internal sealed class McpResponseContinuationStore : IDisposable
     private static string CreateAnalysisMetadata(NavigationAnalysisMetadata? analysis, LongRunningToolCallRequest request)
     {
         if (analysis is null) return string.Empty;
-        var omissionSummary = analysis.OmissionReasons.Count == 0
-            ? "none"
-            : string.Join(',', analysis.OmissionReasons.Select(EscapeHeaderValue));
-        return $"snapshotId={analysis.SnapshotId}\n"
+        var metadata = $"snapshotId={analysis.SnapshotId}\n"
             + $"analyzedScope={EscapeHeaderValue(analysis.AnalyzedScope)}\n"
-            + $"analysisCompleteness={analysis.AnalysisCompleteness}\n"
-            + $"resultContinuation={(analysis.ResultContinuationAvailable ? "available" : "none")}\n"
-            + $"omissions={omissionSummary}\n";
+            + $"analysisCompleteness={analysis.AnalysisCompleteness}\n";
+        if (analysis.ResultContinuationAvailable) metadata += "resultContinuation=available\n";
+        if (analysis.OmissionReasons.Count > 0)
+            metadata += $"omissions={string.Join(',', analysis.OmissionReasons.Select(EscapeHeaderValue))}\n";
+        return metadata;
     }
 
     private static string EscapeHeaderValue(string value) => value

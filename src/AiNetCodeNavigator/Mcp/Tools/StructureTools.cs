@@ -220,13 +220,15 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 if (type is null) return McpToolResults.InvalidArgument("The assembly identifier did not resolve to a type.", "$.symbolIdentifier", "Use a type or member declared in a type.",
                     maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                 var identity = AssemblySymbolInputResolver.CreateIdentity(assemblyScope);
+                var decompiledSourceRoot = assemblyScope.Context.DecompiledProjectPaths?.DecompiledSourceRoot;
                 var result = BuildAssemblyClassStructure(type, target.CanonicalPath, identity, sortBy, maxMembers, kindFilter, nameFilter,
+                    decompiledSourceRoot,
                     collectAll: true, formatReference: symbol => FormatAssemblyReference(symbol, assemblyScope));
                 var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, identity.ContentHash + "|" + assemblyScope.Context.ReferenceSnapshotHash,
                     "get_class_structure.members", symbolIdentifier.Trim(), scopeType, includeGenerated.ToString(), kindFilter?.Trim(), nameFilter?.Trim(), sortBy.Trim().ToLowerInvariant(),
                     maxMembers.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 var response = CreateClassStructurePage(result, target.CanonicalPath, maxMembers, coreCursor, binding,
-                    maxResponseBytes, maxResponseTokens);
+                    maxResponseBytes, maxResponseTokens, decompiledSourceRoot);
                 if (response.IsError == true) return response;
                 return NavigationToolSupport.WithAssemblyMetadata(response, identity,
                     $"classStructure(symbol={symbolIdentifier.Trim()}, pageSize={maxMembers}, kind={kindFilter?.Trim() ?? "*"}, name={nameFilter?.Trim() ?? "*"}, sortBy={sortBy.Trim().ToLowerInvariant()})",
@@ -479,7 +481,10 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         }
         if (hasMissing) omissionReasons?.Add("unresolvedOrMissingFiles");
-        return NavigationToolSupport.SuccessText(string.Join("\n\n", chunks), hasMissing,
+        var skeletonText = string.Join("\n\n", chunks);
+        if (assemblyScope is not null)
+            skeletonText = $"Decompiled source root: `{targetDirectory.Replace('\\', '/')}`{Environment.NewLine}{Environment.NewLine}{skeletonText}";
+        return NavigationToolSupport.SuccessText(skeletonText, hasMissing,
             hasMissing ? "Correct invalid, missing, out-of-target, or ambiguous paths and repeat the file skeleton query." : null);
     }
 
@@ -646,7 +651,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     }
 
     private static CallToolResult CreateClassStructurePage(ClassStructurePayload result, string targetPath, int pageSize,
-        string? cursor, string binding, int maxResponseBytes, int? maxResponseTokens)
+        string? cursor, string binding, int maxResponseBytes, int? maxResponseTokens, string? decompiledSourceRoot = null)
     {
         var page = NavigationToolSupport.PageResults(result.Members, pageSize, cursor, binding,
             maxResponseBytes, maxResponseTokens);
@@ -656,6 +661,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             result.TypeName,
             result.Kind,
             TargetPath = targetPath,
+            DecompiledSourceRoot = decompiledSourceRoot,
             result.Files,
             result.TotalLines,
             result.TotalMemberCount,
@@ -666,17 +672,17 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     }
 
     internal static ClassStructurePayload BuildAssemblyClassStructure(INamedTypeSymbol type, string assemblyPath, AnalysisSymbolIdentity identity,
-        string sortBy, int maxMembers, string? kindFilter, string? nameFilter, bool collectAll = false,
+        string sortBy, int maxMembers, string? kindFilter, string? nameFilter, string? decompiledSourceRoot, bool collectAll = false,
         Func<ISymbol, string?>? formatReference = null)
     {
-        var directory = Path.GetDirectoryName(assemblyPath)!;
+        var sourceRoot = string.IsNullOrWhiteSpace(decompiledSourceRoot) ? null : decompiledSourceRoot;
         var members = type.GetMembers().Where(member => !member.IsImplicitlyDeclared)
             .Select(member =>
             {
                 var location = member.Locations.FirstOrDefault(item => item.IsInSource);
                 var span = location?.GetLineSpan();
                 var handoff = formatReference?.Invoke(member);
-                var relative = span?.Path is { } file ? Path.GetRelativePath(directory, file) : string.Empty;
+                var relative = span?.Path is { } file ? FormatAssemblySourcePath(sourceRoot, file) : string.Empty;
                 var kind = member switch
                 {
                     IMethodSymbol { MethodKind: MethodKind.Constructor or MethodKind.StaticConstructor } => "Constructor",
@@ -707,8 +713,24 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         };
         var shown = members.Take(collectAll ? int.MaxValue : Math.Clamp(maxMembers, 1, 200)).ToArray();
         var typeKind = type.IsRecord ? type.TypeKind == TypeKind.Struct ? "Record Struct" : "Record Class" : type.TypeKind.ToString();
-        return new ClassStructurePayload(type.ToDisplayString(), typeKind, [], shown.Sum(item => item.LineCount), members.Count, shown.Length,
+        var files = type.Locations.Where(location => location.IsInSource && location.SourceTree?.FilePath is not null)
+            .Select(location => FormatAssemblySourcePath(sourceRoot, location.SourceTree!.FilePath))
+            .Concat(members.Select(member => member.FilePath))
+            .Where(filePath => !string.IsNullOrWhiteSpace(filePath))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(filePath => filePath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return new ClassStructurePayload(type.ToDisplayString(), typeKind, files, shown.Sum(item => item.LineCount), members.Count, shown.Length,
             members.Count > shown.Length, shown, members.Count > shown.Length ? ["maxMembers"] : []);
+    }
+
+    private static string FormatAssemblySourcePath(string? decompiledSourceRoot, string filePath)
+    {
+        var fullPath = Path.GetFullPath(filePath);
+        if (string.IsNullOrWhiteSpace(decompiledSourceRoot)) return fullPath.Replace('\\', '/');
+        var fullRoot = Path.GetFullPath(decompiledSourceRoot);
+        if (!IsWithin(fullRoot, fullPath)) return fullPath.Replace('\\', '/');
+        return Path.GetRelativePath(fullRoot, fullPath).Replace('\\', '/');
     }
 
     private static string? FormatAssemblyReference(ISymbol symbol, AssemblyNavigationSessionScope scope)

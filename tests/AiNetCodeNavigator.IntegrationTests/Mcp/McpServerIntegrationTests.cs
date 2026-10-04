@@ -713,12 +713,13 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             var metadataTypeOrigin = await ReadResponseAsync(process, 31, timeout.Token);
             Assert.False(metadataTypeOrigin.GetProperty("result").GetProperty("isError").GetBoolean());
             var metadataOriginText = GetFirstText(metadataTypeOrigin);
-            Assert.Contains("\"found\": true", metadataOriginText, StringComparison.Ordinal);
-            Assert.Contains("\"assemblyOrigin\": \"reference\"", metadataOriginText, StringComparison.Ordinal);
-            Assert.Contains("\"outputAssembly\": \"", metadataOriginText, StringComparison.Ordinal);
+            var metadataOrigin = ParsePayload(metadataOriginText);
+            Assert.True(metadataOrigin.GetProperty("found").GetBoolean());
+            Assert.Equal("reference", metadataOrigin.GetProperty("assemblyOrigin").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(metadataOrigin.GetProperty("outputAssembly").GetString()));
             Assert.Contains("Microsoft.NETCore.App.Ref", metadataOriginText, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("\"searchedAssemblies\": [", metadataOriginText, StringComparison.Ordinal);
-            Assert.Contains("\"assemblyOrigin\": \"source\"", sourceOriginText, StringComparison.Ordinal);
+            Assert.Equal(JsonValueKind.Array, metadataOrigin.GetProperty("searchedAssemblies").ValueKind);
+            Assert.Equal("source", ParsePayload(sourceOriginText).GetProperty("assemblyOrigin").GetString());
 
             await SendRequestAsync(process, 32, "tools/call", new
             {

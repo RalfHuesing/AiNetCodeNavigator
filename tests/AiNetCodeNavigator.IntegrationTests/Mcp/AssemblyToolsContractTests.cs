@@ -576,10 +576,10 @@ public sealed class AssemblyToolsContractTests
         Assert.Contains("Probe.Second", mutualText, StringComparison.Ordinal);
         Assert.Contains("Probe.First", mutualText, StringComparison.Ordinal);
         Assert.DoesNotContain("Diagnostics count: 1", mutualText, StringComparison.Ordinal);
-        Assert.Contains("\"evidenceKind\": \"call\"", TextOf(selfReferences), StringComparison.Ordinal);
+        Assert.Contains("\"evidenceKind\":\"call\"", TextOf(selfReferences), StringComparison.Ordinal);
         Assert.Contains("\"column\":", TextOf(selfReferences), StringComparison.Ordinal);
         Assert.Contains("Probe.Self", TextOf(selfReferences), StringComparison.Ordinal);
-        Assert.Contains("\"evidenceKind\": \"call\"", TextOf(selfImpact), StringComparison.Ordinal);
+        Assert.Contains("\"evidenceKind\":\"call\"", TextOf(selfImpact), StringComparison.Ordinal);
         Assert.Contains("\"column\":", TextOf(selfImpact), StringComparison.Ordinal);
         Assert.Contains("Probe.Self", TextOf(selfImpact), StringComparison.Ordinal);
     }
@@ -1036,6 +1036,98 @@ public sealed class AssemblyToolsContractTests
         var contextText = TextOf(context);
         Assert.Contains("Zulu", contextText, StringComparison.Ordinal);
         Assert.Contains("Alpha", contextText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AssemblyClassStructureReportsGenerationRootAndResolvableRelativeFilesOnEveryCursorPage()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var structureTools = new StructureTools(runtime);
+        var symbolTools = new SymbolTools(runtime);
+
+        using var fixture = TestTempDirectory.Create("assembly-structure-paths-");
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "StructurePathsProbe", """
+            namespace StructurePathsProbe;
+            public sealed class Probe<T>
+            {
+                public T Echo(T value) => value;
+                public T Repeat(T value) => Echo(value);
+                public string Describe() => typeof(T).Name;
+            }
+            """);
+
+        string? resultCursor = null;
+        string? reportedRoot = null;
+        var memberNames = new List<string>();
+        var pageNumber = 0;
+        do
+        {
+            var response = await structureTools.GetClassStructure(assemblyPath, "StructurePathsProbe.Probe",
+                maxMembers: 1, resultCursor: resultCursor, maxResponseBytes: 32768, maxResponseTokens: 4096);
+            AssertSuccessWithinBudget(response, 32768, 4096);
+            using var document = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(response)));
+            var root = document.RootElement;
+
+            Assert.True(root.TryGetProperty("decompiledSourceRoot", out var sourceRootProperty),
+                "Each class-structure page must identify its physical decompiler generation root.");
+            var sourceRoot = Assert.IsType<string>(sourceRootProperty.GetString());
+            Assert.True(Path.IsPathFullyQualified(sourceRoot), sourceRoot);
+            Assert.True(Directory.Exists(sourceRoot), sourceRoot);
+            Assert.Equal(Path.GetFullPath(assemblyPath), Path.GetFullPath(root.GetProperty("targetPath").GetString()!));
+            if (reportedRoot is null) reportedRoot = sourceRoot;
+            else Assert.Equal(reportedRoot, sourceRoot);
+
+            var files = root.GetProperty("files").EnumerateArray().Select(item => item.GetString()!).ToArray();
+            Assert.NotEmpty(files);
+            Assert.All(files, filePath =>
+            {
+                Assert.False(Path.IsPathRooted(filePath), filePath);
+                Assert.DoesNotContain("..", filePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparer.Ordinal);
+                Assert.True(File.Exists(Path.GetFullPath(Path.Combine(sourceRoot, filePath))), filePath);
+            });
+
+            var members = root.GetProperty("members").EnumerateArray().ToArray();
+            Assert.NotEmpty(members);
+            foreach (var member in members)
+            {
+                var filePath = member.GetProperty("filePath").GetString()!;
+                Assert.False(Path.IsPathRooted(filePath), filePath);
+                Assert.DoesNotContain("..", filePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparer.Ordinal);
+                Assert.True(File.Exists(Path.GetFullPath(Path.Combine(sourceRoot, filePath))), filePath);
+                memberNames.Add(member.GetProperty("name").GetString()!);
+            }
+
+            if (pageNumber == 0)
+            {
+                var echo = Assert.Single(members.Where(member => member.GetProperty("name").GetString() == "Echo"));
+                var handoff = echo.GetProperty("handoffId").GetString()!;
+                var body = await symbolTools.GetSymbolBody(assemblyPath, [handoff], maxResponseBytes: 32768, maxResponseTokens: 4096);
+                AssertOwnerResult(body, "Echo");
+                Assert.Contains("Echo", TextOf(body), StringComparison.Ordinal);
+                Assert.Contains("Decompiled source root:", TextOf(body), StringComparison.Ordinal);
+                Assert.Contains(sourceRoot, TextOf(body), StringComparison.Ordinal);
+                Assert.Equal(1, TextOf(body).Split("Decompiled source root:", StringSplitOptions.None).Length - 1);
+
+                var skeleton = await structureTools.GetFileSkeleton(assemblyPath, [handoff],
+                    maxResponseBytes: 32768, maxResponseTokens: 4096);
+                AssertOwnerResult(skeleton, "Probe");
+                Assert.Contains("Decompiled source root:", TextOf(skeleton), StringComparison.Ordinal);
+                Assert.Contains(sourceRoot.Replace('\\', '/'), TextOf(skeleton), StringComparison.Ordinal);
+                Assert.Equal(1, TextOf(skeleton).Split("Decompiled source root:", StringSplitOptions.None).Length - 1);
+            }
+
+            pageNumber++;
+            resultCursor = root.TryGetProperty("resultCursor", out var cursor)
+                && cursor.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? cursor.GetString()
+                    : null;
+        } while (resultCursor is not null);
+
+        Assert.True(pageNumber > 1, "The fixture must exercise more than one member page.");
+        Assert.Contains("Echo", memberNames);
+        Assert.Contains("Repeat", memberNames);
+        Assert.Contains("Describe", memberNames);
     }
 
     [Fact]
@@ -1555,7 +1647,7 @@ public sealed class AssemblyToolsContractTests
         Assert.StartsWith("types(namespace=*", ReadHeader(TextOf(inspectFirst), "analyzedScope"), StringComparison.Ordinal);
         Assert.Contains("analysisCompleteness=complete", TextOf(inspectFirst), StringComparison.Ordinal);
         Assert.Contains("resultContinuation=available", TextOf(inspectFirst), StringComparison.Ordinal);
-        Assert.Contains("omissions=none", TextOf(inspectFirst), StringComparison.Ordinal);
+        Assert.DoesNotContain("omissions=none", TextOf(inspectFirst), StringComparison.Ordinal);
         var inspectNext = await assemblies.InspectAssembly(assemblyPath, maxResults: 1,
             includeReferences: false, resultCursor: inspectCursor, maxResponseBytes: 65536, maxResponseTokens: 16000);
         AssertOwnerResultWithinBudget(inspectNext, "Probe1", 65536, 16000);
@@ -1594,7 +1686,7 @@ public sealed class AssemblyToolsContractTests
 
         var searchFirstPages = await ReadOuterPagesAsync((bytes, tokens, continuation) => assemblies.SearchAssembly(
             assemblyPath, pattern: "Needle", declarationOnly: true, kind: "method", maxResults: 100, maxFiles: 0,
-            maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 65536, 50000);
+            maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 4096, 1600);
         AssertOwnerPage(searchFirstPages.FirstPage);
         Assert.Contains("Needle0", searchFirstPages.Text, StringComparison.Ordinal);
         Assert.True(searchFirstPages.Pages > 1, "The first search domain page must be reconstructed from its outer response pages.");
@@ -1602,13 +1694,13 @@ public sealed class AssemblyToolsContractTests
         var searchNextPages = await ReadOuterPagesAsync((bytes, tokens, continuation) => assemblies.SearchAssembly(
             assemblyPath, pattern: "Needle", declarationOnly: true, kind: "method", maxResults: 100, maxFiles: 0,
             resultCursor: continuation is null ? searchCursor : null,
-            maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 65536, 50000);
+            maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 4096, 1600);
         AssertOwnerPage(searchNextPages.FirstPage);
         Assert.Contains("Probe", searchNextPages.Text, StringComparison.Ordinal);
         var searchReplayPages = await ReadOuterPagesAsync((bytes, tokens, continuation) => assemblies.SearchAssembly(
             assemblyPath, pattern: "Needle", declarationOnly: true, kind: "method", maxResults: 100, maxFiles: 0,
             resultCursor: continuation is null ? searchCursor : null,
-            maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 65536, 50000);
+            maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 4096, 1600);
         Assert.Equal(searchNextPages.Text, searchReplayPages.Text);
         Assert.Equal(searchNextPages.Pages, searchReplayPages.Pages);
         AssertError(await assemblies.SearchAssembly(assemblyPath, pattern: "Needle", declarationOnly: true,
@@ -1649,7 +1741,7 @@ public sealed class AssemblyToolsContractTests
         Assert.Contains("maxFiles", filesLimitedText, StringComparison.Ordinal);
         Assert.Contains("analysisCompleteness=partial", filesLimitedText, StringComparison.Ordinal);
         Assert.Contains("omissions=maxFiles", filesLimitedText, StringComparison.Ordinal);
-        Assert.DoesNotContain("\"continuationToken\": \"v1.", filesLimitedText, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"continuationToken\":\"v1.", filesLimitedText, StringComparison.Ordinal);
         Assert.DoesNotContain("Needle7", filesLimitedText, StringComparison.Ordinal);
     }
 
@@ -1830,10 +1922,11 @@ public sealed class AssemblyToolsContractTests
         Assert.Contains(longLiteral, leafBodyText, StringComparison.Ordinal);
         Assert.Contains(".Length", leafBodyText, StringComparison.Ordinal);
         Assert.Contains("return", leafBodyText, StringComparison.OrdinalIgnoreCase);
-        const string completeBodyMarker = "\nNext action: none; this declaration window is complete.\n";
-        var bodyContentStart = leafBodyText.IndexOf(completeBodyMarker, StringComparison.Ordinal);
+        var linesHeaderStart = leafBodyText.IndexOf("\nLines: ", StringComparison.Ordinal);
+        Assert.True(linesHeaderStart >= 0, leafBodyText);
+        var bodyContentStart = leafBodyText.IndexOf('\n', linesHeaderStart + 1);
         Assert.True(bodyContentStart >= 0, leafBodyText);
-        var leafBodyContent = leafBodyText[(bodyContentStart + completeBodyMarker.Length)..];
+        var leafBodyContent = leafBodyText[(bodyContentStart + 1)..];
         AssertErrorWithinBudget(await symbols.GetSymbolBody(root, [leafHandle], maxResponseBytes: 32768, maxResponseTokens: 4096),
             "TARGET_MISMATCH", 32768, 4096);
 
@@ -2167,10 +2260,10 @@ public sealed class AssemblyToolsContractTests
         Assert.False(result.IsError ?? false, text);
         Assert.DoesNotContain("operation=running", text, StringComparison.Ordinal);
         Assert.DoesNotContain("operation=retry", text, StringComparison.Ordinal);
-        if (text.Contains("\"results\": [", StringComparison.Ordinal) && expectedText.StartsWith("class ", StringComparison.Ordinal))
+        if (text.Contains("\"results\":[", StringComparison.Ordinal) && expectedText.StartsWith("class ", StringComparison.Ordinal))
         {
-            Assert.Contains("\"kind\": \"class\"", text, StringComparison.Ordinal);
-            Assert.Contains($"\"name\": \"{expectedText[6..]}\"", text, StringComparison.Ordinal);
+            Assert.Contains("\"kind\":\"class\"", text, StringComparison.Ordinal);
+            Assert.Contains($"\"name\":\"{expectedText[6..]}\"", text, StringComparison.Ordinal);
         }
         else
         {
