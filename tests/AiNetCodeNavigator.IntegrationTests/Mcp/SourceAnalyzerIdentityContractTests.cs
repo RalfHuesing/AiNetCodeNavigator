@@ -277,6 +277,91 @@ public sealed class SourceAnalyzerIdentityContractTests
             [reference], maxBodyLines: 20, maxResponseBytes: bytes, maxResponseTokens: tokens,
             operationToken: operation, continuationToken: continuation), 32768, 2048);
 
+    [Fact]
+    public async Task MsBuildSourceNavigation_AllowsReferencedXmlDocumentationWithExternalInclude()
+    {
+        using var fixture = TestTempDirectory.Create("source-xml-include-");
+        var solutionPath = fixture.GetPath("IncludeFixture.slnx");
+        var referencePath = AssemblyTestHelper.EmitAssembly(fixture, "Vendor.Api",
+            "namespace Vendor.Api; public sealed class Entry { public static int Read() => 1; }");
+        var referenceDocumentationPath = Path.ChangeExtension(referencePath, ".xml");
+        const string externalInclude = "../../../doc/snippets/vendor/Entry.xml";
+        await File.WriteAllTextAsync(referenceDocumentationPath, $$"""
+            <?xml version="1.0"?>
+            <doc>
+              <assembly><name>Vendor.Api</name></assembly>
+              <members>
+                <member name="T:Vendor.Api.Entry">
+                  <include file="{{externalInclude}}" path="/doc/members/member[@name='T:Vendor.Api.Entry']" />
+                </member>
+              </members>
+            </doc>
+            """);
+        Assert.Contains(externalInclude, await File.ReadAllTextAsync(referenceDocumentationPath), StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(referenceDocumentationPath)!, externalInclude))));
+
+        fixture.CreateFile("src/App/App.csproj", $$"""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+                <ImplicitUsings>enable</ImplicitUsings>
+                <Nullable>enable</Nullable>
+              </PropertyGroup>
+              <ItemGroup>
+                <Reference Include="Vendor.Api">
+                  <HintPath>../../{{Path.GetFileName(referencePath)}}</HintPath>
+                </Reference>
+              </ItemGroup>
+            </Project>
+            """);
+        fixture.CreateFile("src/App/Consumer.cs", $$"""
+            namespace IncludeFixture;
+
+            public static class Consumer
+            {
+                /// <include file="{{externalInclude}}" path="/doc/members/member[@name='M:IncludeFixture.Consumer.Read']" />
+                public static int Read() => Vendor.Api.Entry.Read();
+            }
+            """);
+        await File.WriteAllTextAsync(solutionPath,
+            "<Solution><Project Path=\"src/App/App.csproj\" /></Solution>");
+        var nugetConfigPath = fixture.CreateFile("NuGet.Config",
+            "<configuration><packageSources><clear /></packageSources></configuration>");
+        await FixtureRestore.RunAsync(solutionPath, fixture.DirectoryPath, nugetConfigPath,
+            "XML include navigation fixture restore");
+
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var registry = new ProjectRegistry(ProjectRegistryOptions.ForMSBuild());
+        await using var runtime = new NavigatorHostRuntime(
+            host.Services.GetRequiredService<IHostApplicationLifetime>(), projectRegistry: registry);
+        var leaseResult = registry.Lease(solutionPath);
+        Assert.True(leaseResult.Succeeded, leaseResult.ErrorMessage);
+        using var lease = leaseResult.Lease!;
+        await lease.ResidentSolution.LoadTask!.WaitAsync(TimeSpan.FromSeconds(30));
+
+        var structures = new StructureTools(runtime);
+        var indexScope = await CompleteAsync(operation => structures.GetIndexScope(solutionPath,
+            maxResponseBytes: 16384, maxResponseTokens: 1024, operationToken: operation));
+        var indexScopeText = TextOf(indexScope);
+        Assert.False(indexScope.IsError ?? false, indexScopeText);
+        Assert.Contains("App", indexScopeText, StringComparison.Ordinal);
+
+        var symbols = new SymbolTools(runtime);
+        var discovery = await CompleteAsync(operation => symbols.FindSymbol(solutionPath,
+            pattern: "IncludeFixture.Consumer.Read", kind: "method", maxResponseBytes: 16384,
+            maxResponseTokens: 1024, operationToken: operation));
+        var discoveryText = TextOf(discovery);
+        Assert.False(discovery.IsError ?? false, discoveryText);
+        var reference = Assert.Single(ReadStableReferences(discoveryText));
+
+        var body = await CompleteAsync(operation => symbols.GetSymbolBody(solutionPath, [reference],
+            maxBodyLines: 20, maxResponseBytes: 16384, maxResponseTokens: 1024, operationToken: operation));
+        var bodyText = TextOf(body);
+        Assert.False(body.IsError ?? false, bodyText);
+        Assert.Contains(externalInclude, bodyText, StringComparison.Ordinal);
+        Assert.Contains("Vendor.Api.Entry.Read", bodyText, StringComparison.Ordinal);
+    }
+
     private static Task<(string Text, int Pages, string FirstPage)> ReadPagesAsync(
         Func<int, int?, string?, string?, Task<CallToolResult>> invoke,
         int maxResponseBytes,

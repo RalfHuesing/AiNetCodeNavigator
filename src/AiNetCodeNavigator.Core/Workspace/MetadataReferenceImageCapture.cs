@@ -11,7 +11,6 @@ using System.Reflection.PortableExecutable;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Threading;
-using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using AiNetCodeNavigator.Core.Symbols;
@@ -196,10 +195,6 @@ internal static class MetadataReferenceImageCapture
                 {
                     unsupportedReason ??= $"Project '{project.FilePath ?? project.Name}' has a metadata documentation provider without captured immutable XML bytes.";
                 }
-                else if (documentation.ExternalIncludePath is not null)
-                {
-                    unsupportedReason ??= $"Project '{project.FilePath ?? project.Name}' includes external XML documentation '{documentation.ExternalIncludePath}' without captured resolved include inputs.";
-                }
                 else if (documentation.Hash != "missing")
                 {
                     bindingInputs.Add(new SourceIdentityCapturedInput(
@@ -311,29 +306,26 @@ internal static class MetadataReferenceImageCapture
                 knownOwner.DocumentationProvider,
                 knownOwner.DocumentationHash,
                 knownOwner.DocumentationIsStable,
-                knownOwner.DocumentationImageKey,
-                knownOwner.DocumentationIncludePath);
+                knownOwner.DocumentationImageKey);
         }
 
         if (string.IsNullOrWhiteSpace(reference.FilePath) || !Path.IsPathRooted(reference.FilePath))
         {
-            return new CapturedDocumentation(null, "missing", true, "missing", null);
+            return new CapturedDocumentation(null, "missing", true, "missing");
         }
 
         var documentationPath = Path.ChangeExtension(reference.FilePath, ".xml");
         if (!File.Exists(documentationPath))
         {
-            return new CapturedDocumentation(null, "missing", true, "missing", null);
+            return new CapturedDocumentation(null, "missing", true, "missing");
         }
 
         var image = CapturePhysicalImage(documentationPath, imagesByPath, attempt, cancellationToken, observer);
-        var includePath = FindExternalXmlInclude(image.Bytes);
         return new CapturedDocumentation(
             XmlDocumentationProvider.CreateFromBytes(image.Bytes.ToArray()),
             image.Sha256,
             true,
-            image.CanonicalPath,
-            includePath);
+            image.CanonicalPath);
     }
 
     internal static ImmutableArray<CapturedImage> CaptureManagedImageSet(
@@ -437,8 +429,7 @@ internal static class MetadataReferenceImageCapture
         string? display,
         string documentationHash = "missing",
         bool documentationIsStable = true,
-        string documentationImageKey = "missing",
-        string? documentationIncludePath = null)
+        string documentationImageKey = "missing")
     {
         var inMemoryImages = images.All(image => image.CanonicalPath.StartsWith("in-memory:", StringComparison.Ordinal))
             ? images
@@ -451,7 +442,7 @@ internal static class MetadataReferenceImageCapture
             {
                 var moduleReference = module.GetReference(documentationProvider, filePath, display).WithProperties(properties);
                 owner = new CapturedMetadataOwner(module, CreateEvidence(images), inMemoryImages, documentationProvider,
-                    documentationHash, documentationIsStable, documentationImageKey, documentationIncludePath);
+                    documentationHash, documentationIsStable, documentationImageKey);
                 MetadataOwners.Add(moduleReference, owner);
                 owner = null;
                 return moduleReference;
@@ -490,7 +481,7 @@ internal static class MetadataReferenceImageCapture
                 filePath,
                 display);
             assemblyOwner = new CapturedMetadataOwner(assemblyMetadata, CreateEvidence(images), inMemoryImages, documentationProvider,
-                documentationHash, documentationIsStable, documentationImageKey, documentationIncludePath);
+                documentationHash, documentationIsStable, documentationImageKey);
             MetadataOwners.Add(reference, assemblyOwner);
             assemblyOwner = null;
             assemblyMetadata = null;
@@ -588,7 +579,6 @@ internal static class MetadataReferenceImageCapture
         var documentationHash = documentationXmlBytes.IsDefault
             ? documentationProvider is null ? "missing" : "untracked-provider"
             : Convert.ToHexString(SHA256.HashData(documentationXmlBytes.AsSpan()));
-        var documentationIncludePath = documentationXmlBytes.IsDefault ? null : FindExternalXmlInclude(documentationXmlBytes);
         return CreateReferenceFromImages(
             capturedImages,
             properties,
@@ -597,8 +587,7 @@ internal static class MetadataReferenceImageCapture
             display,
             documentationHash,
             documentationIsStable: documentationXmlBytes.IsDefault ? documentationProvider is null : true,
-            documentationImageKey: documentationXmlBytes.IsDefault ? "missing" : $"in-memory-xml:{documentationHash}",
-            documentationIncludePath: documentationIncludePath);
+            documentationImageKey: documentationXmlBytes.IsDefault ? "missing" : $"in-memory-xml:{documentationHash}");
     }
 
     internal sealed class MetadataImageCaptureObserver
@@ -639,27 +628,11 @@ internal static class MetadataReferenceImageCapture
         ImmutableArray<byte> Bytes,
         string Sha256);
 
-    private static string? FindExternalXmlInclude(ImmutableArray<byte> xmlBytes)
-    {
-        try
-        {
-            using var stream = new MemoryStream(xmlBytes.ToArray(), writable: false);
-            var document = XDocument.Load(stream, LoadOptions.None);
-            var include = document.Descendants().FirstOrDefault(element => element.Name.LocalName == "include");
-            return include is null ? null : include.Attribute("file")?.Value ?? "<include directive>";
-        }
-        catch (System.Xml.XmlException exception)
-        {
-            throw new MetadataImageUnsupportedException($"XML documentation input is malformed: {exception.Message}");
-        }
-    }
-
     private sealed record CapturedDocumentation(
         DocumentationProvider? Provider,
         string Hash,
         bool IsStable,
-        string CanonicalImageKey,
-        string? ExternalIncludePath);
+        string CanonicalImageKey);
 
     internal sealed class MetadataImageUnsupportedException(string message) : Exception(message);
 
@@ -674,8 +647,7 @@ internal static class MetadataReferenceImageCapture
             DocumentationProvider? documentationProvider,
             string documentationHash,
             bool documentationIsStable,
-            string documentationImageKey,
-            string? documentationIncludePath)
+            string documentationImageKey)
         {
             this.metadata = metadata;
             Images = images;
@@ -684,7 +656,6 @@ internal static class MetadataReferenceImageCapture
             DocumentationHash = documentationHash;
             DocumentationIsStable = documentationIsStable;
             DocumentationImageKey = documentationImageKey;
-            DocumentationIncludePath = documentationIncludePath;
         }
 
         internal ImmutableArray<SourceIdentityImageEvidence> Images { get; }
@@ -698,8 +669,6 @@ internal static class MetadataReferenceImageCapture
         internal bool DocumentationIsStable { get; }
 
         internal string DocumentationImageKey { get; }
-
-        internal string? DocumentationIncludePath { get; }
 
         ~CapturedMetadataOwner() => Dispose(false);
 

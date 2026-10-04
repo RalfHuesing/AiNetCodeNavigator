@@ -389,6 +389,54 @@ public sealed class ResidentSolutionMetadataFreshnessTests
             project => project.BindingInputs.Any(input => input.Kind == "xml-documentation-image" && input.LogicalKey.EndsWith("documentationfreshness.xml", StringComparison.OrdinalIgnoreCase)));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetCurrentSnapshot_WhenCapturedXmlDocumentationHasUnresolvedInclude_UsesLiteralCapturedDocumentation(bool inMemoryReference)
+    {
+        using var fixture = TestTempDirectory.Create("metadata-documentation-include-");
+        var solutionPath = fixture.CreateFile("DocumentationInclude.slnx", string.Empty);
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "DocumentationIncludeApi",
+            "namespace DocumentationInclude; public sealed class Api { }");
+        const string xmlDocumentation = "<doc><members><member name=\"T:DocumentationInclude.Api\"><summary><include file=\"missing-snippets.xml\" path=\"/doc/members/member[@name='T:DocumentationInclude.Api']/summary/node()\" /></summary></member></members></doc>";
+        var xmlBytes = ImmutableArray.CreateRange(Encoding.UTF8.GetBytes(xmlDocumentation));
+        PortableExecutableReference reference;
+        if (inMemoryReference)
+        {
+            var image = ImmutableArray.CreateRange(await File.ReadAllBytesAsync(assemblyPath));
+            reference = CapturedMetadataReference.CreateFromImage(image, filePath: "DocumentationIncludeApi.dll",
+                documentationXmlBytes: xmlBytes);
+        }
+        else
+        {
+            await File.WriteAllBytesAsync(Path.ChangeExtension(assemblyPath, ".xml"), xmlBytes.ToArray());
+            reference = MetadataReference.CreateFromFile(assemblyPath);
+        }
+
+        using var workspace = TestWorkspaceBuilder.Create().WithVirtualSolutionPath(solutionPath)
+            .WithProject(new ProjectSpec("DocumentationInclude",
+                [("Consumer.cs", "public sealed class Consumer { public global::DocumentationInclude.Api? Value { get; } }")],
+                AdditionalReferences: [reference]))
+            .Build();
+        await using var resident = new ResidentSolution(workspace.Solution, solutionPath: solutionPath);
+
+        var snapshot = await resident.GetCurrentSnapshotAsync();
+
+        Assert.True(snapshot.Succeeded, snapshot.Error?.Message);
+        var projectEvidence = Assert.Single(snapshot.IdentityInputs!.Projects);
+        Assert.True(projectEvidence.IsSupported, projectEvidence.UnsupportedReason);
+        Assert.Contains(projectEvidence.BindingInputs,
+            input => input.Kind == "xml-documentation-image"
+                && input.Sha256 == Convert.ToHexString(SHA256.HashData(xmlBytes.AsSpan())));
+        var identity = await SourceAnalysisIdentityEncoder.ComputeAsync(
+            new SourceIdentityValidatedSnapshot(snapshot.Solution!, snapshot.IdentityInputs!), default);
+        Assert.True(identity.IsSuccess, identity.Error?.Message);
+        var compilation = await Assert.Single(snapshot.Solution!.Projects).GetCompilationAsync();
+        var documentation = compilation!.GetTypeByMetadataName("DocumentationInclude.Api")!.GetDocumentationCommentXml();
+        Assert.Contains("<include", documentation, StringComparison.Ordinal);
+        Assert.Contains("missing-snippets.xml", documentation, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task GetCurrentSnapshot_WhenPhysicalMetadataModuleChanges_RebindsAllModulesAndKeepsOldCompilationAlive()
     {
