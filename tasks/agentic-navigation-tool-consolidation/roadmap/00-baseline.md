@@ -12,7 +12,7 @@ Establish the actual starting state and a small usable verification basis before
 
 ## Verification and non-goals
 
-Read-only inventory requires no full build/test run. Build/run only what is necessary to identify the production baseline and inspect real calls; any corrective code gets official affected checks. Do not repeatedly establish the same baseline, build another harness, implement speculative optimizations, or migrate production contracts in this milestone. Coordinate with the Exploration owner if development is still active.
+Read-only inventory requires no full build/test run. Build/run only what is necessary to identify the production baseline and inspect real calls; any corrective code gets official affected checks. The Exploration runner is completed and available, as recorded in [concept 8.3](../concept.md#83-required-final-exploration-inspection); verify its baseline flow here and extend task-specific scenarios during implementation. No additional runner preparation by the user is required. Do not repeatedly establish the same baseline, build another harness, implement speculative optimizations, or migrate production contracts in this milestone. Coordinate shared-file changes if another agent is actively editing them.
 
 ## Completion evidence
 
