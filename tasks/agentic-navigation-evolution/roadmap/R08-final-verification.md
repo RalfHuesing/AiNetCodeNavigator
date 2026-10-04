@@ -8,7 +8,7 @@ Review the final implementation against the four contracts and the R02 migration
 
 Run the official build if changes since the last successful build require it, and the complete eligible routine solution gate once at completion. Finish any required narrowly selected extended checks not already covered by a valid earlier run. Do not automatically run the complete extended suite, routine-excluded E2E suite or a separate broad benchmark suite.
 
-Review measured cold/warm/targeted evidence and client evidence without turning fixture timings into universal claims. Check task links after source removals/renames. Record final commit(s), checks, known factual limits and implemented contract coverage. A reproducible unresolved defect or unavailable mandatory client gate prevents completion; a documented undetermined historical EOF cause alone does not, under specification 03's defined evidence outcome.
+Review measured cold/warm/targeted evidence and client evidence without turning fixture timings into universal claims. Check task links after source removals/renames. Record final commit(s), checks, known factual limits and implemented contract coverage. A reproducible unresolved defect or unavailable mandatory client gate prevents completion unless that additional client evidence has been expressly deferred under the user-approved execution policy; a documented undetermined historical EOF cause alone does not, under specification 03's defined evidence outcome.
 
 This point consolidates required completion evidence; it does not add a separate testing feature or invoke another workflow. Leave deployment/push to a later explicit request.
 
