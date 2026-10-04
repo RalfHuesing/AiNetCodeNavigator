@@ -227,7 +227,10 @@ internal static class SourceAnalysisIdentityEncoder
                 {
                     var bindingFailure = AnalyzerImageCapture.GetBindingFailure(analyzerReference);
                     if (bindingFailure is not null)
-                        return Failure($"Project '{project.Name}' could not load a captured source generator binding input: {bindingFailure}");
+                    {
+                        var analyzerPath = AnalyzerImageCapture.GetSourcePath(analyzerReference) ?? analyzerReference.Display;
+                        return Failure($"Project '{project.FilePath ?? project.Name}' source generator '{analyzerPath}' could not load a captured binding input: {bindingFailure}");
+                    }
                 }
                 foreach (var document in generatedDocuments)
                     sourceDocuments.Add(await EncodeDocumentAsync(document, "source", canonicalPaths[project.Id], context, cancellationToken).ConfigureAwait(false));

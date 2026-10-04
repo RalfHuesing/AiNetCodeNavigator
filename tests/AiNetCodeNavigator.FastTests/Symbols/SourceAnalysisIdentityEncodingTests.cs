@@ -307,14 +307,13 @@ public sealed class SourceAnalysisIdentityEncodingTests
         var project = Assert.Single(workspace.Solution.Projects);
 
         var generatorPath = fixture.GetPath("generators/IdentityGenerator.dll");
-        var generatorV1 = EmitIdentityGenerator(generatorPath, project.FilePath!, "captured-v1");
+        EmitIdentityGenerator(generatorPath, "captured-v1");
         var replacementGeneratorPath = fixture.GetPath("generators/IdentityGeneratorV2.dll");
-        var generatorV2 = EmitIdentityGenerator(replacementGeneratorPath, project.FilePath!, "captured-v2");
-        var creatorContracts = new[] { generatorV1.Contract, generatorV2.Contract };
+        EmitIdentityGenerator(replacementGeneratorPath, "captured-v2");
         using var generatorLoader = new IsolatedAnalyzerAssemblyLoader();
         var generatedSolution = workspace.Solution.AddAnalyzerReference(project.Id,
             new AnalyzerFileReference(generatorPath, generatorLoader));
-        var generatedOwnerProof = WorkspaceInputProvenance.CreateFromTrustedLoader(generatedSolution, creatorContracts);
+        var generatedOwnerProof = WorkspaceInputProvenance.CreateFromTrustedLoader(generatedSolution);
         var generatedCapture = MetadataReferenceImageCapture.Capture(generatedSolution, previousInputs: null,
             CancellationToken.None, provenance: generatedOwnerProof);
         var generatedResult = await SourceAnalysisIdentityEncoder.ComputeAsync(
@@ -337,7 +336,7 @@ public sealed class SourceAnalysisIdentityEncodingTests
         using var replacementGeneratorLoader = new IsolatedAnalyzerAssemblyLoader();
         var replacementSolution = workspace.Solution.AddAnalyzerReference(project.Id,
             new AnalyzerFileReference(replacementGeneratorPath, replacementGeneratorLoader));
-        var replacementOwnerProof = WorkspaceInputProvenance.CreateFromTrustedLoader(replacementSolution, creatorContracts);
+        var replacementOwnerProof = WorkspaceInputProvenance.CreateFromTrustedLoader(replacementSolution);
         var replacementCapture = MetadataReferenceImageCapture.Capture(replacementSolution, previousInputs: null,
             CancellationToken.None, provenance: replacementOwnerProof);
         var replacementResult = await SourceAnalysisIdentityEncoder.ComputeAsync(
@@ -640,10 +639,7 @@ public sealed class SourceAnalysisIdentityEncodingTests
             new SourceIdentityValidatedSnapshot(captured.Solution, captured.Inputs), CancellationToken.None);
     }
 
-    private static (ImmutableArray<byte> ImageBytes, GeneratorCreatorInputContract Contract) EmitIdentityGenerator(
-        string outputPath,
-        string projectPath,
-        string version)
+    private static ImmutableArray<byte> EmitIdentityGenerator(string outputPath, string version)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         var platformPaths = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator);
@@ -668,9 +664,7 @@ public sealed class SourceAnalysisIdentityEncodingTests
         Assert.True(emitted.Success, string.Join(Environment.NewLine, emitted.Diagnostics));
         var imageBytes = ImmutableArray.CreateRange(stream.ToArray());
         File.WriteAllBytes(outputPath, imageBytes.ToArray());
-        var contract = GeneratorCreatorInputContract.CreateFromProducedImages(projectPath, outputPath,
-            [GeneratorCreatorInputImage.FromBytes(outputPath, imageBytes.AsSpan())]);
-        return (imageBytes, contract);
+        return imageBytes;
     }
 
     private sealed class IsolatedAnalyzerAssemblyLoader : IAnalyzerAssemblyLoader, IDisposable

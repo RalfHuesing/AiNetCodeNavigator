@@ -144,63 +144,11 @@ internal static class MetadataReferenceImageCapture
                 analyzerReferencesChanged |= !ReferenceEquals(capturedAnalyzer.Reference, analyzerReference);
                 if (capturedAnalyzer.UnsupportedReason is not null)
                 {
-                    unsupportedReason ??= capturedAnalyzer.UnsupportedReason;
+                    unsupportedReason ??= $"Project '{project.FilePath ?? project.Name}' has source generator '{analyzerPath}' with unsupported captured binding inputs: {capturedAnalyzer.UnsupportedReason}";
+                    continue;
                 }
 
                 bindingInputs.AddRange(capturedAnalyzer.Inputs);
-                var analyzerSha256 = capturedAnalyzer.Inputs
-                    .SingleOrDefault(input => input.Kind == "analyzer-image")?.Sha256;
-                var creatorContract = analyzerSha256 is null
-                    ? null
-                    : provenance?.FindGeneratorContract(project, analyzerPath, analyzerSha256);
-                creatorContract ??= provenance?.CreateTrustedSdkGeneratorContract(
-                    project,
-                    analyzerPath,
-                    capturedAnalyzer.Inputs,
-                    imagesByPath,
-                    attempt,
-                    cancellationToken,
-                    observer);
-                if (creatorContract is null)
-                {
-                    unsupportedReason = $"Project '{project.FilePath ?? project.Name}' has source generator '{analyzerPath}' without a complete creator-supplied immutable input contract. {capturedAnalyzer.UnsupportedReason}";
-                    continue;
-                }
-
-                var capturedByPath = capturedAnalyzer.Inputs.ToDictionary(input => input.LogicalKey, StringComparer.Ordinal);
-                var contractByPath = creatorContract.EffectiveInputs.ToDictionary(input => input.CanonicalPath, input => input.Sha256,
-                    OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-                var closureMatches = capturedByPath.All(input => contractByPath.TryGetValue(input.Key, out var hash)
-                    && StringComparer.Ordinal.Equals(input.Value.Sha256, hash));
-                if (!closureMatches)
-                {
-                    var mismatchPath = capturedByPath.FirstOrDefault(input =>
-                        !contractByPath.TryGetValue(input.Key, out var hash)
-                        || !StringComparer.Ordinal.Equals(input.Value.Sha256, hash)).Key;
-                    unsupportedReason ??= $"Source generator '{analyzerPath}' creator contract does not include the captured binding input '{mismatchPath ?? "unknown input"}' for project '{project.FilePath ?? project.Name}'.";
-                    continue;
-                }
-
-                foreach (var input in creatorContract.EffectiveInputs)
-                {
-                    var capturedImage = CapturePhysicalImage(
-                        input.CanonicalPath,
-                        imagesByPath,
-                        attempt,
-                        cancellationToken,
-                        observer);
-                    if (!StringComparer.Ordinal.Equals(capturedImage.Sha256, input.Sha256)
-                        || !capturedImage.Bytes.AsSpan().SequenceEqual(input.Bytes.AsSpan()))
-                    {
-                        unsupportedReason ??= $"Source generator '{analyzerPath}' creator input '{input.CanonicalPath}' changed since its owner produced the immutable contract.";
-                        break;
-                    }
-
-                    bindingInputs.Add(new SourceIdentityCapturedInput(
-                        "generator-creator-input",
-                        $"{input.CanonicalPath}|{input.Sha256}",
-                        input.Sha256));
-                }
             }
 
             if (analyzerReferencesChanged)

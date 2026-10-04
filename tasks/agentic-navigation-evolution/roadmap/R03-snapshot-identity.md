@@ -6,6 +6,8 @@ Prerequisite: [R02](R02-public-reference-migration.md). Next: [R04](R04-single-c
 
 Contract: [04 — freshness, identity inputs and memoization](../04-snapshot-refresh-and-analysis-cache.md).
 
+The later [source-navigation recovery decision](../../source-navigation-recovery/README.md) replaces the creator-only generator admission described in this point's historical evidence with captured generator snapshots. The weak-key identity, immutable binding and tracked-input refresh requirements remain current.
+
 Implement runtime-owned weak-key single-flight identity memoization for the exact immutable Solution. Route remaining identity call sites through it after R02's removals. Preserve full evidence fingerprints and get-index-scope's configured-inventory identity domain.
 
 Verify current refresh detects loaded source/project/reference changes. Narrowly correct metadata-reference freshness in the existing fingerprint/reload owner if required by the prescribed replacement regression. Do not introduce watcher-only or timestamp-only freshness.

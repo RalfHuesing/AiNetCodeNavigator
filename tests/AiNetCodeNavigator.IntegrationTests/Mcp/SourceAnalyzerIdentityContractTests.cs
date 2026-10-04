@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -28,12 +29,116 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class SourceAnalyzerIdentityContractTests
 {
     [Fact]
+    public async Task MsBuildOptionsGeneratorSupportsRegularAndGeneratedHandlerNavigation()
+    {
+        using var fixture = TestTempDirectory.Create("options-generator-");
+        var solutionPath = fixture.GetPath("GeneratorFixture.slnx");
+        fixture.CreateFile("src/App/App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+              <ItemGroup>
+                <PackageReference Include="Microsoft.Extensions.Options" />
+              </ItemGroup>
+            </Project>
+            """);
+        fixture.CreateFile("src/App/Options.cs", """
+            using Microsoft.Extensions.Options;
+            namespace GeneratorFixture;
+            public sealed class SampleOptions
+            {
+                [System.ComponentModel.DataAnnotations.Required]
+                public string Name { get; set; } = string.Empty;
+            }
+            [OptionsValidator]
+            public partial class SampleOptionsValidator : IValidateOptions<SampleOptions> { }
+            """);
+        fixture.CreateFile("src/App/Consumer.cs", """
+            using Microsoft.Extensions.Options;
+            namespace GeneratorFixture;
+            public static class RegularConsumer
+            {
+                public static ValidateOptionsResult Check(SampleOptionsValidator validator, SampleOptions options) =>
+                    validator.Validate(Options.DefaultName, options);
+            }
+            """);
+        await File.WriteAllTextAsync(solutionPath, "<Solution><Project Path=\"src/App/App.csproj\" /></Solution>");
+        fixture.CreateFile("Directory.Packages.props", """
+            <Project>
+              <PropertyGroup><ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally></PropertyGroup>
+              <ItemGroup>
+                <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.1" />
+                <PackageVersion Include="Microsoft.Build.Framework" Version="18.9.6" />
+                <PackageVersion Include="Microsoft.NET.StringTools" Version="18.9.6" />
+              </ItemGroup>
+            </Project>
+            """);
+        var nugetConfigPath = fixture.CreateFile("NuGet.Config",
+            "<configuration><packageSources><clear /></packageSources></configuration>");
+        await FixtureRestore.RunAsync(solutionPath, fixture.DirectoryPath, nugetConfigPath, "Options generator fixture restore");
+
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var registry = new ProjectRegistry(ProjectRegistryOptions.ForMSBuild());
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>(),
+            projectRegistry: registry);
+        var leaseResult = registry.Lease(solutionPath);
+        Assert.True(leaseResult.Succeeded, leaseResult.ErrorMessage);
+        using var lease = leaseResult.Lease!;
+        await lease.ResidentSolution.LoadTask!.WaitAsync(TimeSpan.FromSeconds(30));
+
+        var previousUiCulture = CultureInfo.CurrentUICulture;
+        try
+        {
+            CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo("de-DE");
+
+            var structures = new StructureTools(runtime);
+            var indexScope = await CompleteAsync(operation => structures.GetIndexScope(solutionPath,
+                maxResponseBytes: 16384, maxResponseTokens: 1024, operationToken: operation));
+            var indexScopeText = TextOf(indexScope);
+            Assert.False(indexScope.IsError ?? false, indexScopeText);
+            Assert.Contains("App", indexScopeText, StringComparison.Ordinal);
+
+            var symbols = new SymbolTools(runtime);
+            var regular = await CompleteAsync(operation => symbols.FindSymbol(solutionPath,
+                pattern: "GeneratorFixture.RegularConsumer.Check", kind: "method", maxResponseBytes: 16384,
+                maxResponseTokens: 1024, operationToken: operation));
+            var regularText = TextOf(regular);
+            Assert.False(regular.IsError ?? false, regularText);
+            Assert.Equal("complete", ReadHeader(regularText, "analysisCompleteness"));
+            var regularReference = Assert.Single(ReadStableReferences(regularText));
+
+            var generated = await CompleteAsync(operation => symbols.FindSymbol(solutionPath,
+                pattern: "GeneratorFixture.SampleOptionsValidator.Validate", kind: "method", includeGenerated: true,
+                maxResponseBytes: 16384, maxResponseTokens: 1024, operationToken: operation));
+            var generatedText = TextOf(generated);
+            Assert.False(generated.IsError ?? false, generatedText);
+            Assert.Equal("complete", ReadHeader(generatedText, "analysisCompleteness"));
+            var generatedReference = Assert.Single(ReadStableReferences(generatedText));
+
+            var regularBody = await CompleteAsync(operation => symbols.GetSymbolBody(solutionPath, [regularReference],
+                maxBodyLines: 20, maxResponseBytes: 16384, maxResponseTokens: 1024, operationToken: operation));
+            var regularBodyText = TextOf(regularBody);
+            Assert.False(regularBody.IsError ?? false, regularBodyText);
+            Assert.Contains("validator.Validate", regularBodyText, StringComparison.Ordinal);
+
+            var generatedBody = await CompleteAsync(operation => symbols.GetSymbolBody(solutionPath, [generatedReference],
+                maxBodyLines: 40, maxResponseBytes: 16384, maxResponseTokens: 1024, operationToken: operation));
+            var generatedBodyText = TextOf(generatedBody);
+            Assert.False(generatedBody.IsError ?? false, generatedBodyText);
+            Assert.Contains("Validate", generatedBodyText, StringComparison.Ordinal);
+            Assert.Contains("Name", generatedBodyText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            CultureInfo.CurrentUICulture = previousUiCulture;
+        }
+    }
+
+    [Fact]
     public async Task MsBuildGeneratorImageReplacementRefreshesSnapshotAndGeneratedMethodBody()
     {
-        using var fixture = TestTempDirectory.Create("ainet-source-analyzer-identity-");
+        using var fixture = TestTempDirectory.Create("source-analyzer-identity-");
 
         var solutionPath = fixture.GetPath("AnalyzerFixture.slnx");
-        var projectPath = fixture.GetPath("src/App/App.csproj");
         var generatorPath = fixture.GetPath("tools/IdentityGenerator.dll");
         fixture.CreateFile("src/App/App.csproj", """
             <Project Sdk="Microsoft.NET.Sdk">
@@ -45,31 +150,14 @@ public sealed class SourceAnalyzerIdentityContractTests
         await File.WriteAllTextAsync(solutionPath, "<Solution><Project Path=\"src/App/App.csproj\" /></Solution>");
         var nugetConfigPath = fixture.CreateFile("NuGet.Config",
             "<configuration><packageSources><clear /></packageSources></configuration>");
-        var version17 = await EmitGeneratorAsync(generatorPath, projectPath, 17);
-        var version18 = await EmitGeneratorAsync(generatorPath, projectPath, 18);
-        await File.WriteAllBytesAsync(generatorPath, version17.ImageBytes);
+        var version17 = await EmitGeneratorAsync(generatorPath, 17);
+        var version18 = await EmitGeneratorAsync(generatorPath, 18);
+        await File.WriteAllBytesAsync(generatorPath, version17);
         await FixtureRestore.RunAsync(solutionPath, fixture.DirectoryPath, nugetConfigPath, "Analyzer identity fixture restore");
 
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
-        await using (var unprovenRuntime = new NavigatorHostRuntime(lifetime))
-        {
-            var unprovenSymbols = new SymbolTools(unprovenRuntime);
-            var unproven = await CompleteAsync(operation => unprovenSymbols.FindSymbol(solutionPath,
-                pattern: "AnalyzerFixture.Generated.GeneratedProbe.Read", kind: "method", includeGenerated: true, maxResponseBytes: 16384,
-                maxResponseTokens: 1024, operationToken: operation));
-            var unprovenText = TextOf(unproven);
-            Assert.True(unproven.IsError ?? false, unprovenText);
-            Assert.Contains("WORKSPACE_DIAGNOSTIC", unprovenText, StringComparison.Ordinal);
-            Assert.Contains("IdentityGenerator.dll", unprovenText, StringComparison.Ordinal);
-            Assert.Contains("App.csproj", unprovenText, StringComparison.Ordinal);
-        }
-
-        var creatorContracts = new[] { version17.Contract, version18.Contract };
-        await using var registry = new ProjectRegistry(new ProjectRegistryOptions(
-            definition => ResidentSolutionCreation.Resident(
-                MSBuildSolutionLoader.CreateResidentSolution(definition.SolutionPath, creatorContracts)),
-            TimeProvider.System));
+        await using var registry = new ProjectRegistry(ProjectRegistryOptions.ForMSBuild());
         await using var runtime = new NavigatorHostRuntime(lifetime, projectRegistry: registry);
         var symbols = new SymbolTools(runtime);
 
@@ -98,7 +186,7 @@ public sealed class SourceAnalyzerIdentityContractTests
             && generatedSource.Contains("=> 17", StringComparison.Ordinal),
             $"The registered MSBuild snapshot did not materialize the expected generated source. Generated documents: {generatedDocuments.Length}.\n{generatorDiagnostics}");
 
-        var initialBytes = version17.ImageBytes;
+        var initialBytes = version17;
         var initialHash = Convert.ToHexString(SHA256.HashData(initialBytes));
         var initialTimestamp = File.GetLastWriteTimeUtc(generatorPath);
 
@@ -150,7 +238,7 @@ public sealed class SourceAnalyzerIdentityContractTests
         Assert.Equal(initialSnapshot, ReadHeader(initialBody.FirstPage, "snapshotId"));
         Assert.Contains("=> 17", initialBody.Text, StringComparison.Ordinal);
 
-        await File.WriteAllBytesAsync(generatorPath, version18.ImageBytes);
+        await File.WriteAllBytesAsync(generatorPath, version18);
         var replacementBytes = await File.ReadAllBytesAsync(generatorPath);
         Assert.Equal(initialBytes.Length, replacementBytes.Length);
         var replacementHash = Convert.ToHexString(SHA256.HashData(replacementBytes));
@@ -206,14 +294,13 @@ public sealed class SourceAnalyzerIdentityContractTests
             if (!text.Contains("operation=running", StringComparison.Ordinal)
                 && !text.Contains("operation=retry", StringComparison.Ordinal)) return result;
             Assert.True(TryReadToken(text, "operationToken", out operation), text);
-            await Task.Delay(50);
+            await Task.Delay(1000);
         }
         throw new Xunit.Sdk.XunitException("The source analyzer identity contract did not complete after operation polling.");
     }
 
-    private static async Task<(byte[] ImageBytes, GeneratorCreatorInputContract Contract)> EmitGeneratorAsync(
+    private static async Task<byte[]> EmitGeneratorAsync(
         string path,
-        string projectPath,
         int bodyVersion)
     {
         var platformPaths = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator);
@@ -244,8 +331,6 @@ public sealed class SourceAnalyzerIdentityContractTests
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var imageBytes = stream.ToArray();
         await File.WriteAllBytesAsync(path, imageBytes);
-        var contract = GeneratorCreatorInputContract.CreateFromProducedImages(projectPath, path,
-            [GeneratorCreatorInputImage.FromBytes(path, imageBytes)]);
-        return (imageBytes, contract);
+        return imageBytes;
     }
 }

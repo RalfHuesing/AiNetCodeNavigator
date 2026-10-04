@@ -2,6 +2,8 @@
 
 [Index](../roadmap.md). Read this contract together with the selected point file and its linked specifications.
 
+The later [source-navigation recovery decision](../../source-navigation-recovery/README.md) supersedes this roadmap's creator-only generator admission requirement. The current contract is [captured generator snapshots](../04-snapshot-refresh-and-analysis-cache.md#captured-generator-snapshots); the other bounded implementation and evidence rules remain applicable.
+
 ## Execution contract
 
 The orchestrator executes R01 through R08 in order, one active implementation point at a time. Every point depends on the preceding point's verified commit. Assign its linked contract, required outcome, acceptance and verification together. Do not delegate only a code fragment without its consumers, wiring and evidence obligations.

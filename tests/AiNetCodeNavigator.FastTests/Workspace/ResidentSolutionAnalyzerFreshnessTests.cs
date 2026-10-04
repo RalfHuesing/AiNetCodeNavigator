@@ -3,11 +3,13 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
+using System.Resources;
 using System.Runtime.Loader;
 using System.Security.Cryptography;
 using System.Threading;
@@ -69,7 +71,7 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
         Assert.Contains("DependencyWasLoaded", (await generated.GetTextAsync()).ToString(), StringComparison.Ordinal);
         var unsupportedProject = Assert.Single(capture.Inputs.Projects);
         Assert.False(unsupportedProject.IsSupported);
-        Assert.Contains("complete creator-supplied immutable input contract", unsupportedProject.UnsupportedReason, StringComparison.Ordinal);
+        Assert.Contains("could not resolve private analyzer dependency", unsupportedProject.UnsupportedReason, StringComparison.OrdinalIgnoreCase);
 
         var identity = await SourceAnalysisIdentityEncoder.ComputeAsync(
             new SourceIdentityValidatedSnapshot(capture.Solution, capture.Inputs),
@@ -81,7 +83,7 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
     }
 
     [Fact]
-    public async Task GeneratorDefaultLoadContextExternalDependencyIsNotCapturedAndMustFailClosed()
+    public async Task GeneratorDefaultContextOutputIsMaterializedWithoutClaimingExternalDependency()
     {
         using var fixture = TestTempDirectory.Create("resident-generator-default-context-dependency-");
         var solutionPath = fixture.CreateFile("Generator.slnx", string.Empty);
@@ -120,9 +122,8 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
         var identity = await SourceAnalysisIdentityEncoder.ComputeAsync(
             new SourceIdentityValidatedSnapshot(capture.Solution, capture.Inputs),
             CancellationToken.None);
-        Assert.False(identity.IsSuccess);
-        Assert.Equal(NavigationErrorCodes.WorkspaceDiagnostic, identity.Error!.Value.Code);
-        Assert.Contains(Path.GetFileName(generatorPath), identity.Error.Value.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(identity.IsSuccess, identity.Error?.Message);
+        Assert.NotEmpty(identity.Value!.ContentHash);
     }
 
     [Fact]
@@ -154,12 +155,7 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
             solution,
             previousInputs: null,
             cancellationToken: CancellationToken.None,
-            provenance: WorkspaceInputProvenance.CreateForCreatorContracts(solution, [
-                GeneratorCreatorInputContract.CreateFromProducedImages(project.FilePath!, generatorPath, [
-                    GeneratorCreatorInputImage.FromBytes(generatorPath, generatorBytes.AsSpan()),
-                    GeneratorCreatorInputImage.FromBytes(dependencyPath, dependencyBytes.AsSpan()),
-                ]),
-            ]));
+            provenance: WorkspaceInputProvenance.CreateFromTrustedLoader(solution));
 
         var projectInputs = Assert.Single(capture.Inputs.Projects).BindingInputs;
         var generatorInput = Assert.Single(projectInputs, input => input.Kind == "analyzer-image");
@@ -201,14 +197,7 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
         var project = Assert.Single(workspace.Solution.Projects);
         using var analyzerLoader = new IsolatedAnalyzerAssemblyLoader();
         var solution = workspace.Solution.AddAnalyzerReference(project.Id, new AnalyzerFileReference(generatorPath, analyzerLoader));
-        var provenance = WorkspaceInputProvenance.CreateForCreatorContracts(solution, [
-            GeneratorCreatorInputContract.CreateFromProducedImages(project.FilePath!, generatorPath, [
-                GeneratorCreatorInputImage.FromBytes(generatorPath, alphaBytes.AsSpan()),
-            ]),
-            GeneratorCreatorInputContract.CreateFromProducedImages(project.FilePath!, generatorPath, [
-                GeneratorCreatorInputImage.FromBytes(generatorPath, bravoBytes.AsSpan()),
-            ]),
-        ]);
+        var provenance = WorkspaceInputProvenance.CreateFromTrustedLoader(solution);
         var initial = MetadataReferenceImageCapture.Capture(
             solution,
             previousInputs: null,
@@ -247,7 +236,7 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
     }
 
     [Fact]
-    public async Task DynamicAnalyzerWithoutCreatorContractRejectsIdentityReuse()
+    public async Task DynamicAnalyzerWithCapturedLoadFailureRejectsIdentityReuse()
     {
         using var fixture = TestTempDirectory.Create("resident-generator-dynamic-dependency-");
         var solutionPath = fixture.CreateFile("Generator.slnx", string.Empty);
@@ -278,7 +267,7 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
         Assert.Equal(NavigationErrorCodes.WorkspaceDiagnostic, identity.Error!.Value.Code);
         Assert.Contains(project.FilePath!, identity.Error.Value.Message, StringComparison.Ordinal);
         Assert.Contains(generatorPath, identity.Error.Value.Message, StringComparison.Ordinal);
-        Assert.Contains("without a complete creator-supplied immutable input contract", identity.Error.Value.Message, StringComparison.Ordinal);
+        Assert.Contains("could not load a captured binding input", identity.Error.Value.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -326,11 +315,7 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
         var project = Assert.Single(workspace.Solution.Projects);
         using var analyzerLoader = new IsolatedAnalyzerAssemblyLoader();
         var solution = workspace.Solution.AddAnalyzerReference(project.Id, new AnalyzerFileReference(generatorPath, analyzerLoader));
-        var provenance = WorkspaceInputProvenance.CreateForCreatorContracts(solution, [
-            GeneratorCreatorInputContract.CreateFromProducedImages(project.FilePath!, generatorPath, [
-                GeneratorCreatorInputImage.FromBytes(generatorPath, generatorBytes.AsSpan()),
-            ]),
-        ]);
+        var provenance = WorkspaceInputProvenance.CreateFromTrustedLoader(solution);
         var initial = MetadataReferenceImageCapture.Capture(
             solution,
             previousInputs: null,
@@ -373,7 +358,7 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
     }
 
     [Fact]
-    public async Task ServiceRejectsMemoHitWhenFreshCaptureLosesGeneratorCreatorContract()
+    public async Task ServiceRejectsMemoHitWhenFreshCaptureLosesWorkspaceOwnerProof()
     {
         using var fixture = TestTempDirectory.Create("resident-generator-creator-contract-refresh-");
         var solutionPath = fixture.CreateFile("Generator.slnx", string.Empty);
@@ -389,39 +374,35 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
         var project = Assert.Single(workspace.Solution.Projects);
         using var analyzerLoader = new IsolatedAnalyzerAssemblyLoader();
         var solution = workspace.Solution.AddAnalyzerReference(project.Id, new AnalyzerFileReference(generatorPath, analyzerLoader));
-        var creatorContract = GeneratorCreatorInputContract.CreateFromProducedImages(project.FilePath!, generatorPath, [
-            GeneratorCreatorInputImage.FromBytes(generatorPath, generatorBytes.AsSpan()),
-        ]);
         var initial = MetadataReferenceImageCapture.Capture(
             solution,
             previousInputs: null,
             cancellationToken: CancellationToken.None,
-            provenance: WorkspaceInputProvenance.CreateForCreatorContracts(solution, [creatorContract]));
+            provenance: WorkspaceInputProvenance.CreateFromTrustedLoader(solution));
         await using var identityService = new AnalysisSymbolIdentityService();
         var initialIdentity = await identityService.GetForSourceAsync(
             new SourceIdentityValidatedSnapshot(initial.Solution, initial.Inputs),
             CancellationToken.None);
         Assert.True(initialIdentity.IsSuccess, initialIdentity.Error?.Message);
 
-        var freshCaptureWithoutCreator = MetadataReferenceImageCapture.Capture(
+        var freshCaptureWithoutOwner = MetadataReferenceImageCapture.Capture(
             initial.Solution,
             initial.Inputs,
-            cancellationToken: CancellationToken.None,
-            provenance: WorkspaceInputProvenance.CreateFromTrustedLoader(initial.Solution));
+            cancellationToken: CancellationToken.None);
 
-        Assert.Same(initial.Solution, freshCaptureWithoutCreator.Solution);
-        var unsupportedProject = Assert.Single(freshCaptureWithoutCreator.Inputs.Projects);
+        Assert.Same(initial.Solution, freshCaptureWithoutOwner.Solution);
+        var unsupportedProject = Assert.Single(freshCaptureWithoutOwner.Inputs.Projects);
         Assert.False(unsupportedProject.IsSupported);
-        Assert.Contains("without a complete creator-supplied immutable input contract", unsupportedProject.UnsupportedReason, StringComparison.Ordinal);
+        Assert.Contains("workspace-owner proof", unsupportedProject.UnsupportedReason, StringComparison.Ordinal);
         var identity = await identityService.GetForSourceAsync(
-            new SourceIdentityValidatedSnapshot(freshCaptureWithoutCreator.Solution, freshCaptureWithoutCreator.Inputs),
+            new SourceIdentityValidatedSnapshot(freshCaptureWithoutOwner.Solution, freshCaptureWithoutOwner.Inputs),
             CancellationToken.None);
         Assert.False(identity.IsSuccess);
         Assert.Equal(NavigationErrorCodes.WorkspaceDiagnostic, identity.Error!.Value.Code);
     }
 
     [Fact]
-    public async Task ChangedConsumedGeneratorCreatorInputRequiresWorkspaceReload()
+    public async Task ChangedAdditionalTextRefreshesGeneratedOutputAndMetadataImage()
     {
         using var fixture = TestTempDirectory.Create("resident-generator-consumed-input-refresh-");
         var solutionPath = fixture.CreateFile("Generator.slnx", string.Empty);
@@ -431,8 +412,8 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
             "ReloadTriggerApi",
             "namespace ReloadTriggerApi; public static class Marker { public const int Value = 17; }");
         var generatorPath = fixture.GetPath("analyzers/FileInputGenerator.dll");
-        var inputPath = fixture.CreateFile("generator-input.txt", "CreatorInputValue=17");
-        var generatorBytes = EmitFileInputGenerator(generatorPath, inputPath);
+        var inputPath = fixture.CreateFile("src/GeneratorConsumer/generator-input.txt", "CreatorInputValue=17");
+        EmitAdditionalTextGenerator(generatorPath);
 
         using var workspace = TestWorkspaceBuilder.Create().WithVirtualSolutionPath(solutionPath)
             .WithProject(new ProjectSpec("MetadataConsumer", [
@@ -441,28 +422,23 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
                 VirtualProjectDirectory: "src/MetadataConsumer"))
             .WithProject(new ProjectSpec("GeneratorConsumer", [
                 ("Consumer.cs", "namespace GeneratorConsumer; public sealed class Consumer { }")],
+                AdditionalDocuments: [(inputPath, "CreatorInputValue=17")],
                 VirtualProjectDirectory: "src/GeneratorConsumer"))
             .Build();
         var project = Assert.Single(workspace.Solution.Projects, candidate => candidate.Name == "GeneratorConsumer");
         var metadataProject = Assert.Single(workspace.Solution.Projects, candidate => candidate.Name == "MetadataConsumer");
         using var analyzerLoader = new IsolatedAnalyzerAssemblyLoader();
         var solution = workspace.Solution.AddAnalyzerReference(project.Id, new AnalyzerFileReference(generatorPath, analyzerLoader));
-        var initialInputBytes = await File.ReadAllBytesAsync(inputPath);
-        var initialContract = GeneratorCreatorInputContract.CreateFromProducedImages(project.FilePath!, generatorPath, [
-            GeneratorCreatorInputImage.FromBytes(generatorPath, generatorBytes.AsSpan()),
-            GeneratorCreatorInputImage.FromBytes(inputPath, initialInputBytes),
-        ]);
         var initial = MetadataReferenceImageCapture.Capture(
             solution,
             previousInputs: null,
             cancellationToken: CancellationToken.None,
-            provenance: WorkspaceInputProvenance.CreateForCreatorContracts(solution, [initialContract]));
+            provenance: WorkspaceInputProvenance.CreateFromTrustedLoader(solution));
         var initialProject = Assert.Single(initial.Inputs.Projects, candidate => candidate.OwnerProjectId == project.Id);
         Assert.True(initialProject.IsSupported, initialProject.UnsupportedReason);
         var initialOutput = Assert.Single(await initial.Solution.GetProject(project.Id)!.GetSourceGeneratedDocumentsAsync(CancellationToken.None));
         Assert.Contains("CreatorInputValue=17", (await initialOutput.GetTextAsync()).ToString(), StringComparison.Ordinal);
-        var initialCreatorInput = Assert.Single(initialProject.BindingInputs, input =>
-            input.Kind == "generator-creator-input" && input.LogicalKey.Contains(CanonicalPath(inputPath), StringComparison.Ordinal));
+        var initialAdditionalDocument = Assert.Single(initial.Solution.GetProject(project.Id)!.AdditionalDocuments);
         var initialMetadataReference = Assert.Single(initial.Solution.GetProject(metadataProject.Id)!.MetadataReferences
             .OfType<PortableExecutableReference>()
             .Where(reference => StringComparer.OrdinalIgnoreCase.Equals(Path.GetFullPath(reference.FilePath!), Path.GetFullPath(metadataPath))));
@@ -470,36 +446,86 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
         var inputTimestamp = File.GetLastWriteTimeUtc(inputPath);
         await File.WriteAllTextAsync(inputPath, "CreatorInputValue=18");
         File.SetLastWriteTimeUtc(inputPath, inputTimestamp);
-        var updatedInputBytes = await File.ReadAllBytesAsync(inputPath);
         var metadataTimestamp = File.GetLastWriteTimeUtc(metadataPath);
         EmitAssembly(
             metadataPath,
             "ReloadTriggerApi",
             "namespace ReloadTriggerApi; public static class Marker { public const int Value = 18; }");
         File.SetLastWriteTimeUtc(metadataPath, metadataTimestamp);
-        var updatedContract = GeneratorCreatorInputContract.CreateFromProducedImages(project.FilePath!, generatorPath, [
-            GeneratorCreatorInputImage.FromBytes(generatorPath, generatorBytes.AsSpan()),
-            GeneratorCreatorInputImage.FromBytes(inputPath, updatedInputBytes),
-        ]);
-        var updatedProvenance = WorkspaceInputProvenance.CreateForCreatorContracts(initial.Solution, [updatedContract]);
+        var updatedSolution = initial.Solution.WithAdditionalDocumentText(
+            initialAdditionalDocument.Id,
+            SourceText.From("CreatorInputValue=18"));
+        var updatedProvenance = initial.Provenance!.CarryKnownTextChanges(initial.Solution, updatedSolution);
+        Assert.NotNull(updatedProvenance);
         var refreshed = MetadataReferenceImageCapture.Capture(
-            initial.Solution,
+            updatedSolution,
             initial.Inputs,
             cancellationToken: CancellationToken.None,
             provenance: updatedProvenance);
 
         Assert.True(refreshed.SolutionChanged);
         Assert.NotSame(initial.Solution, refreshed.Solution);
-        Assert.True(refreshed.RequiresWorkspaceReload);
+        Assert.False(refreshed.RequiresWorkspaceReload);
         var refreshedProject = Assert.Single(refreshed.Inputs.Projects, candidate => candidate.OwnerProjectId == project.Id);
         Assert.True(refreshedProject.IsSupported, refreshedProject.UnsupportedReason);
-        var refreshedCreatorInput = Assert.Single(refreshedProject.BindingInputs, input =>
-            input.Kind == "generator-creator-input" && input.LogicalKey.Contains(CanonicalPath(inputPath), StringComparison.Ordinal));
-        Assert.NotEqual(initialCreatorInput.Sha256, refreshedCreatorInput.Sha256);
+        var refreshedOutput = Assert.Single(await refreshed.Solution.GetProject(project.Id)!.GetSourceGeneratedDocumentsAsync(CancellationToken.None));
+        Assert.Contains("CreatorInputValue=18", (await refreshedOutput.GetTextAsync()).ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("CreatorInputValue=17", (await refreshedOutput.GetTextAsync()).ToString(), StringComparison.Ordinal);
         var refreshedMetadataReference = Assert.Single(refreshed.Solution.GetProject(metadataProject.Id)!.MetadataReferences
             .OfType<PortableExecutableReference>()
             .Where(reference => StringComparer.OrdinalIgnoreCase.Equals(Path.GetFullPath(reference.FilePath!), Path.GetFullPath(metadataPath))));
         Assert.NotSame(initialMetadataReference, refreshedMetadataReference);
+    }
+
+    [Fact]
+    public async Task CapturedCultureSatelliteUsesParentCultureFallbackAndTracksItsImage()
+    {
+        using var fixture = TestTempDirectory.Create("resident-generator-culture-satellite-");
+        var solutionPath = fixture.CreateFile("Generator.slnx", string.Empty);
+        var generatorPath = fixture.GetPath("analyzers/RenamedGenerator.dll");
+        var satelliteDirectory = fixture.GetPath("analyzers/de");
+        Directory.CreateDirectory(satelliteDirectory);
+        var satellitePath = Path.Combine(satelliteDirectory, "SatelliteGenerator.resources.dll");
+        EmitResourceSatellite(satellitePath, "de", "SatelliteStrings", "Value", "parent culture resource");
+        EmitResourceGenerator(generatorPath);
+
+        using var workspace = TestWorkspaceBuilder.Create().WithVirtualSolutionPath(solutionPath)
+            .WithProject(new ProjectSpec("GeneratorConsumer", [
+                ("Consumer.cs", "namespace GeneratorConsumer; public sealed class Consumer { }")],
+                VirtualProjectDirectory: "src/GeneratorConsumer"))
+            .Build();
+        var project = Assert.Single(workspace.Solution.Projects);
+        using var analyzerLoader = new IsolatedAnalyzerAssemblyLoader();
+        var solution = workspace.Solution.AddAnalyzerReference(project.Id, new AnalyzerFileReference(generatorPath, analyzerLoader));
+        var previousCulture = CultureInfo.CurrentUICulture;
+        try
+        {
+            CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo("de-DE");
+            var capture = MetadataReferenceImageCapture.Capture(
+                solution,
+                previousInputs: null,
+                cancellationToken: CancellationToken.None,
+                provenance: WorkspaceInputProvenance.CreateFromTrustedLoader(solution));
+
+            var bindingInputs = Assert.Single(capture.Inputs.Projects).BindingInputs;
+            Assert.True(bindingInputs.Any(input => input.LogicalKey == CanonicalPath(satellitePath)),
+                $"Captured analyzer inputs did not include '{satellitePath}': {string.Join(", ", bindingInputs.Select(input => input.LogicalKey))}");
+            var satelliteInput = Assert.Single(bindingInputs,
+                input => input.LogicalKey == CanonicalPath(satellitePath));
+            Assert.Equal("analyzer-dependency-image", satelliteInput.Kind);
+            Assert.Equal(Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(satellitePath))), satelliteInput.Sha256);
+
+            var generated = Assert.Single(await capture.Solution.GetProject(project.Id)!.GetSourceGeneratedDocumentsAsync(CancellationToken.None));
+            Assert.Contains("parent culture resource", (await generated.GetTextAsync()).ToString(), StringComparison.Ordinal);
+            var identity = await SourceAnalysisIdentityEncoder.ComputeAsync(
+                new SourceIdentityValidatedSnapshot(capture.Solution, capture.Inputs),
+                CancellationToken.None);
+            Assert.True(identity.IsSuccess, identity.Error?.Message);
+        }
+        finally
+        {
+            CultureInfo.CurrentUICulture = previousCulture;
+        }
     }
 
     private static string CanonicalPath(string path)
@@ -600,13 +626,13 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
             MetadataReference.CreateFromFile(typeof(ISourceGenerator).Assembly.Location));
     }
 
-    private static ImmutableArray<byte> EmitFileInputGenerator(string outputPath, string inputPath)
+    private static ImmutableArray<byte> EmitAdditionalTextGenerator(string outputPath)
     {
-        var pathLiteral = System.Text.Json.JsonSerializer.Serialize(Path.GetFullPath(inputPath));
         var source = $$"""
             using Microsoft.CodeAnalysis;
             using Microsoft.CodeAnalysis.Text;
             using System.IO;
+            using System.Linq;
             using System.Text;
             using System.Text.Json;
             [Generator]
@@ -615,7 +641,8 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
                 public void Initialize(GeneratorInitializationContext context) { }
                 public void Execute(GeneratorExecutionContext context)
                 {
-                    var value = File.ReadAllText({{pathLiteral}}).Trim();
+                    var value = context.AdditionalFiles.Single(file => Path.GetFileName(file.Path) == "generator-input.txt")
+                        .GetText(context.CancellationToken)!.ToString().Trim();
                     var generated = "namespace GeneratedProbe; public sealed class Generated { public const string Value = "
                         + JsonSerializer.Serialize(value) + "; }";
                     context.AddSource("Input.g.cs", SourceText.From(generated, Encoding.UTF8));
@@ -627,6 +654,73 @@ public sealed class ResidentSolutionAnalyzerFreshnessTests
             "FileInputGenerator",
             source,
             MetadataReference.CreateFromFile(typeof(ISourceGenerator).Assembly.Location));
+    }
+
+    private static ImmutableArray<byte> EmitResourceGenerator(string outputPath)
+    {
+        var source = """
+            using System.Globalization;
+            using System.Resources;
+            using System.Text;
+            using Microsoft.CodeAnalysis;
+            using Microsoft.CodeAnalysis.Text;
+            [Generator]
+            public sealed class SatelliteGenerator : ISourceGenerator
+            {
+                public void Initialize(GeneratorInitializationContext context) { }
+                public void Execute(GeneratorExecutionContext context)
+                {
+                    var value = new ResourceManager("SatelliteStrings", typeof(SatelliteGenerator).Assembly)
+                        .GetString("Value", CultureInfo.CurrentUICulture);
+                    context.AddSource("Satellite.g.cs", SourceText.From(
+                        "namespace GeneratedProbe; public sealed class Generated { public const string Value = \"" + value + "\"; }", Encoding.UTF8));
+                }
+            }
+            """;
+        return EmitAssembly(
+            outputPath,
+            "SatelliteGenerator",
+            source,
+            MetadataReference.CreateFromFile(typeof(ISourceGenerator).Assembly.Location));
+    }
+
+    private static void EmitResourceSatellite(
+        string outputPath,
+        string cultureName,
+        string resourceBaseName,
+        string resourceName,
+        string resourceValue)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        using var resourceStream = new MemoryStream();
+        using (var writer = new ResourceWriter(resourceStream))
+        {
+            writer.AddResource(resourceName, resourceValue);
+            writer.Generate();
+        }
+
+        var resourceBytes = resourceStream.ToArray();
+        var source = $$"""
+            [assembly: System.Reflection.AssemblyCulture("{{cultureName}}")]
+            [assembly: System.Reflection.AssemblyVersion("0.0.0.0")]
+            public sealed class SatelliteMarker { }
+            """;
+        var platformPaths = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator);
+        var references = platformPaths.Append(typeof(ISourceGenerator).Assembly.Location)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(static path => MetadataReference.CreateFromFile(path))
+            .ToImmutableArray();
+        var compilation = CSharpCompilation.Create(
+            Path.GetFileNameWithoutExtension(outputPath),
+            [CSharpSyntaxTree.ParseText(source)],
+            references,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        using var assemblyStream = new MemoryStream();
+        var emitted = compilation.Emit(
+            assemblyStream,
+            manifestResources: [new ResourceDescription($"{resourceBaseName}.{cultureName}.resources", () => new MemoryStream(resourceBytes, writable: false), isPublic: true)]);
+        Assert.True(emitted.Success, string.Join(Environment.NewLine, emitted.Diagnostics));
+        File.WriteAllBytes(outputPath, assemblyStream.ToArray());
     }
 
     private static void EmitDynamicLoadGenerator(string outputPath)

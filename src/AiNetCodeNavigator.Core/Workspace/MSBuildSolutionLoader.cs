@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -18,14 +17,12 @@ namespace AiNetCodeNavigator.Core.Workspace;
 
 /// <summary>
 /// Loads actual .sln and .slnx files through Roslyn <see cref="MSBuildWorkspace"/>
-/// with design-time build flags (fast, without compiler execution or analyzers).
+/// with design-time build flags. Roslyn can still run referenced source generators when a navigation
+/// request materializes the project's compilation.
 /// </summary>
 public static class MSBuildSolutionLoader
 {
     private static readonly Lock RegistrationLock = new();
-    private static string? trustedDistributionPath;
-
-    internal static string? TrustedDistributionPath => trustedDistributionPath;
 
     public static Dictionary<string, string> CreateWorkspaceProperties()
     {
@@ -77,7 +74,6 @@ public static class MSBuildSolutionLoader
     {
         if (MSBuildLocator.IsRegistered)
         {
-            CaptureTrustedDistributionPath();
             return;
         }
 
@@ -85,14 +81,12 @@ public static class MSBuildSolutionLoader
         {
             if (MSBuildLocator.IsRegistered)
             {
-                CaptureTrustedDistributionPath();
                 return;
             }
 
             try
             {
-                var instance = MSBuildLocator.RegisterDefaults();
-                trustedDistributionPath = Path.GetFullPath(instance.MSBuildPath);
+                MSBuildLocator.RegisterDefaults();
             }
             catch (Exception ex)
             {
@@ -104,33 +98,6 @@ public static class MSBuildSolutionLoader
                 Environment.SetEnvironmentVariable("MSBuildExtensionsPath", null);
                 Environment.SetEnvironmentVariable("MSBuildSDKsPath", null);
             }
-        }
-    }
-
-    private static void CaptureTrustedDistributionPath()
-    {
-        if (trustedDistributionPath is not null)
-        {
-            return;
-        }
-
-        var loadedMSBuildPath = typeof(Microsoft.Build.Evaluation.Project).Assembly.Location;
-        if (string.IsNullOrWhiteSpace(loadedMSBuildPath))
-        {
-            return;
-        }
-
-        try
-        {
-            trustedDistributionPath = MSBuildLocator.QueryVisualStudioInstances()
-                .Where(instance => IsWithinDirectory(loadedMSBuildPath, instance.MSBuildPath))
-                .OrderByDescending(instance => instance.MSBuildPath.Length)
-                .Select(instance => Path.GetFullPath(instance.MSBuildPath))
-                .FirstOrDefault();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
-        {
-            trustedDistributionPath = null;
         }
     }
 
@@ -296,23 +263,9 @@ public static class MSBuildSolutionLoader
             canonicalPath);
     }
 
-    internal static ResidentSolution CreateResidentSolution(
-        string solutionPath,
-        IEnumerable<GeneratorCreatorInputContract> creatorContracts)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(solutionPath);
-        ArgumentNullException.ThrowIfNull(creatorContracts);
-        var canonicalPath = Path.GetFullPath(solutionPath);
-        var capturedContracts = creatorContracts.ToImmutableArray();
-        return new ResidentSolution(
-            async cancellationToken => await LoadResidentStateAsync(canonicalPath, cancellationToken, capturedContracts).ConfigureAwait(false),
-            canonicalPath);
-    }
-
     internal static async Task<ResidentLoadedState> LoadResidentStateAsync(
         string solutionPath,
-        CancellationToken cancellationToken = default,
-        IEnumerable<GeneratorCreatorInputContract>? creatorContracts = null)
+        CancellationToken cancellationToken = default)
     {
         var (solution, workspace) = await LoadSolutionAsync(solutionPath, cancellationToken).ConfigureAwait(false);
         try
@@ -321,10 +274,7 @@ public static class MSBuildSolutionLoader
             return new ResidentLoadedState(solution, workspace)
             {
                 StructureInputs = inputs,
-                InputProvenance = WorkspaceInputProvenance.CreateFromTrustedLoader(
-                    solution,
-                    creatorContracts,
-                    TrustedDistributionPath),
+                InputProvenance = WorkspaceInputProvenance.CreateFromTrustedLoader(solution),
             };
         }
         catch

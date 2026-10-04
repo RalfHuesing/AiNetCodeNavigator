@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -67,11 +68,12 @@ internal static class AnalyzerImageCapture
         var identitiesByName = new Dictionary<string, AssemblyName>(StringComparer.OrdinalIgnoreCase);
         var defaultContextDependencies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var dependencyUnits = new Dictionary<string, ImmutableArray<MetadataReferenceImageCapture.CapturedImage>>(StringComparer.OrdinalIgnoreCase);
+        var satellitesByParent = new Dictionary<string, ImmutableArray<CapturedSatelliteResource>>(PathComparer);
         var work = new Queue<AnalyzerAssemblyUnit>();
         var dependencyReasons = new List<string>();
         var manifestInputs = new Dictionary<string, MetadataReferenceImageCapture.CapturedImage>(PathComparer);
-        AddUnit(sourcePath, rootImages);
         var rootIdentity = ReadAssemblyIdentity(rootImages[0]);
+        AddUnit(sourcePath, rootIdentity, rootImages);
         if (rootIdentity.Name is not null)
         {
             assembliesByName.Add(rootIdentity.Name, sourcePath);
@@ -81,6 +83,23 @@ internal static class AnalyzerImageCapture
         while (work.TryDequeue(out var unit))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var satellites = CaptureSatelliteResources(
+                unit.AssemblyPath,
+                unit.Identity.Name ?? throw new MetadataReferenceImageCapture.MetadataImageUnsupportedException(
+                    $"Captured analyzer component '{unit.AssemblyPath}' has no assembly simple name."),
+                imagesByPath,
+                attempt,
+                cancellationToken,
+                observer);
+            if (!satellites.IsDefaultOrEmpty)
+            {
+                satellitesByParent[Path.GetFullPath(unit.AssemblyPath)] = satellites;
+                foreach (var satellite in satellites.SelectMany(resource => resource.Images))
+                {
+                    allImages.TryAdd(satellite.CanonicalPath, satellite);
+                }
+            }
+
             var resolver = CreateResolver(unit.AssemblyPath, imagesByPath, manifestInputs, attempt, cancellationToken, observer);
             foreach (var image in unit.Images)
             {
@@ -162,7 +181,7 @@ internal static class AnalyzerImageCapture
 
                     dependencyUnits.Add(reference.Name!, dependencyImages);
                     AddImages(dependencyImages);
-                    AddUnit(dependencyPath, dependencyImages);
+                    AddUnit(dependencyPath, dependencyIdentity, dependencyImages);
                 }
 
                 if (HasNativeImports(image))
@@ -186,12 +205,15 @@ internal static class AnalyzerImageCapture
             return new CapturedAnalyzerReference(analyzerReference, inputs, null);
         }
 
-        return CreateCapturedReference(sourcePath, rootImages, inputs, dependencyUnits);
+        return CreateCapturedReference(sourcePath, rootImages, inputs, dependencyUnits, satellitesByParent);
 
-        void AddUnit(string assemblyPath, ImmutableArray<MetadataReferenceImageCapture.CapturedImage> images)
+        void AddUnit(
+            string assemblyPath,
+            AssemblyName identity,
+            ImmutableArray<MetadataReferenceImageCapture.CapturedImage> images)
         {
             AddImages(images);
-            work.Enqueue(new AnalyzerAssemblyUnit(assemblyPath, images));
+            work.Enqueue(new AnalyzerAssemblyUnit(assemblyPath, identity, images));
         }
 
         void AddImages(IEnumerable<MetadataReferenceImageCapture.CapturedImage> images)
@@ -226,7 +248,8 @@ internal static class AnalyzerImageCapture
             sourcePath,
             rootImages,
             inputs,
-            ImmutableDictionary<string, ImmutableArray<MetadataReferenceImageCapture.CapturedImage>>.Empty);
+            ImmutableDictionary<string, ImmutableArray<MetadataReferenceImageCapture.CapturedImage>>.Empty,
+            ImmutableDictionary<string, ImmutableArray<CapturedSatelliteResource>>.Empty);
     }
 
     internal static bool ContainsSourceGenerators(
@@ -340,6 +363,65 @@ internal static class AnalyzerImageCapture
         }
 
         return new AssemblyDependencyResolver(assemblyPath);
+    }
+
+    private static ImmutableArray<CapturedSatelliteResource> CaptureSatelliteResources(
+        string componentPath,
+        string componentAssemblyName,
+        IDictionary<string, MetadataReferenceImageCapture.CapturedImage> imagesByPath,
+        int attempt,
+        CancellationToken cancellationToken,
+        MetadataReferenceImageCapture.MetadataImageCaptureObserver? observer)
+    {
+        var componentDirectory = Path.GetDirectoryName(Path.GetFullPath(componentPath));
+        if (componentDirectory is null)
+        {
+            return [];
+        }
+
+        var satelliteFileName = $"{componentAssemblyName}.resources.dll";
+        var satellites = ImmutableArray.CreateBuilder<CapturedSatelliteResource>();
+        foreach (var cultureDirectory in Directory.EnumerateDirectories(componentDirectory))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var cultureName = Path.GetFileName(cultureDirectory);
+            if (!IsCanonicalCultureName(cultureName))
+            {
+                continue;
+            }
+
+            var satellitePath = Path.Combine(cultureDirectory, satelliteFileName);
+            if (!File.Exists(satellitePath))
+            {
+                continue;
+            }
+
+            var images = MetadataReferenceImageCapture.CaptureManagedImageSet(
+                satellitePath,
+                MetadataImageKind.Assembly,
+                imagesByPath,
+                attempt,
+                cancellationToken,
+                observer);
+            if (!images.IsDefaultOrEmpty)
+            {
+                satellites.Add(new CapturedSatelliteResource(cultureName, images));
+            }
+        }
+
+        return satellites.ToImmutable();
+    }
+
+    private static bool IsCanonicalCultureName(string name)
+    {
+        try
+        {
+            return StringComparer.OrdinalIgnoreCase.Equals(CultureInfo.GetCultureInfo(name).Name, name);
+        }
+        catch (CultureNotFoundException)
+        {
+            return false;
+        }
     }
 
     private static ResolvedAnalyzerDependency? ResolveDependencyPath(
@@ -751,7 +833,8 @@ internal static class AnalyzerImageCapture
         string sourcePath,
         ImmutableArray<MetadataReferenceImageCapture.CapturedImage> rootImages,
         ImmutableArray<SourceIdentityCapturedInput> inputs,
-        IReadOnlyDictionary<string, ImmutableArray<MetadataReferenceImageCapture.CapturedImage>> dependencyUnits)
+        IReadOnlyDictionary<string, ImmutableArray<MetadataReferenceImageCapture.CapturedImage>> dependencyUnits,
+        IReadOnlyDictionary<string, ImmutableArray<CapturedSatelliteResource>> satellitesByParent)
     {
         var directory = Path.Combine(Path.GetTempPath(), "AiNetCodeNavigator", "captured-analyzers", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -762,6 +845,10 @@ internal static class AnalyzerImageCapture
             var primaryOriginalDirectory = Path.GetDirectoryName(Path.GetFullPath(sourcePath))!;
             var primaryShadowPath = Path.Combine(directory, Path.GetFileName(sourcePath));
             File.WriteAllBytes(primaryShadowPath, rootImages[0].Bytes.ToArray());
+            var shadowDirectories = new Dictionary<string, string>(PathComparer)
+            {
+                [Path.GetFullPath(sourcePath)] = directory,
+            };
 
             foreach (var module in rootImages.Skip(1))
             {
@@ -784,6 +871,7 @@ internal static class AnalyzerImageCapture
                 var unitRoot = unitImages[0];
                 var originalDirectory = Path.GetDirectoryName(unitRoot.PhysicalPath!)!;
                 var unitDirectory = Path.Combine(directory, "dependencies", name);
+                shadowDirectories[Path.GetFullPath(unitRoot.PhysicalPath!)] = unitDirectory;
                 foreach (var image in unitImages)
                 {
                     var relativePath = Path.GetRelativePath(originalDirectory, image.PhysicalPath!);
@@ -800,6 +888,35 @@ internal static class AnalyzerImageCapture
                 }
 
                 privatePaths.Add(name, Path.Combine(unitDirectory, Path.GetFileName(unitRoot.PhysicalPath!)));
+            }
+
+            foreach (var (parentAssemblyPath, resources) in satellitesByParent)
+            {
+                if (!shadowDirectories.TryGetValue(Path.GetFullPath(parentAssemblyPath), out var parentShadowDirectory))
+                {
+                    throw new MetadataReferenceImageCapture.MetadataImageUnsupportedException(
+                        $"Captured satellite resources have no shadow owner for analyzer component '{parentAssemblyPath}'.");
+                }
+
+                foreach (var resource in resources)
+                {
+                    var resourceRoot = resource.Images[0];
+                    var originalResourceDirectory = Path.GetDirectoryName(resourceRoot.PhysicalPath!)!;
+                    foreach (var image in resource.Images)
+                    {
+                        var relativePath = Path.GetRelativePath(originalResourceDirectory, image.PhysicalPath!);
+                        if (Path.IsPathRooted(relativePath) || relativePath == ".."
+                            || relativePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+                        {
+                            throw new MetadataReferenceImageCapture.MetadataImageUnsupportedException(
+                                $"Satellite resource image '{image.PhysicalPath}' is outside its culture directory.");
+                        }
+
+                        var shadowPath = Path.Combine(parentShadowDirectory, resource.CultureName, relativePath);
+                        Directory.CreateDirectory(Path.GetDirectoryName(shadowPath)!);
+                        File.WriteAllBytes(shadowPath, image.Bytes.ToArray());
+                    }
+                }
             }
 
             loader = new CapturedAnalyzerAssemblyLoader(directory, privatePaths);
@@ -845,7 +962,13 @@ internal static class AnalyzerImageCapture
             ? Owners.TryGetValue(analyzerReference, out var owner) ? owner.SourcePath : Path.GetFullPath(fileReference.FullPath)
             : null;
 
-    private sealed record AnalyzerAssemblyUnit(string AssemblyPath, ImmutableArray<MetadataReferenceImageCapture.CapturedImage> Images);
+    private sealed record AnalyzerAssemblyUnit(
+        string AssemblyPath,
+        AssemblyName Identity,
+        ImmutableArray<MetadataReferenceImageCapture.CapturedImage> Images);
+    private sealed record CapturedSatelliteResource(
+        string CultureName,
+        ImmutableArray<MetadataReferenceImageCapture.CapturedImage> Images);
     private sealed record ResolvedAnalyzerDependency(
         string Path,
         AssemblyName Identity,
@@ -929,6 +1052,14 @@ internal static class AnalyzerImageCapture
             {
                 if (assemblyName.Name is null)
                 {
+                    return null;
+                }
+
+                if (!string.IsNullOrWhiteSpace(assemblyName.CultureName)
+                    && assemblyName.Name.EndsWith(".resources", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Missing culture-specific satellites are optional. Returning null lets the runtime
+                    // probe the captured culture directories and apply normal parent-culture fallback.
                     return null;
                 }
 

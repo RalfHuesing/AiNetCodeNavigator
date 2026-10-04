@@ -2,6 +2,8 @@
 
 [Roadmap](roadmap.md) · [Execution policy](roadmap/execution.md)
 
+The later [source-navigation recovery decision](../source-navigation-recovery/README.md) supersedes the generator admission policy recorded below. Ordinary package generators use captured binding images and materialized output; undeclared external inputs are outside freshness detection. Earlier completion counts and creator-contract evidence are historical results, not the current generator contract.
+
 The user approved deferring additional evidence on 2026-10-04 so the complete implementation can finish. This file distinguishes unexecuted evidence from confirmed functional defects. Deferred checks are not claimed passed. Root owns disposition and progress; follow-up work does not authorize a push or deployment.
 
 | ID | Point | Status | Missing evidence / observation | Reason for deferral | Follow-up / acceptance | Owner |
