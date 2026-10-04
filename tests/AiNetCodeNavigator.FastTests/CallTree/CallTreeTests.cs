@@ -186,6 +186,20 @@ public sealed class CallTreeTests
         Assert.Equal(RelationshipEvidence.PossibleTarget, reference.EvidenceKind);
         Assert.Equal(ambiguousSite.CandidateTargets, reference.CandidateTargets);
 
+        var incoming = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
+            fixture.Solution, stringOverload, Direction: CallTreeDirection.Incoming));
+        var incomingSite = Assert.Single(Assert.Single(incoming.Edges).CallSites);
+        Assert.Equal(RelationshipEvidence.PossibleTarget, incomingSite.EvidenceKind);
+        Assert.Equal(ambiguousSite.CandidateTargets, incomingSite.CandidateTargets);
+        Assert.Equal(1, incoming.UnresolvedSiteCount);
+        Assert.Contains("1 candidate/unresolved sites.", CallGraphTextRenderer.RenderAscii(incoming));
+        Assert.Contains("1 candidate/unresolved sites.", CallTreeMermaidRenderer.RenderMermaid(incoming));
+        Assert.Equal(1, graph.UnresolvedSiteCount);
+        var overlapping = incoming with { UnresolvedCallSites = [ambiguousSite with { CallerNodeId = incoming.Edges[0].FromNodeId, FilePath = incomingSite.FilePath, Line = incomingSite.Line, Column = incomingSite.Column }] };
+        Assert.Equal(1, overlapping.UnresolvedSiteCount);
+        var distinctColumn = overlapping with { UnresolvedCallSites = [overlapping.UnresolvedCallSites![0] with { Column = incomingSite.Column + 1 }] };
+        Assert.Equal(2, distinctColumn.UnresolvedSiteCount);
+
         Assert.Contains(ambiguousSite.CandidateTargets, target => target.Contains("Target.Run(string?", System.StringComparison.Ordinal));
         Assert.Contains(ambiguousSite.CandidateTargets, target => target.Contains("Target.Run(Uri?", System.StringComparison.Ordinal));
     }

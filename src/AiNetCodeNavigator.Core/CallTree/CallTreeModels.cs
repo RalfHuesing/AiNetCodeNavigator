@@ -65,7 +65,13 @@ public sealed record CallGraphPayload(
     public int NodeCount => Nodes.Count;
     public int EdgeCount => Edges.Count;
     public int EdgeSiteCount => Edges.Sum(edge => edge.CallSites.Count);
-    public int UnresolvedSiteCount => UnresolvedCallSites?.Count ?? 0;
+    public int UnresolvedSiteCount => Edges.SelectMany(edge => edge.CallSites
+        .Where(site => site.EvidenceKind is AiNetCodeNavigator.Core.Symbols.RelationshipEvidence.PossibleTarget
+            or AiNetCodeNavigator.Core.Symbols.RelationshipEvidence.Unresolved || site.CandidateTargets is { Count: > 0 })
+        .Select(site => (Caller: edge.FromNodeId, site.FilePath, site.Line, site.Column, site.EvidenceKind)))
+        .Concat((UnresolvedCallSites ?? []).Select(site =>
+            (Caller: site.CallerNodeId, site.FilePath, site.Line, site.Column, site.EvidenceKind)))
+        .Distinct().Count();
 }
 
 public sealed record CallTreeBuildRequest(

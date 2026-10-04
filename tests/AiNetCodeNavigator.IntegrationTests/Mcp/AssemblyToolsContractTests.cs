@@ -1829,6 +1829,7 @@ public sealed class AssemblyToolsContractTests
         var target = AssemblyTestHelper.EmitAssembly(fixture, "UsableOwner", """
             namespace UsableOwner;
             public sealed class Root { public MissingOwner.Dependency? Dependency; public int Read() => 1; }
+            public sealed class Caller { public int First(Root root) => root.Read(); public int Second(Root root) => root.Read(); }
             public static class Extensions { public static int Twice(this int value) => value * 2; }
             """, dependency);
         File.Delete(dependency);
@@ -1861,6 +1862,35 @@ public sealed class AssemblyToolsContractTests
         Assert.Contains("incompleteRelationships", compactExtensionJson.RootElement.GetProperty("analysis").GetProperty("omissionReasons").GetRawText(), StringComparison.Ordinal);
         Assert.DoesNotContain(Path.GetFileName(dependency), TextOf(compactExtensions), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("MissingOwner", TextOf(detailedExtensions), StringComparison.OrdinalIgnoreCase);
+
+        var relationships = new RelationshipTools(runtime);
+        var defaultReferences = await relationships.FindReferences(target, "M:UsableOwner.Root.Read", maxResponseBytes: 65536);
+        Assert.False(defaultReferences.IsError ?? false, TextOf(defaultReferences));
+        Assert.Contains("analysisCompleteness=partial", TextOf(defaultReferences), StringComparison.Ordinal);
+        Assert.Contains("assemblyOwnerIncomplete", TextOf(defaultReferences), StringComparison.Ordinal);
+        string? cursor = null;
+        string? summary = null;
+        var seen = 0;
+        do
+        {
+            var references = await relationships.FindReferences(target, "M:UsableOwner.Root.Read", maxResults: 1,
+                includeSummary: true, resultCursor: cursor, maxResponseBytes: 65536);
+            Assert.False(references.IsError ?? false, TextOf(references));
+            Assert.Contains("analysisCompleteness=partial", TextOf(references), StringComparison.Ordinal);
+            using var document = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(references)));
+            var root = document.RootElement;
+            var pageSummary = root.GetProperty("summary");
+            Assert.False(pageSummary.GetProperty("analysisComplete").GetBoolean());
+            Assert.Contains("assemblyOwnerIncomplete", pageSummary.GetProperty("omissions").GetRawText(), StringComparison.Ordinal);
+            Assert.Equal(2, pageSummary.GetProperty("totalReferenceSiteCount").GetInt32());
+            summary ??= pageSummary.GetRawText();
+            Assert.Equal(summary, pageSummary.GetRawText());
+            seen += root.GetProperty("references").GetArrayLength();
+            cursor = root.TryGetProperty("resultCursor", out var next) && next.ValueKind == System.Text.Json.JsonValueKind.String
+                ? next.GetString() : null;
+            Assert.InRange(seen, 1, 2);
+        } while (cursor is not null);
+        Assert.Equal(2, seen);
     }
 
     [Fact]

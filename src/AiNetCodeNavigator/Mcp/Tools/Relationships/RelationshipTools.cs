@@ -172,16 +172,20 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     var page = NavigationToolSupport.PageResults(result.References, maxResults, coreCursor, binding,
                         maxResponseBytes, maxResponseTokens);
                     if (page.Error is not null) return page.Error;
-                    var response = NavigationToolSupport.Success(new { result.TargetSymbolName, result.TargetKind, References = page.Items,
-                        result.TotalCount, ReturnedCount = page.Items.Length, result.RequestedDepth, result.EffectiveDepth,
-                        result.VisitedSymbolCount, result.IsTruncatedByNodeLimit, result.IsDepthClamped, result.EffectiveNodeLimit,
-                        result.Summary, ResultCursor = page.NextCursor }, result.IsTruncatedByNodeLimit || result.IsDepthClamped,
-                        result.IsTruncatedByNodeLimit
-                            ? "Narrow the source scope or choose a supported traversal depth; the symbol-visit budget is fixed."
-                            : result.IsDepthClamped ? "Choose a supported traversal depth up to three and repeat the query." : null);
                     var omissions = new List<string>();
                     if (result.IsTruncatedByNodeLimit) omissions.Add("nodeLimit");
                     if (result.IsDepthClamped) omissions.Add("depthLimit");
+                    if (access.ScopeValue.Context.Status != AssemblySessionStatus.Complete) omissions.Add("assemblyOwnerIncomplete");
+                    if (result.Summary is not null)
+                        result = result with { Summary = result.Summary with { AnalysisComplete = omissions.Count == 0, Omissions = omissions.ToArray() } };
+                    var response = NavigationToolSupport.Success(new { result.TargetSymbolName, result.TargetKind, References = page.Items,
+                        result.TotalCount, ReturnedCount = page.Items.Length, result.RequestedDepth, result.EffectiveDepth,
+                        result.VisitedSymbolCount, result.IsTruncatedByNodeLimit, result.IsDepthClamped, result.EffectiveNodeLimit,
+                        result.Summary, ResultCursor = page.NextCursor }, omissions.Count > 0,
+                        result.IsTruncatedByNodeLimit
+                            ? "Narrow the source scope or choose a supported traversal depth; the symbol-visit budget is fixed."
+                            : result.IsDepthClamped ? "Choose a supported traversal depth up to three and repeat the query."
+                            : omissions.Count > 0 ? "The selected assembly owner is incomplete; inspect its navigation status and repeat the query when dependencies are available." : null);
                     return NavigationToolSupport.WithAssemblyMetadata(response, identity,
                         $"findReferences(symbol={symbolIdentifier.Trim()}, requestedDepth={result.RequestedDepth}, effectiveDepth={result.EffectiveDepth}, visitedSymbols={result.VisitedSymbolCount}, nodeLimit={result.EffectiveNodeLimit}, pageSize={maxResults}, scope={scope}, includeGenerated={includeGenerated}, includeReferences=false)", omissions, page.NextCursor is not null);
                 }
