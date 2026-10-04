@@ -6,6 +6,12 @@
 
 The orchestrator executes R01 through R08 in order, one active implementation point at a time. Every point depends on the preceding point's verified commit. Assign its linked contract, required outcome, acceptance and verification together. Do not delegate only a code fragment without its consumers, wiring and evidence obligations.
 
+### Task-local agent roles
+
+The user's 2026-10-04 override during R05 requires `gpt-6.1-sol` with reasoning `medium` for all subsequent implementation, test implementation and fix subagents throughout this task. Configure both values explicitly when starting those agents. This supersedes this task's earlier Luna/high implementation assignment; historical executed evidence keeps its actual agent attribution. It applies only to `agentic-navigation-evolution` and does not change repository or personal subagent defaults.
+
+Independent auditors also use explicitly configured `gpt-6.1-sol` / `medium`, remain read-only and must be separate from the implementation/fix worker. The orchestrator alone owns commits, checklist changes and executed evidence. Continue the active work without pausing for the role change; no push or deployment is authorized.
+
 Technical behavior is defined in [01](../01-symbol-identity-and-recovery.md), [02](../02-dependency-graph-analysis.md), [03](../03-long-running-operations-and-transport.md) and [04](../04-snapshot-refresh-and-analysis-cache.md). Their specified decisions replace the earlier open questions and proposals. Internal class/file placement may follow the existing owners; that freedom does not reopen the public contract.
 
 ### Approved delivery priority and deferred evidence

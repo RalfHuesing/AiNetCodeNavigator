@@ -4,6 +4,8 @@ This directory is the implementation basis and maintained knowledge store for th
 
 Start at [roadmap.md](roadmap.md). This compact index owns execution order and the eight completion checkboxes. Read the [shared execution rules](roadmap/execution.md); each linked point file under `roadmap/` owns its detailed checklist and implementation evidence. The four specifications below own their contracts; the roadmap links to them instead of duplicating them.
 
+Task-local agent roles: the user's 2026-10-04 override requires `gpt-6.1-sol` / reasoning `medium` for every subsequent implementation/test/fix subagent. A separate read-only `gpt-6.1-sol` / `medium` agent audits the actual code. Earlier Luna work remains historical evidence; this override changes no defaults outside this task. See [execution roles](roadmap/execution.md#task-local-agent-roles).
+
 | Specification | Authoritative subject |
 | --- | --- |
 | [01 — Symbol references](01-symbol-identity-and-recovery.md) | Wire grammar, exact ownership, resolution, errors and complete handle removal |
