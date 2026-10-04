@@ -31,8 +31,9 @@ public static class FindReferencesResolver
         SymbolScopeType scope = SymbolScopeType.All,
         bool includeGenerated = false,
         Func<ISymbol, string?>? handoffFormatter = null,
-        string? ownerTargetPath = null)
-        => await FindReferencesAsyncCore(targetSymbol, solution, maxResults, depth, maxNodes, ct, scope, includeGenerated, handoffFormatter, ownerTargetPath).ConfigureAwait(false);
+        string? ownerTargetPath = null,
+        bool includeSummary = false)
+        => await FindReferencesAsyncCore(targetSymbol, solution, maxResults, depth, maxNodes, ct, scope, includeGenerated, handoffFormatter, ownerTargetPath, includeSummary).ConfigureAwait(false);
 
     private static async Task<FindReferencesResult> FindReferencesAsyncCore(
         ISymbol targetSymbol,
@@ -44,7 +45,8 @@ public static class FindReferencesResolver
         SymbolScopeType scope,
         bool includeGenerated,
         Func<ISymbol, string?>? handoffFormatter = null,
-        string? ownerTargetPath = null)
+        string? ownerTargetPath = null,
+        bool includeSummary = false)
     {
         ArgumentNullException.ThrowIfNull(targetSymbol);
         ArgumentNullException.ThrowIfNull(solution);
@@ -138,6 +140,8 @@ public static class FindReferencesResolver
                             ReachedFromSymbolName: reachedFromName,
                             ReachedFromSymbolHandoffId: null,
                             OwnerTargetPath: ownerTargetPath,
+                            ProjectPath: ownerTargetPath is null && doc.Project.FilePath is { Length: > 0 } sourceProjectPath ? Path.GetFullPath(sourceProjectPath) : null,
+                            ProjectIdentity: ownerTargetPath is null ? doc.Project.FilePath is { Length: > 0 } identityPath ? Path.GetFullPath(identityPath) : "project:" + doc.Project.Id.Id.ToString("N") : ownerTargetPath,
                         ReachedFromSymbolId: RelationshipSymbolIdentity.GetStableId(currentSymbol),
                         EvidenceKind: referenceNode is null
                             ? RelationshipEvidence.Unresolved
@@ -217,7 +221,16 @@ public static class FindReferencesResolver
             VisitedSymbolCount: expandedSymbolCount,
             IsTruncatedByNodeLimit: truncatedByNodeLimit,
             IsDepthClamped: requestedDepth != effectiveDepth,
-            EffectiveNodeLimit: effectiveNodeLimit);
+            EffectiveNodeLimit: effectiveNodeLimit,
+            Summary: includeSummary ? ReferenceSummary.Create(sorted, GetOmissions(), ownerTargetPath ?? solution.FilePath) : null);
+
+        IReadOnlyList<string> GetOmissions()
+        {
+            var omissions = new List<string>();
+            if (truncatedByNodeLimit) omissions.Add("nodeLimit");
+            if (requestedDepth != effectiveDepth) omissions.Add("depthLimit");
+            return omissions;
+        }
     }
 
     private static ISymbol? NormalizeToOwningMember(ISymbol? symbol) =>

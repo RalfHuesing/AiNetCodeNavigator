@@ -380,12 +380,12 @@ public sealed class IndexScopeContractTests
         }
 
         var names = registered.Select(item => item.Tool.ProtocolTool.Name).Order(StringComparer.Ordinal).ToArray();
-        Assert.Equal(17, names.Length);
+        Assert.Equal(16, names.Length);
         Assert.Equal(new[]
         {
             "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol",
             "get_call_tree", "get_class_structure", "get_context", "get_file_skeleton",
-            "get_impact", "get_index_scope", "get_namespace_tree", "get_symbol_body",
+            "get_index_scope", "get_namespace_tree", "get_symbol_body",
             "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly",
         }, names);
         Assert.DoesNotContain("get_server_health", names);

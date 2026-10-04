@@ -11,10 +11,10 @@ using Xunit;
 namespace AiNetCodeNavigator.FastTests.Symbols;
 
 [Trait("Category", "Unit")]
-public sealed class ImpactAnalyzerTests
+public sealed class ReferenceSummaryTests
 {
     [Fact]
-    public async Task AnalyzeSymbolImpactAsync_FindsTransitiveCallersAndAffectedProjects()
+    public async Task ReferenceSummary_FindsTransitiveCallersAndAffectedProjects()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
         var coreCompilation = await fixture.Solution.Projects.Single(p => p.Name == "Sample.Core").GetCompilationAsync();
@@ -25,19 +25,19 @@ public sealed class ImpactAnalyzerTests
 
         var greetMethod = greeterType.GetMembers("Greet").OfType<IMethodSymbol>().First();
 
-        var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(greetMethod, fixture.Solution, maxDepth: 2);
+        var impact = await FindReferencesResolver.FindReferencesAsync(greetMethod, fixture.Solution, depth: 2, maxResults: 50, includeSummary: true);
 
-        Assert.Equal("Greet", impact.TargetSymbol);
-        Assert.True(impact.DirectCallersCount >= 2);
-        Assert.True(impact.TransitiveImpactCount >= 2);
-        Assert.Contains(impact.AffectedProjects, p => p == "Sample.App");
-        Assert.Contains(impact.AffectedFiles, f => f.Contains("Caller.cs"));
-        Assert.Contains(impact.CallSites, s => s.CallingMember.Contains("ExecuteSingle"));
-        Assert.Contains(impact.CallSites, s => s.CallingMember.Contains("ExecuteMultiple"));
+        Assert.Equal("Greet", impact.TargetSymbolName);
+        Assert.True(impact.Summary!.DirectReferenceSiteCount >= 2);
+        Assert.True(impact.Summary!.TotalReferenceSiteCount >= 2);
+        Assert.Contains(impact.Summary!.Projects.Select(project => project.ProjectName), p => p == "Sample.App");
+        Assert.Contains(impact.Summary!.Files.Select(file => file.FilePath), f => f.Contains("Caller.cs"));
+        Assert.Contains(impact.References, s => s.EnclosingSymbolName.Contains("ExecuteSingle"));
+        Assert.Contains(impact.References, s => s.EnclosingSymbolName.Contains("ExecuteMultiple"));
     }
 
     [Fact]
-    public async Task AnalyzeSymbolImpactAsync_PreservesCrossProjectCallChainAndHandoffs()
+    public async Task ReferenceSummary_PreservesCrossProjectCallChainAndHandoffs()
     {
         using var fixture = TestWorkspaceBuilder.CreateSolution(
             @"C:\VirtualRepo\ImpactChain.slnx",
@@ -48,24 +48,24 @@ public sealed class ImpactAnalyzerTests
         Assert.NotNull(compilation);
         var target = compilation.GetTypeByMetadataName("Contracts.Api")!.GetMembers("Run").OfType<IMethodSymbol>().Single();
 
-        var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, fixture.Solution, maxDepth: 2);
+        var impact = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, depth: 2, maxResults: 50, includeSummary: true);
 
-        Assert.Equal(1, impact.DirectCallersCount);
-        Assert.Equal(2, impact.TransitiveImpactCount);
-        Assert.Equal(1, impact.TransitiveCallSitesCount);
-        Assert.Contains(impact.CallSites, site => site.Depth == 1 && site.ProjectName == "Middle");
-        Assert.Contains(impact.CallSites, site => site.Depth == 2 && site.ProjectName == "App");
-        foreach (var site in impact.CallSites)
+        Assert.Equal(1, impact.Summary!.DirectReferenceSiteCount);
+        Assert.Equal(2, impact.Summary!.TotalReferenceSiteCount);
+        Assert.Equal(1, impact.Summary!.DeeperReferenceSiteCount);
+        Assert.Contains(impact.References, site => site.Depth == 1 && site.ProjectName == "Middle");
+        Assert.Contains(impact.References, site => site.Depth == 2 && site.ProjectName == "App");
+        foreach (var site in impact.References)
         {
-            Assert.StartsWith("src:", site.CallingMemberHandoffId);
-            var resolved = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.CallingMemberHandoffId!);
+            Assert.StartsWith("src:", site.EnclosingSymbolHandoffId);
+            var resolved = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.EnclosingSymbolHandoffId!);
             Assert.True(resolved.IsSuccess);
             Assert.Equal(site.ProjectName, resolved.Symbol!.ContainingAssembly!.Name);
         }
     }
 
     [Fact]
-    public async Task AnalyzeSymbolImpactAsync_DistinguishesCallSitesInDifferentProjectsWithSamePath()
+    public async Task ReferenceSummary_DistinguishesCallSitesInDifferentProjectsWithSamePath()
     {
         using var fixture = TestWorkspaceBuilder.CreateSolution(
             @"C:\VirtualRepo\ImpactSharedFile.slnx",
@@ -76,31 +76,34 @@ public sealed class ImpactAnalyzerTests
         Assert.NotNull(compilation);
         var target = compilation.GetTypeByMetadataName("Contracts.Api")!.GetMembers("Run").OfType<IMethodSymbol>().Single();
 
-        var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, fixture.Solution, maxNodes: int.MaxValue);
+        var impact = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, maxNodes: int.MaxValue, maxResults: 50, depth: 1, includeSummary: true);
 
-        Assert.Equal(2, impact.DirectCallersCount);
-        Assert.Equal(2, impact.CallSites.Count);
-        Assert.Contains("Host", impact.AffectedProjects);
-        Assert.Contains("Tests", impact.AffectedProjects);
-        Assert.Equal(ImpactAnalyzer.MaxNodes, impact.EffectiveNodeLimit);
-        foreach (var site in impact.CallSites)
+        Assert.Equal(2, impact.Summary!.DirectReferenceSiteCount);
+        Assert.Equal(2, impact.References.Count);
+        Assert.Contains("Host", impact.Summary!.Projects.Select(project => project.ProjectName));
+        Assert.Contains("Tests", impact.Summary!.Projects.Select(project => project.ProjectName));
+        Assert.Equal(FindReferencesResolver.DefaultMaxVisitedSymbols, impact.EffectiveNodeLimit);
+        foreach (var site in impact.References)
         {
-            Assert.StartsWith("src:", site.CallingMemberHandoffId);
-            var resolved = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.CallingMemberHandoffId!);
+            Assert.StartsWith("src:", site.EnclosingSymbolHandoffId);
+            var resolved = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.EnclosingSymbolHandoffId!);
             Assert.True(resolved.IsSuccess);
             Assert.Equal(site.ProjectName, resolved.Symbol!.ContainingAssembly!.Name);
         }
 
-        var limited = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, fixture.Solution, maxResults: 1);
-        Assert.Single(limited.CallSites);
+        var limited = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, maxResults: 1, depth: 1, includeSummary: true);
+        Assert.Single(limited.References);
         Assert.True(limited.IsTruncated);
-        Assert.Equal(2, limited.DirectCallersCount);
-        Assert.Contains("Host", limited.AffectedProjects);
-        Assert.Contains("Tests", limited.AffectedProjects);
+        Assert.Equal(2, limited.Summary!.DirectReferenceSiteCount);
+        Assert.True(limited.Summary.AnalysisComplete);
+        Assert.Equal(impact.Summary.Files, limited.Summary.Files);
+        Assert.Equal(impact.Summary.Projects, limited.Summary.Projects);
+        Assert.Contains("Host", limited.Summary!.Projects.Select(project => project.ProjectName));
+        Assert.Contains("Tests", limited.Summary!.Projects.Select(project => project.ProjectName));
     }
 
     [Fact]
-    public async Task AnalyzeSymbolImpactAsync_ReportsPendingNodesAtNodeLimit()
+    public async Task ReferenceSummary_ReportsPendingNodesAtNodeLimit()
     {
         var callers = Enumerable.Range(0, 105)
             .Select(index => ($"Caller{index}.cs", $"namespace Fanout; public class Caller{index} {{ public void Call() => Contracts.Api.Run(); }}"))
@@ -113,59 +116,63 @@ public sealed class ImpactAnalyzerTests
         Assert.NotNull(compilation);
         var target = compilation.GetTypeByMetadataName("Contracts.Api")!.GetMembers("Run").OfType<IMethodSymbol>().Single();
 
-        var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, fixture.Solution, maxDepth: 2, maxResults: 500, maxNodes: 100);
+        var impact = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, depth: 2, maxResults: 500, maxNodes: 100, includeSummary: true);
 
-        Assert.Equal(105, impact.DirectCallersCount);
+        Assert.Equal(105, impact.Summary!.DirectReferenceSiteCount);
         Assert.True(impact.IsTruncatedByNodeLimit);
         Assert.False(impact.IsComplete);
+        Assert.False(impact.Summary!.AnalysisComplete);
+        Assert.Contains("nodeLimit", impact.Summary.Omissions);
         Assert.Equal(100, impact.EffectiveNodeLimit);
     }
 
     [Fact]
-    public async Task AnalyzeSymbolImpactAsync_NormalizesNonpositiveResultLimit()
+    public async Task ReferenceSummary_NormalizesNonpositiveResultLimit()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
         var compilation = await fixture.Solution.Projects.Single(project => project.Name == "Sample.Core").GetCompilationAsync();
         Assert.NotNull(compilation);
         var target = compilation.GetTypeByMetadataName("SampleNamespace.Greeter")!.GetMembers("Greet").OfType<IMethodSymbol>().First();
 
-        var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, fixture.Solution, maxResults: 0);
+        var impact = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, maxResults: 0, depth: 1, includeSummary: true);
 
-        Assert.Single(impact.CallSites);
+        Assert.Single(impact.References);
         Assert.True(impact.IsTruncated);
     }
 
     [Fact]
-    public async Task AnalyzeSymbolImpactAsync_ReportsRequestedAndEffectiveDepth()
+    public async Task ReferenceSummary_ReportsRequestedAndEffectiveDepth()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
         var compilation = await fixture.Solution.Projects.Single(project => project.Name == "Sample.Core").GetCompilationAsync();
         Assert.NotNull(compilation);
         var target = compilation.GetTypeByMetadataName("SampleNamespace.Greeter")!.GetMembers("Greet").OfType<IMethodSymbol>().First();
 
-        var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, fixture.Solution, maxDepth: 9);
+        var impact = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, depth: 9, maxResults: 50, includeSummary: true);
 
         Assert.Equal(9, impact.RequestedDepth);
-        Assert.Equal(ImpactAnalyzer.MaxAllowedDepth, impact.EffectiveDepth);
+        Assert.Equal(FindReferencesResolver.MaxReferenceDepth, impact.EffectiveDepth);
         Assert.True(impact.IsDepthClamped);
+        Assert.False(impact.Summary!.AnalysisComplete);
+        Assert.Contains("depthLimit", impact.Summary.Omissions);
         Assert.False(impact.IsComplete);
     }
 
     [Fact]
-    public async Task AnalyzeSymbolImpactAsync_ValidatesArgumentsAndNodeLimit()
+    public async Task ReferenceSummary_ValidatesArgumentsAndNodeLimit()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
         var compilation = await fixture.Solution.Projects.Single(project => project.Name == "Sample.Core").GetCompilationAsync();
         Assert.NotNull(compilation);
         var target = compilation.GetTypeByMetadataName("SampleNamespace.Greeter")!.GetMembers("Greet").OfType<IMethodSymbol>().First();
 
-        await Assert.ThrowsAsync<System.ArgumentNullException>(() => ImpactAnalyzer.AnalyzeSymbolImpactAsync(null!, fixture.Solution));
-        await Assert.ThrowsAsync<System.ArgumentNullException>(() => ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, null!));
-        await Assert.ThrowsAsync<System.ArgumentOutOfRangeException>(() => ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, fixture.Solution, maxNodes: 0));
+        await Assert.ThrowsAsync<System.ArgumentNullException>(() => FindReferencesResolver.FindReferencesAsync(null!, fixture.Solution, maxResults: 50, depth: 1, includeSummary: true));
+        await Assert.ThrowsAsync<System.ArgumentNullException>(() => FindReferencesResolver.FindReferencesAsync(target, null!, maxResults: 50, depth: 1, includeSummary: true));
+        await Assert.ThrowsAsync<System.ArgumentOutOfRangeException>(() => FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, maxNodes: 0, maxResults: 50, depth: 1, includeSummary: true));
     }
 
     [Fact]
-    public async Task AnalyzeSymbolImpactAsync_StopsCyclesAndKeepsTheShortestCallDepth()
+    public async Task ReferenceSummary_StopsCyclesAndKeepsTheShortestCallDepth()
     {
         using var fixture = TestWorkspaceBuilder.CreateSolution(
             @"C:\VirtualRepo\ImpactCycle.slnx",
@@ -175,16 +182,16 @@ public sealed class ImpactAnalyzerTests
         Assert.NotNull(compilation);
         var target = compilation.GetTypeByMetadataName("Contracts.Api")!.GetMembers("Run").OfType<IMethodSymbol>().Single();
 
-        var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, fixture.Solution, maxDepth: 3);
+        var impact = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, depth: 3, maxResults: 50, includeSummary: true);
 
-        Assert.Equal(1, impact.DirectCallersCount);
-        Assert.Equal(2, impact.TransitiveCallSitesCount);
+        Assert.Equal(1, impact.Summary!.DirectReferenceSiteCount);
+        Assert.Equal(2, impact.Summary!.DeeperReferenceSiteCount);
         Assert.Equal(3, impact.VisitedSymbolCount);
         Assert.False(impact.IsTruncatedByNodeLimit);
     }
 
     [Fact]
-    public async Task AnalyzeSymbolImpactAsync_PreservesConvergingCallersOnTheSameLineAcrossProjects()
+    public async Task ReferenceSummary_PreservesConvergingCallersOnTheSameLineAcrossProjects()
     {
         using var fixture = TestWorkspaceBuilder.CreateSolution(
             @"C:\VirtualRepo\ImpactConverging.slnx",
@@ -196,16 +203,16 @@ public sealed class ImpactAnalyzerTests
         Assert.NotNull(compilation);
         var target = compilation.GetTypeByMetadataName("Contracts.Api")!.GetMembers("Run").OfType<IMethodSymbol>().Single();
 
-        var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, fixture.Solution, maxDepth: 2);
+        var impact = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, depth: 2, maxResults: 50, includeSummary: true);
 
-        Assert.Equal(2, impact.DirectCallersCount);
-        Assert.Equal(4, impact.TransitiveImpactCount);
-        Assert.Equal(2, impact.TransitiveCallSitesCount);
-        Assert.Equal(4, impact.CallSites.Count);
-        Assert.Contains("BranchB", impact.AffectedProjects);
-        Assert.Contains("BranchC", impact.AffectedProjects);
-        Assert.Contains("Top", impact.AffectedProjects);
-        var convergedSites = impact.CallSites.Where(site => site.Depth == 2 && site.ProjectName == "Top").ToArray();
+        Assert.Equal(2, impact.Summary!.DirectReferenceSiteCount);
+        Assert.Equal(4, impact.Summary!.TotalReferenceSiteCount);
+        Assert.Equal(2, impact.Summary!.DeeperReferenceSiteCount);
+        Assert.Equal(4, impact.References.Count);
+        Assert.Contains("BranchB", impact.Summary!.Projects.Select(project => project.ProjectName));
+        Assert.Contains("BranchC", impact.Summary!.Projects.Select(project => project.ProjectName));
+        Assert.Contains("Top", impact.Summary!.Projects.Select(project => project.ProjectName));
+        var convergedSites = impact.References.Where(site => site.Depth == 2 && site.ProjectName == "Top").ToArray();
         Assert.Equal(2, convergedSites.Length);
         Assert.Equal(2, convergedSites.Select(site => site.ReachedFromSymbolId).Distinct().Count());
         Assert.Equal(2, convergedSites.Select(site => site.ReachedFromSymbolHandoffId).Distinct().Count());
@@ -216,18 +223,18 @@ public sealed class ImpactAnalyzerTests
             var resolvedReachedFrom = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.ReachedFromSymbolHandoffId!);
             Assert.True(resolvedReachedFrom.IsSuccess);
             Assert.Contains(resolvedReachedFrom.Symbol!.ContainingAssembly!.Name, new[] { "BranchB", "BranchC" });
-            Assert.StartsWith("src:", site.CallingMemberHandoffId);
-            var resolvedCaller = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.CallingMemberHandoffId!);
+            Assert.StartsWith("src:", site.EnclosingSymbolHandoffId);
+            var resolvedCaller = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.EnclosingSymbolHandoffId!);
             Assert.True(resolvedCaller.IsSuccess);
             Assert.Equal("Top", resolvedCaller.Symbol!.ContainingAssembly!.Name);
         }
 
-        var limited = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, fixture.Solution, maxDepth: 2, maxResults: 3);
-        Assert.Equal(3, limited.CallSites.Count);
+        var limited = await FindReferencesResolver.FindReferencesAsync(target, fixture.Solution, depth: 2, maxResults: 3, includeSummary: true);
+        Assert.Equal(3, limited.References.Count);
         Assert.True(limited.IsTruncated);
-        Assert.Equal(2, limited.TransitiveCallSitesCount);
-        Assert.Contains("BranchB", limited.AffectedProjects);
-        Assert.Contains("BranchC", limited.AffectedProjects);
-        Assert.Contains("Top", limited.AffectedProjects);
+        Assert.Equal(2, limited.Summary!.DeeperReferenceSiteCount);
+        Assert.Contains("BranchB", limited.Summary!.Projects.Select(project => project.ProjectName));
+        Assert.Contains("BranchC", limited.Summary!.Projects.Select(project => project.ProjectName));
+        Assert.Contains("Top", limited.Summary!.Projects.Select(project => project.ProjectName));
     }
 }

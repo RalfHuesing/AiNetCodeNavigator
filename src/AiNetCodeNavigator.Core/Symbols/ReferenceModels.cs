@@ -18,7 +18,9 @@ public sealed record ReferenceLocationEntry(
     string? ReachedFromSymbolHandoffId = null,
     string? OwnerTargetPath = null,
     [property: JsonIgnore] string ReachedFromSymbolId = "",
-    string EvidenceKind = RelationshipEvidence.Unresolved);
+    string EvidenceKind = RelationshipEvidence.Unresolved,
+    [property: JsonIgnore] string? ProjectPath = null,
+    [property: JsonIgnore] string? ProjectIdentity = null);
 
 public sealed record FindReferencesResult(
     string TargetSymbolName,
@@ -31,7 +33,8 @@ public sealed record FindReferencesResult(
     int VisitedSymbolCount = 1,
     bool IsTruncatedByNodeLimit = false,
     bool IsDepthClamped = false,
-    int EffectiveNodeLimit = 200)
+    int EffectiveNodeLimit = 200,
+    ReferenceSummary? Summary = null)
 {
     public bool IsComplete => !IsTruncated && !IsTruncatedByNodeLimit && !IsDepthClamped;
 }

@@ -105,27 +105,31 @@ public sealed class FindReferencesResolverTests
             var compilation = await solution.GetProject(contractsId)!.GetCompilationAsync();
             var target = compilation!.GetTypeByMetadataName("Contracts.Target")!.GetMembers("Run").OfType<IMethodSymbol>().Single();
             var result = await FindReferencesResolver.FindReferencesAsync(target, solution, maxResults: 10, depth: 1);
-            var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(target, solution, maxResults: 10);
+            var impact = await FindReferencesResolver.FindReferencesAsync(target, solution, maxResults: 10, depth: 1, includeSummary: true);
             var referencesWithoutHandoffs = await FindReferencesResolver.FindReferencesAsync(
                 target, solution, maxResults: 10, depth: 1, handoffFormatter: _ => null);
-            var impactWithoutHandoffs = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(
-                target, solution, maxResults: 10, handoffFormatter: _ => null);
+            var impactWithoutHandoffs = await FindReferencesResolver.FindReferencesAsync(
+                target, solution, maxResults: 10, handoffFormatter: _ => null, depth: 1, includeSummary: true);
 
             Assert.Equal(2, result.TotalCount);
             Assert.Equal(2, result.References.Count);
-            Assert.Equal(2, impact.TransitiveImpactCount);
-            Assert.Equal(2, impact.CallSites.Count);
-            Assert.Equal(2, impact.CallSites.Select(site => site.CallingMemberHandoffId).Distinct().Count());
-            foreach (var site in impact.CallSites)
+            Assert.Equal(2, impact.Summary!.TotalReferenceSiteCount);
+            Assert.Equal(2, impact.Summary.ProjectCount);
+            Assert.Equal(2, impact.Summary.FileCount);
+            Assert.Equal(2, impact.Summary.Projects.Select(project => project.ProjectPath).Distinct().Count());
+            Assert.Equal(impact.Summary.Projects.OrderBy(project => project.ProjectPath, StringComparer.Ordinal), impact.Summary.Projects);
+            Assert.Equal(2, impact.References.Count);
+            Assert.Equal(2, impact.References.Select(site => site.EnclosingSymbolHandoffId).Distinct().Count());
+            foreach (var site in impact.References)
             {
-                var resolved = await SourceSymbolResolver.ResolveAsync(solution, site.CallingMemberHandoffId!);
+                var resolved = await SourceSymbolResolver.ResolveAsync(solution, site.EnclosingSymbolHandoffId!);
                 Assert.True(resolved.IsSuccess);
                 var sourceTree = Assert.Single(resolved.Symbol!.Locations.Where(location => location.IsInSource)).SourceTree;
                 Assert.Equal(linkedPath, solution.GetDocument(sourceTree!)!.FilePath);
             }
             Assert.Equal(2, referencesWithoutHandoffs.TotalCount);
-            Assert.Equal(2, impactWithoutHandoffs.TransitiveImpactCount);
-            Assert.Equal(2, impactWithoutHandoffs.DirectCallersCount);
+            Assert.Equal(2, impactWithoutHandoffs.Summary!.TotalReferenceSiteCount);
+            Assert.Equal(2, impactWithoutHandoffs.Summary!.DirectReferenceSiteCount);
             Assert.All(result.References, reference => Assert.Equal("Shared", reference.ProjectName));
             var ownerPaths = new List<string?>();
             foreach (var reference in result.References)

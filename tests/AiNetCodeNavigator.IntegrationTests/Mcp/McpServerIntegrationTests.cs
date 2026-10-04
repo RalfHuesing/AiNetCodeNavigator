@@ -31,7 +31,7 @@ public sealed class McpServerIntegrationTests
             {
                 "find_symbol", "get_symbol_body", "get_file_skeleton", "get_class_structure",
                 "get_namespace_tree", "get_index_scope", "get_call_tree", "find_references", "get_type_hierarchy",
-                "find_implementations", "get_impact", "dependency_graph", "resolve_type_origin", "get_context",
+                "find_implementations", "dependency_graph", "resolve_type_origin", "get_context",
                 "inspect_assembly", "search_assembly", "find_assembly_extensions",
             };
             foreach (var name in navigationTools)
@@ -475,12 +475,12 @@ public sealed class McpServerIntegrationTests
                 .Select(tool => tool.GetProperty("name").GetString()!)
                 .Order(StringComparer.Ordinal)
                 .ToArray();
-            Assert.Equal(17, tools.Length);
+            Assert.Equal(16, tools.Length);
             Assert.Equal(new[]
             {
                 "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol",
                 "get_call_tree", "get_class_structure", "get_context", "get_file_skeleton",
-                "get_impact", "get_index_scope", "get_namespace_tree", "get_symbol_body",
+                "get_index_scope", "get_namespace_tree", "get_symbol_body",
                 "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly",
             }, tools);
             Assert.DoesNotContain("get_server_health", tools);
@@ -603,7 +603,7 @@ public sealed class McpServerIntegrationTests
                 ("find_references", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "h:unknown" }, "INVALID_SYMBOL_REFERENCE"),
                 ("get_type_hierarchy", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "INVALID_SYMBOL_REFERENCE"),
                 ("find_implementations", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "INVALID_SYMBOL_REFERENCE"),
-                ("get_impact", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = " " }, "INVALID_ARGUMENT"),
+                ("find_references", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = " " }, "INVALID_ARGUMENT"),
                 ("dependency_graph", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath }, "INVALID_ARGUMENT"),
                 ("resolve_type_origin", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "", ["typeName"] = "" }, "INVALID_ARGUMENT"),
                 ("get_context", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown", ["sections"] = new[] { "tests" } }, "INVALID_ARGUMENT"),
@@ -674,8 +674,8 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                 .Select(tool => tool.GetProperty("name").GetString())
                 .Order(StringComparer.Ordinal)
                 .ToArray();
-            Assert.Equal(17, names.Length);
-            Assert.Equal(new[] { "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol", "get_call_tree", "get_class_structure", "get_context", "get_file_skeleton", "get_impact", "get_index_scope", "get_namespace_tree", "get_symbol_body", "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly" }, names);
+            Assert.Equal(16, names.Length);
+            Assert.Equal(new[] { "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol", "get_call_tree", "get_class_structure", "get_context", "get_file_skeleton", "get_index_scope", "get_namespace_tree", "get_symbol_body", "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly" }, names);
             Assert.DoesNotContain("get_server_health", names);
             Assert.DoesNotContain("reload_config", names);
             Assert.DoesNotContain("get_file_tree", names);
@@ -759,7 +759,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             await SendRequestAsync(process, 13, "tools/call", new
             {
                 name = "find_references",
-                arguments = new { targetPath = solutionPath, symbolIdentifier = sourceHandle, maxResults = 10 },
+                arguments = new { includeSummary = true, targetPath = solutionPath, symbolIdentifier = sourceHandle, maxResults = 10 },
             }, timeout.Token);
             var references = await ReadResponseAsync(process, 13, timeout.Token);
             Assert.False(references.GetProperty("result").GetProperty("isError").GetBoolean());
@@ -781,7 +781,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             Assert.False(callTree.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("CounterConsumer", GetFirstText(callTree), StringComparison.Ordinal);
 
-            await SendRequestAsync(process, 21, "tools/call", new { name = "get_impact", arguments = new { targetPath = solutionPath, symbolIdentifier = sourceHandle } }, timeout.Token);
+            await SendRequestAsync(process, 21, "tools/call", new { name = "find_references", arguments = new { includeSummary = true, targetPath = solutionPath, symbolIdentifier = sourceHandle } }, timeout.Token);
             var impact = await ReadResponseAsync(process, 21, timeout.Token);
             Assert.False(impact.GetProperty("result").GetProperty("isError").GetBoolean());
 
@@ -1265,7 +1265,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             Assert.Equal("local", ParsePayload(rawTypeOriginText).GetProperty("originKind").GetString());
             Assert.Contains("NavigationFixture.Counter", rawTypeOriginText, StringComparison.Ordinal);
 
-            await SendRequestAsync(process, 25, "tools/call", new { name = "get_impact", arguments = new { targetPath = fixtureAssemblyPath, symbolIdentifier = assemblyHandle } }, timeout.Token);
+            await SendRequestAsync(process, 25, "tools/call", new { name = "find_references", arguments = new { includeSummary = true, targetPath = fixtureAssemblyPath, symbolIdentifier = assemblyHandle } }, timeout.Token);
             var assemblyImpact = await ReadResponseAsync(process, 25, timeout.Token);
             Assert.False(assemblyImpact.GetProperty("result").GetProperty("isError").GetBoolean());
 
@@ -1299,26 +1299,27 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             {
                 var arguments = new Dictionary<string, object?>
                 {
+                    ["includeSummary"] = true,
                     ["targetPath"] = fixtureAssemblyPath,
                     ["symbolIdentifier"] = input.Identifier,
                     ["maxResults"] = 20,
                 };
                 if (input.IncludeReferences is { } includeReferences) arguments["includeReferences"] = includeReferences;
-                await SendRequestAsync(process, input.RequestId, "tools/call", new { name = "get_impact", arguments }, timeout.Token);
+                await SendRequestAsync(process, input.RequestId, "tools/call", new { name = "find_references", arguments }, timeout.Token);
                 var response = await ReadResponseAsync(process, input.RequestId, timeout.Token);
                 var responseText = GetFirstText(response);
                 Assert.False(response.GetProperty("result").GetProperty("isError").GetBoolean(), responseText);
                 var payload = ParsePayload(responseText);
-                var caller = payload.GetProperty("callSites").EnumerateArray()
-                    .FirstOrDefault(site => site.GetProperty("callingMember").GetString()?.EndsWith("CounterConsumer.Run", StringComparison.Ordinal) == true);
+                var caller = payload.GetProperty("references").EnumerateArray()
+                    .FirstOrDefault(site => site.GetProperty("enclosingSymbolName").GetString()?.EndsWith("CounterConsumer.Run", StringComparison.Ordinal) == true);
                 Assert.False(caller.ValueKind == JsonValueKind.Undefined, responseText);
-                Assert.True(payload.GetProperty("directCallersCount").GetInt32() > 0, responseText);
-                callerHandoff ??= caller.GetProperty("callingMemberHandoffId").GetString();
+                Assert.True(payload.GetProperty("summary").GetProperty("directReferenceSiteCount").GetInt32() > 0, responseText);
+                callerHandoff ??= caller.GetProperty("enclosingSymbolHandoffId").GetString();
                 AssertStableReference(callerHandoff);
                 if (baselineImpactPayload is { } expected)
                 {
-                    Assert.Equal(expected.GetProperty("directCallersCount").GetInt32(), payload.GetProperty("directCallersCount").GetInt32());
-                    Assert.Equal(expected.GetProperty("transitiveImpactCount").GetInt32(), payload.GetProperty("transitiveImpactCount").GetInt32());
+                    Assert.Equal(expected.GetProperty("summary").GetProperty("directReferenceSiteCount").GetInt32(), payload.GetProperty("summary").GetProperty("directReferenceSiteCount").GetInt32());
+                    Assert.Equal(expected.GetProperty("summary").GetProperty("totalReferenceSiteCount").GetInt32(), payload.GetProperty("summary").GetProperty("totalReferenceSiteCount").GetInt32());
                 }
                 else
                 {
@@ -1441,7 +1442,7 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 19, "tools/call", new
             {
                 name = "find_references",
-                arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 1, maxResults = 20 },
+                arguments = new { includeSummary = true, targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 1, maxResults = 20 },
             }, timeout.Token);
             var closureReferences = await ReadResponseAsync(process, 19, timeout.Token);
             Assert.False(closureReferences.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(closureReferences));
@@ -1572,8 +1573,8 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 41, "tools/call", new
             {
-                name = "get_impact",
-                arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 1, maxResults = 20 },
+                name = "find_references",
+                arguments = new { includeSummary = true, targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 1, maxResults = 20 },
             }, timeout.Token);
             var closureImpact = await ReadResponseAsync(process, 41, timeout.Token);
             for (var requestId = 42; GetFirstText(closureImpact).Contains("operation=running", StringComparison.Ordinal) && requestId < 44; requestId++)
@@ -1581,20 +1582,20 @@ if (Directory.Exists(fixtureRoot))
                 var operationToken = ReadStringLine(GetFirstText(closureImpact), "operationToken");
                 await SendRequestAsync(process, requestId, "tools/call", new
                 {
-                    name = "get_impact",
-                    arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 1, maxResults = 20, operationToken },
+                    name = "find_references",
+                    arguments = new { includeSummary = true, targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 1, maxResults = 20, operationToken },
                 }, timeout.Token);
                 closureImpact = await ReadResponseAsync(process, requestId, timeout.Token);
             }
             var closureImpactText = GetFirstText(closureImpact);
             Assert.False(closureImpact.GetProperty("result").GetProperty("isError").GetBoolean(), closureImpactText);
             var closureImpactPayload = ParsePayload(closureImpactText);
-            Assert.Equal(3, closureImpactPayload.GetProperty("directCallersCount").GetInt32());
-            Assert.Equal(3, closureImpactPayload.GetProperty("transitiveImpactCount").GetInt32());
-            var impactBCaller = closureImpactPayload.GetProperty("callSites").EnumerateArray()
-                .Single(site => site.GetProperty("callingMember").GetString() == "ClosureB.Run");
+            Assert.Equal(3, closureImpactPayload.GetProperty("summary").GetProperty("directReferenceSiteCount").GetInt32());
+            Assert.Equal(3, closureImpactPayload.GetProperty("summary").GetProperty("totalReferenceSiteCount").GetInt32());
+            var impactBCaller = closureImpactPayload.GetProperty("references").EnumerateArray()
+                .Single(site => site.GetProperty("enclosingSymbolName").GetString() == "ClosureB.Run");
             Assert.Equal(Path.GetFullPath(bPath), impactBCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
-            var impactBHandle = impactBCaller.GetProperty("callingMemberHandoffId").GetString();
+            var impactBHandle = impactBCaller.GetProperty("enclosingSymbolHandoffId").GetString();
             AssertStableReference(impactBHandle);
             await SendRequestAsync(process, 44, "tools/call", new
             {
@@ -1604,10 +1605,10 @@ if (Directory.Exists(fixtureRoot))
             var impactBBody = await ReadResponseAsync(process, 44, timeout.Token);
             Assert.False(impactBBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(impactBBody));
             Assert.Contains("Run()", GetFirstText(impactBBody), StringComparison.Ordinal);
-            var impactCCaller = closureImpactPayload.GetProperty("callSites").EnumerateArray()
-                .Single(site => site.GetProperty("callingMember").GetString() == "ClosureOnlyC.LocalRun");
+            var impactCCaller = closureImpactPayload.GetProperty("references").EnumerateArray()
+                .Single(site => site.GetProperty("enclosingSymbolName").GetString() == "ClosureOnlyC.LocalRun");
             Assert.Equal(Path.GetFullPath(ownedCPath), impactCCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
-            var impactCHandle = impactCCaller.GetProperty("callingMemberHandoffId").GetString();
+            var impactCHandle = impactCCaller.GetProperty("enclosingSymbolHandoffId").GetString();
             await SendRequestAsync(process, 45, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -1619,16 +1620,16 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 48, "tools/call", new
             {
-                name = "get_impact",
-                arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 1, maxResults = 1 },
+                name = "find_references",
+                arguments = new { includeSummary = true, targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 1, maxResults = 1 },
             }, timeout.Token);
             var cappedClosureImpact = await ReadResponseAsync(process, 48, timeout.Token);
             var cappedImpactText = GetFirstText(cappedClosureImpact);
             Assert.False(cappedClosureImpact.GetProperty("result").GetProperty("isError").GetBoolean(), cappedImpactText);
             var cappedImpactPayload = ParsePayload(cappedImpactText);
-            Assert.Equal(3, cappedImpactPayload.GetProperty("directCallersCount").GetInt32());
-            Assert.Equal(3, cappedImpactPayload.GetProperty("transitiveImpactCount").GetInt32());
-            Assert.Single(cappedImpactPayload.GetProperty("callSites").EnumerateArray());
+            Assert.Equal(3, cappedImpactPayload.GetProperty("summary").GetProperty("directReferenceSiteCount").GetInt32());
+            Assert.Equal(3, cappedImpactPayload.GetProperty("summary").GetProperty("totalReferenceSiteCount").GetInt32());
+            Assert.Single(cappedImpactPayload.GetProperty("references").EnumerateArray());
             Assert.True(cappedImpactPayload.GetProperty("isTruncated").GetBoolean(), cappedImpactText);
 
             await SendRequestAsync(process, 46, "tools/call", new
@@ -1681,7 +1682,7 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 32, "tools/call", new
             {
                 name = "find_references",
-                arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 2, maxResults = 20 },
+                arguments = new { includeSummary = true, targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 2, maxResults = 20 },
             }, timeout.Token);
             var depthTwoReferences = await ReadResponseAsync(process, 32, timeout.Token);
             var depthTwoReferencesText = GetFirstText(depthTwoReferences);
@@ -1707,7 +1708,7 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 93, "tools/call", new
             {
                 name = "find_references",
-                arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 3, maxResults = 20 },
+                arguments = new { includeSummary = true, targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 3, maxResults = 20 },
             }, timeout.Token);
             var depthThreeReferences = await ReadResponseAsync(process, 93, timeout.Token);
             var depthThreeReferencesText = GetFirstText(depthThreeReferences);
@@ -1720,16 +1721,16 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 86, "tools/call", new
             {
-                name = "get_impact",
-                arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 2, maxResults = 20 },
+                name = "find_references",
+                arguments = new { includeSummary = true, targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 2, maxResults = 20 },
             }, timeout.Token);
             var composedDepthTwoImpact = await ReadResponseAsync(process, 86, timeout.Token);
             Assert.False(composedDepthTwoImpact.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(composedDepthTwoImpact));
-            var composedImpactSite = ParsePayload(GetFirstText(composedDepthTwoImpact)).GetProperty("callSites").EnumerateArray()
-                .Single(site => site.GetProperty("callingMember").GetString() == "ClosureA.Run");
+            var composedImpactSite = ParsePayload(GetFirstText(composedDepthTwoImpact)).GetProperty("references").EnumerateArray()
+                .Single(site => site.GetProperty("enclosingSymbolName").GetString() == "ClosureA.Run");
             Assert.Equal(Path.GetFullPath(aPath), composedImpactSite.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
             Assert.Equal(2, composedImpactSite.GetProperty("depth").GetInt32());
-            var composedImpactHandoff = composedImpactSite.GetProperty("callingMemberHandoffId").GetString();
+            var composedImpactHandoff = composedImpactSite.GetProperty("enclosingSymbolHandoffId").GetString();
             await SendRequestAsync(process, 87, "tools/call", new
             {
                 name = "get_symbol_body",
@@ -1741,15 +1742,15 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 95, "tools/call", new
             {
-                name = "get_impact",
-                arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 3, maxResults = 20 },
+                name = "find_references",
+                arguments = new { includeSummary = true, targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 3, maxResults = 20 },
             }, timeout.Token);
             var depthThreeImpact = await ReadResponseAsync(process, 95, timeout.Token);
             var depthThreeImpactText = GetFirstText(depthThreeImpact);
             Assert.False(depthThreeImpact.GetProperty("result").GetProperty("isError").GetBoolean(), depthThreeImpactText);
             var depthThreeImpactPayload = ParsePayload(depthThreeImpactText);
-            Assert.Equal(4, depthThreeImpactPayload.GetProperty("transitiveImpactCount").GetInt32());
-            Assert.Equal(2, depthThreeImpactPayload.GetProperty("maxDepthReached").GetInt32());
+            Assert.Equal(4, depthThreeImpactPayload.GetProperty("summary").GetProperty("totalReferenceSiteCount").GetInt32());
+            Assert.Equal(2, depthThreeImpactPayload.GetProperty("summary").GetProperty("summary").GetProperty("maxDepthReached").GetInt32());
             Assert.Contains("completeness=complete", depthThreeImpactText, StringComparison.Ordinal);
 
             await SendRequestAsync(process, 88, "tools/call", new
@@ -1936,7 +1937,7 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 116, "tools/call", new
             {
                 name = "find_references",
-                arguments = new { targetPath = aPath, symbolIdentifier = $"{sourceFilePath}:99999", includeReferences = true, depth = 1, maxResults = 20 },
+                arguments = new { includeSummary = true, targetPath = aPath, symbolIdentifier = $"{sourceFilePath}:99999", includeReferences = true, depth = 1, maxResults = 20 },
             }, timeout.Token);
             var invalidRawPosition = await ReadResponseAsync(process, 116, timeout.Token);
             Assert.True(invalidRawPosition.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(invalidRawPosition));
@@ -1954,7 +1955,7 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 103, "tools/call", new
             {
                 name = "find_references",
-                arguments = new { targetPath = aPath, symbolIdentifier = "M:ClosureFixture.ClosureOnlyC.Read", includeReferences = true, depth = 1, maxResults = 20 },
+                arguments = new { includeSummary = true, targetPath = aPath, symbolIdentifier = "M:ClosureFixture.ClosureOnlyC.Read", includeReferences = true, depth = 1, maxResults = 20 },
             }, timeout.Token);
             var rawCrossOwnerReferences = await ReadResponseAsync(process, 103, timeout.Token);
             var rawCrossOwnerText = GetFirstText(rawCrossOwnerReferences);
@@ -1969,7 +1970,7 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 104, "tools/call", new
             {
                 name = "find_references",
-                arguments = new { targetPath = aPath, symbolIdentifier = "Run", includeReferences = true, depth = 1, maxResults = 20 },
+                arguments = new { includeSummary = true, targetPath = aPath, symbolIdentifier = "Run", includeReferences = true, depth = 1, maxResults = 20 },
             }, timeout.Token);
             var ambiguousRawOwners = await ReadResponseAsync(process, 104, timeout.Token);
             var ambiguousRawText = GetFirstText(ambiguousRawOwners);
@@ -2000,15 +2001,15 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 110, "tools/call", new
             {
-                name = "get_impact",
-                arguments = new { targetPath = aPath, symbolIdentifier = "M:ClosureFixture.ClosureOnlyC.Read", includeReferences = true, depth = 1, maxResults = 10 },
+                name = "find_references",
+                arguments = new { includeSummary = true, targetPath = aPath, symbolIdentifier = "M:ClosureFixture.ClosureOnlyC.Read", includeReferences = true, depth = 1, maxResults = 10 },
             }, timeout.Token);
             var rawImpact = await ReadResponseAsync(process, 110, timeout.Token);
             var rawImpactText = GetFirstText(rawImpact);
             Assert.False(rawImpact.GetProperty("result").GetProperty("isError").GetBoolean(), rawImpactText);
             var rawImpactPayload = ParsePayload(rawImpactText);
-            var rawImpactBCaller = rawImpactPayload.GetProperty("callSites").EnumerateArray()
-                .FirstOrDefault(site => site.GetProperty("callingMember").GetString()?.EndsWith("ClosureB.Run", StringComparison.Ordinal) == true);
+            var rawImpactBCaller = rawImpactPayload.GetProperty("references").EnumerateArray()
+                .FirstOrDefault(site => site.GetProperty("enclosingSymbolName").GetString()?.EndsWith("ClosureB.Run", StringComparison.Ordinal) == true);
             Assert.False(rawImpactBCaller.ValueKind == JsonValueKind.Undefined, rawImpactText);
             Assert.Equal(Path.GetFullPath(bPath), rawImpactBCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
 
@@ -2028,7 +2029,7 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 14, "tools/call", new
             {
                 name = "find_references",
-                arguments = new { targetPath = aPath, symbolIdentifier = handoff, includeReferences = true, depth = 1, maxResults = 20 },
+                arguments = new { includeSummary = true, targetPath = aPath, symbolIdentifier = handoff, includeReferences = true, depth = 1, maxResults = 20 },
             }, timeout.Token);
             var typeReferences = await ReadResponseAsync(process, 14, timeout.Token);
             Assert.False(typeReferences.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(typeReferences));
@@ -2059,7 +2060,7 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 31, "tools/call", new
             {
                 name = "find_references",
-                arguments = new { targetPath = aPath, symbolIdentifier = foreignHandoff, includeReferences = true, depth = 1, maxResults = 20 },
+                arguments = new { includeSummary = true, targetPath = aPath, symbolIdentifier = foreignHandoff, includeReferences = true, depth = 1, maxResults = 20 },
             }, timeout.Token);
             var foreignReference = await ReadResponseAsync(process, 31, timeout.Token);
             Assert.True(foreignReference.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignReference));
@@ -2146,7 +2147,7 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 33, "tools/call", new
             {
                 name = "find_references",
-                arguments = new { targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 1, maxResults = 20 },
+                arguments = new { includeSummary = true, targetPath = aPath, symbolIdentifier = methodHandoff, includeReferences = true, depth = 1, maxResults = 20 },
             }, timeout.Token);
             var staleClosure = await ReadResponseAsync(process, 33, timeout.Token);
             Assert.True(staleClosure.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(staleClosure));
@@ -2629,7 +2630,7 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 61, "tools/call", new
             {
                 name = "find_references",
-                arguments = new { targetPath = assemblyPath, symbolIdentifier = concreteReadBetaHandle, depth = 2, maxResults = 10, includeReferences = false },
+                arguments = new { includeSummary = true, targetPath = assemblyPath, symbolIdentifier = concreteReadBetaHandle, depth = 2, maxResults = 10, includeReferences = false },
             }, timeout.Token);
             var assemblyReferences = await ReadResponseAsync(process, 61, timeout.Token);
             var assemblyReferencesText = GetFirstText(assemblyReferences);
@@ -2651,7 +2652,7 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 63, "tools/call", new
             {
                 name = "find_references",
-                arguments = new { targetPath = assemblyPath, symbolIdentifier = concreteReadBetaHandle, depth = 2, maxResults = 10, includeReferences = true },
+                arguments = new { includeSummary = true, targetPath = assemblyPath, symbolIdentifier = concreteReadBetaHandle, depth = 2, maxResults = 10, includeReferences = true },
             }, timeout.Token);
             var incompleteAssemblyReferences = await ReadResponseAsync(process, 63, timeout.Token);
             var completeAssemblyReferencesText = GetFirstText(incompleteAssemblyReferences);
@@ -2664,15 +2665,15 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 71, "tools/call", new
             {
-                name = "get_impact",
-                arguments = new { targetPath = assemblyPath, symbolIdentifier = concreteReadBetaHandle, depth = 2, maxResults = 10, includeReferences = false },
+                name = "find_references",
+                arguments = new { includeSummary = true, targetPath = assemblyPath, symbolIdentifier = concreteReadBetaHandle, depth = 2, maxResults = 10, includeReferences = false },
             }, timeout.Token);
             var assemblyImpact = await ReadResponseAsync(process, 71, timeout.Token);
             var assemblyImpactText = GetFirstText(assemblyImpact);
             Assert.False(assemblyImpact.GetProperty("result").GetProperty("isError").GetBoolean(), assemblyImpactText);
-            var impactCallSite = ParsePayload(assemblyImpactText).GetProperty("callSites").EnumerateArray()
-                .Single(item => item.GetProperty("callingMember").GetString() == "BetaInvoker.Invoke");
-            Assert.True(impactCallSite.TryGetProperty("callingMemberHandoffId", out var impactCallerHandoff),
+            var impactCallSite = ParsePayload(assemblyImpactText).GetProperty("references").EnumerateArray()
+                .Single(item => item.GetProperty("enclosingSymbolName").GetString() == "BetaInvoker.Invoke");
+            Assert.True(impactCallSite.TryGetProperty("enclosingSymbolHandoffId", out var impactCallerHandoff),
                 "The assembly impact caller must include an owner-bound handoff.");
             var impactCallerHandle = impactCallerHandoff.GetString();
             AssertStableReference(impactCallerHandle);
@@ -2687,17 +2688,17 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 73, "tools/call", new
             {
-                name = "get_impact",
-                arguments = new { targetPath = assemblyPath, symbolIdentifier = concreteReadBetaHandle, includeReferences = true },
+                name = "find_references",
+                arguments = new { includeSummary = true, targetPath = assemblyPath, symbolIdentifier = concreteReadBetaHandle, includeReferences = true },
             }, timeout.Token);
             var incompleteAssemblyImpact = await ReadResponseAsync(process, 73, timeout.Token);
             Assert.False(incompleteAssemblyImpact.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(incompleteAssemblyImpact));
             var closureImpactText = GetFirstText(incompleteAssemblyImpact);
             Assert.Contains("completeness=complete", closureImpactText, StringComparison.Ordinal);
-            var closureImpactCaller = ParsePayload(closureImpactText).GetProperty("callSites").EnumerateArray()
-                .Single(item => item.GetProperty("callingMember").GetString() == "BetaInvoker.Invoke");
+            var closureImpactCaller = ParsePayload(closureImpactText).GetProperty("references").EnumerateArray()
+                .Single(item => item.GetProperty("enclosingSymbolName").GetString() == "BetaInvoker.Invoke");
             Assert.Equal(Path.GetFullPath(assemblyPath), Path.GetFullPath(closureImpactCaller.GetProperty("ownerTargetPath").GetString()!), StringComparer.OrdinalIgnoreCase);
-            var closureImpactCallerHandle = closureImpactCaller.GetProperty("callingMemberHandoffId").GetString();
+            var closureImpactCallerHandle = closureImpactCaller.GetProperty("enclosingSymbolHandoffId").GetString();
             AssertStableReference(closureImpactCallerHandle);
             await SendRequestAsync(process, 83, "tools/call", new
             {
@@ -2807,7 +2808,7 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 69, "tools/call", new
             {
                 name = "find_references",
-                arguments = new { targetPath = hostAssemblyPath, symbolIdentifier = concreteReadBetaHandle, maxResults = 10 },
+                arguments = new { includeSummary = true, targetPath = hostAssemblyPath, symbolIdentifier = concreteReadBetaHandle, maxResults = 10 },
             }, timeout.Token);
             var foreignAssemblyReferences = await ReadResponseAsync(process, 69, timeout.Token);
             Assert.True(foreignAssemblyReferences.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignAssemblyReferences));

@@ -122,11 +122,12 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         [System.ComponentModel.Description("Include matches from generated source files.")] bool includeGenerated = false, [System.ComponentModel.Description("Traverse into referenced assemblies when supported.")] bool includeReferences = false, [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384,
         [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null, [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
         [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
-        [System.ComponentModel.Description("Opaque cursor for the next page of the complete reference list.")] string? resultCursor = null, CancellationToken cancellationToken = default)
+        [System.ComponentModel.Description("Opaque cursor for the next page of the complete reference list.")] string? resultCursor = null, [System.ComponentModel.Description("Include counts and sorted owner-qualified identities for all discovered reference sites before display paging. Repeat the same summary on every result page; do not sum pages.")] bool includeSummary = false, CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(symbolIdentifier)) return Invalid("symbolIdentifier", "Provide a non-empty source or assembly symbol identifier.");
         if (!TryScope(scopeType, out var scope)) return Invalid("scopeType", "Use all, production, or tests.");
         return await NavigationToolSupport.RouteAsync(runtime, "find_references", targetPath,
-            new { symbolIdentifier, depth, scopeType, includeGenerated, includeReferences, maxResults }, operationToken,
+            new { symbolIdentifier, depth, scopeType, includeGenerated, includeReferences, includeSummary, maxResults }, operationToken,
             continuationToken, maxResponseBytes, maxResponseTokens,
             async (target, coreCursor, ct) =>
             {
@@ -135,7 +136,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     if (includeReferences)
                     {
                         var closure = await AssemblyReferencesClosureScanner.ScanAsync(target.CanonicalPath,
-                            symbolIdentifier, int.MaxValue, depth, scope, includeGenerated, ct).ConfigureAwait(false);
+                            symbolIdentifier, int.MaxValue, depth, scope, includeGenerated, ct, includeSummary: includeSummary).ConfigureAwait(false);
                         if (closure.Error is { } error)
                             return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, closure.ErrorField);
                         var closureIdentity = closure.AnalysisIdentity!;
@@ -143,7 +144,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                             closureIdentity.ContentHash,
                             "find_references.references", symbolIdentifier.Trim(), depth.ToString(System.Globalization.CultureInfo.InvariantCulture),
                             scope.ToString(), includeGenerated.ToString(), "includeReferences=true",
-                            maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                            maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture), includeSummary.ToString());
                         var closurePage = NavigationToolSupport.PageResults(closure.References!.References, maxResults, coreCursor,
                             closureBinding, maxResponseBytes, maxResponseTokens);
                         if (closurePage.Error is not null) return closurePage.Error;
@@ -152,7 +153,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                             closure.References.RequestedDepth, closure.References.EffectiveDepth,
                             closure.References.VisitedSymbolCount, closure.References.IsTruncatedByNodeLimit,
                             closure.References.IsDepthClamped, closure.References.EffectiveNodeLimit,
-                            ResultCursor = closurePage.NextCursor }, closure.IsTruncated, closure.NextAction);
+                            closure.References.Summary, ResultCursor = closurePage.NextCursor }, closure.IsTruncated, closure.NextAction);
                         return NavigationToolSupport.WithAssemblyMetadata(closureResponse, closure.AnalysisIdentity!,
                             $"findReferences(symbol={symbolIdentifier.Trim()}, requestedDepth={closure.References.RequestedDepth}, effectiveDepth={closure.References.EffectiveDepth}, visitedSymbols={closure.References.VisitedSymbolCount}, nodeLimit={closure.References.EffectiveNodeLimit}, pageSize={maxResults}, scope={scope}, includeGenerated={includeGenerated}, includeReferences=true)",
                             (closure.OmissionReasons ?? []).Where(reason => reason != "maxResults").ToArray(), closurePage.NextCursor is not null);
@@ -162,19 +163,19 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     await using var access = accessResult.Value!;
                     var result = await FindReferencesResolver.FindReferencesAsync(access.Symbol, access.Solution,
                         int.MaxValue, depth, ct, scope: scope, includeGenerated: includeGenerated,
-                        handoffFormatter: CreateAssemblyHandoffFormatter(access), ownerTargetPath: access.Origin.CanonicalPath).ConfigureAwait(false);
+                        handoffFormatter: CreateAssemblyHandoffFormatter(access), ownerTargetPath: access.Origin.CanonicalPath, includeSummary: includeSummary).ConfigureAwait(false);
                     var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
                         access.Generation, access.ReferenceSnapshotHash);
                     var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, identity.ContentHash + "|" + access.ReferenceSnapshotHash,
                         "find_references.references", symbolIdentifier.Trim(), depth.ToString(System.Globalization.CultureInfo.InvariantCulture), scope.ToString(), includeGenerated.ToString(),
-                        maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                        maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture), includeSummary.ToString());
                     var page = NavigationToolSupport.PageResults(result.References, maxResults, coreCursor, binding,
                         maxResponseBytes, maxResponseTokens);
                     if (page.Error is not null) return page.Error;
                     var response = NavigationToolSupport.Success(new { result.TargetSymbolName, result.TargetKind, References = page.Items,
                         result.TotalCount, ReturnedCount = page.Items.Length, result.RequestedDepth, result.EffectiveDepth,
                         result.VisitedSymbolCount, result.IsTruncatedByNodeLimit, result.IsDepthClamped, result.EffectiveNodeLimit,
-                        ResultCursor = page.NextCursor }, result.IsTruncatedByNodeLimit || result.IsDepthClamped,
+                        result.Summary, ResultCursor = page.NextCursor }, result.IsTruncatedByNodeLimit || result.IsDepthClamped,
                         result.IsTruncatedByNodeLimit
                             ? "Narrow the source scope or choose a supported traversal depth; the symbol-visit budget is fixed."
                             : result.IsDepthClamped ? "Choose a supported traversal depth up to three and repeat the query." : null);
@@ -192,17 +193,17 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 if (symbol.Error is not null) return Fail(symbol.Error.Value, "$.symbolIdentifier");
                 var result = await FindReferencesResolver.FindReferencesAsync(symbol.Symbol!, solution, int.MaxValue, depth, ct,
                     scope: scope, includeGenerated: includeGenerated,
-                    handoffFormatter: symbolValue => source.FormatHandoff(symbolValue, solution)).ConfigureAwait(false);
+                    handoffFormatter: symbolValue => source.FormatHandoff(symbolValue, solution), includeSummary: includeSummary).ConfigureAwait(false);
                 var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
                     "find_references.references", symbolIdentifier.Trim(), depth.ToString(System.Globalization.CultureInfo.InvariantCulture), scope.ToString(), includeGenerated.ToString(),
-                    maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture), includeSummary.ToString());
                 var page = NavigationToolSupport.PageResults(result.References, maxResults, coreCursor, binding,
                     maxResponseBytes, maxResponseTokens);
                 if (page.Error is not null) return page.Error;
                 var response = NavigationToolSupport.Success(new { result.TargetSymbolName, result.TargetKind, References = page.Items,
                     result.TotalCount, ReturnedCount = page.Items.Length, result.RequestedDepth, result.EffectiveDepth,
                     result.VisitedSymbolCount, result.IsTruncatedByNodeLimit, result.IsDepthClamped, result.EffectiveNodeLimit,
-                    ResultCursor = page.NextCursor }, result.IsTruncatedByNodeLimit || result.IsDepthClamped,
+                    result.Summary, ResultCursor = page.NextCursor }, result.IsTruncatedByNodeLimit || result.IsDepthClamped,
                     result.IsTruncatedByNodeLimit
                         ? "Narrow the source scope or choose a supported traversal depth; the symbol-visit budget is fixed."
                         : result.IsDepthClamped ? "Choose a supported traversal depth up to three and repeat the query." : null);
@@ -363,116 +364,6 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         CallToolResult Invalid(string field, string hint) => McpToolResults.InvalidArgument("The requested value is not supported.", "$." + field, hint,
             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         CallToolResult Fail(ResultError error, string field) => NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, field);
-    }
-
-    [McpServerTool(Name = "get_impact", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [System.ComponentModel.Description("Summarize callers affected by a source or assembly symbol.")]
-    public async Task<CallToolResult> GetImpact([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [Required, System.ComponentModel.Description("Type, member, documentation ID, or stable src:/asm: reference whose callers and effects should be summarized.")] string symbolIdentifier,
-        [Range(1, 3), System.ComponentModel.Description("Maximum impact traversal depth.")] int depth = 1, [Range(1, int.MaxValue), System.ComponentModel.Description("Page size for impact call sites.")] int maxResults = 50, [System.ComponentModel.Description("Traverse into referenced assemblies when supported.")] bool includeReferences = false,
-        [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
-        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
-        [System.ComponentModel.Description("Opaque cursor for the next page of impact call sites.")] string? resultCursor = null, CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(symbolIdentifier)) return Invalid("symbolIdentifier", "Provide a non-empty source or assembly symbol identifier.");
-        return await NavigationToolSupport.RouteAsync(runtime, "get_impact", targetPath,
-            new { symbolIdentifier, depth, includeReferences, maxResults },
-            operationToken, continuationToken, maxResponseBytes, maxResponseTokens,
-            async (target, coreCursor, ct) =>
-            {
-                if (target.TargetType == AnalysisTargetType.Assembly)
-                {
-                    if (includeReferences)
-                    {
-                        var closureImpact = await AssemblyImpactClosureScanner.ScanAsync(target.CanonicalPath,
-                            symbolIdentifier, depth, int.MaxValue, ct).ConfigureAwait(false);
-                        if (closureImpact.Error is { } error)
-                            return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, closureImpact.ErrorField);
-                        var closureIdentity = closureImpact.AnalysisIdentity!;
-                        var closureBinding = BoundResultCursor.CreateBinding(target.CanonicalPath,
-                            closureIdentity.ContentHash, "get_impact.callSites", symbolIdentifier.Trim(),
-                            depth.ToString(System.Globalization.CultureInfo.InvariantCulture), "includeReferences=true",
-                            maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                        var closurePage = NavigationToolSupport.PageResults(closureImpact.Impact!.CallSites, maxResults,
-                            coreCursor, closureBinding, maxResponseBytes, maxResponseTokens);
-                        if (closurePage.Error is not null) return closurePage.Error;
-                        var impactPayload = closureImpact.Impact;
-                        var closureNextAction = impactPayload.IsTruncatedByNodeLimit
-                            ? "Narrow the reference traversal scope; the symbol-visit budget is fixed."
-                            : impactPayload.IsDepthClamped ? "Choose a supported impact depth up to three and repeat the query." : closureImpact.NextAction;
-                        var closureResponse = NavigationToolSupport.Success(new { impactPayload.TargetSymbol,
-                            impactPayload.TargetKind, impactPayload.DirectCallersCount, impactPayload.TransitiveImpactCount,
-                            impactPayload.MaxDepthReached, CallSites = closurePage.Items, impactPayload.AffectedProjects,
-                            impactPayload.AffectedFiles, impactPayload.IsTruncatedByNodeLimit, impactPayload.IsDepthClamped,
-                            impactPayload.RequestedDepth, impactPayload.EffectiveDepth, impactPayload.VisitedSymbolCount,
-                            impactPayload.EffectiveNodeLimit, impactPayload.TransitiveCallSitesCount,
-                            ResultCursor = closurePage.NextCursor }, closureImpact.IsTruncated, closureNextAction);
-                        return NavigationToolSupport.WithAssemblyMetadata(closureResponse, closureImpact.AnalysisIdentity!,
-                            $"impact(symbol={closureImpact.Impact!.TargetSymbol}, requestedDepth={impactPayload.RequestedDepth}, effectiveDepth={impactPayload.EffectiveDepth}, visitedSymbols={impactPayload.VisitedSymbolCount}, nodeLimit={impactPayload.EffectiveNodeLimit}, pageSize={maxResults}, includeReferences=true)",
-                            (closureImpact.OmissionReasons ?? []).Where(reason => reason != "maxResults").ToArray(), closurePage.NextCursor is not null);
-                    }
-                    var access = await ResolveAssemblySymbolAsync(target, symbolIdentifier, ct).ConfigureAwait(false);
-                    if (!access.IsSuccess) return NavigationToolSupport.Failure(access.Error!.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
-                    await using var lease = access.Value!;
-                    if (!string.Equals(Path.GetFullPath(lease.Origin.CanonicalPath), target.CanonicalPath, StringComparison.OrdinalIgnoreCase))
-                        return Invalid("symbolIdentifier", "Use the stable reference with this exact targetPath.");
-                    var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(lease.Symbol, lease.Solution, depth, int.MaxValue, ct,
-                        handoffFormatter: CreateAssemblyHandoffFormatter(access.Value!)).ConfigureAwait(false);
-                    var identity = AnalysisSymbolIdentity.ForAssembly(lease.Origin.CanonicalPath, lease.Origin.ContentHash,
-                        lease.Generation, lease.ReferenceSnapshotHash);
-                    var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, identity.ContentHash + "|" + lease.ReferenceSnapshotHash,
-                        "get_impact.callSites", symbolIdentifier.Trim(), depth.ToString(System.Globalization.CultureInfo.InvariantCulture), includeReferences.ToString(),
-                        maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                    var page = NavigationToolSupport.PageResults(impact.CallSites, maxResults, coreCursor, binding,
-                        maxResponseBytes, maxResponseTokens);
-                    if (page.Error is not null) return page.Error;
-                    var incomplete = impact.IsTruncatedByNodeLimit || impact.IsDepthClamped;
-                    var nextAction = impact.IsTruncatedByNodeLimit
-                        ? "Narrow the source scope or choose a supported impact depth; the symbol-visit budget is fixed."
-                        : impact.IsDepthClamped ? "Choose a supported impact depth up to three and repeat the query." : null;
-                    var response = NavigationToolSupport.Success(new { impact.TargetSymbol, impact.TargetKind, impact.DirectCallersCount,
-                        impact.TransitiveImpactCount, impact.MaxDepthReached, CallSites = page.Items,
-                        impact.AffectedProjects, impact.AffectedFiles, impact.RequestedDepth, impact.EffectiveDepth,
-                        impact.VisitedSymbolCount, impact.IsTruncatedByNodeLimit, impact.IsDepthClamped,
-                        impact.EffectiveNodeLimit, impact.TransitiveCallSitesCount, ResultCursor = page.NextCursor }, incomplete,
-                        nextAction);
-                    var omissions = new List<string>();
-                    if (impact.IsTruncatedByNodeLimit) omissions.Add("nodeLimit");
-                    if (impact.IsDepthClamped) omissions.Add("depthLimit");
-                    return NavigationToolSupport.WithAssemblyMetadata(response, identity,
-                        $"impact(symbol={lease.Symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)}, requestedDepth={impact.RequestedDepth}, effectiveDepth={impact.EffectiveDepth}, visitedSymbols={impact.VisitedSymbolCount}, nodeLimit={impact.EffectiveNodeLimit}, pageSize={maxResults}, includeReferences=false)", omissions, page.NextCursor is not null);
-                }
-                if (ValidateSourceReferenceInput(symbolIdentifier, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier") is { } referenceRouteError)
-                    return referenceRouteError;
-                return await WithSource(target, async (solution, source) =>
-                {
-                var symbol = await Resolve(solution, symbolIdentifier, source.IdentityRequest, ct).ConfigureAwait(false);
-                    if (symbol.Error is not null) return NavigationToolSupport.Failure(symbol.Error.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
-                    var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(symbol.Symbol!, solution, depth, int.MaxValue, ct).ConfigureAwait(false);
-                    var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
-                        "get_impact.callSites", symbolIdentifier.Trim(), depth.ToString(System.Globalization.CultureInfo.InvariantCulture), includeReferences.ToString(),
-                        maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                    var page = NavigationToolSupport.PageResults(impact.CallSites, maxResults, coreCursor, binding,
-                        maxResponseBytes, maxResponseTokens);
-                    if (page.Error is not null) return page.Error;
-                    var response = NavigationToolSupport.Success(new { impact.TargetSymbol, impact.TargetKind, impact.DirectCallersCount,
-                        impact.TransitiveImpactCount, impact.MaxDepthReached, CallSites = page.Items,
-                        impact.AffectedProjects, impact.AffectedFiles, impact.RequestedDepth, impact.EffectiveDepth,
-                        impact.VisitedSymbolCount, impact.IsTruncatedByNodeLimit, impact.IsDepthClamped,
-                        impact.EffectiveNodeLimit, impact.TransitiveCallSitesCount, ResultCursor = page.NextCursor },
-                        impact.IsTruncatedByNodeLimit || impact.IsDepthClamped,
-                        impact.IsTruncatedByNodeLimit
-                            ? "Narrow the source scope or choose a supported impact depth; the symbol-visit budget is fixed."
-                            : impact.IsDepthClamped ? "Choose a supported impact depth up to three and repeat the query." : null);
-                    var omissions = new List<string>();
-                    if (impact.IsTruncatedByNodeLimit) omissions.Add("nodeLimit");
-                    if (impact.IsDepthClamped) omissions.Add("depthLimit");
-                    return source.WithMetadata(response,
-                        $"impact(symbol={symbolIdentifier.Trim()}, requestedDepth={impact.RequestedDepth}, effectiveDepth={impact.EffectiveDepth}, visitedSymbols={impact.VisitedSymbolCount}, nodeLimit={impact.EffectiveNodeLimit}, pageSize={maxResults})", omissions.ToArray(), page.NextCursor is not null);
-                }, maxResponseBytes, maxResponseTokens, ct);
-            }, null, cancellationToken, resultCursor, "get_impact.callSites");
-
-        CallToolResult Invalid(string field, string hint) => McpToolResults.InvalidArgument("The requested value is not supported.", "$." + field, hint,
-            maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
     }
 
     [McpServerTool(Name = "dependency_graph", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]

@@ -27,7 +27,7 @@ The binding product references are these current-state pages and local Navigator
 - [Get Class Structure](navigation/get-class-structure.md): Declared members, visibility, records and interfaces, filters, and truncation.
 - [Call Tree Core Engine](navigation/get-call-tree.md): Bounded Roslyn call graph traversal and ASCII/Mermaid rendering.
 - [Find References and Implementations Core Engines](navigation/find-references-and-implementations.md): Solution-wide reference locations, implementation and override discovery, and result limits.
-- [Symbol Impact Core Engine](navigation/impact-analysis.md): Transitive caller traversal, affected project summaries, limits, and completeness.
+- [Reference summary](navigation/reference-summary.md): Discovered site counts, owner-qualified project/file identities, paging, and partial analysis.
 - [Get Type Hierarchy Core Engine](navigation/get-type-hierarchy.md): Base chains, interfaces, transitive cross-project subtypes, and subtype limits.
 - [Dependency Graph Core Scanner](navigation/dependency-graph.md): Project and source type dependencies, project-qualified edges, paging, scan bounds, and recoverable document errors.
 - [Resolve Type Origin](navigation/resolve-type-origin.md): Source and metadata type origin results, exact source project ownership, and assembly-reference lookup.

@@ -14,10 +14,6 @@ internal sealed record AssemblyReferencesClosureScanResult(
     string? ErrorField,
     bool IsTruncated,
     string? NextAction,
-    int DirectCount = 0,
-    int MaxDepthReached = 0,
-    IReadOnlyList<string>? AffectedProjects = null,
-    IReadOnlyList<string>? AffectedFiles = null,
     AnalysisSymbolIdentity? AnalysisIdentity = null,
     IReadOnlyList<string>? OmissionReasons = null);
 
@@ -33,7 +29,8 @@ internal static class AssemblyReferencesClosureScanner
         SymbolScopeType scopeType,
         bool includeGenerated,
         CancellationToken ct,
-        bool externalizeHandoffs = true)
+        bool externalizeHandoffs = true,
+        bool includeSummary = false)
     {
         var opened = await AssemblyReferenceClosureSession.OpenAsync(targetPath, identifier, ct).ConfigureAwait(false);
         if (opened.Error is { } error) return Failure(error, opened.ErrorField!);
@@ -54,8 +51,6 @@ internal static class AssemblyReferencesClosureScanner
         var depthClamped = false;
         var effectiveNodeLimit = FindReferencesResolver.DefaultMaxVisitedSymbols;
         var hiddenLocalResults = 0;
-        var directCount = 0;
-        var maxDepthReached = 0;
         while (queue.TryDequeue(out var frontier))
         {
             ct.ThrowIfCancellationRequested();
@@ -91,8 +86,6 @@ internal static class AssemblyReferencesClosureScanner
                 traversalLimited |= scan.IsTruncated || scan.IsTruncatedByNodeLimit || scan.IsDepthClamped;
                 hiddenLocalResults += Math.Max(0, scan.TotalCount - scan.References.Count);
                 var nextDepth = frontier.Depth + 1;
-                if (scan.TotalCount > 0) maxDepthReached = Math.Max(maxDepthReached, nextDepth);
-                if (nextDepth == 1) directCount += scan.TotalCount;
                 foreach (var reference in scan.References)
                 {
                     var entry = reference with { Depth = nextDepth, OwnerTargetPath = owner.TargetPath };
@@ -175,12 +168,8 @@ internal static class AssemblyReferencesClosureScanner
         if (traversalLimited) omissions.Add("traversalLimit");
         if (ownerLimit) omissions.Add("referenceOwnerLimit");
         if (unresolved) omissions.Add("unresolvedReferences");
-        return new(result, null, null, truncated, nextAction, directCount,
-            maxDepthReached,
-            ordered.Select(entry => entry.ProjectName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
-            ordered.Select(entry => entry.FilePath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
-            session.RootAnalysisIdentity,
-            omissions);
+        if (includeSummary) result = result with { Summary = ReferenceSummary.Create(ordered, omissions.Where(reason => reason != "maxResults").ToArray()) };
+        return new(result, null, null, truncated, nextAction, session.RootAnalysisIdentity, omissions);
     }
 
     private static AssemblyReferencesClosureScanResult Failure(ResultError error, string field) => new(null, error, field, false, null);

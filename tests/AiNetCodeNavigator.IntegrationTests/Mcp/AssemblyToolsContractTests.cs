@@ -278,7 +278,7 @@ public sealed class AssemblyToolsContractTests
     }
 
     [Fact]
-    public async Task AssemblyImpact_ResultCursorReconstructsAllCallSitesAcrossPages()
+    public async Task AssemblyReferencesSummary_ResultCursorReconstructsAllSitesAcrossPages()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
@@ -295,12 +295,12 @@ public sealed class AssemblyToolsContractTests
             {{callers}}
             {{subtypes}}
             """);
-        var broadImpact = await relationships.GetImpact(assemblyPath, "M:AssemblyImpactPages.Target.Read",
-            maxResults: 100, maxResponseBytes: 32768, maxResponseTokens: 4096);
+        var broadImpact = await relationships.FindReferences(assemblyPath, "M:AssemblyImpactPages.Target.Read",
+            maxResults: 100, maxResponseBytes: 32768, maxResponseTokens: 4096, includeSummary: true);
         Assert.False(broadImpact.IsError ?? false, TextOf(broadImpact));
         using var broadImpactDocument = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(broadImpact)));
-        var expectedImpact = broadImpactDocument.RootElement.GetProperty("callSites").EnumerateArray()
-            .Select(item => $"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("callingMember").GetString()}")
+        var expectedImpact = broadImpactDocument.RootElement.GetProperty("references").EnumerateArray()
+            .Select(item => $"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("enclosingSymbolName").GetString()}")
             .ToArray();
 
         var seen = new List<string>();
@@ -310,15 +310,16 @@ public sealed class AssemblyToolsContractTests
         int? total = null;
         do
         {
-            var response = await relationships.GetImpact(assemblyPath, "M:AssemblyImpactPages.Target.Read",
-                maxResults: 2, resultCursor: cursor, maxResponseBytes: 32768, maxResponseTokens: 4096);
+            var response = await relationships.FindReferences(assemblyPath, "M:AssemblyImpactPages.Target.Read",
+                maxResults: 2, resultCursor: cursor, maxResponseBytes: 32768, maxResponseTokens: 4096, includeSummary: true);
             Assert.False(response.IsError ?? false, TextOf(response));
             await FollowAssemblyHandoffAsync(symbols, assemblyPath, response);
             using var document = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(response)));
             var root = document.RootElement;
-            total ??= root.GetProperty("transitiveImpactCount").GetInt32();
-            foreach (var item in root.GetProperty("callSites").EnumerateArray())
-                seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("callingMember").GetString()}");
+            Assert.Equal(broadImpactDocument.RootElement.GetProperty("summary").GetRawText(), root.GetProperty("summary").GetRawText());
+            total ??= root.GetProperty("summary").GetProperty("totalReferenceSiteCount").GetInt32();
+            foreach (var item in root.GetProperty("references").EnumerateArray())
+                seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("enclosingSymbolName").GetString()}");
             cursor = root.TryGetProperty("resultCursor", out var cursorValue)
                 && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
             firstImpactCursor ??= cursor;
@@ -332,8 +333,8 @@ public sealed class AssemblyToolsContractTests
         Assert.Equal(8, seen.Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(expectedImpact, seen);
         Assert.NotNull(firstImpactCursor);
-        AssertErrorWithinBudget(await relationships.GetImpact(assemblyPath, "M:AssemblyImpactPages.Target.Read",
-            maxResults: 3, resultCursor: firstImpactCursor, maxResponseBytes: 32768, maxResponseTokens: 4096),
+        AssertErrorWithinBudget(await relationships.FindReferences(assemblyPath, "M:AssemblyImpactPages.Target.Read",
+            maxResults: 3, resultCursor: firstImpactCursor, maxResponseBytes: 32768, maxResponseTokens: 4096, includeSummary: true),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 32768, 4096);
 
         seen.Clear();
@@ -422,14 +423,14 @@ public sealed class AssemblyToolsContractTests
         AssertErrorWithinBudget(await relationships.GetTypeHierarchy(assemblyPath, "T:AssemblyImpactPages.Target",
             maxResults: 3, resultCursor: firstHierarchyCursor, maxResponseBytes: 32768, maxResponseTokens: 4096),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 32768, 4096);
-        AssertErrorWithinBudget(await relationships.GetImpact(assemblyPath, "M:AssemblyImpactPages.Target.Read",
-            maxResults: 2, resultCursor: "malformed-cursor", maxResponseBytes: 32768, maxResponseTokens: 4096),
+        AssertErrorWithinBudget(await relationships.FindReferences(assemblyPath, "M:AssemblyImpactPages.Target.Read",
+            maxResults: 2, resultCursor: "malformed-cursor", maxResponseBytes: 32768, maxResponseTokens: 4096, includeSummary: true),
             "RESULT_CURSOR_EXPIRED", 32768, 4096);
         AssertErrorWithinBudget(await relationships.GetTypeHierarchy(assemblyPath, "T:AssemblyImpactPages.Target",
             maxResults: 2, resultCursor: "malformed-cursor", maxResponseBytes: 32768, maxResponseTokens: 4096),
             "RESULT_CURSOR_EXPIRED", 32768, 4096);
-        AssertErrorWithinBudget(await relationships.GetImpact(referenceCopyPath, "M:AssemblyImpactPages.Target.Read",
-            maxResults: 2, resultCursor: firstImpactCursor, maxResponseBytes: 32768, maxResponseTokens: 4096),
+        AssertErrorWithinBudget(await relationships.FindReferences(referenceCopyPath, "M:AssemblyImpactPages.Target.Read",
+            maxResults: 2, resultCursor: firstImpactCursor, maxResponseBytes: 32768, maxResponseTokens: 4096, includeSummary: true),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 32768, 4096);
         AssertErrorWithinBudget(await relationships.GetTypeHierarchy(referenceCopyPath, "T:AssemblyImpactPages.Target",
             maxResults: 2, resultCursor: firstHierarchyCursor, maxResponseBytes: 32768, maxResponseTokens: 4096),
@@ -441,8 +442,8 @@ public sealed class AssemblyToolsContractTests
             public sealed class ReplacementSubtype : Target { }
             """);
         File.Copy(changedAssemblyPath, assemblyPath, overwrite: true);
-        AssertErrorWithinBudget(await relationships.GetImpact(assemblyPath, "M:AssemblyImpactPages.Target.Read",
-            maxResults: 2, resultCursor: firstImpactCursor, maxResponseBytes: 32768, maxResponseTokens: 4096),
+        AssertErrorWithinBudget(await relationships.FindReferences(assemblyPath, "M:AssemblyImpactPages.Target.Read",
+            maxResults: 2, resultCursor: firstImpactCursor, maxResponseBytes: 32768, maxResponseTokens: 4096, includeSummary: true),
             "STALE_SNAPSHOT", 32768, 4096);
         AssertErrorWithinBudget(await relationships.GetTypeHierarchy(assemblyPath, "T:AssemblyImpactPages.Target",
             maxResults: 2, resultCursor: firstHierarchyCursor, maxResponseBytes: 32768, maxResponseTokens: 4096),
@@ -563,8 +564,8 @@ public sealed class AssemblyToolsContractTests
             direction: "outgoing", depth: 3, maxResponseBytes: 32768);
         var selfReferences = await relationships.FindReferences(assemblyPath, ReadAnyHandoff(TextOf(self)),
             maxResponseBytes: 32768);
-        var selfImpact = await relationships.GetImpact(assemblyPath, ReadAnyHandoff(TextOf(self)),
-            maxResponseBytes: 32768);
+        var selfImpact = await relationships.FindReferences(assemblyPath, ReadAnyHandoff(TextOf(self)),
+            maxResponseBytes: 32768, includeSummary: true);
 
         var twiceText = TextOf(twiceTree);
         var selfText = TextOf(selfTree);
@@ -1346,7 +1347,7 @@ public sealed class AssemblyToolsContractTests
     }
 
     [Fact]
-    public async Task AssemblyNavigationHandlersReturnOwnerResultsAcrossAllSeventeenRoutes()
+    public async Task AssemblyNavigationHandlersReturnOwnerResultsAcrossAllSixteenRoutes()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
@@ -1461,15 +1462,15 @@ public sealed class AssemblyToolsContractTests
         var propertyOverrides = await relationships.FindImplementations(assemblyPath, "P:AssemblyRouteProbe.BaseProbe.Label", maxResponseBytes: 32768);
         AssertOwnerResult(propertyOverrides, "Label");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, propertyOverrides);
-        var impact = await relationships.GetImpact(assemblyPath, "M:AssemblyRouteProbe.Probe.Read", maxResponseBytes: 32768);
+        var impact = await relationships.FindReferences(assemblyPath, "M:AssemblyRouteProbe.Probe.Read", maxResponseBytes: 32768, includeSummary: true);
         AssertOwnerResult(impact, "Entry");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, impact);
-        var impactOpaque = await relationships.GetImpact(assemblyPath, readHandle, maxResponseBytes: 32768);
-        var impactQualified = await relationships.GetImpact(assemblyPath, "AssemblyRouteProbe.Probe.Read", includeReferences: false, maxResponseBytes: 32768);
-        var impactPosition = await relationships.GetImpact(assemblyPath, "Probe.cs:" + ReadPosition(TextOf(foundRead)), maxResponseBytes: 32768);
-        Assert.Equal(TextOf(impact), TextOf(impactOpaque));
-        Assert.Equal(TextOf(impact), TextOf(impactQualified));
-        Assert.Equal(TextOf(impact), TextOf(impactPosition));
+        var impactOpaque = await relationships.FindReferences(assemblyPath, readHandle, maxResponseBytes: 32768, includeSummary: true);
+        var impactQualified = await relationships.FindReferences(assemblyPath, "AssemblyRouteProbe.Probe.Read", includeReferences: false, maxResponseBytes: 32768, includeSummary: true);
+        var impactPosition = await relationships.FindReferences(assemblyPath, "Probe.cs:" + ReadPosition(TextOf(foundRead)), maxResponseBytes: 32768, includeSummary: true);
+        Assert.Equal(BodyOf(TextOf(impact)), BodyOf(TextOf(impactOpaque)));
+        Assert.Equal(BodyOf(TextOf(impact)), BodyOf(TextOf(impactQualified)));
+        Assert.Equal(BodyOf(TextOf(impact)), BodyOf(TextOf(impactPosition)));
         var dependency = await relationships.DependencyGraph(assemblyPath, symbolIdentifier: typeHandle, maxResponseBytes: 32768);
         AssertOwnerResult(dependency, "Probe");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, dependency);
@@ -1525,7 +1526,7 @@ public sealed class AssemblyToolsContractTests
             (bytes, tokens) => relationships.FindReferences(assemblyPath, "M:AssemblyRouteProbe.Probe.Read", maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => relationships.GetTypeHierarchy(assemblyPath, typeHandle, maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => relationships.FindImplementations(assemblyPath, interfaceHandle, maxResponseBytes: bytes, maxResponseTokens: tokens),
-            (bytes, tokens) => relationships.GetImpact(assemblyPath, "M:AssemblyRouteProbe.Probe.Read", maxResponseBytes: bytes, maxResponseTokens: tokens),
+            (bytes, tokens) => relationships.FindReferences(assemblyPath, "M:AssemblyRouteProbe.Probe.Read", maxResponseBytes: bytes, maxResponseTokens: tokens, includeSummary: true),
             (bytes, tokens) => relationships.DependencyGraph(assemblyPath, symbolIdentifier: typeHandle, maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => relationships.ResolveTypeOrigin(assemblyPath, typeName: "AssemblyRouteProbe.Probe", maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => relationships.GetContext(assemblyPath, "AssemblyRouteProbe.Probe", ["body"], maxResponseBytes: bytes, maxResponseTokens: tokens),
@@ -2045,19 +2046,27 @@ public sealed class AssemblyToolsContractTests
         string? impactCursor = null;
         string? firstImpactCursor = null;
         var impactPages = 0;
+        string? firstSummary = null;
         do
         {
             var page = await ReadAssemblyOuterPagesAsync((operation, domainCursor, continuation, bytes, tokens) =>
-                relationships.GetImpact(root, closureDeclarationId,
+                relationships.FindReferences(root, closureDeclarationId,
                     includeReferences: true, depth: 3, maxResults: 1, resultCursor: domainCursor,
                     maxResponseBytes: bytes, maxResponseTokens: tokens,
-                    operationToken: operation, continuationToken: continuation),
+                    operationToken: operation, continuationToken: continuation, includeSummary: true),
                 impactCursor, bytes: 65536, tokens: 4096);
             AssertOwnerPage(page.FirstPage);
             using var document = ParseJsonWithDiagnostics(BodyOf(page.Text),
                 $"Closure impact domain page (domainCursor={impactCursor ?? "<first>"}, outerPages={page.Pages})");
             var pageRoot = document.RootElement;
-            foreach (var item in pageRoot.GetProperty("callSites").EnumerateArray())
+            var summary = pageRoot.GetProperty("summary");
+            firstSummary ??= summary.GetRawText();
+            Assert.Equal(firstSummary, summary.GetRawText());
+            Assert.Equal(2, summary.GetProperty("totalReferenceSiteCount").GetInt32());
+            Assert.Equal(2, summary.GetProperty("projectCount").GetInt32());
+            Assert.Equal(2, summary.GetProperty("fileCount").GetInt32());
+            Assert.Equal(2, summary.GetProperty("projects").EnumerateArray().Select(project => project.GetProperty("ownerTargetPath").GetString()).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+            foreach (var item in pageRoot.GetProperty("references").EnumerateArray())
                 pagedImpact.Add($"{item.GetProperty("ownerTargetPath").GetString()}:{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}");
             impactCursor = pageRoot.TryGetProperty("resultCursor", out var cursorValue)
                 && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
@@ -2069,15 +2078,15 @@ public sealed class AssemblyToolsContractTests
         Assert.Equal(2, pagedImpact.Count);
         Assert.Equal(2, pagedImpact.Distinct(StringComparer.OrdinalIgnoreCase).Count());
         Assert.NotNull(firstImpactCursor);
-        AssertErrorWithinBudget(await relationships.GetImpact(root, closureDeclarationId, includeReferences: true, depth: 3,
-            maxResults: 2, resultCursor: firstImpactCursor, maxResponseBytes: 65536, maxResponseTokens: 4096),
+        AssertErrorWithinBudget(await relationships.FindReferences(root, closureDeclarationId, includeReferences: true, depth: 3,
+            maxResults: 2, resultCursor: firstImpactCursor, maxResponseBytes: 65536, maxResponseTokens: 4096, includeSummary: true),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 4096);
         Assert.Contains("Forward", referencesText, StringComparison.Ordinal);
 
         AssertErrorWithinBudget(await relationships.GetContext(root, leafHandle, ["body", "callers"],
             includeReferences: true, maxResults: 20, maxBodyLines: 1000, maxResponseBytes: 65536, maxResponseTokens: 12000), "TARGET_MISMATCH", 65536, 12000);
-        AssertErrorWithinBudget(await relationships.GetImpact(root, leafHandle, includeReferences: true, depth: 3,
-            maxResponseBytes: 65536, maxResponseTokens: 4096), "TARGET_MISMATCH", 65536, 4096);
+        AssertErrorWithinBudget(await relationships.FindReferences(root, leafHandle, includeReferences: true, depth: 3,
+            maxResponseBytes: 65536, maxResponseTokens: 4096, includeSummary: true), "TARGET_MISMATCH", 65536, 4096);
         var context = await ReadAssemblyOuterPagesAsync((operation, _, continuation, bytes, tokens) =>
             relationships.GetContext(root, closureDeclarationId, ["body", "callers"], includeReferences: true,
                 maxResults: 20, maxBodyLines: 1000, maxResponseBytes: bytes, maxResponseTokens: tokens,

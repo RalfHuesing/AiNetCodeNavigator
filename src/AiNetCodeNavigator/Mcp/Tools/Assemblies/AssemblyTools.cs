@@ -20,22 +20,6 @@ namespace AiNetCodeNavigator.Mcp.Tools.Assemblies;
 public sealed class AssemblyTools(NavigatorHostRuntime runtime)
 {
 
-    private static string FormatImpact(SymbolImpactPayload impact)
-    {
-        var output = new StringBuilder()
-            .AppendLine("## Impact")
-            .AppendLine($"- Direct callers: {impact.DirectCallersCount}")
-            .AppendLine($"- Transitive call sites: {impact.TransitiveImpactCount}")
-            .AppendLine($"- Visited symbols: {impact.VisitedSymbolCount}");
-        foreach (var site in impact.CallSites)
-        {
-            var handoff = site.CallingMemberHandoffId is null ? string.Empty : $" [handoff: {site.CallingMemberHandoffId}]";
-            var owner = string.IsNullOrWhiteSpace(site.OwnerTargetPath) ? string.Empty : $" (targetPath: {site.OwnerTargetPath})";
-            output.AppendLine($"- {site.FilePath}:{site.Line}:{site.Column} [{site.EvidenceKind}]: {site.CallingMember} (depth {site.Depth}){handoff}{owner}");
-        }
-        return output.ToString().TrimEnd();
-    }
-
     private static string FormatReferences(FindReferencesResult references)
     {
         var output = new StringBuilder()

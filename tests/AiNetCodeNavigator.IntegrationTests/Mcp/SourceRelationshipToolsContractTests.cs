@@ -287,18 +287,22 @@ public sealed class SourceRelationshipToolsContractTests
     }
 
     [Fact]
-    public async Task Impact_ResultCursorReconstructsAllCallSitesAcrossPages()
+    public async Task ReferencesSummary_ResultCursorReconstructsAllSitesAcrossPages()
     {
         using var fixture = TestTempDirectory.Create("ainet-source-impact-pages-");
         var (target, project) = await CreateSourceProjectAsync(fixture);
         await using var testHost = InMemorySourceTestHost.Create(target, [project]);
         var relationships = new RelationshipTools(testHost.Runtime);
-        var broadResponse = await relationships.GetImpact(target, "M:RelationshipProbe.Target.Read",
-            maxResults: 100, maxResponseBytes: 65536, maxResponseTokens: 4096);
+        var broadResponse = await relationships.FindReferences(target, "M:RelationshipProbe.Target.Read",
+            maxResults: 100, maxResponseBytes: 65536, maxResponseTokens: 4096, includeSummary: true);
         AssertSuccessWithinBudget(broadResponse, 65536, 4096);
-        using var broadDocument = System.Text.Json.JsonDocument.Parse(JsonBody(TextOf(broadResponse)));
-        var expected = broadDocument.RootElement.GetProperty("callSites").EnumerateArray()
-            .Select(item => $"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("callingMember").GetString()}")
+        var broadPages = await IntegrationMcpAssertions.ReadOuterResponsePagesAsync(
+            (bytes, tokens, continuation) => relationships.FindReferences(target, "M:RelationshipProbe.Target.Read",
+                maxResults: 100, maxResponseBytes: bytes, maxResponseTokens: tokens,
+                continuationToken: continuation, includeSummary: true), 65536, 4096);
+        using var broadDocument = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(broadPages.Text));
+        var expected = broadDocument.RootElement.GetProperty("references").EnumerateArray()
+            .Select(item => $"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("enclosingSymbolName").GetString()}")
             .ToArray();
 
         var seen = new List<string>();
@@ -308,14 +312,15 @@ public sealed class SourceRelationshipToolsContractTests
         int? total = null;
         do
         {
-            var response = await relationships.GetImpact(target, "M:RelationshipProbe.Target.Read",
-                maxResults: 4, resultCursor: cursor, maxResponseBytes: 65536, maxResponseTokens: 4096);
+            var response = await relationships.FindReferences(target, "M:RelationshipProbe.Target.Read",
+                maxResults: 4, resultCursor: cursor, maxResponseBytes: 65536, maxResponseTokens: 4096, includeSummary: true);
             AssertSuccessWithinBudget(response, 65536, 4096);
             using var document = System.Text.Json.JsonDocument.Parse(JsonBody(TextOf(response)));
             var root = document.RootElement;
-            total ??= root.GetProperty("transitiveImpactCount").GetInt32();
-            foreach (var item in root.GetProperty("callSites").EnumerateArray())
-                seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("callingMember").GetString()}");
+            Assert.Equal(broadDocument.RootElement.GetProperty("summary").GetRawText(), root.GetProperty("summary").GetRawText());
+            total ??= root.GetProperty("summary").GetProperty("totalReferenceSiteCount").GetInt32();
+            foreach (var item in root.GetProperty("references").EnumerateArray())
+                seen.Add($"{item.GetProperty("filePath").GetString()}:{item.GetProperty("line").GetInt32()}:{item.GetProperty("enclosingSymbolName").GetString()}");
             cursor = root.TryGetProperty("resultCursor", out var cursorValue)
                 && cursorValue.ValueKind == System.Text.Json.JsonValueKind.String ? cursorValue.GetString() : null;
             firstCursor ??= cursor;
@@ -324,13 +329,16 @@ public sealed class SourceRelationshipToolsContractTests
         } while (cursor is not null);
 
         Assert.True(total > 4);
-        Assert.Equal(total, broadDocument.RootElement.GetProperty("transitiveImpactCount").GetInt32());
+        Assert.Equal(total, broadDocument.RootElement.GetProperty("summary").GetProperty("totalReferenceSiteCount").GetInt32());
         Assert.Equal(total, seen.Count);
         Assert.Equal(seen.Count, seen.Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(expected, seen);
         Assert.NotNull(firstCursor);
-        AssertErrorWithinBudget(await relationships.GetImpact(target, "M:RelationshipProbe.Target.Read",
-            maxResults: 5, resultCursor: firstCursor, maxResponseBytes: 65536, maxResponseTokens: 4096),
+        AssertErrorWithinBudget(await relationships.FindReferences(target, "M:RelationshipProbe.Target.Read",
+            maxResults: 4, resultCursor: firstCursor, maxResponseBytes: 65536, maxResponseTokens: 4096),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 4096);
+        AssertErrorWithinBudget(await relationships.FindReferences(target, "M:RelationshipProbe.Target.Read",
+            maxResults: 5, resultCursor: firstCursor, maxResponseBytes: 65536, maxResponseTokens: 4096, includeSummary: true),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 4096);
     }
 

@@ -24,7 +24,7 @@ Use AiNetCodeNavigator as the primary tool for C# declarations and static relati
 | Selected symbol context | `get_context`: explicit `sections` from `body`, `members`, `callers`, `tests`. |
 | Calls / other usages | `get_call_tree.direction`: `incoming`, `outgoing`, `both` / `find_references` (start `depth: 1`). |
 | Inheritance / implementations | `get_type_hierarchy` / `find_implementations`. |
-| Caller impact | `get_impact` (start `depth: 1`); symbol input, no Git refs or changed-file lists. |
+| Discovered use totals and owners | `find_references` with `includeSummary: true` (start `depth: 1`); counts reference sites before paging, not runtime consequences. |
 | Dependencies / type owner | `dependency_graph`: exactly one of `filePath`, `symbolIdentifier` / `resolve_type_origin`: exactly one of `symbolIdentifier`, `typeName`. |
 | Compiled API / text / extensions | `inspect_assembly` with filters / `search_assembly` with literal `pattern` (`isRegex: true` for regex) / `find_assembly_extensions` with receiver, name or namespace filters. Assembly targets only. |
 
@@ -55,6 +55,7 @@ Preserve the same tool, target and query for polling/paging, including options a
 | Next known-result page | Use returned `resultCursor`; omit `continuationToken` and the previous `operationToken`. Poll if running. |
 | `RESPONSE_BUDGET_TOO_SMALL` | Retry unchanged request, retaining its active token, with exact offered `minimumResponseBytes` and `minimumResponseTokens` as `maxResponseBytes` / `maxResponseTokens`. If unsupported, narrow a fresh query. |
 
+- `find_references.includeSummary` defaults to false. Its known-site totals and sorted owner-qualified project/file identities repeat unchanged across logical pages; never sum summaries across pages. Partial analysis carries the same omissions.
 - Outer pages deliver one immutable response; result cursors page known results without expanding analysis. For `get_context`, each cursor continues exactly one section; preserve the original full section selection, options, explicit argument presence and page size. Another section needs its own cursor or a fresh query.
 - Separate outer `completeness`, `resultContinuation` and `analysisCompleteness` / `omissions`; inspect section status too. In the text preamble, absent `resultContinuation` means no domain continuation, and absent `omissions` means no analysis omissions. A fully delivered page can represent partial analysis. Without a cursor, follow `nextAction` to narrow or change a supported traversal/scanner limit in a fresh query. Larger response budgets do not expand analysis.
 

@@ -2,7 +2,7 @@
 
 The Core relationship engines operate on Roslyn symbols from the same solution snapshot. A source reference emitted by one engine can be resolved with `SourceSymbolResolver` and the resulting symbol passed to another engine. References retain project identity when different projects contain same-named types or members. See [Shared Symbol Resolution](symbol-resolution.md) for the reference contract.
 
-`FindReferencesResolver` is the shared bounded breadth-first caller traversal for references and impact, with direct sites at depth 1 and each caller expansion advancing one level. Both projections retain reached-from provenance, source column, and the same evidence kind, so self-recursive sites and repeated calls remain aligned. Evidence kinds are `call`, `memberAccess`, `staticVirtualOrInterfaceTarget`, `possibleTarget`, and `unresolved`; these describe source binding evidence and do not claim runtime dispatch. Impact additionally reports direct and transitive counts and affected project/file summaries.
+`FindReferencesResolver` is the shared bounded breadth-first caller traversal for references, with direct sites at depth 1 and each caller expansion advancing one level. Reference entries retain reached-from provenance, source column, and the same evidence kind, so self-recursive sites and repeated calls remain aligned. Evidence kinds are `call`, `memberAccess`, `staticVirtualOrInterfaceTarget`, `possibleTarget`, and `unresolved`; these describe source binding evidence and do not claim runtime dispatch. Optional [reference summaries](reference-summary.md) report discovered direct/deeper site counts and owner-qualified project/file identities.
 
 Relationship site identity also retains the owning project internally. Linked source documents shared by same-named projects remain distinct even when a declaration has no stable reference.
 
@@ -13,7 +13,7 @@ Relationship site identity also retains the owning project internally. Linked so
 Each payload keeps its own result limits and reports them in its own terms:
 
 - Call trees set `Truncated`, `HiddenEdgeCount`, and `PendingNodeCount` for fan-out and node bounds.
-- References and impact set display and node truncation fields; both mark `IsComplete` false when a requested traversal is cut short. Impact counts discovered direct and transitive sites before display truncation.
+- References set display and node truncation fields and mark `IsComplete` false when a requested traversal is cut short. Reference summaries count discovered direct and deeper sites before display truncation.
 - Implementation results and type hierarchies report pre-limit `TotalCount` values and `IsTruncated` for their displayed implementation or subtype lists.
 
 The Core APIs take resolved symbols rather than reference strings. Identifier ambiguity and invalid reference errors are handled by shared symbol resolution before a relationship engine runs.

@@ -39,40 +39,40 @@ public sealed class CrossFeatureRelationshipContractTests
         var start = entry.GetMembers("Start").OfType<IMethodSymbol>().Single();
 
         var callers = await FindReferencesResolver.FindReferencesAsync(apiRecord, fixture.Solution, maxResults: 50, depth: 3);
-        var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(apiRecord, fixture.Solution, maxDepth: 3, maxResults: 50);
-        Assert.Equal(callers.TotalCount, impact.TransitiveImpactCount);
+        var impact = await FindReferencesResolver.FindReferencesAsync(apiRecord, fixture.Solution, depth: 3, maxResults: 50, includeSummary: true);
+        Assert.Equal(callers.TotalCount, impact.Summary!.TotalReferenceSiteCount);
         Assert.False(callers.IsTruncated);
         Assert.False(callers.IsTruncatedByNodeLimit);
         Assert.False(callers.IsDepthClamped);
         Assert.True(callers.IsComplete);
         Assert.Equal(3, callers.EffectiveDepth);
         Assert.Equal(6, callers.TotalCount);
-        Assert.Equal(6, impact.TransitiveImpactCount);
-        Assert.Equal(3, impact.DirectCallersCount);
-        Assert.Equal(3, impact.TransitiveCallSitesCount);
+        Assert.Equal(6, impact.Summary!.TotalReferenceSiteCount);
+        Assert.Equal(3, impact.Summary!.DirectReferenceSiteCount);
+        Assert.Equal(3, impact.Summary!.DeeperReferenceSiteCount);
         Assert.Equal(3, impact.EffectiveDepth);
         Assert.True(impact.IsComplete);
 
         var callerSites = callers.References
             .Select(site => (site.ProjectName, site.FilePath, site.Line, site.Column, site.EnclosingSymbolName, site.EnclosingSymbolHandoffId, site.Depth, site.ReachedFromSymbolHandoffId))
             .ToArray();
-        var impactSites = impact.CallSites
-            .Select(site => (site.ProjectName, site.FilePath, site.Line, site.Column, site.CallingMember, site.CallingMemberHandoffId, site.Depth, site.ReachedFromSymbolHandoffId))
+        var impactSites = impact.References
+            .Select(site => (site.ProjectName, site.FilePath, site.Line, site.Column, site.EnclosingSymbolName, site.EnclosingSymbolHandoffId, site.Depth, site.ReachedFromSymbolHandoffId))
             .ToArray();
         Assert.Equal(callerSites, impactSites);
-        Assert.Contains(impact.CallSites, site => site.Depth == 1 && site.ProjectName == "Middle" && site.CallingMember == "Handler.Handle");
-        Assert.Contains(impact.CallSites, site => site.Depth == 1 && site.ProjectName == "Middle" && site.CallingMember == "AlternateHandler.Handle");
-        var repeatedCalls = impact.CallSites.Where(site => site.Depth == 1 && site.CallingMember == "Handler.Handle").ToList();
+        Assert.Contains(impact.References, site => site.Depth == 1 && site.ProjectName == "Middle" && site.EnclosingSymbolName == "Handler.Handle");
+        Assert.Contains(impact.References, site => site.Depth == 1 && site.ProjectName == "Middle" && site.EnclosingSymbolName == "AlternateHandler.Handle");
+        var repeatedCalls = impact.References.Where(site => site.Depth == 1 && site.EnclosingSymbolName == "Handler.Handle").ToList();
         Assert.Equal(2, repeatedCalls.Count);
         Assert.Equal(2, repeatedCalls.Select(site => site.Column).Distinct().Count());
-        Assert.Equal(2, impact.CallSites.Count(site => site.Depth == 2 && site.ProjectName == "Middle" && site.CallingMember == "Dispatcher.Dispatch"));
-        Assert.Contains(impact.CallSites, site => site.Depth == 3 && site.ProjectName == "App" && site.CallingMember == "Entry.Start");
+        Assert.Equal(2, impact.References.Count(site => site.Depth == 2 && site.ProjectName == "Middle" && site.EnclosingSymbolName == "Dispatcher.Dispatch"));
+        Assert.Contains(impact.References, site => site.Depth == 3 && site.ProjectName == "App" && site.EnclosingSymbolName == "Entry.Start");
 
-        foreach (var site in impact.CallSites)
+        foreach (var site in impact.References)
         {
-            Assert.StartsWith("src:", site.CallingMemberHandoffId);
+            Assert.StartsWith("src:", site.EnclosingSymbolHandoffId);
             Assert.StartsWith("src:", site.ReachedFromSymbolHandoffId);
-            var callerResolution = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.CallingMemberHandoffId!);
+            var callerResolution = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.EnclosingSymbolHandoffId!);
             var originResolution = await SourceSymbolResolver.ResolveAsync(fixture.Solution, site.ReachedFromSymbolHandoffId!);
             Assert.True(callerResolution.IsSuccess);
             Assert.True(originResolution.IsSuccess);
@@ -151,7 +151,7 @@ public sealed class CrossFeatureRelationshipContractTests
             maxResults: 1);
         var hierarchy = await TypeHierarchyScanner.ScanAsync(handlerBase, fixture.Solution, maxResults: 1);
         var references = await FindReferencesResolver.FindReferencesAsync(apiRecord, fixture.Solution, maxResults: 1, depth: 3);
-        var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(apiRecord, fixture.Solution, maxDepth: 3, maxResults: 1);
+        var impact = await FindReferencesResolver.FindReferencesAsync(apiRecord, fixture.Solution, depth: 3, maxResults: 1, includeSummary: true);
         var callTree = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
             fixture.Solution, start, RequestedDepth: 3, TopN: 1, Direction: CallTreeDirection.Outgoing));
 
@@ -166,10 +166,10 @@ public sealed class CrossFeatureRelationshipContractTests
         Assert.Equal(6, references.TotalCount);
         Assert.True(impact.IsTruncated);
         Assert.False(impact.IsComplete);
-        Assert.Equal(6, impact.TransitiveImpactCount);
+        Assert.Equal(6, impact.Summary!.TotalReferenceSiteCount);
         Assert.Equal(
             references.References.Select(site => (site.ProjectName, site.FilePath, site.Line, site.Column, site.EnclosingSymbolHandoffId, site.Depth, site.ReachedFromSymbolHandoffId)),
-            impact.CallSites.Select(site => (site.ProjectName, site.FilePath, site.Line, site.Column, site.CallingMemberHandoffId, site.Depth, site.ReachedFromSymbolHandoffId)));
+            impact.References.Select(site => (site.ProjectName, site.FilePath, site.Line, site.Column, site.EnclosingSymbolHandoffId, site.Depth, site.ReachedFromSymbolHandoffId)));
         Assert.True(callTree.Truncated);
         Assert.True(callTree.HiddenEdgeCount > 0);
     }
@@ -191,17 +191,17 @@ public sealed class CrossFeatureRelationshipContractTests
         var first = worker.GetMembers("First").OfType<IMethodSymbol>().Single();
 
         var references = await FindReferencesResolver.FindReferencesAsync(first, fixture.Solution, maxResults: 20, depth: 3);
-        var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(first, fixture.Solution, maxDepth: 3, maxResults: 20);
+        var impact = await FindReferencesResolver.FindReferencesAsync(first, fixture.Solution, depth: 3, maxResults: 20, includeSummary: true);
         var callerTree = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
             fixture.Solution, first, RequestedDepth: 3, Direction: CallTreeDirection.Incoming));
         var callTree = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(
             fixture.Solution, first, RequestedDepth: 3, Direction: CallTreeDirection.Outgoing));
 
-        Assert.Equal(references.TotalCount, impact.TransitiveImpactCount);
+        Assert.Equal(references.TotalCount, impact.Summary!.TotalReferenceSiteCount);
         Assert.Equal(references.References.Select(site =>
                 (site.FilePath, site.Line, site.Column, site.EnclosingSymbolName, site.Depth, site.EvidenceKind)),
-            impact.CallSites.Select(site =>
-                (site.FilePath, site.Line, site.Column, site.CallingMember, site.Depth, site.EvidenceKind)));
+            impact.References.Select(site =>
+                (site.FilePath, site.Line, site.Column, site.EnclosingSymbolName, site.Depth, site.EvidenceKind)));
         Assert.Contains(callerTree.Edges, edge => edge.FromNodeId == callerTree.RootNodeId && edge.ToNodeId == callerTree.RootNodeId);
         Assert.Contains(callTree.Edges, edge => edge.FromNodeId == callTree.RootNodeId && edge.ToNodeId == callTree.RootNodeId);
         Assert.Equal(2, callerTree.Edges.Single(edge => edge.FromNodeId == callerTree.RootNodeId
