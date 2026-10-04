@@ -12,7 +12,7 @@ The user approved deferring additional evidence on 2026-10-04 so the complete im
 
 ## Confirmed findings
 
-R03-P03-D01 is a confirmed functional defect, not deferred evidence: the Default-load-context generator consumes an external DLL absent from its captured inputs while identity succeeds. Its actual failing regression and independent Sol diagnosis are recorded in [R03](roadmap/R03-snapshot-identity.md). The approved creator contract correction must close it before R03 implementation completion.
+R03-P03-D01 is closed. Its original confirmed defect was successful identity despite consumption of an untracked Default-load-context external DLL. The approved actual-creator contract now rejects the unknown generator with a concrete workspace diagnosis before reuse. The actual regression passes in the final 92-test Fast selection; genuine supported creator/public-handler replacement and generated body 17→18 also pass. The separate Sol auditor reviewed the correction and actual gates. Original failing evidence and correction commands remain in [R03](roadmap/R03-snapshot-identity.md); this defect was corrected, not deferred.
 
 ## Structural scope
 
