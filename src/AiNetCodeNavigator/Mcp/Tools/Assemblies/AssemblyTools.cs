@@ -100,37 +100,9 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
             }, AnalysisTargetType.Assembly, cancellationToken, resultCursor, "assembly.search.matches");
     }
 
-    [McpServerTool(Name = "find_assembly_extensions", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [System.ComponentModel.Description("Find extension methods in a managed assembly by receiver type, extension name, or namespace.")]
-    public Task<CallToolResult> FindAssemblyExtensions([Required, System.ComponentModel.Description("Absolute path to an existing managed .dll or .exe target.")] string targetPath, [System.ComponentModel.Description("Optional extension receiver type name.")] string? receiverType = null,
-        [System.ComponentModel.Description("Optional extension method name filter.")] string? extensionName = null, [System.ComponentModel.Description("Optional namespace filter for extension methods.")] string? @namespace = null, [System.ComponentModel.Description("Search resolved referenced assemblies in addition to the target.")] bool includeReferences = false,
-        [System.ComponentModel.Description("Maximum extensions per page; zero uses the default of 100.")] [Range(0, 1000)] int maxResults = 100,
-        [System.ComponentModel.Description("Include detailed navigation and reference diagnostics. Defaults to false.")] bool includeDiagnostics = false,
-        [System.ComponentModel.Description("Optional byte cap; zero uses this tool's 16,384-byte default.")] [Range(0, 65536)] int maxResponseBytes = 16384, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
-        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null,
-        [System.ComponentModel.Description("Opaque cursor returned for the next extension result page; use after reading all outer response pages.")] string? resultCursor = null, CancellationToken cancellationToken = default)
-    {
-        var effectiveResponseBytes = maxResponseBytes == 0 ? 16_384 : maxResponseBytes;
-        return NavigationToolSupport.RouteAsync(runtime, "find_assembly_extensions", targetPath,
-            new { receiverType, extensionName, @namespace, includeReferences, maxResults, includeDiagnostics }, operationToken,
-            continuationToken, effectiveResponseBytes, maxResponseTokens,
-            async (target, coreCursor, ct) =>
-            {
-                var effectiveMaxResults = maxResults == 0 ? 100 : maxResults;
-                var result = await FindAssemblyExtensionsScanner.FindAsync(new FindAssemblyExtensionsRequest(target.CanonicalPath,
-                    receiverType, extensionName, @namespace, includeReferences, effectiveMaxResults, coreCursor), ct).ConfigureAwait(false);
-                return result.IsSuccess ? NavigationToolSupport.Success(ProjectExtensions(result.Value!, includeDiagnostics), result.Value!.Truncated,
-                    result.Value.ResultCursor is not null ? "Repeat the query with the returned resultCursor."
-                    : result.Value.Analysis?.OmissionReasons.Contains("incompleteRelationships", StringComparer.Ordinal) == true
-                        ? "Restore missing assembly references, then retry."
-                        : "Increase maxResults and repeat the same query.")
-                    : NavigationToolSupport.Failure(result.Error!.Value, effectiveResponseBytes, maxResponseTokens, "$.targetPath");
-            }, AnalysisTargetType.Assembly, cancellationToken, resultCursor, "assembly.extensions.results");
-    }
-
     private static InspectAssemblyPayload ProjectInspect(InspectAssemblyPayload payload, bool includeDiagnostics) => payload with
     {
-        Diagnostics = ProjectDiagnostics(payload.Diagnostics, includeDiagnostics),
+        Diagnostics = AssemblyDiagnosticProjection.Project(payload.Diagnostics, includeDiagnostics),
         Types = payload.Types.Select(type => type with
         {
             HandoffId = type.Id is null ? null : type.HandoffId,
@@ -145,38 +117,8 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
 
     private static AssemblySearchPayload ProjectSearch(AssemblySearchPayload payload, bool includeDiagnostics) => payload with
     {
-        Diagnostics = ProjectDiagnostics(payload.Diagnostics, includeDiagnostics),
+        Diagnostics = AssemblyDiagnosticProjection.Project(payload.Diagnostics, includeDiagnostics),
     };
-
-    private static FindAssemblyExtensionsPayload ProjectExtensions(FindAssemblyExtensionsPayload payload, bool includeDiagnostics) => payload with
-    {
-        Diagnostics = ProjectDiagnostics(payload.Diagnostics, includeDiagnostics),
-    };
-
-    private static IReadOnlyList<string> ProjectDiagnostics(IReadOnlyList<string> diagnostics, bool includeDiagnostics)
-    {
-        if (includeDiagnostics || diagnostics.Count == 0) return diagnostics;
-        return diagnostics
-            .GroupBy(DiagnosticCategory, StringComparer.Ordinal)
-            .OrderBy(group => group.Key, StringComparer.Ordinal)
-            .Select(group => $"{group.Key}: {group.Count()}")
-            .ToArray();
-    }
-
-    private static string DiagnosticCategory(string diagnostic)
-    {
-        var value = diagnostic.ToLowerInvariant();
-        if (value.Contains("incompleterelationships", StringComparison.Ordinal)
-            || value.Contains("incomplete relationship", StringComparison.Ordinal)
-            || value.Contains("relationship closure", StringComparison.Ordinal)) return "incompleteRelationships";
-        if (value.Contains("version_mismatch", StringComparison.Ordinal)
-            || value.Contains("version mismatch", StringComparison.Ordinal)
-            || value.Contains("version conflict", StringComparison.Ordinal)) return "versionConflict";
-        if (value.Contains("closure", StringComparison.Ordinal) || value.Contains("limit", StringComparison.Ordinal)) return "analysisLimit";
-        if (value.Contains("reference", StringComparison.Ordinal) || value.Contains("resolve", StringComparison.Ordinal)) return "unresolvedReference";
-        if (value.Contains("decompil", StringComparison.Ordinal)) return "decompilation";
-        return "navigation";
-    }
 
     private CallToolResult Invalid(string field, string hint) => McpToolResults.InvalidArgument("The requested value is not supported.", "$." + field, hint);
 }

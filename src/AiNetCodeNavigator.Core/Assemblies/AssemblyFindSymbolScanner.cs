@@ -18,7 +18,8 @@ public static class AssemblyFindSymbolScanner
         int maxResults = 50,
         bool includeReferences = false,
         CancellationToken cancellationToken = default,
-        AssemblyNavigationSessionScope? pinnedRootScope = null)
+        AssemblyNavigationSessionScope? pinnedRootScope = null,
+        string? namespaceFilter = null, string? signatureFilter = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(assemblyPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(namePattern);
@@ -116,6 +117,8 @@ public static class AssemblyFindSymbolScanner
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!SymbolNameMatcher.MatchesSymbol(symbol, namePattern)) continue;
+                if (!string.IsNullOrWhiteSpace(namespaceFilter) && !symbol.ContainingNamespace.ToDisplayString().Contains(namespaceFilter.Trim(), StringComparison.OrdinalIgnoreCase)
+                    || !string.IsNullOrWhiteSpace(signatureFilter) && !symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat).Contains(signatureFilter, StringComparison.Ordinal)) continue;
                 nameFound = true;
                 var symbolKind = DescribeKind(symbol);
                 if (kind != SymbolKindFilter.All && !MatchesKind(symbol, kind))
@@ -151,7 +154,8 @@ public static class AssemblyFindSymbolScanner
                     locations[0].ProjectName,
                     symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
                     locations,
-                    context.Origin.CanonicalPath));
+                    context.Origin.CanonicalPath,
+                    IsExtension: symbol is IMethodSymbol { IsExtensionMethod: true }, Namespace: symbol.ContainingNamespace.ToDisplayString()));
             }
         }
 

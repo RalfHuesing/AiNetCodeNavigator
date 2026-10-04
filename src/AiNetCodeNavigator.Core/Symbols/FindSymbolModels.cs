@@ -42,7 +42,12 @@ public sealed record SymbolLocationEntry(
     string ProjectName,
     string Signature,
     IReadOnlyList<SymbolLocationItem>? Locations = null,
-    string? OwnerTargetPath = null);
+    string? OwnerTargetPath = null,
+    bool IsExtension = false,
+    string? Namespace = null,
+    string? ContainingType = null,
+    string? ReceiverType = null,
+    string? ReturnType = null);
 
 public sealed record SymbolLocationItem(
     string FilePath,
@@ -61,6 +66,11 @@ public sealed record FindSymbolScanRequest(
     bool IncludeGenerated = false,
     string? ResultCursor = null)
 {
+    public ProjectId? ProjectId { get; init; }
+    public string? NamespaceFilter { get; init; }
+    public string? SignatureFilter { get; init; }
+    public bool ExtensionOnly { get; init; }
+    public string? ReceiverType { get; init; }
     internal SourceIdentityRequest? CurrentIdentityRequest { get; init; }
 }
 
@@ -73,4 +83,5 @@ public sealed record FindSymbolScanResult(
     IReadOnlyList<string> TruncatedBy,
     IReadOnlyList<string> KindAlternatives,
     ResultError? Error = null,
-    string? ResultCursor = null);
+    string? ResultCursor = null,
+    IReadOnlyList<string>? Diagnostics = null);

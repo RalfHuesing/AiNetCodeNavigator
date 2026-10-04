@@ -243,6 +243,22 @@ public sealed class AssemblyNavigationScannerTests
             }
             """);
 
+        var opened = await AssemblyNavigationSessionScope.OpenAsync(path, default);
+        Assert.True(opened.IsSuccess);
+        await using var scope = opened.Value!;
+        var mismatched = await FindAssemblyExtensionsScanner.FindAsync(
+            new FindAssemblyExtensionsRequest(Path.Combine(temp.DirectoryPath, "Other.dll")), pinnedRootScope: scope);
+        Assert.False(mismatched.IsSuccess);
+        Assert.Equal("TARGET_MISMATCH", mismatched.Error!.Value.Code);
+        foreach (var (filter, count) in new[] { ("Mark", 1), ("mark", 0), ("Mark ", 0) })
+        {
+            var filtered = await FindAssemblyExtensionsScanner.FindAsync(new FindAssemblyExtensionsRequest(path,
+                ReceiverType: "global::System.String", Namespace: "EXTENSIONS")
+                { NamePattern = "*Mark*", SignatureFilter = filter, CollectAllInventory = true }, pinnedRootScope: scope);
+            Assert.True(filtered.IsSuccess);
+            Assert.Equal(count, filtered.Value!.TotalCount);
+        }
+
         var first = await FindAssemblyExtensionsScanner.FindAsync(new FindAssemblyExtensionsRequest(
             path, ReceiverType: "string", MaxResults: 1));
 

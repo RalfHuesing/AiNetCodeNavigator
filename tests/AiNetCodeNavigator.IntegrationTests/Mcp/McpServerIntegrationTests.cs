@@ -30,7 +30,7 @@ public sealed class McpServerIntegrationTests
             var navigationTools = new[]
             {
                 "browse_target", "find_symbol", "get_symbol_body", "get_file_skeleton", "get_call_tree", "find_references", "get_type_relations", "dependency_graph", "resolve_type_origin", "get_context",
-                "inspect_assembly", "search_assembly", "find_assembly_extensions",
+                "inspect_assembly", "search_assembly",
             };
             foreach (var name in navigationTools)
             {
@@ -49,12 +49,12 @@ public sealed class McpServerIntegrationTests
             AssertPropertyDescriptionContains(registered["inspect_assembly"], "includeReferences", "false", "independently");
             AssertPropertyDescriptionContains(registered["inspect_assembly"], "includeDiagnostics", "false", "detailed");
             AssertPropertyDescriptionContains(registered["search_assembly"], "includeDiagnostics", "false", "detailed");
-            AssertPropertyDescriptionContains(registered["find_assembly_extensions"], "includeDiagnostics", "false", "detailed");
+            AssertPropertyDescriptionContains(registered["find_symbol"], "includeDiagnostics", "false", "detailed");
             AssertPropertyDescriptionContains(registered["get_context"], "sections", "body", "members", "uses", "tests");
             AssertPropertyDescriptionContains(registered["search_assembly"], "isRegex", "false", "literal", "true");
             var inspectProperties = registered["inspect_assembly"].GetProperty("inputSchema").GetProperty("properties");
             var searchProperties = registered["search_assembly"].GetProperty("inputSchema").GetProperty("properties");
-            var extensionProperties = registered["find_assembly_extensions"].GetProperty("inputSchema").GetProperty("properties");
+            var extensionProperties = registered["find_symbol"].GetProperty("inputSchema").GetProperty("properties");
             Assert.False(inspectProperties.TryGetProperty("maxMembers", out _));
             Assert.False(inspectProperties.TryGetProperty("detailLevel", out _));
             Assert.False(searchProperties.TryGetProperty("searchKind", out _));
@@ -180,29 +180,29 @@ public sealed class McpServerIntegrationTests
 
             await SendRequestAsync(process, 4, "tools/call", new
             {
-                name = "find_assembly_extensions",
-                arguments = new { targetPath = assemblyPath, receiverType = "ZeroMatrix.ZeroBox" },
+                name = "find_symbol",
+                arguments = new { extensionOnly = true, targetPath = assemblyPath, receiverType = "ZeroMatrix.ZeroBox" },
             }, timeout.Token);
             var extensions = await ReadResponseAsync(process, 4, timeout.Token);
             var extensionsText = GetFirstText(extensions);
             Assert.False(extensions.GetProperty("result").GetProperty("isError").GetBoolean(), extensionsText);
             var extensionPayload = ParsePayload(extensionsText);
-            Assert.True(extensionPayload.GetProperty("totalCount").GetInt32() >= 3, extensionsText);
-            Assert.Contains(extensionPayload.GetProperty("extensions").EnumerateArray(), extension => extension.GetProperty("name").GetString() == "PlusOne");
+            Assert.True(extensionPayload.GetProperty("results")[0].GetProperty("totalMatches").GetInt32() >= 3, extensionsText);
+            Assert.Contains(extensionPayload.GetProperty("results")[0].GetProperty("entries").EnumerateArray(), extension => extension.GetProperty("name").GetString() == "PlusOne");
 
             await SendRequestAsync(process, 8, "tools/call", new
             {
-                name = "find_assembly_extensions",
-                arguments = new { targetPath = assemblyPath, receiverType = "ZeroMatrix.ZeroBox", maxResults = 0, maxResponseBytes = 0 },
+                name = "find_symbol",
+                arguments = new { extensionOnly = true, targetPath = assemblyPath, receiverType = "ZeroMatrix.ZeroBox", maxResults = 100, maxResponseBytes = 0 },
             }, timeout.Token);
             var zeroExtensions = await ReadResponseAsync(process, 8, timeout.Token);
             var zeroExtensionsText = GetFirstText(zeroExtensions);
             Assert.False(zeroExtensions.GetProperty("result").GetProperty("isError").GetBoolean(), zeroExtensionsText);
             var zeroExtensionPayload = ParsePayload(zeroExtensionsText);
-            Assert.Equal(extensionPayload.GetProperty("totalCount").GetInt32(), zeroExtensionPayload.GetProperty("totalCount").GetInt32());
-            Assert.Equal(extensionPayload.GetProperty("extensions").EnumerateArray().Select(extension => extension.GetProperty("name").GetString()),
-                zeroExtensionPayload.GetProperty("extensions").EnumerateArray().Select(extension => extension.GetProperty("name").GetString()));
-            Assert.True(zeroExtensionPayload.GetProperty("extensions").GetArrayLength() >= 3, zeroExtensionsText);
+            Assert.Equal(extensionPayload.GetProperty("results")[0].GetProperty("totalMatches").GetInt32(), zeroExtensionPayload.GetProperty("results")[0].GetProperty("totalMatches").GetInt32());
+            Assert.Equal(extensionPayload.GetProperty("results")[0].GetProperty("entries").EnumerateArray().Select(extension => extension.GetProperty("name").GetString()),
+                zeroExtensionPayload.GetProperty("results")[0].GetProperty("entries").EnumerateArray().Select(extension => extension.GetProperty("name").GetString()));
+            Assert.True(zeroExtensionPayload.GetProperty("results")[0].GetProperty("entries").GetArrayLength() >= 3, zeroExtensionsText);
 
             await SendRequestAsync(process, 5, "tools/call", new
             {
@@ -473,10 +473,10 @@ public sealed class McpServerIntegrationTests
                 .Select(tool => tool.GetProperty("name").GetString()!)
                 .Order(StringComparer.Ordinal)
                 .ToArray();
-            Assert.Equal(13, tools.Length);
+            Assert.Equal(12, tools.Length);
             Assert.Equal(new[]
             {
-                "browse_target", "dependency_graph", "find_assembly_extensions", "find_references", "find_symbol",
+                "browse_target", "dependency_graph", "find_references", "find_symbol",
                 "get_call_tree", "get_context", "get_file_skeleton",
                 "get_symbol_body",
                 "get_type_relations", "inspect_assembly", "resolve_type_origin", "search_assembly",
@@ -607,7 +607,7 @@ public sealed class McpServerIntegrationTests
                 ("get_context", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown", ["sections"] = new[] { "tests" } }, "INVALID_ARGUMENT"),
                 ("inspect_assembly", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["maxResults"] = -1 }, "INVALID_ARGUMENT"),
                 ("search_assembly", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["pattern"] = null }, "INVALID_ARGUMENT"),
-                ("find_assembly_extensions", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["maxResults"] = -1 }, "INVALID_ARGUMENT"),
+                ("find_symbol", new(StringComparer.Ordinal) { ["extensionOnly"] = true, ["targetPath"] = assemblyPath, ["maxResults"] = -1 }, "INVALID_ARGUMENT"),
                 ("get_context", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "", ["sections"] = new[] { "body" } }, "INVALID_ARGUMENT"),
             };
 
@@ -672,8 +672,8 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                 .Select(tool => tool.GetProperty("name").GetString())
                 .Order(StringComparer.Ordinal)
                 .ToArray();
-            Assert.Equal(14, names.Length);
-            Assert.Equal(new[] { "browse_target", "dependency_graph", "find_assembly_extensions", "find_references", "find_symbol", "get_call_tree", "get_context", "get_file_skeleton", "get_symbol_body", "get_type_relations", "inspect_assembly", "resolve_type_origin", "search_assembly" }, names);
+            Assert.Equal(12, names.Length);
+            Assert.Equal(new[] { "browse_target", "dependency_graph", "find_references", "find_symbol", "get_call_tree", "get_context", "get_file_skeleton", "get_symbol_body", "get_type_relations", "inspect_assembly", "resolve_type_origin", "search_assembly" }, names);
             Assert.DoesNotContain("get_server_health", names);
             Assert.DoesNotContain("reload_config", names);
             Assert.DoesNotContain("get_file_tree", names);
@@ -1239,7 +1239,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             Assert.False(assemblyNamespaceBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(assemblyNamespaceBody));
             Assert.Contains("class Counter", GetFirstText(assemblyNamespaceBody), StringComparison.Ordinal);
 
-            await SendRequestAsync(process, 24, "tools/call", new { name = "find_assembly_extensions", arguments = new { targetPath = fixtureAssemblyPath, receiverType = "NavigationFixture.Counter", extensionName = "Double", maxResults = 5 } }, timeout.Token);
+            await SendRequestAsync(process, 24, "tools/call", new { name = "find_symbol", arguments = new { extensionOnly = true, targetPath = fixtureAssemblyPath, receiverType = "NavigationFixture.Counter", pattern = "*Double*", maxResults = 5 } }, timeout.Token);
             var assemblyExtensions = await ReadResponseAsync(process, 24, timeout.Token);
             Assert.False(assemblyExtensions.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("Double", GetFirstText(assemblyExtensions), StringComparison.Ordinal);

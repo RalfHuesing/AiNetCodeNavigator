@@ -3,6 +3,7 @@
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using AiNetCodeNavigator.Core.Models;
+using AiNetCodeNavigator.Core.Symbols;
 
 namespace AiNetCodeNavigator.Core.Assemblies;
 
@@ -46,7 +47,13 @@ public sealed record FindAssemblyExtensionsRequest(
     string? Namespace = null,
     bool IncludeReferences = false,
     int MaxResults = 100,
-    string? Cursor = null);
+    string? Cursor = null)
+{
+    public string? NamePattern { get; init; }
+    public string? SignatureFilter { get; init; }
+    public SymbolScopeType Scope { get; init; } = SymbolScopeType.All;
+    public bool CollectAllInventory { get; init; }
+}
 
 public sealed record AssemblyExtensionDto(
     string Namespace,
@@ -58,7 +65,9 @@ public sealed record AssemblyExtensionDto(
     string AssemblyName,
     [property: JsonIgnore] string? SymbolId = null,
     string? HandoffId = null,
-    string? OwnerTargetPath = null);
+    string? OwnerTargetPath = null,
+    string? DocCommentId = null,
+    string? DiscoverySignature = null);
 
 public sealed record FindAssemblyExtensionsPayload(
     string AssemblyPath,

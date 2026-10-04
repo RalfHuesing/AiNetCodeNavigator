@@ -15,7 +15,34 @@ internal static class Scenarios
             [nameof(ExploreContextMembers)] = ExploreContextMembers,
             [nameof(ExploreBrowseTarget)] = ExploreBrowseTarget,
             [nameof(ExploreTypeRelations)] = ExploreTypeRelations,
+            [nameof(ExploreExtensionDiscovery)] = ExploreExtensionDiscovery,
         };
+
+    private static async Task ExploreExtensionDiscovery(ExplorationContext context)
+    {
+        foreach (var target in new[] { context.RepositorySolution, typeof(Scenarios).Assembly.Location })
+        {
+            string? cursor = null;
+            do
+            {
+                var response = await context.CallAsync("find_symbol", new
+                {
+                    targetPath = target, extensionOnly = true, receiverType = "global::System.String",
+                    pattern = "*Exploration*", namespaceFilter = "AINETCODENAVIGATOR.EXPLORATION", signatureFilter = "Exploration",
+                    maxResults = 1, resultCursor = cursor,
+                }).ConfigureAwait(false);
+                using var page = JsonDocument.Parse(response.Payload);
+                var items = page.RootElement.GetProperty("results")[0].GetProperty("entries");
+                foreach (var item in items.EnumerateArray())
+                    await context.CallAsync("get_symbol_body", new
+                    {
+                        targetPath = item.TryGetProperty("ownerTargetPath", out var owner) ? owner.GetString() : target,
+                        symbolIdentifiers = new[] { item.GetProperty("handoffId").GetString() }, maxBodyLines = 10,
+                    }).ConfigureAwait(false);
+                cursor = page.RootElement.TryGetProperty("resultCursor", out var next) ? next.GetString() : null;
+            } while (cursor is not null);
+        }
+    }
 
     private static async Task ExploreTypeRelations(ExplorationContext context)
     {
@@ -281,4 +308,10 @@ internal sealed class ExplorationRelationFirst : IExplorationRelationProbe
 internal sealed class ExplorationRelationSecond : IExplorationRelationProbe
 {
     int IExplorationRelationProbe.Read() => 2;
+}
+
+internal static class ExplorationStringExtensions
+{
+    internal static int ExplorationMark(this string value) => value.Length;
+    internal static int ExplorationSize(this string value) => value.Length + 1;
 }

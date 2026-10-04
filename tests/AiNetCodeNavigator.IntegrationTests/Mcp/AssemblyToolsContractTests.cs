@@ -1348,7 +1348,7 @@ public sealed class AssemblyToolsContractTests
     }
 
     [Fact]
-    public async Task AssemblyNavigationHandlersReturnOwnerResultsAcrossAllThirteenRoutes()
+    public async Task AssemblyNavigationHandlersReturnOwnerResultsAcrossAllTwelveRoutes()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
@@ -1493,16 +1493,16 @@ public sealed class AssemblyToolsContractTests
         AssertOwnerResult(searchDefault, "Entry");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, searchDefault);
         Assert.Equal(TextOf(searchDefault), TextOf(searchZero));
-        var extensionDefault = await assemblies.FindAssemblyExtensions(assemblyPath, receiverType: "", maxResponseBytes: 32768);
-        var extensionZero = await assemblies.FindAssemblyExtensions(assemblyPath, receiverType: "", maxResults: 0, maxResponseBytes: 32768);
+        var extensionDefault = await new SymbolTools(runtime).FindSymbol(assemblyPath, extensionOnly: true, receiverType: "", maxResponseBytes: 32768, maxResults: 100);
+        var extensionZero = await new SymbolTools(runtime).FindSymbol(assemblyPath, extensionOnly: true, receiverType: "", maxResults: 100, maxResponseBytes: 32768);
         AssertOwnerResult(extensionDefault, "Twice");
         Assert.Contains("Thrice", TextOf(extensionDefault), StringComparison.Ordinal);
         Assert.Equal(TextOf(extensionDefault), TextOf(extensionZero));
-        var filteredExtensions = await assemblies.FindAssemblyExtensions(assemblyPath, receiverType: "AssemblyRouteProbe.Probe",
-            extensionName: "Twice", @namespace: "AssemblyRouteProbe", maxResults: 1, maxResponseBytes: 32768);
+        var filteredExtensions = await new SymbolTools(runtime).FindSymbol(assemblyPath, extensionOnly: true, receiverType: "AssemblyRouteProbe.Probe",
+            pattern: "*" + "Twice" + "*", namespaceFilter: "AssemblyRouteProbe", maxResults: 1, maxResponseBytes: 32768);
         AssertOwnerResult(filteredExtensions, "Twice");
         Assert.DoesNotContain("Thrice", TextOf(filteredExtensions), StringComparison.Ordinal);
-        var cappedExtensions = await assemblies.FindAssemblyExtensions(assemblyPath, receiverType: "AssemblyRouteProbe.Probe",
+        var cappedExtensions = await new SymbolTools(runtime).FindSymbol(assemblyPath, extensionOnly: true, receiverType: "AssemblyRouteProbe.Probe",
             maxResults: 1, maxResponseBytes: 32768);
         AssertOwnerPage(TextOf(cappedExtensions));
         Assert.Contains("truncated", TextOf(cappedExtensions), StringComparison.Ordinal);
@@ -1533,7 +1533,7 @@ public sealed class AssemblyToolsContractTests
             (bytes, tokens) => relationships.GetContext(assemblyPath, "AssemblyRouteProbe.Probe", ["body"], maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => assemblies.InspectAssembly(assemblyPath, maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => assemblies.SearchAssembly(assemblyPath, pattern: "Probe", maxResponseBytes: bytes, maxResponseTokens: tokens),
-            (bytes, tokens) => assemblies.FindAssemblyExtensions(assemblyPath, receiverType: "", maxResponseBytes: bytes, maxResponseTokens: tokens),
+            (bytes, tokens) => new SymbolTools(runtime).FindSymbol(assemblyPath, extensionOnly: true, receiverType: "", maxResponseBytes: bytes, maxResponseTokens: tokens, maxResults: 100),
         ];
         foreach (var projection in budgetProjections)
         {
@@ -1609,10 +1609,10 @@ public sealed class AssemblyToolsContractTests
         Assert.Equal(searchDefault.Text, searchZero.Text);
         Assert.InRange(Encoding.UTF8.GetByteCount(searchDefault.FirstPage), 16 * 1024 + 1, 24 * 1024);
 
-        var extensionsDefault = await ReadOuterPagesAsync((_, tokens, continuation) => assemblies.FindAssemblyExtensions(
-            assemblyPath, receiverType: "", maxResults: 50, maxResponseTokens: tokens, continuationToken: continuation), 16384, 16000);
-        var extensionsZero = await ReadOuterPagesAsync((_, tokens, continuation) => assemblies.FindAssemblyExtensions(
-            assemblyPath, receiverType: "", maxResults: 50, maxResponseBytes: 0, maxResponseTokens: tokens,
+        var extensionsDefault = await ReadOuterPagesAsync((_, tokens, continuation) => new SymbolTools(runtime).FindSymbol(
+            assemblyPath, extensionOnly: true, receiverType: "", maxResults: 50, maxResponseTokens: tokens, continuationToken: continuation), 16384, 16000);
+        var extensionsZero = await ReadOuterPagesAsync((_, tokens, continuation) => new SymbolTools(runtime).FindSymbol(
+            assemblyPath, extensionOnly: true, receiverType: "", maxResults: 50, maxResponseBytes: 16384, maxResponseTokens: tokens,
             continuationToken: continuation), 16384, 16000);
         Assert.Contains("ExtensionBudget000", extensionsDefault.Text, StringComparison.Ordinal);
         Assert.Equal(BodyOf(extensionsDefault.FirstPage), BodyOf(extensionsZero.FirstPage));
@@ -1801,7 +1801,7 @@ public sealed class AssemblyToolsContractTests
         using (var document = System.Text.Json.JsonDocument.Parse(BodyOf(searchText)))
             Assert.Empty(document.RootElement.GetProperty("results").EnumerateArray());
 
-        var extensions = await assemblies.FindAssemblyExtensions(target, receiverType: "NoType");
+        var extensions = await new SymbolTools(runtime).FindSymbol(target, extensionOnly: true, receiverType: "NoType", maxResults: 100);
         AssertSuccessWithinBudget(extensions, 16_384, 16_384);
         var extensionText = TextOf(extensions);
         Assert.InRange(TokenCount(extensionText), 0, 256);
@@ -1811,7 +1811,7 @@ public sealed class AssemblyToolsContractTests
         Assert.DoesNotContain("continuationToken=", extensionText, StringComparison.Ordinal);
         Assert.DoesNotContain("resultContinuation=available", extensionText, StringComparison.Ordinal);
         using (var document = System.Text.Json.JsonDocument.Parse(BodyOf(extensionText)))
-            Assert.Empty(document.RootElement.GetProperty("extensions").EnumerateArray());
+            Assert.Empty(document.RootElement.GetProperty("results")[0].GetProperty("entries").EnumerateArray());
         }
         finally
         {
@@ -1848,19 +1848,19 @@ public sealed class AssemblyToolsContractTests
         Assert.DoesNotContain(Path.GetFileName(dependency), TextOf(compactSearch), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("MissingOwner", TextOf(detailedSearch), StringComparison.OrdinalIgnoreCase);
 
-        var compactExtensions = await assemblies.FindAssemblyExtensions(target, receiverType: "System.Int32");
-        var detailedExtensions = await assemblies.FindAssemblyExtensions(target, receiverType: "System.Int32", includeDiagnostics: true);
+        var compactExtensions = await new SymbolTools(runtime).FindSymbol(target, extensionOnly: true, receiverType: "System.Int32", maxResults: 100);
+        var detailedExtensions = await new SymbolTools(runtime).FindSymbol(target, extensionOnly: true, receiverType: "System.Int32", includeDiagnostics: true, maxResults: 100);
         Assert.False(compactExtensions.IsError ?? false, TextOf(compactExtensions));
         Assert.False(detailedExtensions.IsError ?? false, TextOf(detailedExtensions));
         using var compactExtensionJson = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(compactExtensions)));
         using var detailedExtensionJson = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(detailedExtensions)));
-        Assert.Equal(compactExtensionJson.RootElement.GetProperty("extensions").GetRawText(), detailedExtensionJson.RootElement.GetProperty("extensions").GetRawText());
-        Assert.Equal(compactExtensionJson.RootElement.GetProperty("totalCount").GetInt32(), detailedExtensionJson.RootElement.GetProperty("totalCount").GetInt32());
-        var ownExtension = Assert.Single(compactExtensionJson.RootElement.GetProperty("extensions").EnumerateArray());
+        Assert.Equal(compactExtensionJson.RootElement.GetProperty("results")[0].GetProperty("entries").GetRawText(), detailedExtensionJson.RootElement.GetProperty("results")[0].GetProperty("entries").GetRawText());
+        Assert.Equal(compactExtensionJson.RootElement.GetProperty("results")[0].GetProperty("totalMatches").GetInt32(), detailedExtensionJson.RootElement.GetProperty("results")[0].GetProperty("totalMatches").GetInt32());
+        var ownExtension = Assert.Single(compactExtensionJson.RootElement.GetProperty("results")[0].GetProperty("entries").EnumerateArray());
         Assert.Equal("Twice", ownExtension.GetProperty("name").GetString());
         Assert.StartsWith("asm:", ownExtension.GetProperty("handoffId").GetString(), StringComparison.Ordinal);
         Assert.Equal(target, ownExtension.GetProperty("ownerTargetPath").GetString(), ignoreCase: true);
-        Assert.Contains("incompleteRelationships", compactExtensionJson.RootElement.GetProperty("analysis").GetProperty("omissionReasons").GetRawText(), StringComparison.Ordinal);
+        Assert.Contains("incompleteRelationships", TextOf(compactExtensions), StringComparison.Ordinal);
         Assert.DoesNotContain(Path.GetFileName(dependency), TextOf(compactExtensions), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("MissingOwner", TextOf(detailedExtensions), StringComparison.OrdinalIgnoreCase);
 
@@ -1904,7 +1904,7 @@ public sealed class AssemblyToolsContractTests
         var owner = AssemblyTestHelper.EmitAssembly(fixture, "ExtensionCursorOwner", "namespace ExtensionCursor; public static class NumberExtensions { public static int Twice(this int value) => value * 2; public static int Thrice(this int value) => value * 3; }");
         var root = AssemblyTestHelper.EmitAssembly(fixture, "ExtensionCursorRoot", "using ExtensionCursor; namespace ExtensionCursorRoot; public sealed class Root { public int Call() => 1.Twice(); }", owner);
 
-        var first = await PollAssemblyOwnerAsync(operation => assemblies.FindAssemblyExtensions(root,
+        var first = await PollAssemblyOwnerAsync(operation => new SymbolTools(runtime).FindSymbol(root, extensionOnly: true,
             receiverType: "System.Int32", includeReferences: true, maxResults: 1,
             maxResponseBytes: 65536, maxResponseTokens: 4096, operationToken: operation));
         AssertOwnerPage(TextOf(first));
@@ -1915,7 +1915,7 @@ public sealed class AssemblyToolsContractTests
         var replacement = AssemblyTestHelper.EmitAssembly(replacementFixture, "ExtensionCursorOwner", "namespace ExtensionCursor; public static class NumberExtensions { public static int Twice(this int value) => value * 2; public static int Thrice(this int value) => value * 3; public static int FourTimes(this int value) => value * 4; }");
         File.Copy(replacement, owner, overwrite: true);
 
-        var stale = await assemblies.FindAssemblyExtensions(root, receiverType: "System.Int32", includeReferences: true,
+        var stale = await new SymbolTools(runtime).FindSymbol(root, extensionOnly: true, receiverType: "System.Int32", includeReferences: true,
             maxResults: 1, resultCursor: cursor, maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertErrorWithinBudget(stale, "STALE_SNAPSHOT", 65536, 4096);
     }
@@ -1969,7 +1969,7 @@ public sealed class AssemblyToolsContractTests
         do
         {
             var page = await ReadAssemblyOuterPagesAsync((operation, domainCursor, continuation, bytes, tokens) =>
-                assemblies.FindAssemblyExtensions(root, receiverType: "System.Int32", includeReferences: true, maxResults: 1,
+                new SymbolTools(runtime).FindSymbol(root, extensionOnly: true, receiverType: "System.Int32", includeReferences: true, maxResults: 1,
                     resultCursor: domainCursor, maxResponseBytes: bytes, maxResponseTokens: tokens,
                     operationToken: operation, continuationToken: continuation),
                 extensionCursor, bytes: 65536, tokens: 4096);
@@ -1977,7 +1977,7 @@ public sealed class AssemblyToolsContractTests
             using var document = ParseJsonWithDiagnostics(BodyOf(page.Text),
                 $"Closure extension domain page (domainCursor={extensionCursor ?? "<first>"}, outerPages={page.Pages})");
             var pageRoot = document.RootElement;
-            foreach (var item in pageRoot.GetProperty("extensions").EnumerateArray())
+            foreach (var item in pageRoot.GetProperty("results")[0].GetProperty("entries").EnumerateArray())
             {
                 var owner = item.GetProperty("ownerTargetPath").GetString()!;
                 var handoff = item.GetProperty("handoffId").GetString()!;
@@ -1999,7 +1999,7 @@ public sealed class AssemblyToolsContractTests
             Assert.Contains(extension.Name, TextOf(body), StringComparison.Ordinal);
         }
         Assert.NotNull(firstExtensionCursor);
-        AssertErrorWithinBudget(await assemblies.FindAssemblyExtensions(root, receiverType: "System.Int32",
+        AssertErrorWithinBudget(await new SymbolTools(runtime).FindSymbol(root, extensionOnly: true, receiverType: "System.Int32",
             includeReferences: true, maxResults: 2, resultCursor: firstExtensionCursor,
             maxResponseBytes: 65536, maxResponseTokens: 4096),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 4096);

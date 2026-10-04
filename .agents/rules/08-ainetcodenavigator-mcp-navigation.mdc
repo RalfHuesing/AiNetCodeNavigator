@@ -18,7 +18,7 @@ Use AiNetCodeNavigator as the primary tool for C# declarations and static relati
 |---|---|
 | Uncertain indexed scope | `browse_target` with `view=scope` (source only); physical files: `rg --files`. |
 | Project / namespace entry | `browse_target` with `view=namespaces`; narrow project or namespace. |
-| Declaration discovery | `find_symbol`: exactly one of `pattern` or `namePatterns` (1–10); optional `kind`. |
+| Declaration discovery | `find_symbol`: exactly one of `pattern` or `namePatterns` (1–10), or omit both with `extensionOnly=true`; optional kind/project/namespace/signature filters. |
 | File / type outline | `get_file_skeleton.filePaths` / `get_context` with `sections=[members]`. |
 | Declaration text | `get_symbol_body.symbolIdentifiers`; bounded window, batch related symbols. |
 | Selected symbol context | `get_context`: explicit `sections` from `body`, `members`, `uses`, `tests`. |
@@ -26,9 +26,11 @@ Use AiNetCodeNavigator as the primary tool for C# declarations and static relati
 | Inheritance / implementations | `get_type_relations` with `relation=hierarchy|implementations`. |
 | Discovered use totals and owners | `find_references` with `includeSummary: true` (start `depth: 1`); counts reference sites before paging, not runtime consequences. |
 | Dependencies / type owner | `dependency_graph`: exactly one of `filePath`, `symbolIdentifier` / `resolve_type_origin`: exactly one of `symbolIdentifier`, `typeName`. |
-| Compiled API / text / extensions | `inspect_assembly` with filters / `search_assembly` with literal `pattern` (`isRegex: true` for regex) / `find_assembly_extensions` with receiver, name or namespace filters. Assembly targets only. |
+| Compiled API / text / extensions | `inspect_assembly` with filters / `search_assembly` with literal `pattern` (`isRegex: true` for regex) / `find_symbol` with `extensionOnly=true` with receiver, pattern, namespace or signature filters. Extension discovery supports source and assembly targets. |
 
 ## Bound requests
+
+- Discovery `project` accepts an exact loaded source project name (ignore-case) or its returned canonical path. Duplicate names require the path; unknown/empty selectors fail, and assemblies reject project. Namespace substring comparison ignores case; signature substring comparison is case-sensitive. Whitespace optional filters mean no filter. `extensionOnly=true` requires omitted/method kind and can enumerate without patterns; receiver filtering requires extension-only. Receiver aliases/qualified suffixes match declared receiver names, without expression applicability or assignability. For an extension name substring use the existing `*name*` pattern. Keep every effective filter unchanged when following cursors.
 
 - Batch related discovery, bodies or skeletons; start with shallow traversal, filters and small pages. Expand only for unanswered questions or reported limits; skip redundant inventories and graphs.
 - Reuse public `handoffId` values unchanged in supported identifier/file inputs. Source references use `src:<project-path>|<declaration-id>`; assembly references use `asm:<simple-name>|<declaration-id>`. Retain the returned owner `targetPath` / `ownerTargetPath`, including referenced DLL owners. Never parse, fabricate or replace references with display names or internal IDs. Obsolete `h:` and `i:` values are rejected.

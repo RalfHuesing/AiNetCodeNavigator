@@ -34,13 +34,23 @@ public static class FindAssemblyExtensionsScanner
 
     public static async Task<Result<FindAssemblyExtensionsPayload>> FindAsync(
         FindAssemblyExtensionsRequest request,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        AssemblyNavigationSessionScope? pinnedRootScope = null)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var opened = await AssemblyNavigationSessionScope.OpenAsync(request.AssemblyPath, cancellationToken).ConfigureAwait(false);
-        if (!opened.IsSuccess) return Result<FindAssemblyExtensionsPayload>.Failure(opened.Error);
-        await using var scope = opened.Value!;
+        AssemblyNavigationSessionScope? ownedScope = null;
+        if (pinnedRootScope is null)
+        {
+            var opened = await AssemblyNavigationSessionScope.OpenAsync(request.AssemblyPath, cancellationToken).ConfigureAwait(false);
+            if (!opened.IsSuccess) return Result<FindAssemblyExtensionsPayload>.Failure(opened.Error);
+            ownedScope = opened.Value!;
+        }
+        await using var ownedLease = ownedScope;
+        var scope = pinnedRootScope ?? ownedScope!;
         var context = scope.Context;
+        if (!string.Equals(Path.GetFullPath(request.AssemblyPath), context.Origin.CanonicalPath, StringComparison.OrdinalIgnoreCase))
+            return Result<FindAssemblyExtensionsPayload>.Failure(NavigationErrorCodes.TargetMismatch,
+                "The pinned extension analysis scope belongs to a different root target.", "Acquire the scope for the requested assembly path.");
         var extensions = new SortedSet<AssemblyExtensionDto>(ExtensionComparer);
         var totalCount = 0;
         var diagnostics = context.Diagnostics.ToList();
@@ -83,7 +93,7 @@ public static class FindAssemblyExtensionsScanner
             }
         }
 
-        var limit = InspectAssemblyScanner.NormalizeLimit(request.MaxResults, DefaultMaxResults, MaxResults);
+        var limit = request.CollectAllInventory ? int.MaxValue : InspectAssemblyScanner.NormalizeLimit(request.MaxResults, DefaultMaxResults, MaxResults);
         var identity = AnalysisSymbolIdentity.ForAssembly(context.Origin.CanonicalPath, context.Origin.ContentHash,
             context.Generation, context.ReferenceSnapshotHash);
         var binding = AssemblyPaging.CreateExtensionsBinding(context.Origin.CanonicalPath, context.Origin.ContentHash,
@@ -120,6 +130,9 @@ public static class FindAssemblyExtensionsScanner
         void ScanOwner(AssemblyNavigationSessionScope ownerScope)
         {
             var owner = ownerScope.Context;
+            var project = ownerScope.Solution.Projects.FirstOrDefault();
+            var isTest = project is not null && TestDetector.IsTestProject(project, classificationPath: owner.Origin.CanonicalPath);
+            if (request.Scope == SymbolScopeType.Tests && !isTest || request.Scope == SymbolScopeType.Production && isTest) return;
             foreach (var type in AssemblyAnalysisSymbolTraversal.GetAllTypes(owner.Assembly.GlobalNamespace))
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -129,9 +142,11 @@ public static class FindAssemblyExtensionsScanner
                     var receiver = method.Parameters[0].Type;
                     var receiverName = receiver.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
                     var namespaceName = type.ContainingNamespace.ToDisplayString();
-                    if (!MatchesReceiver(receiverName, request.ReceiverType)
+                    if (!DeclaredExtensionReceiverMatcher.Matches(receiverName, request.ReceiverType)
                         || !Matches(method.Name, request.ExtensionName)
-                        || !Matches(namespaceName, request.Namespace)) continue;
+                        || !Matches(namespaceName, request.Namespace)
+                        || request.NamePattern is not null && !SymbolNameMatcher.MatchesSymbol(method, request.NamePattern)
+                        || !string.IsNullOrWhiteSpace(request.SignatureFilter) && !method.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat).Contains(request.SignatureFilter, StringComparison.Ordinal)) continue;
                     var stableReference = ExactAssemblySymbolResolver.CreateReference(ownerScope, method);
                     if (!stableReference.IsSuccess)
                     {
@@ -150,7 +165,8 @@ public static class FindAssemblyExtensionsScanner
                         owner.Identity?.Name ?? Path.GetFileNameWithoutExtension(owner.Origin.CanonicalPath),
                         stableId,
                         stableId,
-                        owner.Origin.CanonicalPath));
+                        owner.Origin.CanonicalPath, method.GetDocumentationCommentId(),
+                        method.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)));
                     if (added) totalCount++;
                 }
             }
@@ -160,29 +176,5 @@ public static class FindAssemblyExtensionsScanner
     private static bool Matches(string value, string? filter) =>
         string.IsNullOrWhiteSpace(filter) || value.Contains(filter.Trim(), StringComparison.OrdinalIgnoreCase);
 
-    private static bool MatchesReceiver(string receiver, string? filter)
-    {
-        if (string.IsNullOrWhiteSpace(filter)) return true;
-        var normalizedReceiver = NormalizeType(receiver);
-        var normalizedFilter = NormalizeType(filter.Trim());
-        return string.Equals(normalizedReceiver, normalizedFilter, StringComparison.OrdinalIgnoreCase)
-            || normalizedReceiver.EndsWith("." + normalizedFilter, StringComparison.OrdinalIgnoreCase)
-            || normalizedFilter.EndsWith("." + normalizedReceiver, StringComparison.OrdinalIgnoreCase);
-    }
 
-    private static string NormalizeType(string value) => value switch
-    {
-        "string" => "System.String",
-        "object" => "System.Object",
-        "bool" => "System.Boolean",
-        "byte" => "System.Byte",
-        "char" => "System.Char",
-        "decimal" => "System.Decimal",
-        "double" => "System.Double",
-        "float" => "System.Single",
-        "int" => "System.Int32",
-        "long" => "System.Int64",
-        "short" => "System.Int16",
-        _ => value.Replace("global::", string.Empty, StringComparison.Ordinal),
-    };
 }

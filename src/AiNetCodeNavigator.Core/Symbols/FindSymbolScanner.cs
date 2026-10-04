@@ -61,12 +61,20 @@ public static class FindSymbolScanner
             .Where(symbol => SymbolNameMatcher.MatchesSymbol(symbol, request.NamePattern))
             .ToList();
 
-        var filtered = FilterByKind(nameMatches, request.Kind).ToList();
-        var kindAlternatives = CreateKindAlternatives(nameMatches, request.Kind);
+        var filtered = FilterByKind(nameMatches, request.Kind)
+            .Where(symbol => request.ProjectId is null || symbol.Locations.Any(location => location.SourceTree is not null && GetSourceDocument(request.Solution, location.SourceTree, generatedDocumentOwners)?.Project.Id == request.ProjectId))
+            .Where(symbol => !request.ExtensionOnly || symbol is IMethodSymbol { IsExtensionMethod: true })
+            .Where(symbol => string.IsNullOrWhiteSpace(request.NamespaceFilter) || symbol.ContainingNamespace.ToDisplayString().Contains(request.NamespaceFilter.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Where(symbol => string.IsNullOrWhiteSpace(request.SignatureFilter) || symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat).Contains(request.SignatureFilter, StringComparison.Ordinal))
+            .Where(symbol => !request.ExtensionOnly || symbol is IMethodSymbol method && DeclaredExtensionReceiverMatcher.Matches(method.Parameters[0].Type.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat), request.ReceiverType))
+            .ToList();
+        var kindAlternatives = request.ExtensionOnly ? Array.Empty<string>() : CreateKindAlternatives(nameMatches, request.Kind);
 
         if (filtered.Count == 0)
         {
-            var missMessage = await FormatMissMessageAsync(request, nameMatches, generatedDocumentOwners, ct).ConfigureAwait(false);
+            var missMessage = request.ExtensionOnly
+                ? $"No declared extension methods matched '{request.NamePattern}' and the selected filters."
+                : await FormatMissMessageAsync(request, nameMatches, generatedDocumentOwners, ct).ConfigureAwait(false);
             return new FindSymbolScanResult(missMessage, Array.Empty<SymbolLocationEntry>(), 0, 0, false, Array.Empty<string>(), kindAlternatives);
         }
 
@@ -111,7 +119,8 @@ public static class FindSymbolScanner
             request.Kind.ToString(),
             request.ScopeType.ToString(),
             request.IncludeGenerated.ToString(),
-            request.MaxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            request.MaxResults.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            request.ProjectId?.ToString(), request.NamespaceFilter, request.SignatureFilter, request.ExtensionOnly.ToString(), request.ReceiverType);
         var cursorStatus = BoundResultCursor.ReadOffset(request.ResultCursor, binding, out var offset);
         if (cursorStatus != BoundResultCursor.CursorStatus.Valid)
         {
@@ -184,7 +193,12 @@ public static class FindSymbolScanner
                 EndLine: primaryLoc.EndLine,
                 ProjectName: primaryLoc.ProjectName,
                 Signature: signature,
-                Locations: locations));
+                Locations: locations,
+                IsExtension: symbol is IMethodSymbol { IsExtensionMethod: true },
+                Namespace: symbol.ContainingNamespace.ToDisplayString(),
+                ContainingType: symbol.ContainingType?.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
+                ReceiverType: symbol is IMethodSymbol { IsExtensionMethod: true } extension ? extension.Parameters[0].Type.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat) : null,
+                ReturnType: symbol is IMethodSymbol method ? method.ReturnType.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat) : null));
         }
 
         return entries;
@@ -206,7 +220,8 @@ public static class FindSymbolScanner
                 if (!loc.IsInSource || loc.SourceTree is null) continue;
                 var filePath = loc.SourceTree.FilePath;
                 var document = GetSourceDocument(request.Solution, loc.SourceTree, generatedDocumentOwners);
-                if (document is null || !IsCSharpProject(document.Project) || !MatchesScope(document, request.ScopeType)) continue;
+                if (document is null || !IsCSharpProject(document.Project) || !MatchesScope(document, request.ScopeType)
+                    || request.ProjectId is not null && document.Project.Id != request.ProjectId) continue;
                 if (!request.IncludeGenerated)
                 {
                     if (!generatedDocuments.TryGetValue(document.Id, out var isGenerated))

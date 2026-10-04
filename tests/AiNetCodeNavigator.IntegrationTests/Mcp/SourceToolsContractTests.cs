@@ -28,6 +28,70 @@ public sealed class SourceToolsContractTests
     public SourceToolsContractTests(Xunit.ITestOutputHelper output) => _output = output;
 
     [Fact]
+    public async Task FindSymbolFiltersSelectExactProjectsAndDeclaredExtensionsBeforePaging()
+    {
+        using var fixture = TestTempDirectory.Create("discovery-filter-");
+        var target = Path.Combine(fixture.DirectoryPath, "Filter.slnx");
+        await File.WriteAllTextAsync(target, "<Solution />");
+        var firstPath = Path.Combine(fixture.DirectoryPath, "first", "Extensions.cs");
+        var secondPath = Path.Combine(fixture.DirectoryPath, "second", "Extensions.cs");
+        Directory.CreateDirectory(Path.GetDirectoryName(firstPath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(secondPath)!);
+        const string firstSource = "namespace Discovery.First; public static class Extensions { public static int Mark(this string value) => 1; public static int Size(this string value) => 2; public static int Plain(string value) => 3; }";
+        const string secondSource = "namespace Discovery.Second; public static class Extensions { public static int Mark(this int value) => 4; }";
+        await File.WriteAllTextAsync(firstPath, firstSource);
+        await File.WriteAllTextAsync(secondPath, secondSource);
+        await using var host = InMemorySourceTestHost.Create(target, [
+            new ProjectSpec("Owner", [(firstPath, firstSource)], VirtualProjectDirectory: "first"),
+            new ProjectSpec("OWNER", [(secondPath, secondSource)], VirtualProjectDirectory: "second"),
+        ]);
+        var tools = new SymbolTools(host.Runtime);
+        var sdk = ModelContextProtocol.Server.McpServerTool.Create(typeof(SymbolTools).GetMethod(nameof(SymbolTools.FindSymbol))!, tools,
+            new ModelContextProtocol.Server.McpServerToolCreateOptions { Name = "find_symbol" });
+        var properties = sdk.ProtocolTool.InputSchema.GetProperty("properties");
+        foreach (var option in new[] { "project", "namespaceFilter", "signatureFilter", "extensionOnly", "receiverType", "includeDiagnostics" })
+            Assert.True(properties.TryGetProperty(option, out _));
+        Assert.False(properties.GetProperty("extensionOnly").GetProperty("default").GetBoolean());
+        Assert.Contains("$.namePatterns", TextOf(await tools.FindSymbol(target, extensionOnly: true, pattern: " ")), StringComparison.Ordinal);
+        Assert.Contains("$.namePatterns", TextOf(await tools.FindSymbol(target, extensionOnly: true, pattern: "*", namePatterns: ["*"])), StringComparison.Ordinal);
+        foreach (var invalid in new[] {
+            await tools.FindSymbol(target, pattern: "*", project: ""),
+            await tools.FindSymbol(target, pattern: "*", project: "missing"),
+            await tools.FindSymbol(typeof(SourceToolsContractTests).Assembly.Location, pattern: "*", project: "Owner"),
+        }) Assert.Contains("$.project", TextOf(invalid), StringComparison.Ordinal);
+        AssertErrorWithinBudget(await tools.FindSymbol(target, pattern: "*", project: "owner"), "AMBIGUOUS_SYMBOL", 16384, 4096);
+        Assert.Contains("$.receiverType", TextOf(await tools.FindSymbol(target, pattern: "*", receiverType: "string")), StringComparison.Ordinal);
+        Assert.Contains("$.kind", TextOf(await tools.FindSymbol(target, extensionOnly: true, kind: "class")), StringComparison.Ordinal);
+        Assert.Contains("$.namePatterns", TextOf(await tools.FindSymbol(target)), StringComparison.Ordinal);
+        var projectPath = Path.Combine(fixture.DirectoryPath, "first", "Owner.csproj").Replace('\\', '/');
+        var first = await tools.FindSymbol(target, extensionOnly: true, project: projectPath, namespaceFilter: "FIRST", receiverType: "global::System.String", maxResults: 1);
+        AssertSuccessWithinBudget(first, 16384, 4096);
+        using var firstJson = JsonDocument.Parse(JsonBody(TextOf(first)));
+        var result = firstJson.RootElement.GetProperty("results")[0];
+        Assert.Equal(2, result.GetProperty("totalMatches").GetInt32());
+        var entry = Assert.Single(result.GetProperty("entries").EnumerateArray());
+        Assert.True(entry.GetProperty("isExtension").GetBoolean());
+        Assert.Equal("Mark", entry.GetProperty("name").GetString());
+        var reference = entry.GetProperty("handoffId").GetString()!;
+        var cursor = firstJson.RootElement.GetProperty("resultCursor").GetString();
+        var second = await tools.FindSymbol(target, extensionOnly: true, project: projectPath, namespaceFilter: "FIRST", receiverType: "global::System.String", maxResults: 1, resultCursor: cursor);
+        AssertSuccessWithinBudget(second, 16384, 4096);
+        Assert.Contains("Size", TextOf(second), StringComparison.Ordinal);
+        AssertErrorWithinBudget(await tools.FindSymbol(target, extensionOnly: true, project: projectPath, namespaceFilter: "SECOND", receiverType: "global::System.String", maxResults: 1, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+        foreach (var (signature, expected) in new[] { ("Mark", 1), ("mark", 0), ("Mark ", 0), (" ", 2) })
+        {
+            var filtered = await tools.FindSymbol(target, extensionOnly: true, project: projectPath, receiverType: "string", signatureFilter: signature);
+            AssertSuccessWithinBudget(filtered, 16384, 4096);
+            using var json = JsonDocument.Parse(JsonBody(TextOf(filtered)));
+            Assert.Equal(expected, json.RootElement.GetProperty("results")[0].GetProperty("totalMatches").GetInt32());
+            Assert.Empty(json.RootElement.GetProperty("results")[0].GetProperty("kindAlternatives").EnumerateArray());
+        }
+        var body = await tools.GetSymbolBody(target, [reference]);
+        AssertSuccessWithinBudget(body, 32768, 4096);
+        Assert.Contains("=> 1", TextOf(body), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task FindSymbolProjectionMeasuresFiftyGenericSingleLocationMatches()
     {
         using var fixture = TestTempDirectory.Create("find-symbol-token-projection-");

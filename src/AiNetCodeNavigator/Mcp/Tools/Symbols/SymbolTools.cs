@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Microsoft.CodeAnalysis;
 using AiNetCodeNavigator.Core.Assemblies;
 using AiNetCodeNavigator.Core.Common;
 using AiNetCodeNavigator.Core.Models;
@@ -20,7 +21,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
     [System.ComponentModel.Description("Find C# types or members by one or more name patterns; maxResults pages the combined match list with stable src: or asm: declaration references when available.")]
     public Task<CallToolResult> FindSymbol(
         [Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
-        [System.ComponentModel.Description("Specify exactly one of this field or pattern. This field accepts one to ten non-empty name patterns.")] string[]? namePatterns = null,
+        [System.ComponentModel.Description("Specify exactly one of this field or pattern, or omit both for extensionOnly enumeration. This field accepts one to ten non-empty name patterns.")] string[]? namePatterns = null,
         [System.ComponentModel.Description("A single non-empty name pattern. Specify this or namePatterns, but not both.")]
         string? pattern = null,
         [System.ComponentModel.Description("Optional C# symbol kind filter: class, interface, record, record class, record struct, struct, enum, delegate, method, property, or field.")]
@@ -35,16 +36,30 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
         [System.ComponentModel.Description("Opaque cursor returned for the next page of known symbol matches; use after reading all outer response pages.")] string? resultCursor = null,
         [Range(McpResponseBudgetLimits.MinimumBytes, McpResponseBudgetLimits.MaximumBytes), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16 * 1024,
         [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
+        [System.ComponentModel.Description("Source only: exact loaded project name or returned canonical project path; duplicate names require a path.")] string? project = null,
+        [System.ComponentModel.Description("Ordinal ignore-case substring of the full declared namespace; whitespace means no filter.")] string? namespaceFilter = null,
+        [System.ComponentModel.Description("Ordinal case-sensitive substring of the returned signature; whitespace means no filter.")] string? signatureFilter = null,
+        [System.ComponentModel.Description("Search actual declared extension methods only; may omit both pattern inputs to enumerate. No expression applicability is implied.")] bool extensionOnly = false,
+        [System.ComponentModel.Description("Declared receiver filter requires extensionOnly; aliases and qualified suffixes match, without assignability checks.")] string? receiverType = null,
+        [System.ComponentModel.Description("Include detailed assembly navigation/reference diagnostics; defaults false.")] bool includeDiagnostics = false,
         CancellationToken cancellationToken = default)
     {
-        if ((namePatterns is null) == string.IsNullOrWhiteSpace(pattern))
+        if (project is not null && string.IsNullOrWhiteSpace(project)) return Invalid("project", "Omit project or choose an exact loaded name or canonical path.");
+        if (project is not null && Path.GetExtension(targetPath).ToLowerInvariant() is ".dll" or ".exe") return Invalid("project", "Project selection supports source solutions only.");
+        namespaceFilter = NormalizeFilter(namespaceFilter);
+        signatureFilter = string.IsNullOrWhiteSpace(signatureFilter) ? null : signatureFilter;
+        receiverType = NormalizeFilter(receiverType);
+        if (receiverType is not null && !extensionOnly) return Invalid("receiverType", "Set extensionOnly=true to filter declared receivers.");
+        if (extensionOnly && kind is not null && !string.Equals(kind.Trim(), "method", StringComparison.OrdinalIgnoreCase)) return Invalid("kind", "Omit kind or use method with extensionOnly.");
+        var enumerateExtensions = extensionOnly && namePatterns is null && pattern is null;
+        if (!enumerateExtensions && (namePatterns is null) == string.IsNullOrWhiteSpace(pattern))
         {
             return Task.FromResult(McpToolResults.InvalidArgument(
                 "Specify exactly one of namePatterns or pattern.", "$.namePatterns",
                 "Provide a non-empty pattern or a non-empty namePatterns array, but not both.",
                 maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
         }
-        var patterns = namePatterns ?? [pattern!];
+        var patterns = enumerateExtensions ? new[] { "*" } : namePatterns ?? [pattern!];
         if (patterns.Length is < 1 or > 10 || patterns.Any(string.IsNullOrWhiteSpace))
         {
             return Task.FromResult(McpToolResults.InvalidArgument(
@@ -64,8 +79,16 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                 "Use a supported type or member kind.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
         }
 
+        if (extensionOnly) symbolKind = SymbolKindFilter.Method;
         var effectivePatterns = patterns.Distinct(StringComparer.Ordinal).ToArray();
-        var arguments = new { patterns = effectivePatterns, kind = symbolKind, scope, includeGenerated, includeReferences };
+        var arguments = new { patterns = effectivePatterns, kind = symbolKind, scope, includeGenerated, includeReferences, maxResults, project = project?.Trim(), namespaceFilter, signatureFilter, extensionOnly, receiverType, includeDiagnostics };
+        var discoveryScope = string.Concat(
+            project is null ? "" : $", project={project.Trim()}",
+            namespaceFilter is null ? "" : $", namespaceFilter={namespaceFilter}",
+            signatureFilter is null ? "" : $", signatureFilter={signatureFilter}",
+            extensionOnly ? ", extensionOnly=true" : "",
+            receiverType is null ? "" : $", receiverType={receiverType}");
+        var filterBinding = System.Text.Json.JsonSerializer.Serialize(arguments);
         return NavigationToolSupport.RouteAsync(runtime, "find_symbol", targetPath, arguments,
             operationToken, continuationToken, maxResponseBytes, maxResponseTokens,
             async (target, coreCursor, ct) =>
@@ -75,6 +98,18 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                 {
                     return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target, async (solution, source, token) =>
                     {
+                        ProjectId? selectedProject = null;
+                        if (project is not null)
+                        {
+                            var selection = solution.Projects.Where(candidate => string.Equals(candidate.Name, project.Trim(), StringComparison.OrdinalIgnoreCase)
+                                || !string.IsNullOrWhiteSpace(candidate.FilePath) && string.Equals(Path.GetFullPath(candidate.FilePath).Replace('\\', '/'), project.Trim().Replace('\\', '/'), StringComparison.OrdinalIgnoreCase)).ToArray();
+                            if (selection.Length != 1)
+                                return McpToolResults.Recoverable(selection.Length == 0 ? NavigationErrorCodes.InvalidArgument : NavigationErrorCodes.AmbiguousSymbol,
+                                    selection.Length == 0 ? "No loaded source project matches the selector." : "The project name matches multiple loaded owners.",
+                                    "Choose a returned canonical project path: " + string.Join(", ", solution.Projects.Select(candidate => candidate.FilePath)),
+                                    fieldPath: "$.project", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                            selectedProject = selection[0].Id;
+                        }
                         foreach (var searchPattern in effectivePatterns)
                         {
                             token.ThrowIfCancellationRequested();
@@ -82,7 +117,8 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                                 new FindSymbolScanRequest(solution, searchPattern, symbolKind, scope, int.MaxValue,
                                     SourceIdentity: source.Identity, IncludeGenerated: includeGenerated)
                                 {
-                                    CurrentIdentityRequest = source.IdentityRequest,
+                                    CurrentIdentityRequest = source.IdentityRequest, ProjectId = selectedProject, NamespaceFilter = namespaceFilter,
+                                    SignatureFilter = signatureFilter, ExtensionOnly = extensionOnly, ReceiverType = receiverType,
                                 }, token).ConfigureAwait(false));
                         }
 
@@ -91,7 +127,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                             .Concat([symbolKind.ToString(), scope.ToString(), includeGenerated.ToString(),
                                 maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture)]).ToArray();
                         var binding = BoundResultCursor.CreateBinding(target.CanonicalPath,
-                            source.Identity.ContentHash, "find_symbol", queryParts);
+                            source.Identity.ContentHash, "find_symbol", queryParts.Append(filterBinding).ToArray());
                         var paged = PageFindResults(results, effectivePatterns, maxResults, coreCursor, binding,
                             maxResponseBytes, maxResponseTokens);
                         if (paged.Error is { } pageError) return NavigationToolSupport.Failure(pageError, maxResponseBytes, maxResponseTokens, "$.resultCursor");
@@ -100,7 +136,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                         var omissions = results.SelectMany(static result => result.TruncatedBy).Where(reason => reason != "maxResults").Distinct(StringComparer.Ordinal).ToArray();
                         var scopes = string.Join(";", effectivePatterns.Select(patternValue => $"pattern={patternValue}"));
                         return source.WithMetadata(response,
-                            $"findSymbol({scopes}, kind={symbolKind}, scope={scope}, includeGenerated={includeGenerated}, maxResults={maxResults})",
+                            $"findSymbol({scopes}, kind={symbolKind}, scope={scope}, includeGenerated={includeGenerated}, maxResults={maxResults}{discoveryScope})",
                             omissions, paged.ResultCursor is not null);
                     }, maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
                 }
@@ -116,11 +152,27 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                 foreach (var searchPattern in effectivePatterns)
                 {
                     ct.ThrowIfCancellationRequested();
-                    var result = await AssemblyFindSymbolScanner.FindAsync(target.CanonicalPath, searchPattern,
-                        symbolKind, scope, int.MaxValue, includeReferences, ct, assemblyScope).ConfigureAwait(false);
-                    if (result.Error is { } error)
-                        return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.targetPath");
-                    results.Add(result);
+                    if (extensionOnly)
+                    {
+                        var extensions = await FindAssemblyExtensionsScanner.FindAsync(new FindAssemblyExtensionsRequest(target.CanonicalPath,
+                            ReceiverType: receiverType, Namespace: namespaceFilter, IncludeReferences: includeReferences)
+                            { NamePattern = searchPattern, SignatureFilter = signatureFilter, Scope = scope, CollectAllInventory = true }, ct, assemblyScope).ConfigureAwait(false);
+                        if (!extensions.IsSuccess) return NavigationToolSupport.Failure(extensions.Error!.Value, maxResponseBytes, maxResponseTokens, "$.targetPath");
+                        var payload = extensions.Value!;
+                        var entries = payload.Extensions.Select(entry => new SymbolLocationEntry(entry.Name, "method", entry.DocCommentId, entry.HandoffId,
+                            "", 0, 0, entry.AssemblyName, entry.DiscoverySignature!, OwnerTargetPath: entry.OwnerTargetPath,
+                            IsExtension: true, Namespace: entry.Namespace, ContainingType: entry.ContainingType, ReceiverType: entry.ReceiverType, ReturnType: entry.ReturnType)).ToArray();
+                        var extensionOmissions = payload.Analysis?.OmissionReasons ?? [];
+                        results.Add(new FindSymbolScanResult("Declared extension matches.", entries, payload.TotalCount, entries.Length,
+                            extensionOmissions.Count > 0, extensionOmissions, [], Diagnostics: AssemblyDiagnosticProjection.Project(payload.Diagnostics, includeDiagnostics)));
+                    }
+                    else
+                    {
+                        var result = await AssemblyFindSymbolScanner.FindAsync(target.CanonicalPath, searchPattern,
+                            symbolKind, scope, int.MaxValue, includeReferences, ct, assemblyScope, namespaceFilter, signatureFilter).ConfigureAwait(false);
+                        if (result.Error is { } error) return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.targetPath");
+                        results.Add(result);
+                    }
                 }
 
                 var assemblyIdentity = AssemblySymbolInputResolver.CreateIdentity(assemblyScope);
@@ -130,17 +182,22 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                         symbolKind.ToString(), scope.ToString(), includeGenerated.ToString(), includeReferences.ToString(),
                         maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture)]).ToArray();
                 var binding = BoundResultCursor.CreateBinding(target.CanonicalPath,
-                    assemblyIdentity.ContentHash, "find_symbol", assemblyQueryParts);
+                    assemblyIdentity.ContentHash, "find_symbol", assemblyQueryParts.Append(filterBinding).ToArray());
                 var paged = PageFindResults(results, effectivePatterns, maxResults, coreCursor, binding,
                     maxResponseBytes, maxResponseTokens);
                 if (paged.Error is { } pageError) return NavigationToolSupport.Failure(pageError, maxResponseBytes, maxResponseTokens, "$.resultCursor");
                 var response = FormatFindResults(paged.Results, effectivePatterns, paged.ResultCursor,
                     maxResponseBytes, maxResponseTokens);
                 var omissions = results.SelectMany(static result => result.TruncatedBy).Where(reason => reason != "maxResults").Distinct(StringComparer.Ordinal).ToArray();
-                var analyzedScope = $"findSymbol(patterns={string.Join('|', effectivePatterns)}, kind={symbolKind}, scope={scope}, includeGenerated={includeGenerated}, includeReferences={includeReferences}, maxResults={maxResults})";
+                var analyzedScope = $"findSymbol(patterns={string.Join('|', effectivePatterns)}, kind={symbolKind}, scope={scope}, includeGenerated={includeGenerated}, includeReferences={includeReferences}, maxResults={maxResults}{discoveryScope})";
                 return NavigationToolSupport.WithAssemblyMetadata(response, assemblyIdentity, analyzedScope, omissions,
                     resultContinuationAvailable: paged.ResultCursor is not null);
             }, null, cancellationToken, resultCursor, "find_symbol.matches");
+
+        Task<CallToolResult> Invalid(string field, string hint) => Task.FromResult(McpToolResults.InvalidArgument("The selected discovery options are unsupported.", "$." + field, hint,
+            maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens));
+        static string? NormalizeFilter(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     }
 
     [McpServerTool(Name = "get_symbol_body", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
@@ -334,7 +391,8 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
         var truncated = resultCursor is not null || results.Any(result => result.IsTruncated);
         var payload = new FindSymbolBatchResponse(patterns.Select((pattern, index) => new FindSymbolPatternResponse(pattern,
             results[index].Entries.Select(ProjectFindSymbolEntry).ToArray(), results[index].TotalMatches, results[index].ReturnedMatches,
-            results[index].TruncatedBy, results[index].KindAlternatives)).ToArray(), resultCursor);
+            results[index].TruncatedBy, results[index].KindAlternatives)).ToArray(), resultCursor,
+            results.SelectMany(result => result.Diagnostics ?? []).Distinct(StringComparer.Ordinal).ToArray());
         return NavigationToolSupport.Success(payload, truncated,
             truncated ? resultCursor is not null ? "Use resultCursor after reading all outer response pages." : "Increase maxResults up to 1000 and repeat the same pattern query." : null);
     }
@@ -375,7 +433,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
         return (nextResults, page.NextCursor, null);
     }
 
-    private sealed record FindSymbolBatchResponse(IReadOnlyList<FindSymbolPatternResponse> Results, string? ResultCursor);
+    private sealed record FindSymbolBatchResponse(IReadOnlyList<FindSymbolPatternResponse> Results, string? ResultCursor, IReadOnlyList<string> Diagnostics);
     private sealed record FindSymbolPatternResponse(string Pattern, IReadOnlyList<SymbolLocationEntry> Entries, int TotalMatches,
         int ReturnedMatches, IReadOnlyList<string> TruncatedBy, IReadOnlyList<string> KindAlternatives);
 
