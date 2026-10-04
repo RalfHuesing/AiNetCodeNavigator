@@ -15,6 +15,69 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class SourceDependencyGraphOutgoingContractTests
 {
     [Fact]
+    public async Task DependencyGraph_ProjectReferencesResolveExactRootWithoutDocumentCollection()
+    {
+        using var fixture = TestTempDirectory.Create("ainet-project-dependencies-");
+        var (target, app) = CreateSolution(fixture, new Dictionary<string, string>
+        {
+            ["Root.cs"] = "namespace ProjectProbe; public class Root { public void Run() { } }",
+            ["Empty.cs"] = "// no declaration"
+        });
+        var libraryFile = fixture.CreateFile("src/Library/Library.cs", "namespace Library; public class Root { }");
+        var leafFile = fixture.CreateFile("src/Leaf/Leaf.cs", "namespace Leaf; public class Root { }");
+        var clientFile = fixture.CreateFile("src/Client/Client.cs", "namespace Client; public class Root { }");
+        var scans = new ConcurrentQueue<string>();
+        var cache = new DependencyGraphCache(observer: new DependencyGraphCollectionObserver(DocumentCollected: document => scans.Enqueue(document.Name)));
+        await using var testHost = InMemorySourceTestHost.Create(target,
+            [app with { ProjectReferences = ["Library"] },
+             new ProjectSpec("Library", [(libraryFile, await File.ReadAllTextAsync(libraryFile))], ProjectReferences: ["Leaf"], VirtualProjectDirectory: "src/Library"),
+             new ProjectSpec("Leaf", [(leafFile, await File.ReadAllTextAsync(leafFile))], VirtualProjectDirectory: "src/Leaf"),
+             new ProjectSpec("Client", [(clientFile, await File.ReadAllTextAsync(clientFile))], ProjectReferences: ["App"], VirtualProjectDirectory: "src/Client")], cache);
+        var relationships = new RelationshipTools(testHost.Runtime);
+        var outgoing = Payload(await relationships.DependencyGraph(target, filePath: "src/App/Empty.cs", level: "project", direction: "outgoing",
+            maxResponseBytes: 65536, maxResponseTokens: 8192));
+        Assert.Equal("project", outgoing.GetProperty("level").GetString());
+        Assert.Equal("App", outgoing.GetProperty("root").GetProperty("name").GetString());
+        Assert.False(outgoing.TryGetProperty("typeDependencies", out _));
+        var direct = Assert.Single(outgoing.GetProperty("projectDependencies").EnumerateArray());
+        Assert.Equal("ProjectReference", direct.GetProperty("origin").GetString());
+        Assert.Equal(outgoing.GetProperty("root").GetProperty("projectId").GetString(), direct.GetProperty("fromProjectId").GetString());
+        Assert.Equal(2, outgoing.GetProperty("projects").GetArrayLength());
+        Assert.All(outgoing.GetProperty("projects").EnumerateArray(), owner =>
+        {
+            Assert.True(Path.IsPathFullyQualified(owner.GetProperty("projectPath").GetString()!));
+            Assert.False(string.IsNullOrWhiteSpace(owner.GetProperty("ownerContextFingerprint").GetString()));
+        });
+        var member = Payload(await relationships.DependencyGraph(target, symbolIdentifier: "M:ProjectProbe.Root.Run", level: "project", direction: "outgoing",
+            maxResponseBytes: 65536, maxResponseTokens: 8192));
+        Assert.Equal(outgoing.GetProperty("root").GetRawText(), member.GetProperty("root").GetRawText());
+        Assert.Equal(outgoing.GetProperty("projectDependencies").GetRawText(), member.GetProperty("projectDependencies").GetRawText());
+        var deeper = Payload(await relationships.DependencyGraph(target, filePath: "src/App/Empty.cs", level: "project", direction: "outgoing", depth: 2,
+            maxResponseBytes: 65536, maxResponseTokens: 8192));
+        Assert.Equal(2, deeper.GetProperty("projectDependencies").GetArrayLength());
+        var incoming = Payload(await relationships.DependencyGraph(target, filePath: "src/App/Empty.cs", level: "project", direction: "incoming",
+            maxResponseBytes: 65536, maxResponseTokens: 8192));
+        Assert.Single(incoming.GetProperty("projectDependencies").EnumerateArray());
+        Assert.Contains("Client", incoming.GetRawText());
+        var both = Payload(await relationships.DependencyGraph(target, filePath: "src/App/Empty.cs", level: "project", direction: "both", depth: 2, maxResults: 1,
+            maxResponseBytes: 65536, maxResponseTokens: 8192));
+        Assert.Equal(3, both.GetProperty("totalProjectDependencyCount").GetInt32());
+        Assert.Single(both.GetProperty("projectDependencies").EnumerateArray());
+        Assert.True(both.GetProperty("hasMore").GetBoolean());
+        Assert.False(both.GetProperty("isComplete").GetBoolean());
+        Assert.Contains("$.scopeType", TextOf(await relationships.DependencyGraph(target, filePath: "src/App/Empty.cs", level: "project", scopeType: "all")));
+        Assert.Contains("$.includeGenerated", TextOf(await relationships.DependencyGraph(target, filePath: "src/App/Empty.cs", level: "project", includeGenerated: false)));
+        Assert.Contains("$.level", TextOf(await relationships.DependencyGraph(typeof(RelationshipTools).Assembly.Location, symbolIdentifier: "T:Any", level: "project")));
+        Assert.Contains("AMBIGUOUS_SYMBOL", TextOf(await relationships.DependencyGraph(target, symbolIdentifier: "Root", level: "project")));
+        var isolated = Payload(await relationships.DependencyGraph(target, filePath: leafFile, level: "project", direction: "outgoing",
+            maxResponseBytes: 65536, maxResponseTokens: 8192));
+        Assert.Equal("Leaf", isolated.GetProperty("root").GetProperty("name").GetString());
+        Assert.Empty(isolated.GetProperty("projectDependencies").EnumerateArray());
+        Assert.True(isolated.GetProperty("isComplete").GetBoolean());
+        Assert.Empty(scans);
+    }
+
+    [Fact]
     public async Task DependencyGraph_SelectedLevelsUseOwningTypeTraversalAndReuseEvidenceFacts()
     {
         using var fixture = TestTempDirectory.Create("ainet-selected-dependency-levels-");
@@ -50,7 +113,7 @@ public sealed class SourceDependencyGraphOutgoingContractTests
             Assert.Equal(level != "type", payload.GetProperty("isComplete").GetBoolean());
         }
         Assert.Single(scans);
-        AssertErrorWithinBudget(await relationships.DependencyGraph(target, symbolIdentifier: "T:App.Root", level: "project"),
+        AssertErrorWithinBudget(await relationships.DependencyGraph(target, symbolIdentifier: "T:App.Root", level: "invalid"),
             "INVALID_ARGUMENT", 24576, 8192);
         AssertErrorWithinBudget(await relationships.DependencyGraph(target, symbolIdentifier: "T:App.Root", depth: 0),
             "INVALID_ARGUMENT", 24576, 8192);
@@ -164,6 +227,15 @@ public sealed class SourceDependencyGraphOutgoingContractTests
         await using var testHost = InMemorySourceTestHost.Create(target, [app, library], cache);
         var relationships = new RelationshipTools(testHost.Runtime);
 
+        var emptyProjects = Payload(await relationships.DependencyGraph(target, filePath: fixture.GetPath("src/App/Empty.cs"), level: "project", direction: "outgoing",
+            maxResponseBytes: 65536, maxResponseTokens: 8192));
+        Assert.Equal("App", emptyProjects.GetProperty("root").GetProperty("name").GetString());
+        Assert.Single(emptyProjects.GetProperty("projectDependencies").EnumerateArray());
+        var selectedProjects = Payload(await relationships.DependencyGraph(target, filePath: fixture.GetPath("src/App/Selected.cs"), level: "project", direction: "outgoing",
+            maxResponseBytes: 65536, maxResponseTokens: 8192));
+        Assert.Equal(emptyProjects.GetProperty("projectDependencies").GetRawText(), selectedProjects.GetProperty("projectDependencies").GetRawText());
+        Assert.Empty(scans);
+
         var empty = await relationships.DependencyGraph(target, filePath: fixture.GetPath("src/App/Empty.cs"), direction: "outgoing",
             maxResponseBytes: 65536, maxResponseTokens: 8192);
         var emptyPayload = Payload(empty);
@@ -250,6 +322,10 @@ public sealed class SourceDependencyGraphOutgoingContractTests
         await using var cache = new DependencyGraphCache(observer: new DependencyGraphCollectionObserver(DocumentCollected: _ => scans.Enqueue("collected")));
         await using var testHost = InMemorySourceTestHost.Create(target, projects, cache);
         var relationships = new RelationshipTools(testHost.Runtime);
+        var projectResult = await relationships.DependencyGraph(target, filePath: linked, level: "project",
+            maxResponseBytes: 65536, maxResponseTokens: 8192);
+        AssertErrorWithinBudget(projectResult, "INVALID_ARGUMENT", 65536, 8192);
+        Assert.Contains("multiple loaded owners", TextOf(projectResult), StringComparison.Ordinal);
         foreach (var direction in new[] { "outgoing", "incoming", "both" })
         {
             var result = await relationships.DependencyGraph(target, filePath: linked, direction: direction, scopeType: "tests", includeGenerated: false,

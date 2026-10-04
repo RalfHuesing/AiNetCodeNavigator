@@ -28,7 +28,8 @@ public sealed class RelationshipToolsContractTests
         Assert.Contains("namespace", properties.GetProperty("level").GetProperty("description").GetString());
         Assert.Equal(JsonValueKind.Null, properties.GetProperty("scopeType").GetProperty("default").ValueKind);
         Assert.Equal(JsonValueKind.Null, properties.GetProperty("includeGenerated").GetProperty("default").ValueKind);
-        Assert.Contains("$.level", TextOf(await tools.DependencyGraph("C:/missing.slnx", filePath: "Root.cs", level: "project")));
+        Assert.Contains("project", properties.GetProperty("level").GetProperty("description").GetString());
+        Assert.Contains("$.level", TextOf(await tools.DependencyGraph("C:/missing.slnx", filePath: "Root.cs", level: "invalid")));
         Assert.Contains("$.depth", TextOf(await tools.DependencyGraph("C:/missing.slnx", filePath: "Root.cs", depth: 0)));
     }
 

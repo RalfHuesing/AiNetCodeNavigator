@@ -230,14 +230,14 @@ public sealed partial class RelationshipTools(NavigatorHostRuntime runtime)
         [System.ComponentModel.Description("Type or member identifier, including a stable src:/asm: reference, used as the dependency graph root; specify this or filePath.")] string? symbolIdentifier = null, [System.ComponentModel.Description("Traversal direction: both (default), incoming, or outgoing.")] string direction = "both", [Range(1, 3), System.ComponentModel.Description("Maximum dependency traversal depth.")] int depth = 1,
         [Range(1, 500), System.ComponentModel.Description("Maximum dependency entries to return.")] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string? scopeType = null, [System.ComponentModel.Description("Include dependencies from generated source files.")] bool? includeGenerated = null,
         [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 24576).") ] int maxResponseBytes = 24576, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
-        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, [System.ComponentModel.Description("Selected dependency projection: type (default), file, or namespace.")] string level = "type", CancellationToken cancellationToken = default)
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, [System.ComponentModel.Description("Selected dependency projection: type (default), file, namespace, or source-only project references.")] string level = "type", CancellationToken cancellationToken = default)
     {
         if ((filePath is null) == (symbolIdentifier is null)) return Invalid("filePath", "Specify exactly one of filePath or symbolIdentifier.");
         if (!TryDependencyDirection(direction, out var parsedDirection)) return Invalid("direction", "Use incoming, outgoing, or both.");
-        if (level is not ("type" or "file" or "namespace")) return Invalid("level", "Choose type, file, or namespace; project projection is unavailable.");
+        if (level is not ("type" or "file" or "namespace" or "project")) return Invalid("level", "Choose type, file, namespace, or project.");
         if (depth is < 1 or > 3) return Invalid("depth", "Use depth from one to three.");
         if (maxResults is < 1 or > 500) return Invalid("maxResults", "Use a page size from one to 500.");
-        var projectionLevel = level == "type" ? DependencyGraphLevel.Type : level == "file" ? DependencyGraphLevel.File : DependencyGraphLevel.Namespace;
+        var projectionLevel = level switch { "type" => DependencyGraphLevel.Type, "file" => DependencyGraphLevel.File, "namespace" => DependencyGraphLevel.Namespace, _ => DependencyGraphLevel.Project };
         var generated = includeGenerated ?? false;
         if (!TryScope(scopeType ?? "all", out var parsedScope)) return Invalid("scopeType", "Use all, production, or tests.");
         return await NavigationToolSupport.RouteAsync(runtime, "dependency_graph", targetPath,
@@ -247,6 +247,7 @@ public sealed partial class RelationshipTools(NavigatorHostRuntime runtime)
             {
                 if (target.TargetType == AnalysisTargetType.Assembly)
                 {
+                    if (level == "project") return Invalid("level", "Project-reference relationships require a source solution target.");
                     if (symbolIdentifier is not null)
                     {
                         var accessResult = await ResolveAssemblySymbolAsync(target, symbolIdentifier, ct).ConfigureAwait(false);
@@ -306,10 +307,39 @@ public sealed partial class RelationshipTools(NavigatorHostRuntime runtime)
                         DependencyGraphOmissions(fileScan));
                 }
 
+                if (level == "project" && scopeType is not null) return Invalid("scopeType", "Omit scopeType for loaded project-reference relationships.");
+                if (level == "project" && includeGenerated is not null) return Invalid("includeGenerated", "Omit includeGenerated for loaded project-reference relationships.");
                 if (symbolIdentifier is not null && ValidateSourceReferenceInput(symbolIdentifier, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier") is { } typeRouteError)
                     return typeRouteError;
                 return await WithSource(target, async (solution, source) =>
                 {
+                if (level == "project")
+                {
+                    Project? owner;
+                    if (filePath is not null)
+                    {
+                        var selected = await ResolveDependencyDocumentAsync(solution, filePath, ct).ConfigureAwait(false);
+                        if (selected.Document is null)
+                            return McpToolResults.InvalidArgument("The requested source file could not be selected.", "$.filePath", selected.Error!, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                        owner = selected.Document.Project;
+                    }
+                    else
+                    {
+                        var resolved = await Resolve(solution, symbolIdentifier!, source.IdentityRequest, ct).ConfigureAwait(false);
+                        if (resolved.Error is not null) return NavigationToolSupport.Failure(resolved.Error.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
+                        var tree = resolved.Symbol!.Locations.FirstOrDefault(location => location.IsInSource)?.SourceTree;
+                        owner = tree is null ? null : solution.GetDocument(tree)?.Project;
+                        if (tree is not null && owner is null)
+                            owner = (await ExactSourceSymbolResolver.GetSourceGeneratedDocumentOwnersAsync(solution, ct).ConfigureAwait(false)).GetValueOrDefault(tree)?.Project;
+                        if (owner is null) return Invalid("symbolIdentifier", "Choose a source declaration with an exact loaded project owner.");
+                    }
+                    var graph = DependencyProjectTraversal.Traverse(solution, owner.Id, parsedDirection, depth, maxResults,
+                        source.IdentityRequest.OwnerContextFingerprints, cancellationToken: ct);
+                    return source.WithMetadata(NavigationToolSupport.Success(graph, graph.IsTruncated,
+                            "Increase maxResults or narrow direction/depth and repeat the query."),
+                        $"dependencyGraph(level=project, file={filePath?.Trim() ?? "*"}, symbol={symbolIdentifier?.Trim() ?? "*"}, direction={parsedDirection}, depth={depth}, maxResults={maxResults})",
+                        graph.NodeLimitReached ? ["nodeLimit"] : []);
+                }
                 string? typeName = null;
                 string? typeId = null;
                 IReadOnlyCollection<string>? fileTypeIds = null;

@@ -15,6 +15,56 @@ namespace AiNetCodeNavigator.FastTests.Dependencies;
 public sealed class DependencyGraphScannerTests
 {
     [Fact]
+    public void ProjectReferences_FollowDirectedDepthDeduplicateCyclesAndKeepExactOwnerBounds()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(@"C:\VirtualRepo\Projects.slnx",
+            new ProjectSpec("A", [], VirtualProjectDirectory: "src/A"),
+            new ProjectSpec("B", [], VirtualProjectDirectory: "src/B"),
+            new ProjectSpec("C", [], VirtualProjectDirectory: "src/C"),
+            new ProjectSpec("D", [], VirtualProjectDirectory: "src/D"));
+        var owners = fixture.Solution.Projects.ToDictionary(project => project.Name, project => project.Id);
+        using var cycleWorkspace = new Microsoft.CodeAnalysis.AdhocWorkspace();
+        var references = new Dictionary<string, string[]> { ["A"] = ["B"], ["B"] = ["C"], ["C"] = ["A"], ["D"] = ["B"] };
+        var solution = cycleWorkspace.AddSolution(Microsoft.CodeAnalysis.SolutionInfo.Create(
+            Microsoft.CodeAnalysis.SolutionId.CreateNewId(), Microsoft.CodeAnalysis.VersionStamp.Create(),
+            projects: fixture.Solution.Projects.Select(project => Microsoft.CodeAnalysis.ProjectInfo.Create(project.Id,
+                Microsoft.CodeAnalysis.VersionStamp.Create(), project.Name == "C" ? "B" : project.Name, project.AssemblyName!,
+                Microsoft.CodeAnalysis.LanguageNames.CSharp, filePath: project.FilePath,
+                projectReferences: references[project.Name].Select(name => new Microsoft.CodeAnalysis.ProjectReference(owners[name]))))));
+        var contexts = owners.Values.ToDictionary(id => id, id => "context-" + id.Id);
+        var direct = DependencyProjectTraversal.Traverse(solution, owners["A"], DependencyGraphDirection.Outgoing, 1, 50, contexts);
+        Assert.Single(direct.ProjectDependencies);
+        Assert.Equal("ProjectReference", direct.ProjectDependencies[0].Origin);
+        Assert.Equal(owners["A"].Id.ToString("D"), direct.Root.ProjectId);
+        Assert.Equal(contexts[owners["A"]], direct.Root.OwnerContextFingerprint);
+        var outgoing = DependencyProjectTraversal.Traverse(solution, owners["A"], DependencyGraphDirection.Outgoing, 3, 50, contexts);
+        Assert.Equal(3, outgoing.ProjectDependencies.Count);
+        Assert.DoesNotContain(outgoing.Projects, project => project.Name == "D");
+        Assert.Equal(2, outgoing.Projects.Count(project => project.Name == "B"));
+        Assert.Equal(3, outgoing.Projects.Select(project => project.ProjectId).Distinct().Count());
+        var incoming = DependencyProjectTraversal.Traverse(solution, owners["A"], DependencyGraphDirection.Incoming, 3, 50, contexts);
+        Assert.Equal(4, incoming.ProjectDependencies.Count);
+        var both = DependencyProjectTraversal.Traverse(solution, owners["A"], DependencyGraphDirection.Both, 3, 50, contexts);
+        Assert.Equal(incoming.ProjectDependencies.Select(edge => (edge.FromProjectId, edge.ToProjectId)).OrderBy(edge => edge).ToArray(),
+            both.ProjectDependencies.Select(edge => (edge.FromProjectId, edge.ToProjectId)).OrderBy(edge => edge).ToArray());
+        var page = DependencyProjectTraversal.Traverse(solution, owners["A"], DependencyGraphDirection.Both, 3, 1, contexts);
+        Assert.Equal(4, page.TotalProjectDependencyCount);
+        Assert.Single(page.ProjectDependencies);
+        Assert.True(page.HasMore);
+        Assert.False(page.IsComplete);
+        var bounded = DependencyProjectTraversal.Traverse(solution, owners["A"], DependencyGraphDirection.Outgoing, 3, 50, contexts, maxNodes: 2);
+        Assert.Equal(2, bounded.VisitedProjectCount);
+        Assert.True(bounded.NodeLimitReached);
+        Assert.Equal(1, bounded.HiddenProjectDependencyCount);
+        Assert.Single(bounded.ProjectDependencies);
+        var isolated = DependencyProjectTraversal.Traverse(solution, owners["D"], DependencyGraphDirection.Incoming, 1, 50);
+        Assert.Equal("D", isolated.Root.Name);
+        Assert.Empty(isolated.ProjectDependencies);
+        Assert.Empty(isolated.Projects);
+        Assert.True(isolated.IsComplete);
+    }
+
+    [Fact]
     public async Task Project_SelectedLevelKeepsOnlyItsTotalsLimitsAndRepresentativeEvidence()
     {
         using var fixture = TestWorkspaceBuilder.CreateSolution(@"C:\VirtualRepo\SelectedDependencies.slnx",
