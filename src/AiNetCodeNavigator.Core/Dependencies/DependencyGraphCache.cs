@@ -188,7 +188,8 @@ internal sealed class DependencyGraphCache : IAsyncDisposable
         CancellationToken cancellationToken = default,
         Action<DependencyGraphProgress>? progress = null)
     {
-        using var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, shutdown.Token);
+        var shutdownToken = shutdown.Token;
+        using var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, shutdownToken);
         var requestToken = requestCancellation.Token;
         targetPath = CanonicalizeTarget(targetPath);
         requestToken.ThrowIfCancellationRequested();
@@ -304,6 +305,7 @@ internal sealed class DependencyGraphCache : IAsyncDisposable
 
             if (!retry)
             {
+                shutdownToken.ThrowIfCancellationRequested();
                 requestToken.ThrowIfCancellationRequested();
                 var newScanCount = ownedBatches.Sum(batch => Volatile.Read(ref batch.SemanticScanCount));
                 return DependencyGraphScanner.CreateCollectionFromFacts(plan, orderedFacts, errors, newScanCount);
