@@ -33,6 +33,12 @@ The orchestrator records this point's implementation evidence here under the [sh
 | Measurements / artifacts | — |
 | Blocker / next action | Implement the approved creator capability/diagnostic boundary, finish focused gates and independent audit, and record optional deferred evidence in findings.md before continuing R04 |
 
+### Resumed delivery and narrow implementation ownership
+
+On 2026-10-04 the user approved the recommended creator contract, authorized separate deferred supplementary evidence and reaffirmed completing R03–R08. The additional guardrail keeps R03 within existing refresh/fingerprint/lifetime responsibilities; arbitrary generator safety and general provenance/sandbox/hooking/audit frameworks are not the task. All behavioral acceptance remains binding. Before product commitment, the orchestrator and independent auditor review newly introduced layers/state/helpers and remove those without a concrete correctness or acceptance need.
+
+Fresh explicitly configured agents continue the existing candidate without reimplementing completed R01/R02: `/root/r03_creator_completion` (gpt-6-luna/high) owns the narrow Workspace creator/capture contract, necessary TestKit factory and focused Fast corrections; `/root/r03_contract_consumers` (gpt-6-luna/high) owns actual Integration consumers and current-state docs; `/root/roadmap_independent_audit` (gpt-6.1-sol/medium) is separate and read-only. Root alone runs serial official gates, edits progress/checkboxes and commits. The permitted supplementary deferrals are listed in [findings.md](../findings.md); D01 remains a correction requirement rather than deferred evidence.
+
 ### Prerequisites and independent ownership
 
 R02 product commit `9c1c3951649a16fbdb1b5a065bd8d2a00a79aa44` and verified evidence commit `671496d` are present; all R02 detail boxes and index checkbox are checked. The working tree and index were clean before R03 assignment. Root reread the full specification 04, specification 02 canonical paths, execution rules, all repository rules, R03 and existing identity call-site inventory. R02's verified structural checkpoint governs this point.
