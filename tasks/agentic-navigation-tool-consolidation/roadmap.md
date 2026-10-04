@@ -12,7 +12,7 @@ Execute the first open child point, in order. A parent closes only after its imp
 
 - [x] **M0 — [Baseline and implementation readiness](roadmap/00-baseline.md)**: concept P0; identify current code, useful reproductions, consumers, and existing regression coverage.
 - [x] **M1 — [References, context uses, and evidence](roadmap/01-references-and-evidence.md)**: concept P1.
-- [ ] **M2 — [Consolidated navigation entry points](roadmap/02-entry-points.md)**: concept P2; intermediate catalog of thirteen tools.
+- [x] **M2 — [Consolidated navigation entry points](roadmap/02-entry-points.md)**: concept P2; intermediate catalog of thirteen tools.
 - [ ] **M3 — [Discovery and metadata ownership](roadmap/03-discovery-and-metadata.md)**: concept P3; final catalog of twelve tools.
 - [ ] **M4 — [Focused dependencies and assembly output](roadmap/04-focused-output.md)**: concept P4.
 - [ ] **M5 — [Helper-based test navigation](roadmap/05-test-navigation.md)**: concept P5.
