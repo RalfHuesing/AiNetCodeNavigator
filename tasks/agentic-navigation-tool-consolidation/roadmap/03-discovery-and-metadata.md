@@ -108,4 +108,3 @@ Current relationship/discovery docs describe complete constructed-interface mapp
 ### M3.R — independent acceptance
 
 Independent Sol 6.1/medium review of M3.1/M3.2 found the two finite defects recorded in M3.C1. Focused re-review of b9053b1e5d5928a326a45dfc2554b5c7d01e8f8a verified both corrections, failing-before evidence, final 15 Fast / 6 Integration passes, zero-warning build, dual-member domain pages and exact body handoffs, and actual omission-aware Extension Exploration. No remaining required finding or concrete neighboring regression. Root inspected W5 owner ambiguity/selection, separate Source/DLL follow-ups and final Extension recovery; no green gates were rerun for review. M3 and M3.R accepted. The next open executable point is M4.1.
-
