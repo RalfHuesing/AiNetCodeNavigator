@@ -22,6 +22,41 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class AssemblyToolsContractTests
 {
     [Fact]
+    public async Task InspectAssemblyCompactDefaultRequiresExplicitMembersAndBindsSelection()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var tools = new AssemblyTools(runtime);
+        using var fixture = TestTempDirectory.Create("assembly-inspect-options-");
+        var path = AssemblyTestHelper.EmitAssembly(fixture, "InspectOptions", "namespace Probe; public class Api { public void MethodA() { } public void MethodB() { } } public class Other { }");
+        var compact = await tools.InspectAssembly(path, typeName: "Api", exactTypeName: true, maxResponseBytes: 65536);
+        Assert.False(compact.IsError, TextOf(compact));
+        using var compactJson = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(compact)));
+        var type = Assert.Single(compactJson.RootElement.GetProperty("types").EnumerateArray());
+        Assert.False(type.TryGetProperty("members", out _));
+        Assert.Equal("Probe.Api", type.GetProperty("signature").GetString());
+        Assert.Equal("Public", type.GetProperty("accessibility").GetString());
+        Assert.Equal(path, type.GetProperty("ownerTargetPath").GetString());
+        var reference = type.GetProperty("handoffId").GetString()!;
+        var members = await new RelationshipTools(runtime).GetContext(path, reference, ["members"], maxResults: 1, maxResponseBytes: 65536);
+        Assert.False(members.IsError, TextOf(members));
+        Assert.Contains("MethodA", TextOf(members), StringComparison.Ordinal);
+        var detail = await tools.InspectAssembly(path, typeName: "Api", includeMembers: true, memberName: "methoda", memberNames: ["MethodB"], maxResponseBytes: 65536);
+        Assert.False(detail.IsError, TextOf(detail));
+        using var detailJson = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(detail)));
+        var api = Assert.Single(detailJson.RootElement.GetProperty("types").EnumerateArray());
+        Assert.Equal(reference, api.GetProperty("handoffId").GetString());
+        Assert.Equal(new[] { "MethodA", "MethodB" }, api.GetProperty("members").EnumerateArray().Select(member => member.GetProperty("name").GetString()));
+        Assert.Contains("$.memberName", TextOf(await tools.InspectAssembly(path, memberName: "")), StringComparison.Ordinal);
+        Assert.Contains("$.memberNames", TextOf(await tools.InspectAssembly(path, includeMembers: false, memberNames: [])), StringComparison.Ordinal);
+        var first = await tools.InspectAssembly(path, maxResults: 1, maxResponseBytes: 65536);
+        var cursor = ReadDomainCursor(TextOf(first));
+        AssertError(await tools.InspectAssembly(path, maxResults: 1, includeMembers: true, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH");
+        var sdk = ModelContextProtocol.Server.McpServerTool.Create(tools.GetType().GetMethod(nameof(AssemblyTools.InspectAssembly))!, tools);
+        Assert.True(sdk.ProtocolTool.InputSchema.GetProperty("properties").TryGetProperty("includeMembers", out _));
+    }
+
+    [Fact]
     public async Task RawAssemblyLocalFunctionLocationKeepsBodyWithoutStableReference()
     {
         using var fixture = TestTempDirectory.Create("assembly-raw-local-function-");
@@ -1391,7 +1426,7 @@ public sealed class AssemblyToolsContractTests
             "M:AssemblyRouteProbe.Probe.Read", assemblyPath);
 
         AssertOwnerResult(await symbols.GetSymbolBody(assemblyPath, [entryHandle], maxResponseBytes: 32768), "Entry");
-        var inspectedProbe = await assemblies.InspectAssembly(assemblyPath, typeName: "AssemblyRouteProbe.Probe",
+        var inspectedProbe = await assemblies.InspectAssembly(assemblyPath, includeMembers: true, typeName: "AssemblyRouteProbe.Probe",
             exactTypeName: true, maxResponseBytes: 32768);
         AssertOwnerResult(inspectedProbe, "AssemblyRouteProbe.Probe");
         var probeHandoff = ReadAnyHandoff(TextOf(inspectedProbe));
@@ -1590,9 +1625,9 @@ public sealed class AssemblyToolsContractTests
         var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "ZeroByteProbe", source.ToString());
 
         var inspectDefault = await ReadOuterPagesAsync((_, tokens, continuation) => assemblies.InspectAssembly(
-            assemblyPath, maxResults: 42, maxResponseTokens: tokens, continuationToken: continuation), 24576, 16000);
+            assemblyPath, includeMembers: true, maxResults: 42, maxResponseTokens: tokens, continuationToken: continuation), 24576, 16000);
         var inspectZero = await ReadOuterPagesAsync((_, tokens, continuation) => assemblies.InspectAssembly(
-            assemblyPath, maxResults: 42, maxResponseBytes: 0, maxResponseTokens: tokens, continuationToken: continuation), 24576, 16000);
+            assemblyPath, includeMembers: true, maxResults: 42, maxResponseBytes: 0, maxResponseTokens: tokens, continuationToken: continuation), 24576, 16000);
         Assert.Contains("Type000", inspectDefault.Text, StringComparison.Ordinal);
         Assert.Equal(BodyOf(inspectDefault.FirstPage), BodyOf(inspectZero.FirstPage));
         Assert.Equal(inspectDefault.Text, inspectZero.Text);
@@ -1635,7 +1670,7 @@ public sealed class AssemblyToolsContractTests
         var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "DomainPageProbe", source);
         var foreignPath = AssemblyTestHelper.EmitAssembly(fixture, "ForeignDomainPageProbe", "public sealed class ForeignProbe { }");
 
-        var inspectFirst = await assemblies.InspectAssembly(assemblyPath, maxResults: 1,
+        var inspectFirst = await assemblies.InspectAssembly(assemblyPath, includeMembers: true, maxResults: 1,
             includeReferences: false, maxResponseBytes: 65536, maxResponseTokens: 16000);
         AssertOwnerResultWithinBudget(inspectFirst, "Probe0", 65536, 16000);
         using (var inspectJson = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(inspectFirst))))
@@ -1650,16 +1685,16 @@ public sealed class AssemblyToolsContractTests
         Assert.Contains("analysisCompleteness=complete", TextOf(inspectFirst), StringComparison.Ordinal);
         Assert.Contains("resultContinuation=available", TextOf(inspectFirst), StringComparison.Ordinal);
         Assert.DoesNotContain("omissions=none", TextOf(inspectFirst), StringComparison.Ordinal);
-        var inspectNext = await assemblies.InspectAssembly(assemblyPath, maxResults: 1,
+        var inspectNext = await assemblies.InspectAssembly(assemblyPath, includeMembers: true, maxResults: 1,
             includeReferences: false, resultCursor: inspectCursor, maxResponseBytes: 65536, maxResponseTokens: 16000);
         AssertOwnerResultWithinBudget(inspectNext, "Probe1", 65536, 16000);
         Assert.Equal(snapshotId, ReadHeader(TextOf(inspectNext), "snapshotId"));
-        var inspectReplay = await assemblies.InspectAssembly(assemblyPath, maxResults: 1,
+        var inspectReplay = await assemblies.InspectAssembly(assemblyPath, includeMembers: true, maxResults: 1,
             includeReferences: false, resultCursor: inspectCursor, maxResponseBytes: 65536, maxResponseTokens: 16000);
         Assert.Equal(TextOf(inspectNext), TextOf(inspectReplay));
-        AssertError(await assemblies.InspectAssembly(assemblyPath, typeName: "Changed", maxResults: 1,
+        AssertError(await assemblies.InspectAssembly(assemblyPath, includeMembers: true, typeName: "Changed", maxResults: 1,
             includeReferences: false, resultCursor: inspectCursor, maxResponseBytes: 16384), "RESULT_CURSOR_ARGUMENT_MISMATCH");
-        AssertError(await assemblies.InspectAssembly(foreignPath, maxResults: 1,
+        AssertError(await assemblies.InspectAssembly(foreignPath, includeMembers: true, maxResults: 1,
             includeReferences: false, resultCursor: inspectCursor, maxResponseBytes: 16384), "RESULT_CURSOR_ARGUMENT_MISMATCH");
         var inspectNames = new List<string>();
         string? fullInspectCursor = null;
@@ -1668,11 +1703,11 @@ public sealed class AssemblyToolsContractTests
         {
             var inspectDomainCursor = fullInspectCursor;
             var broadPage = await ReadOuterPagesAsync((bytes, tokens, continuation) => assemblies.InspectAssembly(
-                assemblyPath, maxResults: 1, includeReferences: false,
+                assemblyPath, includeMembers: true, maxResults: 1, includeReferences: false,
                 maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation, resultCursor: continuation is null ? inspectDomainCursor : null), 65536, 16000,
                 initialContinuation: null);
             var smallPage = await ReadOuterPagesAsync((bytes, tokens, continuation) => assemblies.InspectAssembly(
-                assemblyPath, maxResults: 1, includeReferences: false,
+                assemblyPath, includeMembers: true, maxResults: 1, includeReferences: false,
                 maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation, resultCursor: continuation is null ? inspectDomainCursor : null), 4096, 1600,
                 initialContinuation: null);
             Assert.Equal(broadPage.Text, smallPage.Text);

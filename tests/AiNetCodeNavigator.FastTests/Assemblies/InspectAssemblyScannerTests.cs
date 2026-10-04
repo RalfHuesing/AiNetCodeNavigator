@@ -21,6 +21,24 @@ namespace AiNetCodeNavigator.FastTests.Assemblies;
 public sealed class InspectAssemblyScannerTests
 {
     [Fact]
+    public async Task InspectAssembly_DefaultOmitsMembersAndKeepsExactTypeFacts()
+    {
+        using var temp = TestTempDirectory.Create("assembly-inspect-compact-");
+        var path = AssemblyTestHelper.EmitAssembly(temp, "CompactProbe", "namespace Compact; public class Api<T> { public T Echo(T value) => value; }");
+        var result = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(path));
+        Assert.True(result.IsSuccess);
+        var type = Assert.Single(result.Value!.Types);
+        Assert.Null(type.Members);
+        Assert.Equal("Compact.Api<T>", type.Signature);
+        Assert.Equal("Public", type.Accessibility);
+        Assert.Equal("Compact", type.Namespace);
+        Assert.Equal(path, type.OwnerTargetPath);
+        Assert.StartsWith("asm:", type.HandoffId, StringComparison.Ordinal);
+        foreach (var request in new[] { new InspectAssemblyRequest(path, MemberName: ""), new InspectAssemblyRequest(path, MemberNames: []) })
+            Assert.Equal(NavigationErrorCodes.InvalidArgument, (await InspectAssemblyScanner.InspectAsync(request)).Error!.Value.Code);
+    }
+
+    [Fact]
     public async Task InspectAssembly_ReturnsPublicApiWithOverloadsGenericsAndAttributes()
     {
         using var temp = TestTempDirectory.Create("assembly-inspect-api-");
@@ -44,7 +62,7 @@ public sealed class InspectAssemblyScannerTests
             Namespace: "Probe.Api",
             TypeName: "PublicApi",
             PublicOnly: true,
-            MaxResults: 100));
+            MaxResults: 100, IncludeMembers: true));
 
         Assert.True(result.IsSuccess);
         var payload = result.Value!;
@@ -57,12 +75,12 @@ public sealed class InspectAssemblyScannerTests
         var assemblyReference = Assert.IsType<AiNetCodeNavigator.Core.Symbols.StableSymbolReference.Assembly>(parsed);
         Assert.Equal(payload.Identity!.Name, assemblyReference.SimpleName);
         Assert.Equal("T:Probe.Api.PublicApi", assemblyReference.DeclarationId);
-        Assert.Contains(apiType.Members, member => member.Name == "Name");
-        Assert.Contains(apiType.Members, member => member.Name == "Changed");
-        Assert.Contains(apiType.Members, member => member.Signature.Contains("Convert(string value)", StringComparison.Ordinal));
-        Assert.Contains(apiType.Members, member => member.Signature.Contains("Convert(int value)", StringComparison.Ordinal));
-        Assert.Contains(apiType.Members, member => member.Signature.Contains("Echo<T>(T value)", StringComparison.Ordinal));
-        Assert.DoesNotContain(apiType.Members, member => member.Name is "get_Name" or "set_Name" or "add_Changed" or "Hidden");
+        Assert.Contains(apiType.Members!, member => member.Name == "Name");
+        Assert.Contains(apiType.Members!, member => member.Name == "Changed");
+        Assert.Contains(apiType.Members!, member => member.Signature.Contains("Convert(string value)", StringComparison.Ordinal));
+        Assert.Contains(apiType.Members!, member => member.Signature.Contains("Convert(int value)", StringComparison.Ordinal));
+        Assert.Contains(apiType.Members!, member => member.Signature.Contains("Echo<T>(T value)", StringComparison.Ordinal));
+        Assert.DoesNotContain(apiType.Members!, member => member.Name is "get_Name" or "set_Name" or "add_Changed" or "Hidden");
     }
 
     [Fact]
@@ -221,12 +239,12 @@ public sealed class InspectAssemblyScannerTests
             assemblyPath,
             TypeName: "Program",
             PublicOnly: true,
-            MaxResults: 100));
+            MaxResults: 100, IncludeMembers: true));
 
         Assert.True(result.IsSuccess);
         Assert.Equal("ManagedExeProbe", result.Value!.Identity!.Name);
         Assert.NotNull(result.Value.DecompiledSourceRoot);
-        Assert.Contains("Describe", result.Value.Types.SelectMany(type => type.Members).Select(member => member.Name));
+        Assert.Contains("Describe", result.Value.Types.SelectMany(type => type.Members!).Select(member => member.Name));
         Assert.Equal("complete", result.Value.Completeness);
     }
 
@@ -291,11 +309,11 @@ public sealed class InspectAssemblyScannerTests
             assemblyPath,
             TypeName: "ManyMembers",
             PublicOnly: true,
-            MaxResults: 100));
+            MaxResults: 100, IncludeMembers: true));
 
         Assert.True(result.IsSuccess);
         var type = Assert.Single(result.Value!.Types);
-        Assert.Equal(5, type.Members.Count);
+        Assert.Equal(5, type.Members!.Count);
     }
 
     [Fact]
@@ -384,7 +402,7 @@ public sealed class InspectAssemblyScannerTests
             TypeName: "TargetType",
             ExactTypeName: true,
             PublicOnly: true,
-            MaxResults: 100));
+            MaxResults: 100, IncludeMembers: true));
 
         Assert.True(exactTypeResult.IsSuccess);
         Assert.Single(exactTypeResult.Value!.Types);
@@ -396,10 +414,10 @@ public sealed class InspectAssemblyScannerTests
             TypeName: "TargetType",
             MemberName: "MethodA",
             PublicOnly: true,
-            MaxResults: 100));
+            MaxResults: 100, IncludeMembers: true));
 
         Assert.True(memberFilterResult.IsSuccess);
-        var members = memberFilterResult.Value!.Types[0].Members;
+        var members = memberFilterResult.Value!.Types[0].Members!;
         Assert.Single(members);
         Assert.Equal("MethodA", members[0].Name);
     }

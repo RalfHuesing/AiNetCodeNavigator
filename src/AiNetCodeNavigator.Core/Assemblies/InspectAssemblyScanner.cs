@@ -33,6 +33,10 @@ public static class InspectAssemblyScanner
                 "targetPath must be an existing absolute local .dll or .exe path.");
         }
 
+        if (!request.IncludeMembers && (request.MemberName is not null || request.MemberNames is not null))
+            return Result<InspectAssemblyPayload>.Failure(NavigationErrorCodes.InvalidArgument,
+                "Member filters require includeMembers=true.", "Request member details explicitly or omit member filters.");
+
         var opened = await AssemblyNavigationSessionScope.OpenAsync(fullPath, cancellationToken).ConfigureAwait(false);
         if (!opened.IsSuccess)
         {
@@ -134,7 +138,7 @@ public static class InspectAssemblyScanner
             resultCursor,
             Analysis: new NavigationAnalysisMetadata(
                 NavigationAnalysisMetadata.CreateSnapshotId("assembly", analysisIdentity.ContentHash),
-                $"types(namespace={request.Namespace ?? "*"}, typeName={request.TypeName ?? "*"}, memberName={request.MemberName ?? "*"}, publicOnly={request.PublicOnly}, includeReferences={includeReferences}, maxResults={maxResults})",
+                $"types(namespace={request.Namespace ?? "*"}, typeName={request.TypeName ?? "*"}, memberName={request.MemberName ?? "*"}, includeMembers={request.IncludeMembers}, publicOnly={request.PublicOnly}, includeReferences={includeReferences}, maxResults={maxResults})",
                 analysisLimitations,
                 analysisLimitations.Count > 0 ? "partial" : "complete",
                 isTruncated));
@@ -197,7 +201,7 @@ public static class InspectAssemblyScanner
         InspectAssemblyRequest request,
         AssemblyNavigationSessionScope scope)
     {
-        var matchingMembers = type.GetMembers()
+        var members = request.IncludeMembers ? type.GetMembers()
             .Where(member => !member.IsImplicitlyDeclared)
             .Where(member => !IsAccessor(member))
             .Where(member => !request.PublicOnly || IsPublicApi(member))
@@ -205,9 +209,7 @@ public static class InspectAssemblyScanner
             .Select(member => ToMemberDto(member, scope))
             .OrderBy(member => member.Kind, StringComparer.Ordinal)
             .ThenBy(member => member.Signature, StringComparer.Ordinal)
-            .ToList();
-
-        var members = matchingMembers;
+            .ToList() : null;
         var stableId = StableReference(type, scope);
         return new AssemblyTypeDto(
             type.ContainingNamespace.ToDisplayString(),
@@ -216,6 +218,7 @@ public static class InspectAssemblyScanner
             type.DeclaredAccessibility.ToString(),
             members,
             Attributes(type),
+            type.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
             stableId,
             Handoff: stableId is not null,
             AllowedFollowUpTools: stableId is null ? Array.Empty<string>() : HandoffFollowUpTools.ForAssembly(type),

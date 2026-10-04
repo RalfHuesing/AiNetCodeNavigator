@@ -127,7 +127,7 @@ public sealed class McpServerIntegrationTests
             await SendRequestAsync(process, 2, "tools/call", new
             {
                 name = "inspect_assembly",
-                arguments = new { targetPath = assemblyPath, includeReferences = false },
+                arguments = new { targetPath = assemblyPath, includeReferences = false, includeMembers = true },
             }, timeout.Token);
             var inspect = await ReadResponseAsync(process, 2, timeout.Token);
             var inspectText = GetFirstText(inspect);
@@ -140,7 +140,7 @@ public sealed class McpServerIntegrationTests
             await SendRequestAsync(process, 6, "tools/call", new
             {
                 name = "inspect_assembly",
-                arguments = new { targetPath = assemblyPath, includeReferences = false, maxResults = 0, maxResponseBytes = 0 },
+                arguments = new { targetPath = assemblyPath, includeReferences = false, includeMembers = true, maxResults = 0, maxResponseBytes = 0 },
             }, timeout.Token);
             var zeroInspect = await ReadResponseAsync(process, 6, timeout.Token);
             var zeroInspectText = GetFirstText(zeroInspect);

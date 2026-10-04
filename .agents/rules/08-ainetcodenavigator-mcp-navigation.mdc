@@ -26,7 +26,7 @@ Use AiNetCodeNavigator as the primary tool for C# declarations and static relati
 | Inheritance / implementations | `get_type_relations` with `relation=hierarchy|implementations`. |
 | Discovered use totals and owners | `find_references` with `includeSummary: true` (start `depth: 1`); counts reference sites before paging, not runtime consequences. |
 | Dependencies / type owner | `dependency_graph`: exactly one of `filePath`, `symbolIdentifier`; `level=type|file|namespace|project` selects one list (default type; project is source-only). Project view follows loaded ProjectReferences from the exact owner without dependency document scans; omit scopeType/includeGenerated even at defaults. Member roots select owning-type dependencies for semantic views; representative locations are observed causes / `resolve_type_origin`: exactly one of `symbolIdentifier`, `typeName`. |
-| Compiled API / text / extensions | `inspect_assembly` with filters / `search_assembly` with literal `pattern` (`isRegex: true` for regex) / `find_symbol` with `extensionOnly=true` with receiver, pattern, namespace or signature filters. Extension discovery supports source and assembly targets. |
+| Compiled API / text / extensions | `inspect_assembly` for a compact type overview (`includeMembers=true` before memberName/memberNames filters; focused detail via `get_context.members`) / `search_assembly` with literal `pattern` (`isRegex: true` for regex) / `find_symbol` with `extensionOnly=true` with receiver, pattern, namespace or signature filters. Extension discovery supports source and assembly targets. |
 
 ## Bound requests
 

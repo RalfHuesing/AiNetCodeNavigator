@@ -108,8 +108,20 @@ public sealed class SourceDependencyGraphOutgoingContractTests
             Assert.Equal("src/App/Root.cs", evidence.GetProperty("filePath").GetString());
             Assert.Equal(1, evidence.GetProperty("line").GetInt32());
             Assert.True(evidence.GetProperty("column").GetInt32() > 1);
-            Assert.Contains("App", evidence.GetProperty("fromProjectIdentity").GetString(), StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("Library", evidence.GetProperty("toProjectIdentity").GetString(), StringComparison.OrdinalIgnoreCase);
+            if (level == "type")
+            {
+                Assert.False(evidence.TryGetProperty("fromProjectIdentity", out _));
+                Assert.False(evidence.TryGetProperty("toProjectIdentity", out _));
+                Assert.Contains("App", edge.GetProperty("fromTypeId").GetString(), StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("Library", edge.GetProperty("toTypeId").GetString(), StringComparison.OrdinalIgnoreCase);
+                Assert.StartsWith("src:", edge.GetProperty("fromHandoffId").GetString(), StringComparison.Ordinal);
+                Assert.StartsWith("src:", edge.GetProperty("toHandoffId").GetString(), StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.Contains("App", evidence.GetProperty("fromProjectIdentity").GetString(), StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("Library", evidence.GetProperty("toProjectIdentity").GetString(), StringComparison.OrdinalIgnoreCase);
+            }
             Assert.Equal(level != "type", payload.GetProperty("isComplete").GetBoolean());
         }
         Assert.Single(scans);

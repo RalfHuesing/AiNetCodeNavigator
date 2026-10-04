@@ -1,6 +1,7 @@
 #nullable enable
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Serialization;
 
 namespace AiNetCodeNavigator.Core.Dependencies;
@@ -12,7 +13,8 @@ public sealed record DependencyGraphView([property: JsonIgnore] DependencyGraphL
     public string LevelName => Level.ToString().ToLowerInvariant();
     public string RootSemantics => "Type dependencies; a member root selects its owning type.";
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public IReadOnlyList<DependencyTypeReference>? TypeDependencies => Level == DependencyGraphLevel.Type ? Graph.TypeDependencies : null;
+    public IReadOnlyList<DependencyTypeReferenceView>? TypeDependencies => Level == DependencyGraphLevel.Type
+        ? Graph.TypeDependencies?.Select(edge => new DependencyTypeReferenceView(edge)).ToArray() : null;
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<FileDependency>? FileDependencies => Level == DependencyGraphLevel.File ? Graph.FileDependencies : null;
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -50,3 +52,28 @@ public sealed record DependencyGraphView([property: JsonIgnore] DependencyGraphL
     public bool IsTruncated => Graph.IsTruncated;
     public bool IsComplete => Graph.IsComplete;
 }
+
+
+/// <summary>Type endpoints retain exact owner identities; evidence adds only the representative location.</summary>
+public sealed record DependencyTypeReferenceView([property: JsonIgnore] DependencyTypeReference Reference)
+{
+    public string FromTypeId => Reference.FromTypeId;
+    public string ToTypeId => Reference.ToTypeId;
+    public string FromType => Reference.FromType;
+    public string ToType => Reference.ToType;
+    public string FromTypeName => Reference.FromTypeName;
+    public string ToTypeName => Reference.ToTypeName;
+    public string FromNamespace => Reference.FromNamespace;
+    public string ToNamespace => Reference.ToNamespace;
+    public string FromProject => Reference.FromProject;
+    public string ToProject => Reference.ToProject;
+    public string FromFile => Reference.FromFile;
+    public string ToFile => Reference.ToFile;
+    public int Depth => Reference.Depth;
+    public string? FromHandoffId => Reference.FromHandoffId;
+    public string? ToHandoffId => Reference.ToHandoffId;
+    public DependencyLocationEvidence? Evidence => Reference.Evidence is { } evidence
+        ? new(evidence.FilePath, evidence.Line, evidence.Column) : null;
+}
+
+public sealed record DependencyLocationEvidence(string FilePath, int Line, int Column);

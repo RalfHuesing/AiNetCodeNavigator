@@ -18,7 +18,8 @@ public sealed record InspectAssemblyRequest(
     bool ExactTypeName = false,
     IReadOnlyList<string>? MemberNames = null,
     bool IncludeReferences = false,
-    string? Cursor = null)
+    string? Cursor = null,
+    bool IncludeMembers = false)
 {
     public bool IncludeReferenceDetails => IncludeReferences;
 }
@@ -28,8 +29,9 @@ public sealed record AssemblyTypeDto(
     string Name,
     string Kind,
     string Accessibility,
-    IReadOnlyList<AssemblyMemberDto> Members,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<AssemblyMemberDto>? Members,
     IReadOnlyList<string> Attributes,
+    string Signature,
     [property: JsonIgnore] string? Id = null,
     bool Handoff = false,
     IReadOnlyList<string>? AllowedFollowUpTools = null,

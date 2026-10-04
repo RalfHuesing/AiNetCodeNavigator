@@ -60,7 +60,7 @@ For example, ask your agent to find `OrderService.Save`, read its implementation
 {"name":"get_call_tree","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","symbolIdentifier":"src:src/AiNetCodeNavigator.Core/AiNetCodeNavigator.Core.csproj|T:AiNetCodeNavigator.Core.Symbols.StableSymbolReference","direction":"incoming"}}
 ```
 
-Pass the exact reference returned by `find_symbol`. For a compiled library, start with `inspect_assembly` and its absolute DLL path, then pass a returned type or member reference together with its owner target to structure or body tools. An unchanged source declaration reference remains usable after body or unrelated edits and a server restart; rediscover after a rename, signature change or project move. The sample reference identifies `StableSymbolReference` in the Core project when the repository solution is selected. See [symbol resolution](docs/navigation/symbol-resolution.md) for the wire and recovery contract.
+Pass the exact reference returned by `find_symbol`. For a compiled library, start with compact `inspect_assembly` and its absolute DLL path; request `includeMembers=true` for member detail or use the returned type reference with `get_context.members`. Pass returned references together with their owner target to structure or body tools. An unchanged source declaration reference remains usable after body or unrelated edits and a server restart; rediscover after a rename, signature change or project move. The sample reference identifies `StableSymbolReference` in the Core project when the repository solution is selected. See [symbol resolution](docs/navigation/symbol-resolution.md) for the wire and recovery contract.
 
 ## Scope and limitations
 

@@ -39,7 +39,7 @@ public static class AssemblyPaging
             referenceSnapshotHash, "inspect_assembly", arguments.Namespace, arguments.TypeName, arguments.MemberName,
             arguments.PublicOnly.ToString(), arguments.MaxResults.ToString(), arguments.ExactTypeName.ToString(),
             arguments.MemberNames?.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            arguments.IncludeReferences.ToString(),
+            arguments.IncludeReferences.ToString(), arguments.IncludeMembers.ToString(),
         }.Concat(arguments.MemberNames?.Cast<string?>() ?? []).ToArray();
         return CreateBinding(canonicalPath, contentHash, queryParts);
     }

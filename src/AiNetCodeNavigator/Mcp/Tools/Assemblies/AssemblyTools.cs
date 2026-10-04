@@ -37,12 +37,13 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "inspect_assembly", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [System.ComponentModel.Description("Inspect types and members in a managed assembly, optionally including referenced assemblies.")]
+    [System.ComponentModel.Description("Inspect a compact managed-assembly type overview; explicitly request member declarations or reference inventory.")]
     public Task<CallToolResult> InspectAssembly([Required, System.ComponentModel.Description("Absolute path to an existing managed .dll or .exe target.")] string targetPath, [System.ComponentModel.Description("Optional namespace name used to limit inspected types.")] string? @namespace = null,
-        [System.ComponentModel.Description("Optional type name used to limit inspected types.")] string? typeName = null, [System.ComponentModel.Description("Optional member name used to limit inspected members.")] string? memberName = null, [System.ComponentModel.Description("Return public API members only.")] bool publicOnly = true, [System.ComponentModel.Description("Match typeName exactly instead of as a name filter.")] bool exactTypeName = false,
-        [System.ComponentModel.Description("Optional member names to inspect within the selected type.")] string[]? memberNames = null,
+        [System.ComponentModel.Description("Optional type name used to limit inspected types.")] string? typeName = null, [System.ComponentModel.Description("Optional member-name substring; requires includeMembers=true.")] string? memberName = null, [System.ComponentModel.Description("Return public API types and requested members only.")] bool publicOnly = true, [System.ComponentModel.Description("Match typeName exactly instead of as a name filter.")] bool exactTypeName = false,
+        [System.ComponentModel.Description("Optional exact member-name alternatives; requires includeMembers=true.")] string[]? memberNames = null,
         [System.ComponentModel.Description("Maximum types to return; zero uses the default of 100.")] [Range(0, 1000)] int maxResults = 100,
         [System.ComponentModel.Description("Include reference inventory details. Defaults to false, independently of type/member filters.")] bool includeReferences = false,
+        [System.ComponentModel.Description("Include member declarations within each selected type. Defaults to false; memberName/memberNames require true.")] bool includeMembers = false,
         [System.ComponentModel.Description("Include detailed navigation and reference diagnostics. Defaults to false.")] bool includeDiagnostics = false,
         [System.ComponentModel.Description("Optional byte cap; zero uses this tool's 24,576-byte default.")] [Range(0, 65536)] int maxResponseBytes = 24576,
         [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null, [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
@@ -50,15 +51,19 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
         [System.ComponentModel.Description("Opaque cursor returned for the next page of assembly results; use after reading all outer response pages.")] string? resultCursor = null, CancellationToken cancellationToken = default)
     {
         var effectiveResponseBytes = maxResponseBytes == 0 ? 24_576 : maxResponseBytes;
+        if (!includeMembers && (memberName is not null || memberNames is not null))
+            return Task.FromResult(McpToolResults.InvalidArgument("Member filters require includeMembers=true.",
+                memberName is not null ? "$.memberName" : "$.memberNames", "Set includeMembers=true or omit the member filter.",
+                maxResponseBytes: effectiveResponseBytes, maxResponseTokens: maxResponseTokens));
         var effectiveMaxResults = maxResults == 0 ? 100 : maxResults;
         return NavigationToolSupport.RouteAsync(runtime, "inspect_assembly", targetPath,
-            new { @namespace, typeName, memberName, publicOnly, exactTypeName, memberNames, maxResults = effectiveMaxResults, includeReferences, includeDiagnostics },
+            new { @namespace, typeName, memberName, publicOnly, exactTypeName, memberNames, maxResults = effectiveMaxResults, includeReferences, includeMembers, includeDiagnostics },
             operationToken, continuationToken, effectiveResponseBytes, maxResponseTokens,
             async (target, coreCursor, ct) =>
             {
                 var result = await InspectAssemblyScanner.InspectAsync(new InspectAssemblyRequest(target.CanonicalPath, @namespace,
                     typeName, memberName, publicOnly, effectiveMaxResults, exactTypeName, memberNames, includeReferences,
-                    Cursor: coreCursor), ct).ConfigureAwait(false);
+                    Cursor: coreCursor, IncludeMembers: includeMembers), ct).ConfigureAwait(false);
                 return result.IsSuccess ? NavigationToolSupport.Success(ProjectInspect(result.Value!, includeDiagnostics), result.Value!.Truncated,
                     result.Value.ResultCursor is null ? null : "Repeat the query with the returned resultCursor.")
                     : NavigationToolSupport.Failure(result.Error!.Value, effectiveResponseBytes, maxResponseTokens, "$.targetPath");
@@ -107,7 +112,7 @@ public sealed class AssemblyTools(NavigatorHostRuntime runtime)
         {
             HandoffId = type.Id is null ? null : type.HandoffId,
             OwnerTargetPath = type.Id is null ? null : type.OwnerTargetPath,
-            Members = type.Members.Select(member => member with
+            Members = type.Members?.Select(member => member with
             {
                 HandoffId = member.Id is null ? null : member.HandoffId,
                 OwnerTargetPath = member.Id is null ? null : member.OwnerTargetPath,

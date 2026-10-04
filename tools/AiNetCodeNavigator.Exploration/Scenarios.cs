@@ -18,7 +18,67 @@ internal static class Scenarios
             [nameof(ExploreTypeRelations)] = ExploreTypeRelations,
             [nameof(ExploreExtensionDiscovery)] = ExploreExtensionDiscovery,
             [nameof(ExploreMetadataRelations)] = ExploreMetadataRelations,
+            [nameof(ExploreFocusedAssemblyOutput)] = ExploreFocusedAssemblyOutput,
+            [nameof(ExploreFocusedDependencyOutput)] = ExploreFocusedDependencyOutput,
         };
+
+    private static async Task ExploreFocusedAssemblyOutput(ExplorationContext context)
+    {
+        const string codec = "AiNetCodeNavigator.Core.Symbols.StableSymbolReferenceCodec";
+        var target = typeof(Core.Symbols.StableSymbolReferenceCodec).Assembly.Location;
+        var compact = await context.CallAsync("inspect_assembly", new
+        {
+            targetPath = target, typeName = codec, exactTypeName = true, publicOnly = true, maxResults = 10,
+        }).ConfigureAwait(false);
+        using var compactJson = JsonDocument.Parse(compact.Payload);
+        var type = compactJson.RootElement.GetProperty("types").EnumerateArray().Single();
+        if (type.TryGetProperty("members", out _)) throw new InvalidOperationException("Compact overview collected member details.");
+        var owner = type.GetProperty("ownerTargetPath").GetString();
+        var reference = type.GetProperty("handoffId").GetString();
+        var detail = await context.CallAsync("inspect_assembly", new
+        {
+            targetPath = target, typeName = codec, exactTypeName = true, publicOnly = true, maxResults = 10, includeMembers = true,
+        }).ConfigureAwait(false);
+        using var detailJson = JsonDocument.Parse(detail.Payload);
+        var detailedType = detailJson.RootElement.GetProperty("types").EnumerateArray().Single();
+        if (detailedType.GetProperty("handoffId").GetString() != reference || detailedType.GetProperty("ownerTargetPath").GetString() != owner)
+            throw new InvalidOperationException("Detail query changed its returned owner/reference.");
+        var selectedReferences = detailedType.GetProperty("members").EnumerateArray()
+            .Where(member => member.TryGetProperty("handoffId", out _)).Select(member => member.GetProperty("handoffId").GetString()).ToHashSet();
+        string? cursor = null;
+        string? memberReference = null;
+        var cursors = new HashSet<string>(StringComparer.Ordinal);
+        do
+        {
+            var members = await context.CallAsync("get_context", new
+            {
+                targetPath = owner, symbolIdentifier = reference, sections = new[] { "members" },
+                memberNameFilter = "TryParse", memberKindFilter = "Method", maxResults = 1, resultCursor = cursor,
+            }).ConfigureAwait(false);
+            using var page = JsonDocument.Parse(members.Payload);
+            var section = page.RootElement.GetProperty("sections")[0];
+            foreach (var member in section.GetProperty("items").EnumerateArray())
+                if (member.TryGetProperty("handoffId", out var handoff) && selectedReferences.Contains(handoff.GetString()))
+                    memberReference ??= handoff.GetString();
+            cursor = section.TryGetProperty("resultCursor", out var next) && next.ValueKind == JsonValueKind.String ? next.GetString() : null;
+            if (cursor is not null && !cursors.Add(cursor)) throw new InvalidOperationException("Member cursor repeated.");
+        } while (cursor is not null);
+        if (memberReference is null) throw new InvalidOperationException("Expected an exact public member shared by inspection and focused context.");
+        await context.CallAsync("get_symbol_body", new { targetPath = owner, symbolIdentifiers = new[] { memberReference }, maxBodyLines = 20 }).ConfigureAwait(false);
+        await context.CallAsync("get_symbol_body", new { targetPath = owner, symbolIdentifiers = new[] { reference }, maxBodyLines = 20 }).ConfigureAwait(false);
+        await context.CallAsync("get_symbol_body", new { targetPath = owner, symbolIdentifiers = new[] { reference }, startLine = 21, maxBodyLines = 20 }).ConfigureAwait(false);
+        await ExploreFocusedDependencyOutput(context).ConfigureAwait(false);
+    }
+
+    private static async Task ExploreFocusedDependencyOutput(ExplorationContext context)
+    {
+        await context.CallAsync("dependency_graph", new
+        {
+            targetPath = context.RepositorySolution,
+            symbolIdentifier = "src:src/AiNetCodeNavigator.Core/AiNetCodeNavigator.Core.csproj|T:AiNetCodeNavigator.Core.Symbols.StableSymbolReferenceCodec",
+            direction = "outgoing", depth = 1, scopeType = "production", maxResults = 50,
+        }).ConfigureAwait(false);
+    }
 
     private static async Task ExploreExtensionDiscovery(ExplorationContext context)
     {
