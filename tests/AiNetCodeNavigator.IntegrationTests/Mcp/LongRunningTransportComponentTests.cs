@@ -65,7 +65,7 @@ public sealed class LongRunningTransportComponentTests
                     state.Progress!.Advance(NavigationAnalysisPhase.Formatting);
                     state.Progress.Advance(NavigationAnalysisPhase.Loading);
                 }
-                await Task.Delay(control.RetryAfter, lifetime.Token);
+                await WaitForRetryAsync(lastReceived, control.RetryAfter);
                 using var poll = await ExchangeAsync(RequestFrame(id, control.Token), id, TimeSpan.FromSeconds(5));
                 var timing = timings[^1];
                 Assert.True(timing.SentMilliseconds - lastReceived >= control.RetryAfter, JsonSerializer.Serialize(timing));
@@ -79,7 +79,7 @@ public sealed class LongRunningTransportComponentTests
             }
 
             state.Release.TrySetResult();
-            await Task.Delay(control.RetryAfter, lifetime.Token);
+            await WaitForRetryAsync(lastReceived, control.RetryAfter);
             using var final = await ExchangeAsync(RequestFrame(5, control.Token), 5, TimeSpan.FromSeconds(5));
             Assert.True(timings[^1].SentMilliseconds - lastReceived >= control.RetryAfter);
             var finalText = ResponseText(final);
@@ -135,6 +135,17 @@ public sealed class LongRunningTransportComponentTests
                     executionCount = state.Starts,
                     timings
                 }, new JsonSerializerOptions { WriteIndented = true }));
+            }
+        }
+
+        async Task WaitForRetryAsync(long receivedMilliseconds, int retryAfterMilliseconds)
+        {
+            var deadline = receivedMilliseconds + retryAfterMilliseconds;
+            while (true)
+            {
+                var remaining = deadline - clock.ElapsedMilliseconds;
+                if (remaining <= 0) return;
+                await Task.Delay(TimeSpan.FromMilliseconds(remaining), lifetime.Token);
             }
         }
 

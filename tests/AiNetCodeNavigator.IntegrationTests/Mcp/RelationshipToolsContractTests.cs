@@ -239,6 +239,9 @@ public sealed class RelationshipToolsContractTests
         var continuationToken = (string?)null;
         var minimumRetryObserved = false;
         var awaitingMinimumRetry = false;
+        var awaitingControlMinimumRetry = false;
+        var requestBytes = responseBytes;
+        var requestTokens = responseTokens;
         var result = await tools.GetImpact(targetPath, symbolIdentifier,
             maxResponseBytes: responseBytes, maxResponseTokens: responseTokens);
         for (var request = 0; request < 200; request++)
@@ -246,37 +249,50 @@ public sealed class RelationshipToolsContractTests
             var text = TextOf(result);
             if (result.IsError == true && text.Contains("RESPONSE_BUDGET_TOO_SMALL", StringComparison.Ordinal))
             {
-                Assert.False(awaitingMinimumRetry, "The advertised minimum pair did not deliver the current impact page.");
-                minimumRetryObserved = true;
-                awaitingMinimumRetry = true;
+                var controlBudget = text.Contains("nextAction: Repeat the unchanged fresh call", StringComparison.Ordinal)
+                    || text.Contains("nextAction: Repeat the unchanged poll", StringComparison.Ordinal);
+                if (controlBudget)
+                {
+                    Assert.False(awaitingControlMinimumRetry, "The advertised running-control minimum pair did not fit.");
+                    awaitingControlMinimumRetry = true;
+                }
+                else
+                {
+                    Assert.False(awaitingMinimumRetry, "The advertised minimum pair did not deliver the current impact page.");
+                    minimumRetryObserved = true;
+                    awaitingMinimumRetry = true;
+                    awaitingControlMinimumRetry = false;
+                }
                 var minimumBytes = ReadBudget(text, "minimumResponseBytes");
                 var minimumTokens = ReadBudget(text, "minimumResponseTokens");
-                Assert.True(minimumBytes > responseBytes || minimumTokens > responseTokens,
+                Assert.True(minimumBytes > requestBytes || minimumTokens > requestTokens,
                     "The formatter should advertise a larger exact byte/token pair.");
+                requestBytes = minimumBytes;
+                requestTokens = minimumTokens;
                 result = await tools.GetImpact(targetPath, symbolIdentifier,
-                    maxResponseBytes: minimumBytes, maxResponseTokens: minimumTokens,
+                    maxResponseBytes: requestBytes, maxResponseTokens: requestTokens,
                     operationToken: operationToken, continuationToken: continuationToken);
-                var retryText = TextOf(result);
-                Assert.False(result.IsError ?? false, retryText);
-                reconstructed.Append(BodyOf(retryText));
+                continue;
             }
             else if (TryReadToken(text, "operationToken", out var pendingOperation))
             {
+                awaitingControlMinimumRetry = false;
                 operationToken = pendingOperation;
-                await Task.Delay(50);
-                result = await tools.GetImpact(targetPath, symbolIdentifier, maxResponseBytes: responseBytes,
-                    maxResponseTokens: responseTokens, operationToken: operationToken, continuationToken: continuationToken);
+                await Task.Delay(1000);
+                result = await tools.GetImpact(targetPath, symbolIdentifier, maxResponseBytes: requestBytes,
+                    maxResponseTokens: requestTokens, operationToken: operationToken, continuationToken: continuationToken);
                 continue;
             }
             else if (text.Contains("operation=retry", StringComparison.Ordinal))
             {
                 await Task.Delay(50);
-                result = await tools.GetImpact(targetPath, symbolIdentifier, maxResponseBytes: responseBytes,
-                    maxResponseTokens: responseTokens, operationToken: operationToken, continuationToken: continuationToken);
+                result = await tools.GetImpact(targetPath, symbolIdentifier, maxResponseBytes: requestBytes,
+                    maxResponseTokens: requestTokens, operationToken: operationToken, continuationToken: continuationToken);
                 continue;
             }
             else
             {
+                Assert.False(result.IsError ?? false, text);
                 reconstructed.Append(BodyOf(text));
             }
 
@@ -288,6 +304,9 @@ public sealed class RelationshipToolsContractTests
             }
 
             awaitingMinimumRetry = false;
+            awaitingControlMinimumRetry = false;
+            requestBytes = responseBytes;
+            requestTokens = responseTokens;
             result = await tools.GetImpact(targetPath, symbolIdentifier, maxResponseBytes: responseBytes,
                 maxResponseTokens: responseTokens, continuationToken: continuationToken);
         }

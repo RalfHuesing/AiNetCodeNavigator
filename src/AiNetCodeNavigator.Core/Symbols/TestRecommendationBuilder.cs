@@ -35,6 +35,8 @@ public static class TestRecommendationBuilder
         bool includeGenerated = false,
         SymbolScopeType scope = SymbolScopeType.All)
     {
+        ArgumentNullException.ThrowIfNull(targetSymbol);
+        ArgumentNullException.ThrowIfNull(solution);
         var formatter = await SourceReferenceFormattingContext.CreateFormatterAsync(solution, ct).ConfigureAwait(false);
         return await BuildCoreAsync(targetSymbol, solution, formatter, ct, includeGenerated, scope).ConfigureAwait(false);
     }
@@ -110,7 +112,8 @@ public static class TestRecommendationBuilder
                     var syntaxRoot = await document.GetSyntaxRootAsync(ct).ConfigureAwait(false);
                     if (semanticModel is null || syntaxRoot is null) continue;
                     var referenceNode = syntaxRoot.FindNode(location.Location.SourceSpan, getInnermostNodeForTie: true);
-                    if (!IsExactReferenceBinding(semanticModel, referenceNode, reference.Definition, referencedSymbol)) continue;
+                    if (!await IsExactReferenceBindingAsync(semanticModel, referenceNode, reference.Definition,
+                            referencedSymbol, solution, ct).ConfigureAwait(false)) continue;
                     if (semanticModel?.GetEnclosingSymbol(location.Location.SourceSpan.Start) is not IMethodSymbol testMethod ||
                         !TestDetector.IsTestMethod(testMethod)) continue;
 
@@ -269,8 +272,9 @@ public static class TestRecommendationBuilder
         referenceDefinition is IMethodSymbol { MethodKind: MethodKind.Constructor } constructor &&
         selectedSymbol is INamedTypeSymbol type && SameSymbol(constructor.ContainingType, type);
 
-    private static bool IsExactReferenceBinding(
-        SemanticModel semanticModel, SyntaxNode referenceNode, ISymbol definition, ISymbol referencedSymbol)
+    private static async Task<bool> IsExactReferenceBindingAsync(
+        SemanticModel semanticModel, SyntaxNode referenceNode, ISymbol definition, ISymbol referencedSymbol,
+        Solution solution, CancellationToken ct)
     {
         if (definition is IMethodSymbol { MethodKind: MethodKind.Constructor } constructor)
         {
@@ -278,17 +282,19 @@ public static class TestRecommendationBuilder
             {
                 var typeName = referenceNode.AncestorsAndSelf().OfType<TypeSyntax>()
                     .FirstOrDefault(node => node.Span.Contains(referenceNode.Span));
-                return typeName is not null && semanticModel.GetTypeInfo(typeName).Type is { } boundType && SameSymbol(boundType, type);
+                if (typeName is null || semanticModel.GetTypeInfo(typeName, ct).Type is not { } boundType) return false;
+                var sourceType = await SymbolFinder.FindSourceDefinitionAsync(boundType, solution, ct).ConfigureAwait(false);
+                return sourceType is not null && SameSymbol(sourceType, type);
             }
 
             var creation = referenceNode.AncestorsAndSelf().FirstOrDefault(node =>
                 node is ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax);
-            return creation is not null && IsExactBinding(semanticModel, creation, definition);
+            return creation is not null && await IsExactBindingAsync(semanticModel, creation, definition, solution, ct).ConfigureAwait(false);
         }
 
         var name = referenceNode.AncestorsAndSelf().OfType<SimpleNameSyntax>()
             .FirstOrDefault(node => node.Span.Contains(referenceNode.Span));
-        if (name is null) return IsExactBinding(semanticModel, referenceNode, definition);
+        if (name is null) return await IsExactBindingAsync(semanticModel, referenceNode, definition, solution, ct).ConfigureAwait(false);
 
         // Bind the name at the reference itself. Walking out to an enclosing invocation can
         // incorrectly turn a type or property receiver into evidence for the outer method call.
@@ -302,19 +308,24 @@ public static class TestRecommendationBuilder
             semanticModel.GetTypeInfo(conditionalAccess.Expression).Type?.TypeKind == TypeKind.Error)
             return false;
 
-        if (IsExactBinding(semanticModel, name, definition)) return true;
+        if (await IsExactBindingAsync(semanticModel, name, definition, solution, ct).ConfigureAwait(false)) return true;
         if (name.Parent is MemberAccessExpressionSyntax parentAccess && ReferenceEquals(parentAccess.Name, name))
-            return IsExactBinding(semanticModel, parentAccess, definition);
+            return await IsExactBindingAsync(semanticModel, parentAccess, definition, solution, ct).ConfigureAwait(false);
         if (name.Parent is MemberBindingExpressionSyntax parentBinding && ReferenceEquals(parentBinding.Name, name))
-            return IsExactBinding(semanticModel, parentBinding, definition);
+            return await IsExactBindingAsync(semanticModel, parentBinding, definition, solution, ct).ConfigureAwait(false);
         return false;
     }
 
-    private static bool IsExactBinding(SemanticModel semanticModel, SyntaxNode node, ISymbol definition)
+    private static async Task<bool> IsExactBindingAsync(
+        SemanticModel semanticModel, SyntaxNode node, ISymbol definition, Solution solution, CancellationToken ct)
     {
-        var symbol = semanticModel.GetSymbolInfo(node).Symbol;
+        var symbol = semanticModel.GetSymbolInfo(node, ct).Symbol;
         if (symbol is IAliasSymbol alias) symbol = alias.Target;
-        return symbol is not null && SameSymbol(symbol, definition);
+        if (symbol is null) return false;
+        if (symbol is IMethodSymbol { ReducedFrom: { } reduced }) symbol = reduced.OriginalDefinition;
+        if (SameSymbol(symbol, definition)) return true;
+        var sourceDefinition = await SymbolFinder.FindSourceDefinitionAsync(symbol, solution, ct).ConfigureAwait(false);
+        return sourceDefinition is not null && SameSymbol(sourceDefinition, definition);
     }
 
     private static string SymbolSortKey(ISymbol symbol, Solution solution)

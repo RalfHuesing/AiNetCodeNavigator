@@ -10,6 +10,9 @@ using AiNetCodeNavigator.Core.Workspace;
 using AiNetCodeNavigator.TestKit.Builders;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.FindSymbols;
 using ModelContextProtocol.Protocol;
 using static AiNetCodeNavigator.IntegrationTests.Mcp.IntegrationMcpAssertions;
 
@@ -676,6 +679,47 @@ public sealed class SourceToolsContractTests
 
         var missingFindSelector = await symbols.FindSymbol(target, maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(missingFindSelector, "INVALID_ARGUMENT", 16384, 1024);
+    }
+
+    [Fact]
+    public async Task TestCandidates_FreshCapturedProjectReferencesMapBoundMethodsToExactSourceDefinitions()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        using var fixture = TestTempDirectory.Create("ainet-test-candidate-binding-");
+        var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
+        var acquired = runtime.ProjectRegistry.Lease(target);
+        Assert.True(acquired.Succeeded);
+        using var lease = acquired.Lease!;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var snapshot = await lease.ResidentSolution.GetCurrentSnapshotAsync(timeout.Token);
+        Assert.True(snapshot.Succeeded);
+        var solution = snapshot.Solution!;
+        var app = solution.Projects.Single(project => project.Name == "ScopeProbe.App");
+        var compilation = await app.GetCompilationAsync(timeout.Token);
+        Assert.NotNull(compilation);
+        var sourceMethod = Assert.Single(compilation.GetTypeByMetadataName("ScopeProbe.Target")!
+            .GetMembers("Run").OfType<IMethodSymbol>());
+        var tests = solution.Projects.Single(project => project.Name == "ScopeProbe.Tests");
+        var document = tests.Documents.Single(item => item.Name == "TargetTests.cs");
+        var model = await document.GetSemanticModelAsync(timeout.Token);
+        var syntax = await document.GetSyntaxRootAsync(timeout.Token);
+        Assert.NotNull(model);
+        Assert.NotNull(syntax);
+        var references = syntax.DescendantNodes().OfType<SimpleNameSyntax>()
+            .Where(name => name.Identifier.ValueText == "Run").ToArray();
+        Assert.Equal(2, references.Length);
+        foreach (var reference in references)
+        {
+            var bound = Assert.IsAssignableFrom<IMethodSymbol>(model.GetSymbolInfo(reference, timeout.Token).Symbol);
+            Assert.False(SymbolEqualityComparer.Default.Equals(sourceMethod, bound));
+            var mapped = await SymbolFinder.FindSourceDefinitionAsync(bound, solution, timeout.Token);
+            Assert.NotNull(mapped);
+            Assert.True(SymbolEqualityComparer.Default.Equals(sourceMethod, mapped));
+        }
+        var recommendations = await TestRecommendationBuilder.BuildAsync(sourceMethod, solution, timeout.Token);
+        Assert.Equal(new[] { "TargetTests", "OtherBehavior" }.Order(StringComparer.Ordinal),
+            recommendations.TestFixtures.Select(item => item.ClassName).Order(StringComparer.Ordinal));
     }
 
     [Fact]
