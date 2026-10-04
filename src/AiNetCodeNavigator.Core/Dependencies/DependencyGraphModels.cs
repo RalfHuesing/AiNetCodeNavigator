@@ -91,6 +91,38 @@ internal sealed record DependencyDocumentIdentity(
     string TextHash,
     int DuplicateOrdinal);
 
+internal sealed record DependencyDocumentWorkItem(
+    Project Project,
+    Document Document,
+    DependencyDocumentIdentity Identity,
+    string? TextError);
+
+internal sealed record DependencyDocumentFact(
+    DependencyDocumentIdentity Identity,
+    ImmutableArray<DependencyTypeReference> TypeDependencies,
+    ImmutableArray<DependencyTypeDeclaration> TypeDeclarations);
+
+internal sealed record DependencyDocumentScanOutcome(
+    DependencyDocumentFact? Fact,
+    ImmutableArray<DependencyGraphScanError> Errors,
+    bool SemanticScanAttempted);
+
+internal sealed record DependencyGraphCollectionPlan(
+    Solution Solution,
+    ImmutableArray<DependencyDocumentIdentity> EligibleDocuments,
+    ImmutableArray<DependencyDocumentWorkItem> RequiredDocuments,
+    ImmutableArray<ProjectDependency> ProjectDependencies,
+    ImmutableDictionary<SyntaxTree, SourceGeneratedDocument> GeneratedDocumentOwners,
+    ImmutableDictionary<ProjectId, string> OwnerContextFingerprints,
+    string SolutionDirectory,
+    int EligibleDocumentCount,
+    int DocumentOffset,
+    int? NextDocumentOffset,
+    bool DocumentLimitWasClamped,
+    SymbolScopeType ScopeType,
+    bool IncludeGenerated,
+    bool ContinuationInputIncomplete = false);
+
 internal sealed record DependencyTypeDeclaration(
     string TypeId,
     string DisplayName,
@@ -101,12 +133,15 @@ internal sealed record DependencyTypeDeclaration(
     string OwnerProjectPath,
     string OwnerContextFingerprint,
     string OriginalTypeId,
+    string DocumentationCommentId,
     ImmutableArray<DependencyDocumentIdentity> DeclarationDocuments);
 
 internal sealed record DependencyGraphCollectionObserver(
     Action<Project>? CompilationAcquired = null,
     Action<Document>? DocumentCollected = null,
-    Action<string, ISymbol>? SymbolDiscovered = null);
+    Action<string, ISymbol>? SymbolDiscovered = null,
+    Action<Document>? SubscriptionAdded = null,
+    Action<Document>? QuiescingWait = null);
 
 public sealed record DependencyGraphTraversalOptions(
     string? TargetFilePath = null,

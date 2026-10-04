@@ -514,7 +514,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         var scan = await CollectAndProjectDependencyGraphAsync(access.Solution,
                             new DependencyGraphProjectionOptions(PageSize: maxResults, TargetTypeName: targetSymbol.ToDisplayString(),
                                 TargetTypeId: targetTypeId, Direction: parsedDirection, Depth: depth),
-                            parsedScope, includeGenerated, null, CreateAssemblyHandoffFormatter(access), ct).ConfigureAwait(false);
+                            parsedScope, includeGenerated, CreateAssemblyHandoffFormatter(access), ct).ConfigureAwait(false);
                         var response = NavigationToolSupport.Success(scan, scan.IsTruncated,
                             "Increase maxResults, depth, or document coverage and repeat the query.");
                         var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
@@ -543,7 +543,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     var fileScan = await CollectAndProjectDependencyGraphAsync(scope.Solution,
                         new DependencyGraphProjectionOptions(PageSize: maxResults, TargetFilePath: filePath,
                             TargetTypeIds: fileTypeIds, Direction: parsedDirection, Depth: depth),
-                        parsedScope, includeGenerated, null, CreateAssemblyHandoffFormatter(scope.Solution, scope.Context), ct).ConfigureAwait(false);
+                        parsedScope, includeGenerated, CreateAssemblyHandoffFormatter(scope.Solution, scope.Context), ct).ConfigureAwait(false);
                     var fileResponse = NavigationToolSupport.Success(fileScan, fileScan.IsTruncated,
                         "Increase maxResults, depth, or document coverage and repeat the query.");
                     var fileIdentity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath,
@@ -582,12 +582,11 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     fileTypeIds = await DependencyGraphScanner.GetDocumentTypeIdsAsync(selectedDocument.Document,
                         ct, source.IdentityRequest.OwnerContextFingerprints).ConfigureAwait(false);
                 }
-                var scan = await CollectAndProjectDependencyGraphAsync(solution,
+                var scan = await CollectAndProjectSourceDependencyGraphAsync(runtime, target.CanonicalPath, solution,
                     new DependencyGraphProjectionOptions(TargetFilePath: filePath,
                         TargetTypeName: typeName, Direction: parsedDirection, Depth: depth,
                         PageSize: maxResults, TargetTypeId: typeId, TargetTypeIds: fileTypeIds),
-                    parsedScope, includeGenerated, source.IdentityRequest,
-                    symbolValue => source.FormatHandoff(symbolValue, solution), ct).ConfigureAwait(false);
+                    parsedScope, includeGenerated, source.IdentityRequest, ct).ConfigureAwait(false);
                 var response = NavigationToolSupport.Success(scan, scan.IsTruncated, "Increase maxResults, depth, or document coverage and repeat the query.");
                 var omissions = new List<string>();
                 if (scan.IsDepthClamped) omissions.Add("depthLimit");
@@ -610,18 +609,37 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         DependencyGraphProjectionOptions projectionOptions,
         SymbolScopeType scopeType,
         bool includeGenerated,
-        SourceIdentityRequest? sourceIdentityRequest,
         Func<ISymbol, string?>? handoffFormatter,
         CancellationToken cancellationToken)
     {
         var symbolsByTypeId = new Dictionary<string, ISymbol>(StringComparer.Ordinal);
         var collection = await DependencyGraphScanner.CollectAsync(solution,
             new DependencyGraphCollectionOptions(scopeType, includeGenerated), cancellationToken,
-            sourceIdentityRequest?.OwnerContextFingerprints,
+            null,
             new DependencyGraphCollectionObserver(SymbolDiscovered: (typeId, symbol) => symbolsByTypeId.TryAdd(typeId, symbol)))
             .ConfigureAwait(false);
         return DependencyGraphScanner.Project(collection, projectionOptions,
             typeId => symbolsByTypeId.GetValueOrDefault(typeId), handoffFormatter);
+    }
+
+    private static async Task<DependencyGraphPayload> CollectAndProjectSourceDependencyGraphAsync(
+        NavigatorHostRuntime runtime,
+        string canonicalTargetPath,
+        Solution solution,
+        DependencyGraphProjectionOptions projectionOptions,
+        SymbolScopeType scopeType,
+        bool includeGenerated,
+        SourceIdentityRequest sourceIdentityRequest,
+        CancellationToken cancellationToken)
+    {
+        var collection = await runtime.DependencyGraphCache.CollectAsync(solution,
+            new DependencyGraphCollectionOptions(scopeType, includeGenerated), canonicalTargetPath,
+            sourceIdentityRequest.SnapshotTicket, cancellationToken,
+            sourceIdentityRequest.OwnerContextFingerprints).ConfigureAwait(false);
+        var payload = DependencyGraphScanner.Project(collection, projectionOptions);
+        return await DependencyGraphScanner.FormatVisibleHandoffsAsync(collection, payload, solution,
+            sourceIdentityRequest.OwnerContextFingerprints,
+            symbol => sourceIdentityRequest.FormatHandoff(symbol, solution), cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<(Document? Document, string? Error)> ResolveDependencyDocumentAsync(

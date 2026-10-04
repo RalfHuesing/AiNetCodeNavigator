@@ -25,6 +25,8 @@ internal sealed class ProjectEntry(
 
     internal bool FailureLeaseReleased { get; set; }
 
+    internal long MaximumSourceSnapshotTicket { get; set; }
+
     internal int InFlightCount => Interlocked.CompareExchange(ref inFlightCount, 0, 0);
 
     internal ProjectLease OpenLease(Action<ProjectLease>? onReleased = null)

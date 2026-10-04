@@ -55,37 +55,192 @@ public static class DependencyGraphScanner
     {
         ArgumentNullException.ThrowIfNull(solution);
         ArgumentNullException.ThrowIfNull(options);
+        var plan = await PrepareCollectionPlanAsync(solution, options, ownerContextFingerprints, ct).ConfigureAwait(false);
+        var facts = new List<DependencyDocumentFact>();
+        var errors = new List<DependencyGraphScanError>();
+        var newSemanticScanCount = 0;
+        var compilations = new Dictionary<ProjectId, Compilation?>();
+        foreach (var batch in plan.RequiredDocuments.Chunk(MaximumDocuments))
+        {
+            foreach (var item in batch)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (item.TextError is not null)
+                {
+                    errors.Add(new DependencyGraphScanError(item.Project.Name, item.Document.Name, item.TextError));
+                    continue;
+                }
+
+                if (!compilations.TryGetValue(item.Project.Id, out var compilation))
+                {
+                    compilation = await item.Project.GetCompilationAsync(ct).ConfigureAwait(false);
+                    compilations[item.Project.Id] = compilation;
+                    observer?.CompilationAcquired?.Invoke(item.Project);
+                }
+                if (compilation is null)
+                {
+                    errors.Add(new DependencyGraphScanError(item.Project.Name, item.Document.Name, "Compilation was unavailable."));
+                    continue;
+                }
+
+                var outcome = await CollectDocumentFactAsync(solution, plan, item, compilation, observer, ct).ConfigureAwait(false);
+                if (outcome.SemanticScanAttempted) newSemanticScanCount++;
+                errors.AddRange(outcome.Errors);
+                if (outcome.Fact is not null) facts.Add(outcome.Fact);
+            }
+        }
+        return CreateCollectionFromFacts(plan, facts, errors, newSemanticScanCount);
+    }
+
+    internal static async Task<DependencyGraphCollectionPlan> PrepareCollectionPlanAsync(
+        Solution solution,
+        DependencyGraphCollectionOptions options,
+        IReadOnlyDictionary<ProjectId, string>? ownerContextFingerprints,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(solution);
+        ArgumentNullException.ThrowIfNull(options);
         if (options.DocumentOffset < 0) throw new ArgumentOutOfRangeException(nameof(options), "DocumentOffset must be zero or greater.");
         if (options.MaxDocuments is < 1) throw new ArgumentOutOfRangeException(nameof(options), "MaxDocuments must be at least one when provided.");
         if (!Enum.IsDefined(options.ScopeType)) throw new ArgumentOutOfRangeException(nameof(options), "ScopeType is invalid.");
-        var maxDocuments = options.MaxDocuments is null ? int.MaxValue : Math.Min(options.MaxDocuments.Value, MaximumDocuments);
-        var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
-        var generatedDocumentOwners = await ExactSourceSymbolResolver.GetSourceGeneratedDocumentOwnersAsync(solution, ct).ConfigureAwait(false);
-        var documentSelection = await SelectDocumentsAsync(
-            solution, options, maxDocuments, ownerContextFingerprints, generatedDocumentOwners, ct).ConfigureAwait(false);
-        var projectDependencies = GetProjectDependencies(solution);
-        var typeScan = await CollectTypeReferencesAsync(
-            solution, documentSelection.Documents, solutionDir, ownerContextFingerprints, generatedDocumentOwners, ct, observer).ConfigureAwait(false);
 
-        return new DependencyGraphCollection(
-            typeScan.Edges.ToImmutableArray(),
-            projectDependencies.ToImmutableArray(),
-            typeScan.Errors.ToImmutableArray(),
-            documentSelection.EligibleDocuments.Select(item => item.ToIdentity()).ToImmutableArray(),
-            documentSelection.Documents.Select(item => item.ToIdentity()).ToImmutableArray(),
-            typeScan.AttemptedDocuments.ToImmutableArray(),
-            typeScan.CoveredDocuments.ToImmutableArray(),
-            typeScan.TypeDeclarations.ToImmutableArray(),
-            documentSelection.TotalDocumentCount,
-            documentSelection.Documents.Count,
-            typeScan.CollectedDocumentCount,
-            typeScan.NewSemanticScanCount,
+        var maximumDocuments = options.MaxDocuments is null
+            ? int.MaxValue
+            : Math.Min(options.MaxDocuments.Value, MaximumDocuments);
+        var generatedOwners = await ExactSourceSymbolResolver.GetSourceGeneratedDocumentOwnersAsync(solution, cancellationToken)
+            .ConfigureAwait(false);
+        var selection = await SelectDocumentsAsync(solution, options, maximumDocuments,
+            ownerContextFingerprints, generatedOwners, cancellationToken).ConfigureAwait(false);
+        return new DependencyGraphCollectionPlan(
+            solution,
+            selection.EligibleDocuments.Select(item => item.ToIdentity()).ToImmutableArray(),
+            selection.Documents.Select(item => new DependencyDocumentWorkItem(item.Project, item.Document,
+                item.ToIdentity(), item.TextError)).ToImmutableArray(),
+            GetProjectDependencies(solution).ToImmutableArray(),
+            generatedOwners.ToImmutableDictionary(),
+            ownerContextFingerprints?.ToImmutableDictionary() ?? ImmutableDictionary<ProjectId, string>.Empty,
+            Path.GetDirectoryName(solution.FilePath) ?? string.Empty,
+            selection.TotalDocumentCount,
             options.DocumentOffset,
-            documentSelection.NextDocumentOffset,
-            options.MaxDocuments is not null && options.MaxDocuments.Value != maxDocuments,
+            selection.NextDocumentOffset,
+            options.MaxDocuments is not null && options.MaxDocuments.Value != maximumDocuments,
             options.ScopeType,
-            options.IncludeGenerated,
-            solutionDir);
+            options.IncludeGenerated);
+    }
+
+    internal static async Task<DependencyDocumentScanOutcome> CollectDocumentFactAsync(
+        Solution solution,
+        DependencyGraphCollectionPlan plan,
+        DependencyDocumentWorkItem workItem,
+        Compilation compilation,
+        DependencyGraphCollectionObserver? observer,
+        CancellationToken cancellationToken)
+    {
+        if (workItem.TextError is not null)
+            return new DependencyDocumentScanOutcome(null,
+                [new DependencyGraphScanError(workItem.Project.Name, workItem.Document.Name, workItem.TextError)], false);
+
+        var rawEdges = new Dictionary<(string FromTypeId, string ToTypeId), DependencyTypeReference>();
+        var symbols = new Dictionary<string, INamedTypeSymbol>(StringComparer.Ordinal);
+        var declarationsById = new Dictionary<string, (INamedTypeSymbol Symbol, List<DependencyDocumentIdentity> Documents)>(StringComparer.Ordinal);
+        var errors = new List<DependencyGraphScanError>();
+        var generatedOwners = plan.GeneratedDocumentOwners;
+        observer?.DocumentCollected?.Invoke(workItem.Document);
+        var scanSucceeded = await CollectDocumentTypeReferencesAsync(
+            solution,
+            workItem.Project,
+            workItem.Document,
+            compilation,
+            plan.SolutionDirectory,
+            plan.OwnerContextFingerprints,
+            generatedOwners,
+            workItem.Identity,
+            rawEdges,
+            symbols,
+            declarationsById,
+            errors,
+            cancellationToken).ConfigureAwait(false);
+        if (!scanSucceeded)
+            return new DependencyDocumentScanOutcome(null, errors.ToImmutableArray(), true);
+
+        foreach (var (typeId, symbol) in symbols)
+            observer?.SymbolDiscovered?.Invoke(typeId, symbol);
+        var typeDeclarations = CreateTypeDeclarations(solution, plan.SolutionDirectory, plan.OwnerContextFingerprints,
+            generatedOwners, symbols, declarationsById);
+        var fact = new DependencyDocumentFact(
+            workItem.Identity,
+            rawEdges.Values.OrderBy(edge => edge.FromTypeId, StringComparer.Ordinal)
+                .ThenBy(edge => edge.ToTypeId, StringComparer.Ordinal)
+                .ThenBy(edge => edge.FromFile, StringComparer.Ordinal)
+                .ThenBy(edge => edge.ToFile, StringComparer.Ordinal)
+                .ToImmutableArray(),
+            typeDeclarations);
+        return new DependencyDocumentScanOutcome(fact, ImmutableArray<DependencyGraphScanError>.Empty, true);
+    }
+
+    internal static DependencyGraphCollection CreateCollectionFromFacts(
+        DependencyGraphCollectionPlan plan,
+        IReadOnlyList<DependencyDocumentFact> facts,
+        IReadOnlyList<DependencyGraphScanError> errors,
+        int newSemanticScanCount)
+    {
+        var factByIdentity = facts.ToDictionary(fact => GetCollectionDocumentKey(fact.Identity), StringComparer.Ordinal);
+        var orderedFacts = plan.RequiredDocuments
+            .Select(item => factByIdentity.GetValueOrDefault(GetCollectionDocumentKey(item.Identity)))
+            .Where(fact => fact is not null)
+            .Cast<DependencyDocumentFact>()
+            .ToArray();
+        var edges = new Dictionary<(string From, string To), DependencyTypeReference>();
+        foreach (var fact in orderedFacts)
+            foreach (var edge in fact.TypeDependencies)
+            {
+                var key = (edge.FromTypeId, edge.ToTypeId);
+                if (!edges.ContainsKey(key)) edges.Add(key, edge);
+            }
+        var typeDeclarations = orderedFacts.SelectMany(fact => fact.TypeDeclarations)
+            .GroupBy(declaration => declaration.TypeId, StringComparer.Ordinal)
+            .Select(group => group.First() with
+            {
+                DeclarationDocuments = group.SelectMany(declaration => declaration.DeclarationDocuments).ToImmutableArray(),
+            })
+            .OrderBy(declaration => declaration.TypeId, StringComparer.Ordinal)
+            .ToImmutableArray();
+        return new DependencyGraphCollection(
+            edges.Values.OrderBy(edge => edge.FromProject, StringComparer.Ordinal).ThenBy(edge => edge.FromFile, StringComparer.Ordinal)
+                .ThenBy(edge => edge.FromTypeId, StringComparer.Ordinal).ThenBy(edge => edge.ToTypeId, StringComparer.Ordinal).ToImmutableArray(),
+            plan.ProjectDependencies,
+            errors.ToImmutableArray(),
+            plan.EligibleDocuments,
+            plan.RequiredDocuments.Select(item => item.Identity).ToImmutableArray(),
+            plan.RequiredDocuments.Select(item => item.Identity).ToImmutableArray(),
+            orderedFacts.Select(fact => fact.Identity).ToImmutableArray(),
+            typeDeclarations,
+            plan.EligibleDocumentCount,
+            plan.RequiredDocuments.Length,
+            orderedFacts.Length,
+            newSemanticScanCount,
+            plan.DocumentOffset,
+            plan.NextDocumentOffset,
+            plan.DocumentLimitWasClamped,
+            plan.ScopeType,
+            plan.IncludeGenerated,
+            plan.SolutionDirectory,
+            plan.ContinuationInputIncomplete);
+    }
+
+    private static string GetCollectionDocumentKey(DependencyDocumentIdentity identity)
+    {
+        var builder = new StringBuilder();
+        AppendKeyPart(builder, identity.OwnerProjectPath);
+        AppendKeyPart(builder, identity.OwnerContextFingerprint);
+        AppendKeyPart(builder, identity.DocumentPath);
+        AppendKeyPart(builder, identity.Name);
+        builder.Append(identity.Folders.Length).Append(':');
+        foreach (var folder in identity.Folders) AppendKeyPart(builder, folder);
+        AppendKeyPart(builder, identity.SourceCodeKind);
+        AppendKeyPart(builder, identity.TextHash);
+        builder.Append(identity.DuplicateOrdinal.ToString(System.Globalization.CultureInfo.InvariantCulture)).Append(':');
+        return builder.ToString();
     }
 
     internal static DependencyGraphPayload Project(
@@ -129,6 +284,93 @@ public static class DependencyGraphScanner
         return CreatePayload(
             options, pageSize, maxNodes, collection, traversal, isTargeted, requestedDepth, effectiveDepth,
             symbolResolver, handoffFormatter, collection.DocumentLimitWasClamped, pageSize != options.PageSize);
+    }
+
+    internal static async Task<DependencyGraphPayload> FormatVisibleHandoffsAsync(
+        DependencyGraphCollection collection,
+        DependencyGraphPayload payload,
+        Solution solution,
+        IReadOnlyDictionary<ProjectId, string> ownerContextFingerprints,
+        Func<ISymbol, string?> handoffFormatter,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(collection);
+        ArgumentNullException.ThrowIfNull(payload);
+        ArgumentNullException.ThrowIfNull(solution);
+        ArgumentNullException.ThrowIfNull(ownerContextFingerprints);
+        ArgumentNullException.ThrowIfNull(handoffFormatter);
+
+        var visibleEdges = payload.TypeDependencies ?? [];
+        if (visibleEdges.Count == 0) return payload;
+
+        var declarations = collection.TypeDeclarations.ToDictionary(declaration => declaration.TypeId, StringComparer.Ordinal);
+        var requiredTypeIds = visibleEdges.SelectMany(edge => new[] { edge.FromTypeId, edge.ToTypeId })
+            .Distinct(StringComparer.Ordinal).ToArray();
+        var resolved = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var projects = new Dictionary<string, (Project Project, Compilation Compilation)>(StringComparer.Ordinal);
+        var generatedOwners = await ExactSourceSymbolResolver.GetSourceGeneratedDocumentOwnersAsync(solution, cancellationToken)
+            .ConfigureAwait(false);
+
+        foreach (var typeId in requiredTypeIds)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!declarations.TryGetValue(typeId, out var declaration)
+                || declaration.DocumentationCommentId.Length == 0)
+            {
+                resolved[typeId] = null;
+                continue;
+            }
+
+            var matchingProjects = solution.Projects.Where(project =>
+                string.Equals(CanonicalPath(project.FilePath), declaration.OwnerProjectPath, StringComparison.Ordinal)
+                && string.Equals(ownerContextFingerprints.GetValueOrDefault(project.Id) ?? string.Empty,
+                    declaration.OwnerContextFingerprint, StringComparison.Ordinal)).ToArray();
+            if (matchingProjects.Length != 1)
+            {
+                resolved[typeId] = null;
+                continue;
+            }
+
+            var project = matchingProjects[0];
+            var projectKey = declaration.OwnerProjectPath + "\0" + declaration.OwnerContextFingerprint;
+            if (!projects.TryGetValue(projectKey, out var owner))
+            {
+                var compilation = await project.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
+                if (compilation is null)
+                {
+                    projects[projectKey] = (project, null!);
+                    resolved[typeId] = null;
+                    continue;
+                }
+                owner = (project, compilation);
+                projects.Add(projectKey, owner);
+            }
+            if (owner.Compilation is null)
+            {
+                resolved[typeId] = null;
+                continue;
+            }
+
+            var symbolMatches = DocumentationCommentId.GetSymbolsForDeclarationId(declaration.DocumentationCommentId, owner.Compilation)
+                .Select(symbol => symbol.OriginalDefinition)
+                .Where(symbol => symbol is INamedTypeSymbol
+                    && SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, owner.Compilation.Assembly)
+                    && string.Equals(DocumentationCommentId.CreateDeclarationId(symbol), declaration.DocumentationCommentId, StringComparison.Ordinal)
+                    && symbol.Locations.Any(location => location.IsInSource && location.SourceTree is { } tree
+                        && GetDocumentOwner(solution, tree, generatedOwners)?.Project.Id == owner.Project.Id))
+                .Distinct(SymbolEqualityComparer.Default)
+                .ToArray();
+            resolved[typeId] = symbolMatches.Length == 1 ? handoffFormatter(symbolMatches[0]) : null;
+        }
+
+        return payload with
+        {
+            TypeDependencies = visibleEdges.Select(edge => edge with
+            {
+                FromHandoffId = resolved.GetValueOrDefault(edge.FromTypeId),
+                ToHandoffId = resolved.GetValueOrDefault(edge.ToTypeId),
+            }).ToArray(),
+        };
     }
 
     private static DependencyGraphProjectionOptions ToProjectionOptions(DependencyGraphScanOptions options) => new(
@@ -280,70 +522,16 @@ public static class DependencyGraphScanner
         .ThenBy(dependency => dependency.ToProject, StringComparer.Ordinal)
         .ToList();
 
-    private static async Task<TypeReferenceScan> CollectTypeReferencesAsync(
+    private static ImmutableArray<DependencyTypeDeclaration> CreateTypeDeclarations(
         Solution solution,
-        IReadOnlyList<OrderedDocument> documents,
         string solutionDir,
         IReadOnlyDictionary<ProjectId, string>? ownerContextFingerprints,
         IReadOnlyDictionary<SyntaxTree, SourceGeneratedDocument> generatedDocumentOwners,
-        CancellationToken ct,
-        DependencyGraphCollectionObserver? observer)
-    {
-        var errors = new List<DependencyGraphScanError>();
-        var rawTypeEdges = new Dictionary<(string FromTypeId, string ToTypeId), DependencyTypeReference>();
-        var symbolsByTypeId = new Dictionary<string, INamedTypeSymbol>(StringComparer.Ordinal);
-        var typeDocumentsById = new Dictionary<string, (INamedTypeSymbol Symbol, List<DependencyDocumentIdentity> Documents)>(StringComparer.Ordinal);
-        var compilations = new Dictionary<ProjectId, Compilation?>();
-        var collectedDocumentCount = 0;
-        var newSemanticScanCount = 0;
-        var attemptedDocuments = new List<DependencyDocumentIdentity>();
-        var coveredDocuments = new List<DependencyDocumentIdentity>();
-        foreach (var batch in documents.Chunk(MaximumDocuments))
+        IReadOnlyDictionary<string, INamedTypeSymbol> symbols,
+        IReadOnlyDictionary<string, (INamedTypeSymbol Symbol, List<DependencyDocumentIdentity> Documents)> declarationsById) =>
+        symbols.Select(pair =>
         {
-            foreach (var orderedDocument in batch)
-            {
-                var project = orderedDocument.Project;
-                var document = orderedDocument.Document;
-                var documentIdentity = orderedDocument.ToIdentity();
-                attemptedDocuments.Add(documentIdentity);
-                ct.ThrowIfCancellationRequested();
-                if (orderedDocument.TextError is not null)
-                {
-                    errors.Add(new DependencyGraphScanError(project.Name, document.Name, orderedDocument.TextError));
-                    continue;
-                }
-                if (!compilations.TryGetValue(project.Id, out var compilation))
-                {
-                    compilation = await project.GetCompilationAsync(ct).ConfigureAwait(false);
-                    compilations[project.Id] = compilation;
-                    observer?.CompilationAcquired?.Invoke(project);
-                }
-                if (compilation is null)
-                {
-                    errors.Add(new DependencyGraphScanError(project.Name, document.Name, "Compilation was unavailable."));
-                    continue;
-                }
-
-                observer?.DocumentCollected?.Invoke(document);
-                newSemanticScanCount++;
-                if (await CollectDocumentTypeReferencesAsync(
-                        solution, project, document, compilation, solutionDir, ownerContextFingerprints, generatedDocumentOwners, documentIdentity,
-                        rawTypeEdges, symbolsByTypeId, typeDocumentsById, errors, ct).ConfigureAwait(false))
-                {
-                    collectedDocumentCount++;
-                    coveredDocuments.Add(orderedDocument.ToIdentity());
-                }
-            }
-        }
-
-        if (observer?.SymbolDiscovered is { } symbolDiscovered)
-            foreach (var (typeId, symbol) in symbolsByTypeId)
-                symbolDiscovered(typeId, symbol);
-
-        var typeDeclarations = typeDocumentsById.Select(pair =>
-        {
-            var symbol = pair.Value.Symbol;
-            var type = symbol.OriginalDefinition;
+            var type = pair.Value.OriginalDefinition;
             var location = type.Locations.Where(candidate => candidate.IsInSource)
                 .OrderBy(candidate => CanonicalPath(candidate.SourceTree?.FilePath ?? candidate.GetLineSpan().Path), StringComparer.Ordinal)
                 .FirstOrDefault();
@@ -362,16 +550,11 @@ public static class DependencyGraphScanner
                 ownerPath,
                 ownerContext,
                 pair.Key,
-                pair.Value.Documents.ToImmutableArray());
-        }).OrderBy(declaration => declaration.TypeId, StringComparer.Ordinal).ToList();
-
-        var rawEdges = rawTypeEdges.Values
-            .OrderBy(edge => edge.FromProject, StringComparer.Ordinal).ThenBy(edge => edge.FromFile, StringComparer.Ordinal)
-            .ThenBy(edge => edge.FromTypeId, StringComparer.Ordinal).ThenBy(edge => edge.ToTypeId, StringComparer.Ordinal)
-            .ToList();
-        return new TypeReferenceScan(rawEdges, errors, collectedDocumentCount, newSemanticScanCount,
-            attemptedDocuments, coveredDocuments, typeDeclarations);
-    }
+                DocumentationCommentId.CreateDeclarationId(type) ?? string.Empty,
+                declarationsById.TryGetValue(pair.Key, out var declared)
+                    ? declared.Documents.ToImmutableArray()
+                    : ImmutableArray<DependencyDocumentIdentity>.Empty);
+        }).OrderBy(declaration => declaration.TypeId, StringComparer.Ordinal).ToImmutableArray();
 
     private static async Task<bool> CollectDocumentTypeReferencesAsync(
         Solution solution,
@@ -622,15 +805,6 @@ public static class DependencyGraphScanner
             return leftFolders.Count.CompareTo(rightFolders.Count);
         }
     }
-
-    private sealed record TypeReferenceScan(
-        IReadOnlyList<DependencyTypeReference> Edges,
-        IReadOnlyList<DependencyGraphScanError> Errors,
-        int CollectedDocumentCount,
-        int NewSemanticScanCount,
-        IReadOnlyList<DependencyDocumentIdentity> AttemptedDocuments,
-        IReadOnlyList<DependencyDocumentIdentity> CoveredDocuments,
-        IReadOnlyList<DependencyTypeDeclaration> TypeDeclarations);
 
     internal static DependencyGraphTraversalOutcome Traverse(
         IReadOnlyList<DependencyTypeReference> edges,

@@ -15,6 +15,11 @@ namespace AiNetCodeNavigator.Core.Workspace;
 /// </summary>
 public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
 {
+    private readonly record struct RetiredSolution(
+        string? RetiredTarget,
+        long MaximumSourceSnapshotTicket,
+        ResidentSolution ResidentSolution);
+
     private readonly Lock gate = new();
     private readonly Dictionary<string, ProjectEntry> projects = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ProjectCreationReservation> reservations = new(StringComparer.OrdinalIgnoreCase);
@@ -25,6 +30,8 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
     private TaskCompletionSource? leaseOperationsDrained;
     private int activeLeaseOperations;
     private int disposed;
+
+    internal Func<string, long, Task>? SourceOwnerRetiring { get; set; }
 
     public ProjectRegistry(ProjectRegistryOptions options)
     {
@@ -48,11 +55,11 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
         try
         {
             var key = Canonicalize(solutionPath);
-            var retired = new List<ResidentSolution>();
+            var retired = new List<RetiredSolution>();
             var result = TryAdoptOrCreate(key, retired);
-            foreach (var server in retired)
+            foreach (var retiredSolution in retired)
             {
-                server.Dispose();
+                RetireAndDisposeAsync(retiredSolution).AsTask().GetAwaiter().GetResult();
             }
 
             return result;
@@ -128,17 +135,19 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
             await pendingLeaseOperations.ConfigureAwait(false);
         }
 
-        List<ResidentSolution> remaining;
+        List<RetiredSolution> remaining;
         lock (gate)
         {
-            remaining = projects.Values.Select(entry => entry.ResidentSolution).ToList();
+            remaining = projects.Values
+                .Select(entry => RetiredSolutionFor(entry))
+                .ToList();
             projects.Clear();
             reservations.Clear();
         }
 
-        foreach (var server in remaining)
+        foreach (var retiredSolution in remaining)
         {
-            await server.DisposeAsync().ConfigureAwait(false);
+            await RetireAndDisposeAsync(retiredSolution).ConfigureAwait(false);
         }
 
         tickSource.Dispose();
@@ -158,7 +167,7 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
 
         foreach (var entry in expired)
         {
-            await entry.ResidentSolution.DisposeAsync().ConfigureAwait(false);
+            await RetireAndDisposeAsync(RetiredSolutionFor(entry)).ConfigureAwait(false);
         }
     }
 
@@ -178,7 +187,7 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "ProjectLease ownership is transferred to the caller via ProjectLeaseResult")]
-    private ProjectLeaseResult TryAdoptOrCreate(string key, List<ResidentSolution> retired)
+    private ProjectLeaseResult TryAdoptOrCreate(string key, List<RetiredSolution> retired)
     {
         if (options.BeforeCreationReservation is not null)
         {
@@ -228,7 +237,7 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
         return PublishCreation(key, reservation, attempt, retired);
     }
 
-    private ProjectLease? FindResidentBeforeCreationBarrier(string key, List<ResidentSolution> retired)
+    private ProjectLease? FindResidentBeforeCreationBarrier(string key, List<RetiredSolution> retired)
     {
         lock (gate)
         {
@@ -264,7 +273,7 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
         string key,
         ProjectCreationReservation reservation,
         ProjectCreationAttempt attempt,
-        List<ResidentSolution> retired)
+        List<RetiredSolution> retired)
     {
         var created = attempt.Creation;
         lock (gate)
@@ -274,7 +283,7 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
                 RemoveReservationUnderLock(key, reservation);
                 if (created.Solution is not null)
                 {
-                    retired.Add(created.Solution);
+                    retired.Add(new RetiredSolution(null, 0, created.Solution));
                 }
 
                 return ProjectLeaseResult.Failure(
@@ -293,7 +302,7 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
                 RemoveReservationUnderLock(key, reservation);
                 if (created.Solution is not null && !ReferenceEquals(created.Solution, raced.ResidentSolution))
                 {
-                    retired.Add(created.Solution);
+                    retired.Add(new RetiredSolution(null, 0, created.Solution));
                 }
 
                 return ProjectLeaseResult.Success(Adopt(raced));
@@ -338,7 +347,7 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
         }
     }
 
-    private ProjectLease? FindAdoptable(string key, List<ResidentSolution> retired)
+    private ProjectLease? FindAdoptable(string key, List<RetiredSolution> retired)
     {
         if (!projects.TryGetValue(key, out var entry))
         {
@@ -350,7 +359,7 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
             && entry.InFlightCount == 0)
         {
             projects.Remove(key);
-            retired.Add(entry.ResidentSolution);
+            retired.Add(RetiredSolutionFor(entry));
             return null;
         }
 
@@ -389,6 +398,23 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
         }
     }
 
+    internal void RecordValidatedSourceSnapshot(ProjectLease lease, long snapshotTicket)
+    {
+        ArgumentNullException.ThrowIfNull(lease);
+        if (snapshotTicket <= 0) throw new ArgumentOutOfRangeException(nameof(snapshotTicket));
+        lock (gate)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+            if (!projects.TryGetValue(lease.RootPath, out var entry)
+                || !ReferenceEquals(entry.ResidentSolution, lease.ResidentSolution))
+            {
+                throw new InvalidOperationException("The source snapshot lease is no longer resident.");
+            }
+
+            entry.MaximumSourceSnapshotTicket = Math.Max(entry.MaximumSourceSnapshotTicket, snapshotTicket);
+        }
+    }
+
     private static ProjectSnapshot SnapshotOf(ProjectEntry entry) =>
         new(entry.RootPath, entry.Definition, entry.LastUsedUtc, entry.ResidentSolution);
 
@@ -417,7 +443,7 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
         }
     }
 
-    private void EvictLeastRecentlyUsed(List<ResidentSolution> retired)
+    private void EvictLeastRecentlyUsed(List<RetiredSolution> retired)
     {
         while (projects.Count >= options.MaxProjects)
         {
@@ -438,7 +464,27 @@ public sealed class ProjectRegistry : IAsyncDisposable, IDisposable
             }
 
             projects.Remove(victim.RootPath);
-            retired.Add(victim.ResidentSolution);
+            retired.Add(RetiredSolutionFor(victim));
+        }
+    }
+
+    private static RetiredSolution RetiredSolutionFor(ProjectEntry entry) =>
+        new(entry.RootPath, entry.MaximumSourceSnapshotTicket, entry.ResidentSolution);
+
+    private async ValueTask RetireAndDisposeAsync(RetiredSolution retiredSolution)
+    {
+        try
+        {
+            if (retiredSolution.RetiredTarget is { } targetPath
+                && retiredSolution.MaximumSourceSnapshotTicket > 0
+                && SourceOwnerRetiring is { } retireOwner)
+            {
+                await retireOwner(targetPath, retiredSolution.MaximumSourceSnapshotTicket).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            await retiredSolution.ResidentSolution.DisposeAsync().ConfigureAwait(false);
         }
     }
 

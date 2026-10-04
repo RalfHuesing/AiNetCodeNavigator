@@ -166,6 +166,55 @@ public sealed class ProjectRegistryTests
     }
 
     [Fact]
+    public async Task Lease_LruRetirementReportsOldSnapshotTicketWithoutBlockingFreshOwner()
+    {
+        using var tempDir = TestTempDirectory.Create("project-registry-retirement-ticket-");
+        var factory = new TrackingSolutionFactory();
+        await using var registry = new ProjectRegistry(new ProjectRegistryOptions(
+            factory.Factory,
+            new FakeClock(),
+            MaxProjects: 1,
+            IdleTtl: TimeSpan.FromHours(1)));
+        var firstPath = CreateSolutionPath(tempDir, "first");
+        var secondPath = CreateSolutionPath(tempDir, "second");
+        var retirementStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowRetirement = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        string? retiredPath = null;
+        long retiredTicket = 0;
+        registry.SourceOwnerRetiring = async (path, ticket) =>
+        {
+            if (!string.Equals(path, Path.GetFullPath(firstPath), StringComparison.OrdinalIgnoreCase)) return;
+            retiredPath = path;
+            retiredTicket = ticket;
+            retirementStarted.TrySetResult();
+            await allowRetirement.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        };
+
+        var first = registry.Lease(firstPath);
+        using var firstLease = first.Lease;
+        Assert.NotNull(firstLease);
+        registry.RecordValidatedSourceSnapshot(firstLease, 41);
+        firstLease.Dispose();
+
+        var secondTask = Task.Run(() => registry.Lease(secondPath));
+        await retirementStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var freshFirst = await Task.Run(() => registry.Lease(firstPath)).WaitAsync(TimeSpan.FromSeconds(10));
+        using var freshFirstLease = freshFirst.Lease;
+        Assert.NotNull(freshFirstLease);
+        registry.RecordValidatedSourceSnapshot(freshFirstLease, 42);
+
+        allowRetirement.TrySetResult();
+        var second = await secondTask.WaitAsync(TimeSpan.FromSeconds(10));
+        using var secondLease = second.Lease;
+
+        Assert.Equal(Path.GetFullPath(firstPath), retiredPath);
+        Assert.Equal(41, retiredTicket);
+        Assert.True(freshFirst.Succeeded);
+        Assert.NotSame(firstLease.ResidentSolution, freshFirstLease.ResidentSolution);
+        Assert.True(second.Succeeded);
+    }
+
+    [Fact]
     public async Task Lease_WhileBackgroundLoadIsPending_ReturnsRetryableLoadingState()
     {
         using var tempDir = TestTempDirectory.Create("project-registry-background-load-");

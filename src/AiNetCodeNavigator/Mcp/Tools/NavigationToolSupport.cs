@@ -330,6 +330,7 @@ internal static class NavigationToolSupport
                 error.Hint ?? "Correct unsupported source project or loader inputs and repeat the query.",
                 context: target.CanonicalPath, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         }
+        runtime.ProjectRegistry.RecordValidatedSourceSnapshot(lease, identityResult.Value!.SnapshotTicket);
         return await operation(sourceSolution,
             new SourceAnalysisContext(identityResult.Value!, snapshot.ConfiguredTargetFrameworks), cancellationToken).ConfigureAwait(false);
     }
