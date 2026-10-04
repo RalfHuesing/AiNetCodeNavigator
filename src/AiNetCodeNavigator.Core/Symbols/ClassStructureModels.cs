@@ -43,4 +43,7 @@ public sealed record ClassStructureScanRequest(
     AnalysisSymbolIdentity? HandoffIdentity = null,
     SymbolScopeType ScopeType = SymbolScopeType.All,
     bool IncludeGenerated = false,
-    bool CollectAllMembers = false);
+    bool CollectAllMembers = false)
+{
+    internal SourceIdentityRequest? CurrentIdentityRequest { get; init; }
+}

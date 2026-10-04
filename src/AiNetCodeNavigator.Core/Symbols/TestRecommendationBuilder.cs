@@ -28,27 +28,37 @@ public static class TestRecommendationBuilder
         "Tests", "Test", "Specs", "Spec", "IntegrationTests", "IntegrationTest", "UnitTests", "UnitTest", "FastTests"
     ];
 
-    public static Task<TestContextPayload> BuildAsync(
-        ISymbol targetSymbol,
-        Solution solution,
-        CancellationToken ct = default,
-        bool includeGenerated = false,
-        SymbolScopeType scope = SymbolScopeType.All) =>
-        BuildAsync(targetSymbol, solution, identity: null, ct, includeGenerated, scope);
-
-    /// <summary>Build candidates from an already resolved symbol and the identity of its existing source snapshot.</summary>
     public static async Task<TestContextPayload> BuildAsync(
         ISymbol targetSymbol,
         Solution solution,
-        AnalysisSymbolIdentity? identity,
         CancellationToken ct = default,
         bool includeGenerated = false,
         SymbolScopeType scope = SymbolScopeType.All)
     {
+        var formatter = await SourceReferenceFormattingContext.CreateFormatterAsync(solution, ct).ConfigureAwait(false);
+        return await BuildCoreAsync(targetSymbol, solution, formatter, ct, includeGenerated, scope).ConfigureAwait(false);
+    }
+
+    internal static Task<TestContextPayload> BuildAsync(
+        ISymbol targetSymbol,
+        Solution solution,
+        SourceIdentityRequest identityRequest,
+        CancellationToken ct = default,
+        bool includeGenerated = false,
+        SymbolScopeType scope = SymbolScopeType.All) =>
+        BuildCoreAsync(targetSymbol, solution, symbol => identityRequest.FormatHandoff(symbol, solution), ct, includeGenerated, scope);
+
+    private static async Task<TestContextPayload> BuildCoreAsync(
+        ISymbol targetSymbol,
+        Solution solution,
+        Func<ISymbol, string?> handoffFormatter,
+        CancellationToken ct,
+        bool includeGenerated,
+        SymbolScopeType scope)
+    {
         ArgumentNullException.ThrowIfNull(targetSymbol);
         ArgumentNullException.ThrowIfNull(solution);
 
-        var handoffIdentity = identity ?? await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
         var candidateBuilders = new Dictionary<ISymbol, CandidateBuilder>(SymbolEqualityComparer.Default);
         var methodsWithEvidence = new Dictionary<IMethodSymbol, List<TestCandidateEvidence>>(SymbolEqualityComparer.Default);
@@ -121,8 +131,7 @@ public static class TestRecommendationBuilder
                         location.Location,
                         document,
                         solutionDir,
-                        handoffIdentity,
-                        solution);
+                        handoffFormatter);
                     if (!methodEvidence.Contains(evidence)) methodEvidence.Add(evidence);
                     if (candidateLimitReached) break;
                 }
@@ -138,7 +147,7 @@ public static class TestRecommendationBuilder
         }
 
         var allCandidates = candidateBuilders.Values
-            .Select(builder => builder.Build(solution, solutionDir, handoffIdentity))
+            .Select(builder => builder.Build(solution, solutionDir, handoffFormatter))
             .Where(static fixture => fixture is not null)
             .Select(static fixture => fixture!)
             .OrderBy(fixture => fixture.ProjectIdentity, StringComparer.Ordinal)
@@ -184,7 +193,7 @@ public static class TestRecommendationBuilder
                         var document = solution.GetDocument(syntax.SyntaxTree);
                         if (document is null || (!includeGenerated && await GeneratedDocumentDetector.IsGeneratedDocumentAsync(document, ct).ConfigureAwait(false))) continue;
                         var evidence = CreateEvidence(evidenceType, relatedSymbol, (await syntax.GetSyntaxAsync(ct).ConfigureAwait(false)).GetLocation(), document,
-                            solutionDir, handoffIdentity, solution);
+                            solutionDir, handoffFormatter);
                         candidates.Add((testClass, evidence));
                     }
                 }
@@ -328,13 +337,12 @@ public static class TestRecommendationBuilder
         Location location,
         Document document,
         string solutionDir,
-        AnalysisSymbolIdentity? identity,
-        Solution solution)
+        Func<ISymbol, string?> handoffFormatter)
     {
         var lineSpan = location.GetLineSpan();
         var path = PathNormalizer.ToRelative(solutionDir, lineSpan.Path);
         var projectIdentity = ProjectIdentity(document.Project);
-        var handoff = identity is null ? null : StableSourceReferenceFormatter.Format(sourceSymbol, solution, identity);
+        var handoff = handoffFormatter(sourceSymbol);
         return new TestCandidateEvidence(
             evidenceType,
             sourceSymbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
@@ -380,7 +388,7 @@ public static class TestRecommendationBuilder
                 if (!items.Contains(item)) items.Add(item);
         }
 
-        internal TestFixtureMatch? Build(Solution solution, string solutionDir, AnalysisSymbolIdentity? identity)
+        internal TestFixtureMatch? Build(Solution solution, string solutionDir, Func<ISymbol, string?> handoffFormatter)
         {
             var syntaxRef = symbol.DeclaringSyntaxReferences.FirstOrDefault();
             if (syntaxRef is null) return null;
@@ -396,7 +404,7 @@ public static class TestRecommendationBuilder
                 if (!useAllAttributedMethods && !_methodEvidence.ContainsKey(method)) continue;
                 var methodLocation = method.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax().GetLocation();
                 var methodLine = methodLocation?.GetLineSpan().StartLinePosition.Line + 1 ?? 0;
-                var methodHandoff = StableSourceReferenceFormatter.Format(method, solution, identity);
+                var methodHandoff = handoffFormatter(method);
                 _methodEvidence.TryGetValue(method, out var evidence);
                 methods.Add(new TestMethodMatch(method.Name, methodLine, methodHandoff,
                     evidence?.OrderBy(item => item.EvidenceType, StringComparer.Ordinal)
@@ -405,7 +413,7 @@ public static class TestRecommendationBuilder
             }
             methods = methods.OrderBy(method => method.Line).ThenBy(method => method.MethodName, StringComparer.Ordinal).ToList();
             var framework = DetectFramework(symbol);
-            var classHandoff = StableSourceReferenceFormatter.Format(symbol, solution, identity);
+            var classHandoff = handoffFormatter(symbol);
             var evidenceItems = _fixtureEvidence
                 .OrderBy(item => item.EvidenceType, StringComparer.Ordinal)
                 .ThenBy(item => item.ProjectIdentity, StringComparer.Ordinal)

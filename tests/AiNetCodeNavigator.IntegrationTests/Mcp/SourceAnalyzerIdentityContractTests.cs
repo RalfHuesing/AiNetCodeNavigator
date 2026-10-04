@@ -1,0 +1,251 @@
+using System;
+using System.Collections.Immutable;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using AiNetCodeNavigator.Core.Symbols;
+using AiNetCodeNavigator.Core.Workspace;
+using AiNetCodeNavigator.Mcp;
+using AiNetCodeNavigator.Mcp.Tools;
+using AiNetCodeNavigator.Mcp.Tools.Relationships;
+using AiNetCodeNavigator.Mcp.Tools.Symbols;
+using AiNetCodeNavigator.TestKit;
+using AiNetCodeNavigator.TestKit.Builders;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Text;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using ModelContextProtocol.Protocol;
+using static AiNetCodeNavigator.IntegrationTests.Mcp.IntegrationMcpAssertions;
+
+namespace AiNetCodeNavigator.IntegrationTests.Mcp;
+
+// @covers SymbolTools.FindSymbol
+// @covers SymbolTools.GetSymbolBody
+[Trait("Category", "Integration")]
+public sealed class SourceAnalyzerIdentityContractTests
+{
+    [Fact]
+    public async Task MsBuildGeneratorImageReplacementRefreshesSnapshotAndGeneratedMethodBody()
+    {
+        using var fixture = TestTempDirectory.Create("ainet-source-analyzer-identity-");
+
+        var solutionPath = fixture.GetPath("AnalyzerFixture.slnx");
+        var projectPath = fixture.GetPath("src/App/App.csproj");
+        var generatorPath = fixture.GetPath("tools/IdentityGenerator.dll");
+        fixture.CreateFile("src/App/App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
+              <ItemGroup><Analyzer Include="../../tools/IdentityGenerator.dll" /></ItemGroup>
+            </Project>
+            """);
+        fixture.CreateFile("src/App/App.cs", "namespace AnalyzerFixture; public sealed class RegularType { }");
+        await File.WriteAllTextAsync(solutionPath, "<Solution><Project Path=\"src/App/App.csproj\" /></Solution>");
+        var nugetConfigPath = fixture.CreateFile("NuGet.Config",
+            "<configuration><packageSources><clear /></packageSources></configuration>");
+        var version17 = await EmitGeneratorAsync(generatorPath, projectPath, 17);
+        var version18 = await EmitGeneratorAsync(generatorPath, projectPath, 18);
+        await File.WriteAllBytesAsync(generatorPath, version17.ImageBytes);
+        await FixtureRestore.RunAsync(solutionPath, fixture.DirectoryPath, nugetConfigPath, "Analyzer identity fixture restore");
+
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+        await using (var unprovenRuntime = new NavigatorHostRuntime(lifetime))
+        {
+            var unprovenSymbols = new SymbolTools(unprovenRuntime);
+            var unproven = await CompleteAsync(operation => unprovenSymbols.FindSymbol(solutionPath,
+                pattern: "AnalyzerFixture.Generated.GeneratedProbe.Read", kind: "method", includeGenerated: true, maxResponseBytes: 16384,
+                maxResponseTokens: 1024, operationToken: operation));
+            var unprovenText = TextOf(unproven);
+            Assert.True(unproven.IsError ?? false, unprovenText);
+            Assert.Contains("WORKSPACE_DIAGNOSTIC", unprovenText, StringComparison.Ordinal);
+            Assert.Contains("IdentityGenerator.dll", unprovenText, StringComparison.Ordinal);
+            Assert.Contains("App.csproj", unprovenText, StringComparison.Ordinal);
+        }
+
+        var creatorContracts = new[] { version17.Contract, version18.Contract };
+        await using var registry = new ProjectRegistry(new ProjectRegistryOptions(
+            definition => ResidentSolutionCreation.Resident(
+                MSBuildSolutionLoader.CreateResidentSolution(definition.SolutionPath, creatorContracts)),
+            TimeProvider.System));
+        await using var runtime = new NavigatorHostRuntime(lifetime, projectRegistry: registry);
+        var symbols = new SymbolTools(runtime);
+
+        var residentLeaseResult = registry.Lease(solutionPath);
+        Assert.True(residentLeaseResult.Succeeded, residentLeaseResult.ErrorMessage);
+        using var residentLease = residentLeaseResult.Lease!;
+        var residentSnapshot = await residentLease.ResidentSolution.GetCurrentSnapshotAsync();
+        Assert.True(residentSnapshot.Succeeded, residentSnapshot.Error?.Message);
+        var generatorProject = Assert.Single(residentSnapshot.Solution!.Projects);
+        var generatedDocuments = (await generatorProject.GetSourceGeneratedDocumentsAsync()).ToArray();
+        var generatedSource = string.Join(Environment.NewLine,
+            await Task.WhenAll(generatedDocuments.Select(async document =>
+                (await document.GetTextAsync()).ToString())));
+        var generatorCompilation = await generatorProject.GetCompilationAsync();
+        var generatorDiagnostics = generatorCompilation is null
+            ? "The generator project produced no compilation."
+            : string.Join(Environment.NewLine,
+                generatorCompilation.GetDiagnostics().Select(diagnostic => diagnostic.ToString()));
+        var generatedMethod = generatorCompilation?.GetTypeByMetadataName("AnalyzerFixture.Generated.GeneratedProbe")?
+            .GetMembers("Read").OfType<IMethodSymbol>().SingleOrDefault();
+        Assert.NotNull(generatedMethod);
+        var generatedMethodDeclarationId = DocumentationCommentId.CreateDeclarationId(generatedMethod!);
+        Assert.NotNull(generatedMethodDeclarationId);
+        Assert.True(StableSymbolReferenceCodec.IsCanonicalDeclarationId(generatedMethodDeclarationId!), generatedMethodDeclarationId);
+        Assert.True(generatedSource.Contains("GeneratedProbe", StringComparison.Ordinal)
+            && generatedSource.Contains("=> 17", StringComparison.Ordinal),
+            $"The registered MSBuild snapshot did not materialize the expected generated source. Generated documents: {generatedDocuments.Length}.\n{generatorDiagnostics}");
+
+        var initialBytes = version17.ImageBytes;
+        var initialHash = Convert.ToHexString(SHA256.HashData(initialBytes));
+        var initialTimestamp = File.GetLastWriteTimeUtc(generatorPath);
+
+        var excluded = await ReadPagesAsync((bytes, tokens, operation, continuation) => symbols.FindSymbol(solutionPath,
+            pattern: "AnalyzerFixture.Generated.GeneratedProbe.Read", kind: "method", includeGenerated: false, maxResponseBytes: bytes,
+            maxResponseTokens: tokens, operationToken: operation, continuationToken: continuation), 16384, 1024);
+        Assert.Empty(ReadGeneratedMethodReferences(excluded.Text, generatedMethodDeclarationId!));
+
+        var discovered = await ReadPagesAsync((bytes, tokens, operation, continuation) => symbols.FindSymbol(solutionPath,
+            pattern: "AnalyzerFixture.Generated.GeneratedProbe.Read", kind: "method", includeGenerated: true, maxResponseBytes: bytes,
+            maxResponseTokens: tokens, operationToken: operation, continuationToken: continuation), 16384, 1024);
+        Assert.Equal("complete", ReadHeader(discovered.FirstPage, "analysisCompleteness"));
+        var discoveredReferences = ReadGeneratedMethodReferences(discovered.Text, generatedMethodDeclarationId!);
+        Assert.True(discoveredReferences.Length == 1, discovered.Text);
+        var reference = discoveredReferences[0];
+        var generatedTypeDiscovery = await ReadPagesAsync((bytes, tokens, operation, continuation) => symbols.FindSymbol(solutionPath,
+            pattern: "AnalyzerFixture.Generated.GeneratedProbe", kind: "class", includeGenerated: true,
+            maxResponseBytes: bytes, maxResponseTokens: tokens, operationToken: operation, continuationToken: continuation), 16384, 1024);
+        var generatedTypeReferences = ReadGeneratedTypeReferences(generatedTypeDiscovery.Text);
+        Assert.True(generatedTypeReferences.Length == 1, generatedTypeDiscovery.Text);
+        var generatedTypeReference = generatedTypeReferences[0];
+
+        var structures = new StructureTools(runtime);
+        var excludedStructure = await ReadPagesAsync((bytes, tokens, operation, continuation) => structures.GetClassStructure(solutionPath,
+            generatedTypeReference, includeGenerated: false, maxResponseBytes: bytes, maxResponseTokens: tokens,
+            operationToken: operation, continuationToken: continuation), 16384, 1024);
+        Assert.DoesNotContain("Read", excludedStructure.Text, StringComparison.Ordinal);
+        var includedStructure = await ReadPagesAsync((bytes, tokens, operation, continuation) => structures.GetClassStructure(solutionPath,
+            generatedTypeReference, includeGenerated: true, maxResponseBytes: bytes, maxResponseTokens: tokens,
+            operationToken: operation, continuationToken: continuation), 16384, 1024);
+        Assert.Contains("Read", includedStructure.Text, StringComparison.Ordinal);
+
+        var relationships = new RelationshipTools(runtime);
+        var excludedContext = await CompleteAsync(operation => relationships.GetContext(solutionPath, reference, ["body"],
+            maxResponseBytes: 16384, maxResponseTokens: 1024, operationToken: operation));
+        Assert.True(excludedContext.IsError == true, TextOf(excludedContext));
+        Assert.Contains("generated source", TextOf(excludedContext), StringComparison.Ordinal);
+        var includedContext = await ReadPagesAsync((bytes, tokens, operation, continuation) => relationships.GetContext(solutionPath,
+            reference, ["body"], includeGenerated: true, maxResponseBytes: bytes, maxResponseTokens: tokens,
+            operationToken: operation, continuationToken: continuation), 16384, 1024);
+        using var includedContextDocument = JsonDocument.Parse(includedContext.Text);
+        var includedContextBody = includedContextDocument.RootElement.GetProperty("sections")[0]
+            .GetProperty("items").GetProperty("body").GetString();
+        Assert.True(includedContextBody?.Contains("=> 17", StringComparison.Ordinal) == true,
+            $"Generated body was absent from the parsed get_context payload. Body: {includedContextBody}\nPayload: {includedContext.Text}");
+
+        var initialSnapshot = ReadHeader(discovered.FirstPage, "snapshotId");
+        var initialBody = await ReadBodyAsync(symbols, solutionPath, reference);
+        Assert.Equal(initialSnapshot, ReadHeader(initialBody.FirstPage, "snapshotId"));
+        Assert.Contains("=> 17", initialBody.Text, StringComparison.Ordinal);
+
+        await File.WriteAllBytesAsync(generatorPath, version18.ImageBytes);
+        var replacementBytes = await File.ReadAllBytesAsync(generatorPath);
+        Assert.Equal(initialBytes.Length, replacementBytes.Length);
+        var replacementHash = Convert.ToHexString(SHA256.HashData(replacementBytes));
+        Assert.NotEqual(initialHash, replacementHash);
+        File.SetLastWriteTimeUtc(generatorPath, initialTimestamp);
+        Assert.Equal(initialTimestamp, File.GetLastWriteTimeUtc(generatorPath));
+
+        var refreshedSymbols = new SymbolTools(runtime);
+        var rediscovered = await ReadPagesAsync((bytes, tokens, operation, continuation) => refreshedSymbols.FindSymbol(solutionPath,
+            pattern: "AnalyzerFixture.Generated.GeneratedProbe.Read", kind: "method", includeGenerated: true, maxResponseBytes: bytes,
+            maxResponseTokens: tokens, operationToken: operation, continuationToken: continuation), 16384, 1024);
+        var refreshedSnapshot = ReadHeader(rediscovered.FirstPage, "snapshotId");
+        Assert.NotEqual(initialSnapshot, refreshedSnapshot);
+        Assert.Equal(reference, Assert.Single(ReadGeneratedMethodReferences(rediscovered.Text, generatedMethodDeclarationId!)));
+
+        var refreshedBody = await ReadBodyAsync(refreshedSymbols, solutionPath, reference);
+        Assert.Equal(refreshedSnapshot, ReadHeader(refreshedBody.FirstPage, "snapshotId"));
+        Assert.Contains("=> 18", refreshedBody.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("=> 17", refreshedBody.Text, StringComparison.Ordinal);
+    }
+
+    private static string[] ReadGeneratedMethodReferences(string text, string expectedDeclarationId) => ReadStableReferences(text)
+        .Where(reference => StableSymbolReferenceCodec.TryParse(reference, out var parsed, out _)
+            && parsed is StableSymbolReference.Source source
+            && source.DeclarationId == expectedDeclarationId)
+        .ToArray();
+
+    private static string[] ReadGeneratedTypeReferences(string text) => ReadStableReferences(text)
+        .Where(reference => StableSymbolReferenceCodec.TryParse(reference, out var parsed, out _)
+            && parsed is StableSymbolReference.Source source
+            && source.DeclarationId == "T:AnalyzerFixture.Generated.GeneratedProbe")
+        .ToArray();
+
+    private static Task<(string Text, int Pages, string FirstPage)> ReadBodyAsync(SymbolTools symbols, string solutionPath,
+        string reference) => ReadPagesAsync((bytes, tokens, operation, continuation) => symbols.GetSymbolBody(solutionPath,
+            [reference], maxBodyLines: 20, maxResponseBytes: bytes, maxResponseTokens: tokens,
+            operationToken: operation, continuationToken: continuation), 32768, 2048);
+
+    private static Task<(string Text, int Pages, string FirstPage)> ReadPagesAsync(
+        Func<int, int?, string?, string?, Task<CallToolResult>> invoke,
+        int maxResponseBytes,
+        int? maxResponseTokens)
+        => ReadOuterResponsePagesAsync((bytes, tokens, continuation) =>
+            CompleteAsync(operation => invoke(bytes, tokens, operation, continuation)), maxResponseBytes, maxResponseTokens);
+
+    private static async Task<CallToolResult> CompleteAsync(Func<string?, Task<CallToolResult>> invoke)
+    {
+        string? operation = null;
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            var result = await invoke(operation);
+            var text = TextOf(result);
+            if (!text.Contains("operation=running", StringComparison.Ordinal)
+                && !text.Contains("operation=retry", StringComparison.Ordinal)) return result;
+            Assert.True(TryReadToken(text, "operationToken", out operation), text);
+            await Task.Delay(50);
+        }
+        throw new Xunit.Sdk.XunitException("The source analyzer identity contract did not complete after operation polling.");
+    }
+
+    private static async Task<(byte[] ImageBytes, GeneratorCreatorInputContract Contract)> EmitGeneratorAsync(
+        string path,
+        string projectPath,
+        int bodyVersion)
+    {
+        var platformPaths = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator);
+        var references = platformPaths.Append(typeof(ISourceGenerator).Assembly.Location)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(static referencePath => MetadataReference.CreateFromFile(referencePath)).ToImmutableArray();
+        var source = $$"""
+            using Microsoft.CodeAnalysis;
+            using Microsoft.CodeAnalysis.Text;
+            using System.Text;
+            [Generator]
+            public sealed class IdentityGenerator : ISourceGenerator
+            {
+                public void Initialize(GeneratorInitializationContext context) { }
+                public void Execute(GeneratorExecutionContext context)
+                {
+                    const string generated = "namespace AnalyzerFixture.Generated; public sealed class GeneratedProbe { public int Read() => {{bodyVersion}}; }";
+                    context.AddSource("GeneratedProbe.g.cs", SourceText.From(generated, Encoding.UTF8));
+                }
+            }
+            """;
+        var compilation = CSharpCompilation.Create("AnalyzerFixtureGenerator", [CSharpSyntaxTree.ParseText(source)], references,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, optimizationLevel: OptimizationLevel.Release,
+                deterministic: true));
+        await using var stream = new MemoryStream();
+        var emit = compilation.Emit(stream);
+        Assert.True(emit.Success, string.Join(Environment.NewLine, emit.Diagnostics));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var imageBytes = stream.ToArray();
+        await File.WriteAllBytesAsync(path, imageBytes);
+        var contract = GeneratorCreatorInputContract.CreateFromProducedImages(projectPath, path,
+            [GeneratorCreatorInputImage.FromBytes(path, imageBytes)]);
+        return (imageBytes, contract);
+    }
+}

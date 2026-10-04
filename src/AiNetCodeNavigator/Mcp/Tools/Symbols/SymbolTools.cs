@@ -80,7 +80,10 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                             token.ThrowIfCancellationRequested();
                             results.Add(await FindSymbolScanner.FindMatchesWithDetailsAsync(
                                 new FindSymbolScanRequest(solution, searchPattern, symbolKind, scope, int.MaxValue,
-                                    SourceIdentity: source.Identity, IncludeGenerated: includeGenerated), token).ConfigureAwait(false));
+                                    SourceIdentity: source.Identity, IncludeGenerated: includeGenerated)
+                                {
+                                    CurrentIdentityRequest = source.IdentityRequest,
+                                }, token).ConfigureAwait(false));
                         }
 
                         var queryParts = effectivePatterns.Cast<string?>()
@@ -207,7 +210,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                                 continue;
                             }
                             var resolved = await SourceSymbolBodyResolver.ResolveAsync(
-                                solution, identifier, effectiveLines, startLine, source.Identity, token).ConfigureAwait(false);
+                                solution, identifier, effectiveLines, startLine, source.Identity, source.IdentityRequest, token).ConfigureAwait(false);
                             hasDomainGaps |= resolved.Error is not null || resolved.Body?.HasMore == true;
                             hasSourceResolutionGaps |= resolved.Error is not null;
                             hasSourceBodyLimit |= resolved.Body?.HasMore == true;

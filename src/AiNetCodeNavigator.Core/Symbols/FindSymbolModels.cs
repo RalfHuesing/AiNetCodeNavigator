@@ -59,7 +59,10 @@ public sealed record FindSymbolScanRequest(
     AnalysisSymbolIdentity? AssemblyIdentity = null,
     AnalysisSymbolIdentity? SourceIdentity = null,
     bool IncludeGenerated = false,
-    string? ResultCursor = null);
+    string? ResultCursor = null)
+{
+    internal SourceIdentityRequest? CurrentIdentityRequest { get; init; }
+}
 
 public sealed record FindSymbolScanResult(
     string Text,

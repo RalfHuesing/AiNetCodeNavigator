@@ -204,7 +204,30 @@ public sealed class ProjectRegistryTests
 
         Assert.Equal(ServerLoadState.Loaded, lease.ResidentSolution.LoadState);
         Assert.Equal(0, registry.ActiveLoadCount);
-        Assert.Same(solutionHandle.Solution, lease.ResidentSolution.GetCurrentSolution());
+        var firstCurrentSolution = lease.ResidentSolution.GetCurrentSolution();
+        Assert.NotNull(firstCurrentSolution);
+        Assert.Equal(solutionHandle.Solution.Id, firstCurrentSolution.Id);
+        Assert.Equal(solutionHandle.Solution.ProjectIds, firstCurrentSolution.ProjectIds);
+        foreach (var sourceProject in solutionHandle.Solution.Projects)
+        {
+            var currentProject = firstCurrentSolution.GetProject(sourceProject.Id);
+            Assert.NotNull(currentProject);
+            Assert.Equal(sourceProject.FilePath, currentProject.FilePath);
+            Assert.Equal(sourceProject.DocumentIds, currentProject.DocumentIds);
+            Assert.Equal(sourceProject.AdditionalDocumentIds, currentProject.AdditionalDocumentIds);
+            foreach (var documentId in sourceProject.DocumentIds)
+            {
+                var sourceDocument = sourceProject.GetDocument(documentId)!;
+                var currentDocument = currentProject.GetDocument(documentId);
+                Assert.NotNull(currentDocument);
+                Assert.Equal(sourceDocument.FilePath, currentDocument.FilePath);
+                Assert.Equal(sourceDocument.Name, currentDocument.Name);
+                Assert.Equal(sourceDocument.Folders, currentDocument.Folders);
+                Assert.Equal(await sourceDocument.GetTextAsync(), await currentDocument.GetTextAsync());
+            }
+        }
+
+        Assert.Same(firstCurrentSolution, lease.ResidentSolution.GetCurrentSolution());
     }
 
     [Fact]

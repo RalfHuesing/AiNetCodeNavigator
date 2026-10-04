@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
+using AiNetCodeNavigator.Core.Symbols;
 
 namespace AiNetCodeNavigator.Core.Workspace;
 
@@ -23,6 +24,10 @@ public readonly record struct DocumentFileState(DateTime MtimeUtc, string Hash);
 public sealed record ResidentLoadedState(Solution Solution, Microsoft.CodeAnalysis.Workspace? Workspace)
 {
     internal SolutionStructureInputs? StructureInputs { get; init; }
+
+    internal SourceIdentityValidatedInputs? IdentityInputs { get; init; }
+
+    internal WorkspaceInputProvenance? InputProvenance { get; init; }
 }
 
 /// <summary>
@@ -38,13 +43,18 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
     private readonly CancellationTokenSource loadCancellation = new();
     private readonly SemaphoreSlim reloadGate = new(1, 1);
     private readonly Task<ResidentLoadedState?>? loadTask;
+    private Func<CancellationToken, Task<ResidentLoadedState?>>? loadFunc;
     private readonly string? solutionPath;
     private Solution? currentSolution;
     private Microsoft.CodeAnalysis.Workspace? currentWorkspace;
     private string? structureFingerprint;
     private SolutionStructureInputs? structureInputs;
+    private SourceIdentityValidatedInputs? identityInputs;
+    private WorkspaceInputProvenance? inputProvenance;
     private ResidentSolutionLoadError? loadFailure;
     private int disposed;
+
+    internal MetadataReferenceImageCapture.MetadataImageCaptureObserver? ImageCaptureObserver { get; set; }
 
     /// <summary>
     /// Creates a synchronous resident instance from an already loaded snapshot.
@@ -55,10 +65,27 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
         currentSolution = solution;
         currentWorkspace = workspace;
         this.solutionPath = solutionPath;
-        currentSolution = InitializeFileStates(solution);
-        if (!string.IsNullOrEmpty(solutionPath))
+        inputProvenance = WorkspaceInputProvenance.FindTestWorkspaceBuilderOutput(solution);
+        try
         {
-            structureFingerprint = SolutionStructureFingerprint.Create(solution, solutionPath);
+            var captured = MetadataReferenceImageCapture.Capture(solution, previousInputs: null, provenance: inputProvenance);
+            identityInputs = captured.Inputs;
+            currentSolution = InitializeFileStates(captured.Solution);
+            inputProvenance = captured.Provenance?.CarryKnownTextChanges(captured.Solution, currentSolution);
+            if (!string.IsNullOrEmpty(solutionPath))
+            {
+                structureFingerprint = SolutionStructureFingerprint.Create(currentSolution, solutionPath);
+            }
+        }
+        catch (MetadataReferenceImageCapture.MetadataImageUnsupportedException exception)
+        {
+            currentSolution = InitializeFileStates(solution);
+            loadFailure = CreateWorkspaceDiagnostic(exception);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            currentSolution = InitializeFileStates(solution);
+            loadFailure = CreateLoadError(exception);
         }
     }
 
@@ -69,7 +96,12 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
         : this(async ct =>
         {
             var sol = await loadFunc(ct).ConfigureAwait(false);
-            return sol is not null ? new ResidentLoadedState(sol, null) : null;
+            return sol is not null
+                ? new ResidentLoadedState(sol, null)
+                {
+                    InputProvenance = WorkspaceInputProvenance.FindTestWorkspaceBuilderOutput(sol),
+                }
+                : null;
         })
     {
     }
@@ -80,41 +112,63 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
     public ResidentSolution(Func<CancellationToken, Task<ResidentLoadedState?>> loadFunc, string? solutionPath = null)
     {
         ArgumentNullException.ThrowIfNull(loadFunc);
+        this.loadFunc = loadFunc;
         this.solutionPath = solutionPath;
         loadTask = Task.Run(async () =>
         {
+            ResidentLoadedState? uncommittedResult = null;
             try
             {
                 var result = await loadFunc(loadCancellation.Token).ConfigureAwait(false);
                 if (result is not null)
                 {
+                    uncommittedResult = result;
+                    var captured = MetadataReferenceImageCapture.Capture(
+                        result.Solution,
+                        previousInputs: null,
+                        cancellationToken: loadCancellation.Token,
+                    provenance: result.InputProvenance,
+                    observer: ImageCaptureObserver);
+                    var (initializedSolution, initializedFileStates) = CreateInitializedFileStates(captured.Solution);
+                    var initializedProvenance = captured.Provenance?.CarryKnownTextChanges(captured.Solution, initializedSolution);
+                    var loaded = result with
+                    {
+                        Solution = initializedSolution,
+                        IdentityInputs = captured.Inputs,
+                        InputProvenance = initializedProvenance,
+                    };
+                    var newStructureFingerprint = string.IsNullOrEmpty(this.solutionPath)
+                        ? null
+                        : SolutionStructureFingerprint.Create(initializedSolution, this.solutionPath, loaded.StructureInputs);
                     lock (syncLock)
                     {
-                        currentSolution = InitializeFileStates(result.Solution);
-                        currentWorkspace = result.Workspace;
-                        structureInputs = result.StructureInputs;
-                        if (!string.IsNullOrEmpty(this.solutionPath))
-                        {
-                            structureFingerprint = SolutionStructureFingerprint.Create(result.Solution, this.solutionPath, structureInputs);
-                        }
-
+                        currentSolution = initializedSolution;
+                        ReplaceFileStates(initializedFileStates);
+                        currentWorkspace = loaded.Workspace;
+                        structureInputs = loaded.StructureInputs;
+                        identityInputs = loaded.IdentityInputs;
+                        inputProvenance = initializedProvenance;
+                        structureFingerprint = newStructureFingerprint;
                         loadFailure = null;
                     }
 
-                    return result;
+                    uncommittedResult = null;
+                    return loaded;
                 }
 
                 return null;
             }
             catch (OperationCanceledException)
             {
+                uncommittedResult?.Workspace?.Dispose();
                 return null;
             }
             catch (Exception ex)
             {
+                uncommittedResult?.Workspace?.Dispose();
                 lock (syncLock)
                 {
-                    loadFailure = CreateLoadError(ex);
+                    loadFailure = CreateResidentError(ex);
                 }
 
                 return null;
@@ -205,6 +259,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
         await reloadGate.WaitAsync(refreshToken).ConfigureAwait(false);
         try
         {
+            var captureContext = new MetadataReferenceImageCapture.CaptureContext();
             Solution? current;
             string? expectedFingerprint;
             SolutionStructureInputs? inputs;
@@ -217,29 +272,50 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
 
             if (string.IsNullOrEmpty(solutionPath))
             {
-                lock (syncLock)
-                {
-                    try
-                    {
-                        RefreshStalenessUnderLock();
-                        loadFailure = null;
-                    }
-                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                    {
-                        loadFailure = CreateLoadError(exception);
-                        return new ResidentSolutionSnapshot(null, loadFailure);
-                    }
-
-                    return new ResidentSolutionSnapshot(currentSolution, loadFailure, structureInputs?.ConfiguredTargetFrameworks);
-                }
-            }
-
-            if (current is null)
-            {
-                if (!await TryReloadAsync(solutionPath, refreshToken).ConfigureAwait(false))
+                if (current is null)
                 {
                     return new ResidentSolutionSnapshot(null, LoadFailure);
                 }
+
+                try
+                {
+                    if (!await RefreshMetadataReferencesAsync(refreshToken, captureContext).ConfigureAwait(false))
+                    {
+                        return new ResidentSolutionSnapshot(null, LoadFailure);
+                    }
+
+                    lock (syncLock)
+                    {
+                        loadFailure = null;
+
+                        return CreateSnapshot(currentSolution, loadFailure, structureInputs?.ConfiguredTargetFrameworks);
+                    }
+                }
+                catch (OperationCanceledException) when (refreshToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (MetadataReferenceImageCapture.MetadataImageUnsupportedException exception)
+                {
+                    SetResidentFailure(exception);
+                    return new ResidentSolutionSnapshot(null, LoadFailure);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    SetLoadFailure(exception);
+                    return new ResidentSolutionSnapshot(null, LoadFailure);
+                }
+            }
+
+            var snapshotAlreadyRefreshed = false;
+            if (current is null)
+            {
+                if (!await TryReloadAsync(solutionPath, refreshToken, captureContext: captureContext).ConfigureAwait(false))
+                {
+                    return new ResidentSolutionSnapshot(null, LoadFailure);
+                }
+
+                snapshotAlreadyRefreshed = true;
             }
             else
             {
@@ -250,9 +326,16 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
                     if ((retryFailedLoad
                             || inputs?.HasUnexpandedExpressions == true
                             || !StringComparer.Ordinal.Equals(expectedFingerprint, observedFingerprint))
-                        && !await TryReloadAsync(solutionPath, refreshToken).ConfigureAwait(false))
+                        && !await TryReloadAsync(solutionPath, refreshToken, captureContext: captureContext).ConfigureAwait(false))
                     {
                         return new ResidentSolutionSnapshot(null, LoadFailure);
+                    }
+
+                    if (retryFailedLoad
+                        || inputs?.HasUnexpandedExpressions == true
+                        || !StringComparer.Ordinal.Equals(expectedFingerprint, observedFingerprint))
+                    {
+                        snapshotAlreadyRefreshed = true;
                     }
                 }
                 catch (OperationCanceledException) when (refreshToken.IsCancellationRequested)
@@ -266,20 +349,34 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
                 }
             }
 
-            lock (syncLock)
+            try
             {
-                try
+                if (!snapshotAlreadyRefreshed
+                    && !await RefreshMetadataReferencesAsync(refreshToken, captureContext).ConfigureAwait(false))
                 {
-                    RefreshStalenessUnderLock();
-                    loadFailure = null;
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    loadFailure = CreateLoadError(exception);
-                    return new ResidentSolutionSnapshot(null, loadFailure);
+                    return new ResidentSolutionSnapshot(null, LoadFailure);
                 }
 
-                return new ResidentSolutionSnapshot(currentSolution, loadFailure, structureInputs?.ConfiguredTargetFrameworks);
+                lock (syncLock)
+                {
+                    loadFailure = null;
+
+                    return CreateSnapshot(currentSolution, loadFailure, structureInputs?.ConfiguredTargetFrameworks);
+                }
+            }
+            catch (OperationCanceledException) when (refreshToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (MetadataReferenceImageCapture.MetadataImageUnsupportedException exception)
+            {
+                SetResidentFailure(exception);
+                return new ResidentSolutionSnapshot(null, LoadFailure);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                SetLoadFailure(exception);
+                return new ResidentSolutionSnapshot(null, LoadFailure);
             }
         }
         finally
@@ -288,23 +385,50 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
         }
     }
 
-    private async Task<bool> TryReloadAsync(string path, CancellationToken cancellationToken)
+    private async Task<bool> TryReloadAsync(
+        string path,
+        CancellationToken cancellationToken,
+        int metadataCaptureAttempts = 3,
+        MetadataReferenceImageCapture.CaptureContext? captureContext = null)
     {
         Microsoft.CodeAnalysis.Workspace? newlyLoadedWorkspace = null;
         try
         {
-            var loadedState = await MSBuildSolutionLoader.LoadResidentStateAsync(path, cancellationToken).ConfigureAwait(false);
-            var newSolution = loadedState.Solution;
+            var reloadFunc = loadFunc;
+            var loadedState = reloadFunc is null
+                ? await MSBuildSolutionLoader.LoadResidentStateAsync(path, cancellationToken).ConfigureAwait(false)
+                : await reloadFunc(cancellationToken).ConfigureAwait(false);
+            if (loadedState is null)
+            {
+                throw new MetadataReferenceImageCapture.MetadataImageUnsupportedException(
+                    $"The resident solution creator returned no workspace for '{path}' during reload.");
+            }
+
+            newlyLoadedWorkspace = loadedState.Workspace;
+            var captured = MetadataReferenceImageCapture.Capture(
+                loadedState.Solution,
+                previousInputs: null,
+                cancellationToken: cancellationToken,
+                maxAttempts: metadataCaptureAttempts,
+                provenance: loadedState.InputProvenance,
+                observer: ImageCaptureObserver,
+                context: captureContext);
+            var (initializedSolution, initializedFileStates) = CreateInitializedFileStates(captured.Solution);
+            var refreshedFileStates = new Dictionary<string, DocumentFileState>(initializedFileStates, StringComparer.OrdinalIgnoreCase);
+            var newSolution = RefreshStaleness(initializedSolution, refreshedFileStates);
+            var refreshedProvenance = captured.Provenance?.CarryKnownTextChanges(captured.Solution, newSolution);
             var newWorkspace = loadedState.Workspace;
-            newlyLoadedWorkspace = newWorkspace;
             var newStructureFingerprint = SolutionStructureFingerprint.Create(newSolution, path, loadedState.StructureInputs);
             Microsoft.CodeAnalysis.Workspace? oldWorkspace;
             lock (syncLock)
             {
                 oldWorkspace = currentWorkspace;
-                currentSolution = InitializeFileStates(newSolution);
+                currentSolution = newSolution;
+                ReplaceFileStates(refreshedFileStates);
                 currentWorkspace = newWorkspace;
                 structureInputs = loadedState.StructureInputs;
+                identityInputs = captured.Inputs;
+                inputProvenance = refreshedProvenance;
                 newlyLoadedWorkspace = null;
                 structureFingerprint = newStructureFingerprint;
                 loadFailure = null;
@@ -320,8 +444,80 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
         catch (Exception ex)
         {
             newlyLoadedWorkspace?.Dispose();
-            SetLoadFailure(ex);
+            SetResidentFailure(ex);
             return false;
+        }
+    }
+
+    private async Task<bool> RefreshMetadataReferencesAsync(
+        CancellationToken cancellationToken,
+        MetadataReferenceImageCapture.CaptureContext captureContext)
+    {
+        MetadataReferenceImageCapture.CapturedMetadataReferences captured;
+        lock (syncLock)
+        {
+            if (currentSolution is null)
+            {
+                return true;
+            }
+
+            captured = MetadataReferenceImageCapture.Capture(
+                currentSolution,
+                identityInputs,
+                cancellationToken,
+                provenance: inputProvenance,
+                observer: ImageCaptureObserver,
+                context: captureContext);
+            if (!captured.RequiresWorkspaceReload)
+            {
+                var refreshedFileStates = new Dictionary<string, DocumentFileState>(fileStates, StringComparer.OrdinalIgnoreCase);
+                var refreshedSolution = RefreshStaleness(captured.Solution, refreshedFileStates);
+                var refreshedProvenance = captured.Provenance?.CarryKnownTextChanges(captured.Solution, refreshedSolution);
+                currentSolution = refreshedSolution;
+                identityInputs = captured.Inputs;
+                inputProvenance = refreshedProvenance;
+                ReplaceFileStates(refreshedFileStates);
+                return true;
+            }
+        }
+
+        if (string.IsNullOrEmpty(solutionPath))
+        {
+            throw new MetadataReferenceImageCapture.MetadataImageUnsupportedException(
+                "An analyzer or source-generator image changed in a resident solution without a reloadable owner.");
+        }
+
+        var remainingAttempts = 3 - captured.AttemptsUsed;
+        if (remainingAttempts < 1)
+        {
+            throw new IOException("Metadata capture exhausted the three refresh attempts before the required workspace reload could be validated.");
+        }
+
+        return await TryReloadAsync(solutionPath, cancellationToken, remainingAttempts, captureContext).ConfigureAwait(false);
+    }
+
+    private ResidentSolutionSnapshot CreateSnapshot(
+        Solution? solution,
+        ResidentSolutionLoadError? error,
+        IReadOnlyDictionary<string, ConfiguredTargetFrameworks>? frameworks) =>
+        new(solution, error, frameworks) { IdentityInputs = solution is null ? null : identityInputs };
+
+    private ResidentSolutionLoadError CreateWorkspaceDiagnostic(Exception exception) => new(
+        NavigationErrorCodes.WorkspaceDiagnostic,
+        solutionPath,
+        exception.Message,
+        Retryable: false);
+
+    private ResidentSolutionLoadError CreateResidentError(Exception exception) =>
+        exception is MetadataReferenceImageCapture.MetadataImageUnsupportedException
+            ? CreateWorkspaceDiagnostic(exception)
+            : CreateLoadError(exception);
+
+    private void SetResidentFailure(Exception exception)
+    {
+        lock (syncLock)
+        {
+            loadFailure = CreateResidentError(exception);
         }
     }
 
@@ -341,12 +537,18 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
 
     private Solution InitializeFileStates(Solution solution)
     {
+        var (initialized, initializedFileStates) = CreateInitializedFileStates(solution);
+        ReplaceFileStates(initializedFileStates);
+        return initialized;
+    }
+
+    private static (Solution Solution, Dictionary<string, DocumentFileState> FileStates) CreateInitializedFileStates(Solution solution)
+    {
         var initializedFileStates = new Dictionary<string, DocumentFileState>(StringComparer.OrdinalIgnoreCase);
         var initialized = solution;
-        var documentsByPath = solution.Projects
-            .SelectMany(project => project.Documents)
-            .Where(document => !string.IsNullOrEmpty(document.FilePath))
-            .GroupBy(document => document.FilePath!, StringComparer.OrdinalIgnoreCase);
+        var documentsByPath = GetTrackedTextDocuments(solution)
+            .Where(document => !string.IsNullOrEmpty(document.Document.FilePath))
+            .GroupBy(document => document.Document.FilePath!, StringComparer.OrdinalIgnoreCase);
 
         foreach (var documents in documentsByPath)
         {
@@ -357,18 +559,12 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
                 initializedFileStates[path] = new DocumentFileState(file.MtimeUtc, file.Hash);
                 foreach (var document in documents)
                 {
-                    initialized = initialized.WithDocumentText(document.Id, file.Text);
+                    initialized = WithText(initialized, document, file.Text);
                 }
             }
         }
 
-        fileStates.Clear();
-        foreach (var (path, state) in initializedFileStates)
-        {
-            fileStates[path] = state;
-        }
-
-        return initialized;
+        return (initialized, initializedFileStates);
     }
 
     private void RefreshStalenessUnderLock()
@@ -378,13 +574,18 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
             return;
         }
 
-        var updated = currentSolution;
         var updatedFileStates = new Dictionary<string, DocumentFileState>(fileStates, StringComparer.OrdinalIgnoreCase);
+        var updated = RefreshStaleness(currentSolution, updatedFileStates);
+        currentSolution = updated;
+        ReplaceFileStates(updatedFileStates);
+    }
 
-        var documentsByPath = updated.Projects
-            .SelectMany(project => project.Documents)
-            .Where(document => !string.IsNullOrEmpty(document.FilePath))
-            .GroupBy(document => document.FilePath!, StringComparer.OrdinalIgnoreCase);
+    private static Solution RefreshStaleness(Solution solution, Dictionary<string, DocumentFileState> updatedFileStates)
+    {
+        var updated = solution;
+        var documentsByPath = GetTrackedTextDocuments(updated)
+            .Where(document => !string.IsNullOrEmpty(document.Document.FilePath))
+            .GroupBy(document => document.Document.FilePath!, StringComparer.OrdinalIgnoreCase);
 
         foreach (var documents in documentsByPath)
         {
@@ -393,7 +594,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
             {
                 foreach (var document in documents)
                 {
-                    updated = updated.RemoveDocument(document.Id);
+                    updated = RemoveTextDocument(updated, document);
                 }
 
                 updatedFileStates.Remove(path);
@@ -414,15 +615,50 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
 
             foreach (var document in documents)
             {
-                updated = updated.WithDocumentText(document.Id, file.Text);
+                updated = WithText(updated, document, file.Text);
             }
 
             updatedFileStates[path] = new DocumentFileState(file.MtimeUtc, file.Hash);
         }
 
-        currentSolution = updated;
+        return updated;
+    }
+
+    private static IEnumerable<TrackedTextDocument> GetTrackedTextDocuments(Solution solution) =>
+        solution.Projects.SelectMany(project =>
+            project.Documents.Select(document => new TrackedTextDocument(document, TrackedTextDocumentKind.Source))
+                .Concat(project.AdditionalDocuments.Select(document => new TrackedTextDocument(document, TrackedTextDocumentKind.Additional)))
+                .Concat(project.AnalyzerConfigDocuments.Select(document => new TrackedTextDocument(document, TrackedTextDocumentKind.AnalyzerConfig))));
+
+    private static Solution WithText(Solution solution, TrackedTextDocument document, SourceText text) => document.Kind switch
+    {
+        TrackedTextDocumentKind.Source => solution.WithDocumentText(document.Document.Id, text),
+        TrackedTextDocumentKind.Additional => solution.WithAdditionalDocumentText(document.Document.Id, text),
+        TrackedTextDocumentKind.AnalyzerConfig => solution.WithAnalyzerConfigDocumentText(document.Document.Id, text),
+        _ => throw new ArgumentOutOfRangeException(nameof(document), document.Kind, "Unknown tracked text document kind."),
+    };
+
+    private static Solution RemoveTextDocument(Solution solution, TrackedTextDocument document) => document.Kind switch
+    {
+        TrackedTextDocumentKind.Source => solution.RemoveDocument(document.Document.Id),
+        TrackedTextDocumentKind.Additional => solution.RemoveAdditionalDocument(document.Document.Id),
+        TrackedTextDocumentKind.AnalyzerConfig => solution.RemoveAnalyzerConfigDocument(document.Document.Id),
+        _ => throw new ArgumentOutOfRangeException(nameof(document), document.Kind, "Unknown tracked text document kind."),
+    };
+
+    private enum TrackedTextDocumentKind
+    {
+        Source,
+        Additional,
+        AnalyzerConfig,
+    }
+
+    private readonly record struct TrackedTextDocument(TextDocument Document, TrackedTextDocumentKind Kind);
+
+    private void ReplaceFileStates(IReadOnlyDictionary<string, DocumentFileState> replacement)
+    {
         fileStates.Clear();
-        foreach (var (path, state) in updatedFileStates)
+        foreach (var (path, state) in replacement)
         {
             fileStates[path] = state;
         }
@@ -468,6 +704,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
             {
                 workspace = currentWorkspace;
                 currentWorkspace = null;
+                loadFunc = null;
             }
 
             workspace?.Dispose();
@@ -508,6 +745,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
             {
                 workspace = currentWorkspace;
                 currentWorkspace = null;
+                loadFunc = null;
             }
 
             workspace?.Dispose();

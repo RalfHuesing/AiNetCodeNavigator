@@ -643,6 +643,31 @@ public sealed class StableSymbolReferenceTests
     }
 
     [Fact]
+    public async Task FindSymbolScanner_KindAllIncludesGeneratedTypesButNotNamespaceDeclarations()
+    {
+        using var workspace = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\GeneratedFind.slnx",
+            new ProjectSpec("App", [("App.cs", "namespace Sample; public class Ordinary { }")], VirtualProjectDirectory: "src/App"));
+        var initialProject = workspace.Solution.Projects.Single();
+        var generatorReference = new TestGeneratorReference(new R01IncrementalTestSourceGenerator().AsSourceGenerator());
+        var projectWithGenerator = initialProject.WithAnalyzerReferences(initialProject.AnalyzerReferences.Append(generatorReference));
+        Assert.True(workspace.Workspace.TryApplyChanges(projectWithGenerator.Solution));
+        var solution = workspace.Workspace.CurrentSolution;
+        var project = solution.GetProject(initialProject.Id)!;
+        var generatedDocument = Assert.Single(await project.GetSourceGeneratedDocumentsAsync());
+        Assert.Contains("namespace Generated;", (await generatedDocument.GetTextAsync()).ToString(), StringComparison.Ordinal);
+
+        var result = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(solution, "Generated.*", Kind: SymbolKindFilter.All, IncludeGenerated: true));
+
+        Assert.Null(result.Error);
+        var entry = Assert.Single(result.Entries);
+        Assert.Equal("NamespaceType", entry.Name);
+        Assert.Equal("class", entry.Kind);
+        Assert.DoesNotContain(result.Entries, candidate => candidate.Kind == "namespace");
+    }
+
+    [Fact]
     public async Task SourceReference_ExcludesProjectReferenceAndMetadataDeclarations()
     {
         using var workspace = TestWorkspaceBuilder.CreateSolution(

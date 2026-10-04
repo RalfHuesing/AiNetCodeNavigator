@@ -31,9 +31,7 @@ public static class TypeHierarchyScanner
         ArgumentNullException.ThrowIfNull(solution);
 
         var normalizedMaxResults = Math.Max(maxResults, 1);
-        var handoffIdentity = handoffFormatter is null
-            ? await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false)
-            : null;
+        handoffFormatter ??= await SourceReferenceFormattingContext.CreateFormatterAsync(solution, ct).ConfigureAwait(false);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
 
         if (type.TypeKind is not (TypeKind.Class or TypeKind.Interface or TypeKind.Struct))
@@ -49,8 +47,8 @@ public static class TypeHierarchyScanner
                 ErrorMessage: $"Type '{type.ToDisplayString()}' ({type.TypeKind.ToString().ToLowerInvariant()}) is not supported; classes, interfaces or structs are expected.");
         }
 
-        var baseTypes = CollectBaseTypes(type, solution, solutionDir, handoffIdentity, handoffFormatter, ct);
-        var interfaces = CollectInterfaces(type, solution, solutionDir, handoffIdentity, handoffFormatter);
+        var baseTypes = CollectBaseTypes(type, solution, solutionDir, handoffFormatter, ct);
+        var interfaces = CollectInterfaces(type, solution, solutionDir, handoffFormatter);
 
         var isInterface = type.TypeKind == TypeKind.Interface;
         var subtypesHeading = isInterface ? "Implementing types:" : "Derived classes:";
@@ -77,7 +75,7 @@ public static class TypeHierarchyScanner
         }
 
         var subtypeEntries = visibleSubtypes
-            .Select(s => CreateEntries(s, solution, solutionDir, handoffIdentity, handoffFormatter).First())
+            .Select(s => CreateEntries(s, solution, solutionDir, handoffFormatter).First())
             .OrderBy(e => e.FilePath, StringComparer.OrdinalIgnoreCase)
             .ThenBy(e => e.FilePath, StringComparer.Ordinal)
             .ThenBy(e => e.Line)
@@ -98,7 +96,7 @@ public static class TypeHierarchyScanner
     }
 
     private static List<TypeHierarchyEntry> CollectBaseTypes(INamedTypeSymbol type, Solution solution, string solutionDir,
-        AnalysisSymbolIdentity? identity, Func<ISymbol, string?>? handoffFormatter, CancellationToken ct)
+        Func<ISymbol, string?>? handoffFormatter, CancellationToken ct)
     {
         var list = new List<TypeHierarchyEntry>();
         var current = type.BaseType;
@@ -107,7 +105,7 @@ public static class TypeHierarchyScanner
         while (current != null && visited.Add(current.OriginalDefinition))
         {
             ct.ThrowIfCancellationRequested();
-            list.AddRange(CreateEntries(current, solution, solutionDir, identity, handoffFormatter));
+            list.AddRange(CreateEntries(current, solution, solutionDir, handoffFormatter));
             current = current.BaseType;
         }
 
@@ -115,11 +113,11 @@ public static class TypeHierarchyScanner
     }
 
     private static List<TypeHierarchyEntry> CollectInterfaces(INamedTypeSymbol type, Solution solution, string solutionDir,
-        AnalysisSymbolIdentity? identity, Func<ISymbol, string?>? handoffFormatter)
+        Func<ISymbol, string?>? handoffFormatter)
     {
         return type.AllInterfaces
             .OrderBy(i => i.ToDisplayString(), StringComparer.Ordinal)
-            .SelectMany(i => CreateEntries(i, solution, solutionDir, identity, handoffFormatter))
+            .SelectMany(i => CreateEntries(i, solution, solutionDir, handoffFormatter))
             .ToList();
     }
 
@@ -127,7 +125,6 @@ public static class TypeHierarchyScanner
         INamedTypeSymbol symbol,
         Solution solution,
         string solutionDir,
-        AnalysisSymbolIdentity? identity,
         Func<ISymbol, string?>? handoffFormatter)
     {
         var locations = symbol.Locations
@@ -136,9 +133,7 @@ public static class TypeHierarchyScanner
             .ThenBy(location => location.SourceTree?.FilePath, StringComparer.Ordinal)
             .ThenBy(location => location.GetLineSpan().StartLinePosition.Line)
             .ToList();
-        var handoff = handoffFormatter is null
-            ? StableSourceReferenceFormatter.Format(symbol, solution, identity)
-            : handoffFormatter(symbol);
+        var handoff = handoffFormatter?.Invoke(symbol);
         var kind = symbol.IsRecord
             ? (symbol.TypeKind == TypeKind.Struct ? "record struct" : "record")
             : symbol.TypeKind.ToString().ToLowerInvariant();

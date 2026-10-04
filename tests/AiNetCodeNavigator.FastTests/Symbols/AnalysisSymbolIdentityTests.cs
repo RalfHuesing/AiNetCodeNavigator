@@ -1,8 +1,10 @@
 #nullable enable
 
+using System.Collections.Immutable;
 using System.Linq;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Symbols;
+using AiNetCodeNavigator.Core.Workspace;
 using AiNetCodeNavigator.TestKit.Builders;
 using AiNetCodeNavigator.TestKit.Fixtures;
 using Microsoft.CodeAnalysis.CSharp;
@@ -107,43 +109,14 @@ public sealed class AnalysisSymbolIdentityTests
 
         var markers = await GetRootProjectMarkersAsync(snapshot.Solution);
         Assert.Equal(markers[0].ProjectMarker, markers[1].ProjectMarker);
-        var identity = await AnalysisSymbolIdentity.ForSourceAsync(snapshot.Solution);
-        Assert.NotNull(identity);
-        var expectedMarkers = snapshot.Solution.Projects
-            .Where(project => project.Name is "LibraryOne" or "LibraryTwo")
-            .Select(AnalysisSymbolIdentity.GetStableProjectMarker)
-            .OrderBy(marker => marker, System.StringComparer.Ordinal)
-            .ToArray();
-        var sourceProjectMarkers = identity!.SourceProjectMarkers!;
-        Assert.Equal(expectedMarkers, sourceProjectMarkers.Values.OrderBy(marker => marker, System.StringComparer.Ordinal));
-        Assert.Equal(2, sourceProjectMarkers.Count);
+        var formatter = await SourceReferenceFormattingContext.CreateFormatterAsync(snapshot.Solution, default);
         foreach (var project in snapshot.Solution.Projects.Where(project => project.Name == "Root"))
         {
             var compilation = await project.GetCompilationAsync();
             Assert.NotNull(compilation);
             var symbol = Assert.IsAssignableFrom<ISymbol>(compilation.GetTypeByMetadataName("Shared.Worker"));
-            Assert.Null(identity.FormatHandoff(symbol, snapshot.Solution));
+            Assert.Null(formatter(symbol));
         }
-    }
-
-    [Fact]
-    public void CreateSourceSnapshotHash_CaseVariantWindowsTargetPaths_HaveTheSameHash()
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
-        var fileStates = new System.Collections.Generic.Dictionary<string, AiNetCodeNavigator.Core.Workspace.DocumentFileState>();
-
-        var upperCaseHash = AnalysisSymbolIdentity.CreateSourceSnapshotHash(
-            @"C:\VirtualRepo\Sample.slnx",
-            fileStates);
-        var lowerCaseHash = AnalysisSymbolIdentity.CreateSourceSnapshotHash(
-            @"c:\virtualrepo\sample.slnx",
-            fileStates);
-
-        Assert.Equal(upperCaseHash, lowerCaseHash);
     }
 
     [Fact]
@@ -251,13 +224,16 @@ public sealed class AnalysisSymbolIdentityTests
 
     private static async Task<(string? DocumentationId, string ProjectMarker)[]> GetMultiTargetProjectMarkersAsync(Solution solution)
     {
+        var fingerprint = await ComputeControlledFingerprintAsync(solution);
+        var projects = solution.Projects.ToArray();
         var results = new System.Collections.Generic.List<(string? DocumentationId, string ProjectMarker)>();
-        foreach (var project in solution.Projects)
+        for (var index = 0; index < projects.Length; index++)
         {
+            var project = projects[index];
             var compilation = await project.GetCompilationAsync();
             Assert.NotNull(compilation);
             var symbol = Assert.IsAssignableFrom<ISymbol>(compilation.GetTypeByMetadataName("Shared.Worker"));
-            results.Add((DocumentationCommentId.CreateDeclarationId(symbol), AnalysisSymbolIdentity.GetStableProjectMarker(project)));
+            results.Add((DocumentationCommentId.CreateDeclarationId(symbol), fingerprint.ProjectMarkers[index].ContextFingerprint));
         }
 
         return results.ToArray();
@@ -362,16 +338,43 @@ public sealed class AnalysisSymbolIdentityTests
 
     private static async Task<(string? DocumentationId, string ProjectMarker)[]> GetRootProjectMarkersAsync(Solution solution)
     {
+        var fingerprint = await ComputeControlledFingerprintAsync(solution);
         var results = new System.Collections.Generic.List<(string? DocumentationId, string ProjectMarker)>();
-        foreach (var project in solution.Projects.Where(project => project.Name == "Root"))
+        var projects = solution.Projects.ToArray();
+        for (var index = 0; index < projects.Length; index++)
         {
+            var project = projects[index];
+            if (project.Name != "Root") continue;
             var compilation = await project.GetCompilationAsync();
             Assert.NotNull(compilation);
             var symbol = Assert.IsAssignableFrom<ISymbol>(compilation.GetTypeByMetadataName("Shared.Worker"));
-            results.Add((DocumentationCommentId.CreateDeclarationId(symbol), AnalysisSymbolIdentity.GetStableProjectMarker(project)));
+            results.Add((DocumentationCommentId.CreateDeclarationId(symbol), fingerprint.ProjectMarkers[index].ContextFingerprint));
         }
 
         return results.ToArray();
+    }
+
+    private static async Task<SourceIdentityFingerprintData> ComputeControlledFingerprintAsync(Solution solution)
+    {
+        // These synthetic context fixtures exercise encoder graph semantics directly, not resident or loader admission.
+        var captured = MetadataReferenceImageCapture.Capture(solution, previousInputs: null, cancellationToken: default);
+        var projects = captured.Inputs.Projects.Select(item =>
+        {
+            var project = captured.Solution.GetProject(item.OwnerProjectId)!;
+            var options = project.CompilationOptions as CSharpCompilationOptions;
+            return item with
+            {
+                IsSupported = true,
+                UnsupportedReason = null,
+                OwnerCreatedAnalyzerConfigProvider = true,
+                OwnerCreatedSyntaxTreeOptionsProvider = options?.SyntaxTreeOptionsProvider is not null,
+                OwnerCreatedStrongNameProvider = options?.StrongNameProvider is not null,
+            };
+        }).ToImmutableArray();
+        var validated = new SourceIdentityValidatedSnapshot(captured.Solution, captured.Inputs with { Projects = projects });
+        var result = await SourceAnalysisIdentityEncoder.ComputeAsync(validated, default);
+        Assert.True(result.IsSuccess, result.Error?.Message);
+        return result.Value!;
     }
 
 }

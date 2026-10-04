@@ -25,6 +25,14 @@ internal sealed class SourceReferenceFormattingContext
 
     internal bool IsForSolution(Solution candidate) => ReferenceEquals(solution, candidate);
 
+    internal static async Task<Func<ISymbol, string?>> CreateFormatterAsync(
+        Solution solution,
+        CancellationToken cancellationToken)
+    {
+        var context = await CreateAsync(solution, cancellationToken).ConfigureAwait(false);
+        return symbol => context.IsForSolution(solution) ? context.Format(symbol) : null;
+    }
+
     internal static async Task<SourceReferenceFormattingContext> CreateAsync(
         Solution solution,
         CancellationToken cancellationToken)

@@ -24,10 +24,9 @@ public static class SourceSymbolBodyResolver
         string symbolIdentifier,
         int maxBodyLines,
         int startLine = 1,
-        AnalysisSymbolIdentity? handoffIdentity = null,
         CancellationToken cancellationToken = default)
     {
-        var resolution = await SourceSymbolResolver.ResolveAsync(solution, symbolIdentifier, handoffIdentity, cancellationToken).ConfigureAwait(false);
+        var resolution = await SourceSymbolResolver.ResolveAsync(solution, symbolIdentifier, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (!resolution.IsSuccess)
         {
             return new SymbolBodyResolutionResult(null, resolution.Candidates, resolution.Error);
@@ -39,7 +38,26 @@ public static class SourceSymbolBodyResolver
             maxBodyLines,
             startLine,
             candidate?.HandoffId,
-            handoffIdentity: null,
+            solution: solution);
+        return new SymbolBodyResolutionResult(body, resolution.Candidates, null);
+    }
+
+    internal static async Task<SymbolBodyResolutionResult> ResolveAsync(
+        Solution solution,
+        string symbolIdentifier,
+        int maxBodyLines,
+        int startLine,
+        AnalysisSymbolIdentity? suppliedIdentity,
+        SourceIdentityRequest currentIdentityRequest,
+        CancellationToken cancellationToken = default)
+    {
+        var resolution = await SourceSymbolResolver.ResolveAsync(solution, symbolIdentifier, suppliedIdentity,
+            currentIdentityRequest, cancellationToken).ConfigureAwait(false);
+        if (!resolution.IsSuccess)
+            return new SymbolBodyResolutionResult(null, resolution.Candidates, resolution.Error);
+
+        var candidate = resolution.Candidates.FirstOrDefault();
+        var body = Resolve(resolution.Symbol!, maxBodyLines, startLine, candidate?.HandoffId,
             solution: solution);
         return new SymbolBodyResolutionResult(body, resolution.Candidates, null);
     }
@@ -54,9 +72,8 @@ public static class SourceSymbolBodyResolver
         int maxBodyLines,
         int startLine = 1,
         string? handoffId = null,
-        AnalysisSymbolIdentity? handoffIdentity = null,
         Solution? solution = null)
-        => ResolveCore(symbol, maxBodyLines, startLine, handoffId, handoffIdentity, solution,
+        => ResolveCore(symbol, maxBodyLines, startLine, handoffId, solution,
             symbol is null ? null : GetBodySyntaxReference(symbol));
 
     internal static SymbolBodyResult ResolveWithDeclaration(
@@ -65,11 +82,10 @@ public static class SourceSymbolBodyResolver
         int maxBodyLines,
         int startLine = 1,
         string? handoffId = null,
-        AnalysisSymbolIdentity? handoffIdentity = null,
         Solution? solution = null)
     {
         ArgumentNullException.ThrowIfNull(declarationReference);
-        return ResolveCore(symbol, maxBodyLines, startLine, handoffId, handoffIdentity, solution, declarationReference);
+        return ResolveCore(symbol, maxBodyLines, startLine, handoffId, solution, declarationReference);
     }
 
     private static SymbolBodyResult ResolveCore(
@@ -77,7 +93,6 @@ public static class SourceSymbolBodyResolver
         int maxBodyLines,
         int startLine,
         string? handoffId,
-        AnalysisSymbolIdentity? handoffIdentity,
         Solution? solution,
         SyntaxReference? declarationReference)
     {
@@ -87,8 +102,6 @@ public static class SourceSymbolBodyResolver
         var unavailable = HasUnavailableBody(symbol, hasSyntax);
         var hint = GetHint(symbol, hasSyntax, unavailable);
         var docCommentId = symbol.GetDocumentationCommentId();
-        handoffId ??= solution is null ? null : StableSourceReferenceFormatter.Format(symbol, solution, handoffIdentity);
-
         var (body, totalLines, displayedStart, displayedEnd, hasMore) = Extract(symbol, maxBodyLines, startLine,
             declarationReference);
 

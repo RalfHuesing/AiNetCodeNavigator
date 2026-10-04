@@ -27,14 +27,7 @@ public static class FileSkeletonBuilder
         var solutionDir = Path.GetDirectoryName(solutionPath) ?? string.Empty;
         if (formatSymbolId is null && formatSymbol is null)
         {
-            var identity = await AnalysisSymbolIdentity.ForSourceAsync(document.Project.Solution, ct).ConfigureAwait(false);
-            if (identity is not null)
-            {
-                formatSymbol = symbol =>
-                {
-                    return identity.FormatHandoff(symbol, document.Project.Solution);
-                };
-            }
+            formatSymbol = await SourceReferenceFormattingContext.CreateFormatterAsync(document.Project.Solution, ct).ConfigureAwait(false);
         }
 
         var types = await SkeletonMapBuilder.BuildForDocumentAsync(document, solutionDir, formatSymbolId, formatSymbol, ct).ConfigureAwait(false);

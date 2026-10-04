@@ -9,10 +9,18 @@ using System.IO;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Text;
+using AiNetCodeNavigator.Core.Workspace;
 
 /// <summary>
 /// Declarative project description for an in-memory test solution.
 /// </summary>
+/// <param name="AdditionalReferences">
+/// Physical references use Roslyn's conventional adjacent XML sidecar documentation behavior.
+/// References with custom documentation providers must be created through
+/// <see cref="CapturedMetadataReference"/> with immutable XML bytes so their documentation input is
+/// part of the captured identity evidence.
+/// </param>
 public sealed record ProjectSpec(
     string Name,
     IReadOnlyList<(string FileName, string Content)> Documents,
@@ -21,7 +29,9 @@ public sealed record ProjectSpec(
     NullableContextOptions Nullable = NullableContextOptions.Enable,
     IReadOnlyList<string>? PreprocessorSymbols = null,
     OutputKind OutputKind = OutputKind.DynamicallyLinkedLibrary,
-    string? VirtualProjectDirectory = null);
+    string? VirtualProjectDirectory = null,
+    IReadOnlyList<(string FileName, string Content)>? AdditionalDocuments = null,
+    IReadOnlyList<(string FileName, string Content)>? AnalyzerConfigDocuments = null);
 
 /// <summary>
 /// A solution snapshot and the workspace that owns its lifetime.
@@ -128,7 +138,9 @@ public sealed class TestWorkspaceBuilder
                 throw new InvalidOperationException("The in-memory workspace rejected the constructed solution.");
             }
 
-            return new TestSolutionHandle(workspace.CurrentSolution, workspace);
+            var createdSolution = workspace.CurrentSolution;
+            WorkspaceInputProvenance.RegisterTestWorkspaceBuilderOutput(createdSolution);
+            return new TestSolutionHandle(createdSolution, workspace);
         }
         catch
         {
@@ -256,6 +268,30 @@ public sealed class TestWorkspaceBuilder
                 : (solutionDirectory is null ? null : Path.GetFullPath(Path.Combine(solutionDirectory, projectDirectory, fileName)));
             var docName = Path.GetFileName(fileName);
             solution = solution.AddDocument(documentId, docName, content, filePath: filePath);
+        }
+
+        foreach (var (fileName, content) in spec.AdditionalDocuments ?? [])
+        {
+            var filePath = Path.IsPathRooted(fileName)
+                ? Path.GetFullPath(fileName)
+                : (solutionDirectory is null ? null : Path.GetFullPath(Path.Combine(solutionDirectory, projectDirectory, fileName)));
+            solution = solution.AddAdditionalDocument(
+                DocumentId.CreateNewId(projectId),
+                Path.GetFileName(fileName),
+                SourceText.From(content),
+                filePath: filePath);
+        }
+
+        foreach (var (fileName, content) in spec.AnalyzerConfigDocuments ?? [])
+        {
+            var filePath = Path.IsPathRooted(fileName)
+                ? Path.GetFullPath(fileName)
+                : (solutionDirectory is null ? null : Path.GetFullPath(Path.Combine(solutionDirectory, projectDirectory, fileName)));
+            solution = solution.AddAnalyzerConfigDocument(
+                DocumentId.CreateNewId(projectId),
+                Path.GetFileName(fileName),
+                SourceText.From(content),
+                filePath: filePath);
         }
 
         return solution;

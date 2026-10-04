@@ -103,8 +103,9 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                         {
                             var omissions = new List<string>();
                             var response = await BuildSkeletonsAsync(solution, target.CanonicalPath, filePaths,
-                                source.Identity, token, maxResponseBytes, maxResponseTokens,
-                                preflightErrors: referenceRouteErrors, omissionReasons: omissions).ConfigureAwait(false);
+                                token, maxResponseBytes, maxResponseTokens,
+                                preflightErrors: referenceRouteErrors, omissionReasons: omissions,
+                                sourceIdentityRequest: source.IdentityRequest).ConfigureAwait(false);
                             return source.WithMetadata(response,
                                 FormatFileSkeletonAnalyzedScope(filePaths, Path.GetDirectoryName(target.CanonicalPath)!), omissions.ToArray());
                         },
@@ -121,7 +122,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 var identity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash,
                     scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
                 var omissions = new List<string>();
-                var response = await BuildSkeletonsAsync(scope.Solution, target.CanonicalPath, filePaths, identity, ct,
+                var response = await BuildSkeletonsAsync(scope.Solution, target.CanonicalPath, filePaths, ct,
                     maxResponseBytes, maxResponseTokens, sourceRoot, scope, BeforeAssemblySkeletonItemForTesting, omissions,
                     referenceRouteErrors).ConfigureAwait(false);
                 return NavigationToolSupport.WithAssemblyMetadata(response, identity,
@@ -180,7 +181,10 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                     {
                         var result = await ClassStructureScanner.ScanAsync(new ClassStructureScanRequest(
                             solution, symbolIdentifier, sortBy, maxMembers, kindFilter, nameFilter, source.Identity, parsedScope, includeGenerated,
-                            CollectAllMembers: true), token).ConfigureAwait(false);
+                            CollectAllMembers: true)
+                        {
+                            CurrentIdentityRequest = source.IdentityRequest,
+                        }, token).ConfigureAwait(false);
                         if (result is null) return McpToolResults.InvalidArgument("The identifier did not resolve to a type.", "$.symbolIdentifier", "Use a type name or stable src: reference.",
                             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                         if (result.Error is { } error) return NavigationToolSupport.Failure(error, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
@@ -257,7 +261,9 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                         async (solution, source, token) =>
                         {
                             var response = await ScanNamespaceTreeAsync(solution, target.CanonicalPath, project, namespacePrefix, depth, includeTypes, kind, maxResults,
-                                includeGenerated, source.Identity, source.Identity.ContentHash, coreCursor, token, maxResponseBytes, maxResponseTokens, includeProjectOverview: true).ConfigureAwait(false);
+                                includeGenerated, source.Identity.ContentHash, coreCursor, token, maxResponseBytes, maxResponseTokens,
+                                includeProjectOverview: true,
+                                formatTypeReference: symbol => source.FormatHandoff(symbol, solution)).ConfigureAwait(false);
                             var omissions = ReadStringArrayFromResult(response, "truncatedBy");
                             return source.WithMetadata(response,
                                 $"namespaceTree(project={project?.Trim() ?? "*"}, prefix={namespacePrefix?.Trim() ?? "*"}, depth={depth}, includeTypes={includeTypes}, kind={kind.Trim().ToLowerInvariant()}, pageSize={maxResults}, includeGenerated={includeGenerated})",
@@ -269,7 +275,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 await using var scope = opened.Value!;
                 var identity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath, scope.Context.Origin.ContentHash,
                     scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
-                var response = await ScanNamespaceTreeAsync(scope.Solution, target.CanonicalPath, project, namespacePrefix, depth, includeTypes, kind, maxResults, includeGenerated, identity,
+                var response = await ScanNamespaceTreeAsync(scope.Solution, target.CanonicalPath, project, namespacePrefix, depth, includeTypes, kind, maxResults, includeGenerated,
                     identity.ContentHash + "|" + scope.Context.ReferenceSnapshotHash, coreCursor, ct,
                     maxResponseBytes, maxResponseTokens, includeProjectOverview: false,
                     formatTypeReference: type => FormatAssemblyReference(type, scope)).ConfigureAwait(false);
@@ -335,11 +341,17 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         $"## {selector}\nResolution status: failed ({error.Code})\nError: {error.Message}\nNext action: {error.Hint ?? "Rediscover the declaration and use the reference returned by that discovery."}";
 
     private static async Task<CallToolResult> BuildSkeletonsAsync(Solution solution, string targetPath, string[] filePaths,
-        AnalysisSymbolIdentity? identity, CancellationToken ct, int maxResponseBytes, int? maxResponseTokens,
+        CancellationToken ct, int maxResponseBytes, int? maxResponseTokens,
         string? selectedRoot = null, AssemblyNavigationSessionScope? assemblyScope = null, Action<int>? beforeAssemblyItem = null,
-        List<string>? omissionReasons = null, IReadOnlyList<ResultError?>? preflightErrors = null)
+        List<string>? omissionReasons = null, IReadOnlyList<ResultError?>? preflightErrors = null,
+        SourceIdentityRequest? sourceIdentityRequest = null)
     {
         var targetDirectory = Path.GetFullPath(selectedRoot ?? Path.GetDirectoryName(targetPath)!);
+        if (assemblyScope is null && (sourceIdentityRequest is null || !sourceIdentityRequest.IsForSolution(solution)))
+            return NavigationToolSupport.Failure(new ResultError(NavigationErrorCodes.WorkspaceDiagnostic,
+                "The current source solution has no matching validated identity request.",
+                "Repeat the query after the source snapshot has been validated."),
+                maxResponseBytes, maxResponseTokens, "$.targetPath");
         var chunks = new List<string>();
         var successfulFiles = 0;
         var hasMissing = false;
@@ -369,7 +381,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                     hasMissing = true;
                     continue;
                 }
-                var resolved = await ResolveSkeletonReferenceAsync(reference!, solution, targetPath, identity, assemblyScope, ct).ConfigureAwait(false);
+                var resolved = await ResolveSkeletonReferenceAsync(reference!, solution, targetPath, sourceIdentityRequest, assemblyScope, ct).ConfigureAwait(false);
                 if (resolved.Error is { } handoffError)
                 {
                     chunks.Add(FormatFileSkeletonFailure(path, handoffError));
@@ -391,9 +403,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                         formatSymbolId: null,
                         formatSymbol: symbol => assemblyScope is not null
                             ? FormatAssemblyReference(symbol, assemblyScope)
-                            : identity is { IsAssembly: false } sourceIdentity
-                                ? sourceIdentity.FormatHandoff(symbol, solution)
-                                : null,
+                            : sourceIdentityRequest?.FormatHandoff(symbol, solution),
                         ct: ct).ConfigureAwait(false);
                     declarationMarkdown.Add(handleMarkdown);
                 }
@@ -412,7 +422,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 hasMissing = true;
                 continue;
             }
-            if (identity?.IsAssembly == true && !IsWithin(targetDirectory, fullPath))
+            if (assemblyScope is not null && !IsWithin(targetDirectory, fullPath))
             {
                 chunks.Add($"## {path}\nThe requested path is outside the selected target.");
                 hasMissing = true;
@@ -451,7 +461,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
             var markdown = await FileSkeletonBuilder.BuildMarkdownForDocumentAsync(document, targetPath,
                 formatSymbolId: null, formatSymbol: symbol => assemblyScope is not null
                     ? FormatAssemblyReference(symbol, assemblyScope)
-                    : identity?.FormatHandoff(symbol, solution), ct: ct).ConfigureAwait(false);
+                    : sourceIdentityRequest?.FormatHandoff(symbol, solution), ct: ct).ConfigureAwait(false);
             chunks.Add(markdown);
             successfulFiles++;
         }
@@ -498,15 +508,19 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     }
 
     private static async Task<(Document[]? Documents, ResultError? Error)> ResolveSkeletonReferenceAsync(
-        StableSymbolReference reference, Solution solution, string targetPath, AnalysisSymbolIdentity? identity,
+        StableSymbolReference reference, Solution solution, string targetPath, SourceIdentityRequest? sourceIdentityRequest,
         AssemblyNavigationSessionScope? assemblyScope, CancellationToken ct)
     {
         if (reference is StableSymbolReference.Source sourceReference)
         {
-            if (identity?.IsAssembly == true)
+            if (assemblyScope is not null)
                 return (null, new ResultError(NavigationErrorCodes.TargetMismatch,
                     "A source reference cannot be resolved in an assembly target.",
                     "Open its source solution target and use the same reference there."));
+            if (sourceIdentityRequest is null || !sourceIdentityRequest.IsForSolution(solution))
+                return (null, new ResultError(NavigationErrorCodes.WorkspaceDiagnostic,
+                    "The current source solution has no matching validated identity request.",
+                    "Repeat the query after the source snapshot has been validated."));
             var resolved = await ExactSourceSymbolResolver.ResolveAsync(solution, sourceReference, ct).ConfigureAwait(false);
             if (!resolved.IsSuccess) return (null, resolved.Error);
             var documents = await GetDeclaringDocumentsAsync(solution, resolved.Value!, ct).ConfigureAwait(false);
@@ -552,7 +566,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     }
 
     private static async Task<CallToolResult> ScanNamespaceTreeAsync(Solution solution, string targetPath, string? project, string? prefix, int depth,
-        bool includeTypes, string kind, int pageSize, bool includeGenerated, AnalysisSymbolIdentity? identity, string snapshotBinding,
+        bool includeTypes, string kind, int pageSize, bool includeGenerated, string snapshotBinding,
         string? coreCursor, CancellationToken ct, int bytes, int? tokens, bool includeProjectOverview,
         Func<INamedTypeSymbol, string?>? formatTypeReference = null)
     {
@@ -561,7 +575,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
         var payload = await NamespaceTreeScanner.ScanSolutionAsync(solution, project, ct,
             new NamespaceTreeScanOptions(Math.Clamp(depth, 1, 3), NamespaceTreeScanner.MaxResultsCap, includeGenerated, prefix, kind, includeTypes,
                 IncludeProjectOverview: includeProjectOverview,
-                FormatTypeHandoff: formatTypeReference ?? (identity is null ? null : symbol => identity.FormatHandoff(symbol, solution)),
+                FormatTypeHandoff: formatTypeReference,
                 CollectAllInventory: true, AllowProjectSelectionRecovery: includeProjectOverview)).ConfigureAwait(false);
         if (payload.Error is not null)
             return payload.ErrorCode == NavigationErrorCodes.AmbiguousSymbol

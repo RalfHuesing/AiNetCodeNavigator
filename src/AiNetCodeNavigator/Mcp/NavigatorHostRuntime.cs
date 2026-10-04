@@ -1,5 +1,6 @@
 using AiNetCodeNavigator.Core.Assemblies;
 using AiNetCodeNavigator.Core.Workspace;
+using AiNetCodeNavigator.Core.Symbols;
 using Microsoft.Extensions.Hosting;
 
 namespace AiNetCodeNavigator.Mcp;
@@ -19,11 +20,13 @@ public sealed class NavigatorHostRuntime : IAsyncDisposable, IDisposable
         ArgumentNullException.ThrowIfNull(lifetime);
         ProjectRegistry = projectRegistry ?? new ProjectRegistry(ProjectRegistryOptions.ForMSBuild());
         AssemblyRegistry = AssemblyAnalysisSessionRegistry.Default;
+        AnalysisIdentities = new AnalysisSymbolIdentityService(lifetime.ApplicationStopping);
         Operations = new LongRunningToolCallStore(operationResponseWindow ?? ResponseWindow, lifetime.ApplicationStopping);
     }
 
     internal ProjectRegistry ProjectRegistry { get; }
     internal AssemblyAnalysisSessionRegistry AssemblyRegistry { get; }
+    internal AnalysisSymbolIdentityService AnalysisIdentities { get; }
     internal LongRunningToolCallStore Operations { get; }
 
     public async ValueTask DisposeAsync()
@@ -32,6 +35,7 @@ public sealed class NavigatorHostRuntime : IAsyncDisposable, IDisposable
             return;
 
         await Operations.DisposeAsync().ConfigureAwait(false);
+        await AnalysisIdentities.DisposeAsync().ConfigureAwait(false);
         await ProjectRegistry.DisposeAsync().ConfigureAwait(false);
         await AssemblyRegistry.DisposeAsync().ConfigureAwait(false);
         MSBuildSolutionLoader.CleanupDesignTimeScratch();

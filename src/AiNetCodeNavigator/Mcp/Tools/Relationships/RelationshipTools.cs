@@ -97,9 +97,10 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     return referenceRouteError;
                 return await WithSource(target, async (solution, source) =>
                 {
-                var symbol = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
+                    var symbol = await Resolve(solution, symbolIdentifier, source.IdentityRequest, ct).ConfigureAwait(false);
                 if (symbol.Error is not null) return Fail(symbol.Error.Value, "$.symbolIdentifier");
-                var graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(solution, symbol.Symbol!, depth, topN, parsedDirection, includeBcl, scope, includeGenerated), ct).ConfigureAwait(false);
+                var graph = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(solution, symbol.Symbol!, depth, topN, parsedDirection, includeBcl, scope, includeGenerated,
+                    symbolValue => source.FormatHandoff(symbolValue, solution)), ct).ConfigureAwait(false);
                 var body = format == "mermaid" ? CallTreeMermaidRenderer.RenderMermaid(graph) : CallGraphTextRenderer.RenderAscii(graph);
                 var response = NavigationToolSupport.SuccessText(body, graph.Truncated,
                     graph.Truncated ? "Increase depth or topN and repeat the query." : null);
@@ -187,10 +188,11 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     return referenceRouteError;
                 return await WithSource(target, async (solution, source) =>
                 {
-                var symbol = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
+                var symbol = await Resolve(solution, symbolIdentifier, source.IdentityRequest, ct).ConfigureAwait(false);
                 if (symbol.Error is not null) return Fail(symbol.Error.Value, "$.symbolIdentifier");
                 var result = await FindReferencesResolver.FindReferencesAsync(symbol.Symbol!, solution, int.MaxValue, depth, ct,
-                    scope: scope, includeGenerated: includeGenerated).ConfigureAwait(false);
+                    scope: scope, includeGenerated: includeGenerated,
+                    handoffFormatter: symbolValue => source.FormatHandoff(symbolValue, solution)).ConfigureAwait(false);
                 var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
                     "find_references.references", symbolIdentifier.Trim(), depth.ToString(System.Globalization.CultureInfo.InvariantCulture), scope.ToString(), includeGenerated.ToString(),
                     maxResults.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -266,10 +268,11 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     return referenceRouteError;
                 return await WithSource(target, async (solution, source) =>
                 {
-                var symbol = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
+                var symbol = await Resolve(solution, symbolIdentifier, source.IdentityRequest, ct).ConfigureAwait(false);
                 if (symbol.Error is not null) return Fail(symbol.Error.Value, "$.symbolIdentifier");
                 if (symbol.Symbol is not INamedTypeSymbol named) return Invalid("symbolIdentifier", "Resolve a named class, interface, or struct.");
-                var result = await TypeHierarchyScanner.ScanAsync(named, solution, int.MaxValue, ct, scope, includeGenerated).ConfigureAwait(false);
+                var result = await TypeHierarchyScanner.ScanAsync(named, solution, int.MaxValue, ct, scope, includeGenerated,
+                    symbolValue => source.FormatHandoff(symbolValue, solution)).ConfigureAwait(false);
                 if (!result.IsSuccess) return McpToolResults.InvalidArgument(result.ErrorMessage!, "$.symbolIdentifier", "Choose a supported named type.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                 var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
                     "get_type_hierarchy.subtypes", symbolIdentifier.Trim(), scope.ToString(), includeGenerated.ToString(),
@@ -337,9 +340,10 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     return referenceRouteError;
                 return await WithSource(target, async (solution, source) =>
                 {
-                var symbol = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
+                var symbol = await Resolve(solution, symbolIdentifier, source.IdentityRequest, ct).ConfigureAwait(false);
                 if (symbol.Error is not null) return Fail(symbol.Error.Value, "$.symbolIdentifier");
-                var result = await FindReferencesResolver.FindImplementationsAsync(symbol.Symbol!, solution, int.MaxValue, ct, scope, includeGenerated).ConfigureAwait(false);
+                var result = await FindReferencesResolver.FindImplementationsAsync(symbol.Symbol!, solution, int.MaxValue, ct, scope, includeGenerated,
+                    symbolValue => source.FormatHandoff(symbolValue, solution)).ConfigureAwait(false);
                 if (result.ErrorMessage is not null) return McpToolResults.InvalidArgument(result.ErrorMessage, "$.symbolIdentifier", "Use an interface, abstract/virtual member, or overridable class.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                 var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
                     "find_implementations.implementations", symbolIdentifier.Trim(), scope.ToString(), includeGenerated.ToString(),
@@ -441,7 +445,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     return referenceRouteError;
                 return await WithSource(target, async (solution, source) =>
                 {
-                    var symbol = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
+                var symbol = await Resolve(solution, symbolIdentifier, source.IdentityRequest, ct).ConfigureAwait(false);
                     if (symbol.Error is not null) return NavigationToolSupport.Failure(symbol.Error.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                     var impact = await ImpactAnalyzer.AnalyzeSymbolImpactAsync(symbol.Symbol!, solution, depth, int.MaxValue, ct).ConfigureAwait(false);
                     var binding = BoundResultCursor.CreateBinding(target.CanonicalPath, source.Identity.ContentHash,
@@ -558,7 +562,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 IReadOnlyCollection<string>? fileTypeIds = null;
                 if (symbolIdentifier is not null)
                 {
-                    var resolved = await Resolve(solution, symbolIdentifier, source.Identity, ct).ConfigureAwait(false);
+                    var resolved = await Resolve(solution, symbolIdentifier, source.IdentityRequest, ct).ConfigureAwait(false);
                     if (resolved.Error is not null) return NavigationToolSupport.Failure(resolved.Error.Value, maxResponseBytes, maxResponseTokens, "$.symbolIdentifier");
                     var type = resolved.Symbol is INamedTypeSymbol namedType ? namedType : resolved.Symbol!.ContainingType;
                     typeName = type?.ToDisplayString();
@@ -572,13 +576,12 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         return McpToolResults.InvalidArgument("The requested source file could not be selected.", "$.filePath", selectedDocument.Error!, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                     fileTypeIds = await DependencyGraphScanner.GetDocumentTypeIdsAsync(selectedDocument.Document, ct).ConfigureAwait(false);
                 }
-                var identity = source.Identity;
                 var scan = await ScanSourceDependencyGraphAcrossDocumentsAsync(solution,
                     new DependencyGraphTraversalOptions(TargetFilePath: filePath,
                         TargetTypeName: typeName, Direction: parsedDirection, Depth: depth,
                         PageSize: maxResults, TargetTypeId: typeId, TargetTypeIds: fileTypeIds),
                     new DependencyGraphScanOptions(ScopeType: parsedScope, IncludeGenerated: includeGenerated),
-                    CreateStableSourceReferenceFormatter(solution, identity), ct).ConfigureAwait(false);
+                    symbolValue => source.FormatHandoff(symbolValue, solution), ct).ConfigureAwait(false);
                 var response = NavigationToolSupport.Success(scan, scan.IsTruncated, "Increase maxResults, depth, or document coverage and repeat the query.");
                 var omissions = new List<string>();
                 if (scan.IsDepthClamped) omissions.Add("depthLimit");
@@ -782,7 +785,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 return await WithSource(target, async (solution, source) =>
                 {
                     var identifier = symbolIdentifier ?? typeName!;
-                    var resolved = await Resolve(solution, identifier, source.Identity, ct).ConfigureAwait(false);
+                    var resolved = await Resolve(solution, identifier, source.IdentityRequest, ct).ConfigureAwait(false);
                     if (resolved.Error is { } resolutionError && resolutionError.Code != NavigationErrorCodes.SymbolNotFound)
                         return NavigationToolSupport.Failure(resolutionError, maxResponseBytes, maxResponseTokens,
                             symbolIdentifier is null ? "$.typeName" : "$.symbolIdentifier");
@@ -922,25 +925,29 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         SymbolScopeType callerScope, bool includeGenerated, int pageSize, int bodyLines, int startLine,
         string? internalCursor, string? continuationSection, int bytes, int? tokens, CancellationToken ct)
     {
-        var resolved = await SourceSymbolResolver.ResolveAsync(solution, identifier, source.Identity, ct).ConfigureAwait(false);
+        var resolved = await SourceSymbolResolver.ResolveAsync(solution, identifier, source.Identity, source.IdentityRequest, ct).ConfigureAwait(false);
         if (!resolved.IsSuccess) return NavigationToolSupport.Failure(resolved.Error!.Value, bytes, tokens, "$.symbolIdentifier");
         var symbol = resolved.Symbol!;
         if (active.Contains("members", StringComparer.Ordinal) && symbol is not INamedTypeSymbol)
             return McpToolResults.InvalidArgument("members requires a type target.", "$.sections",
                 "Select a type declaration or remove members.", maxResponseBytes: bytes, maxResponseTokens: tokens);
+        var generatedDocumentOwners = await ExactSourceSymbolResolver.GetSourceGeneratedDocumentOwnersAsync(solution, ct)
+            .ConfigureAwait(false);
         var targetDeclarations = symbol.DeclaringSyntaxReferences;
         SyntaxReference? selectedDeclaration = includeGenerated ? targetDeclarations.FirstOrDefault() : null;
         foreach (var candidate in targetDeclarations)
         {
             if (selectedDeclaration is not null) break;
-            var document = solution.GetDocument(candidate.SyntaxTree);
-            if (document is null || !await GeneratedDocumentDetector.IsGeneratedDocumentAsync(document, ct).ConfigureAwait(false))
+            var document = GetSourceDocument(solution, candidate.SyntaxTree, generatedDocumentOwners);
+            if (document is null || (document is not SourceGeneratedDocument
+                && !await GeneratedDocumentDetector.IsGeneratedDocumentAsync(document, ct).ConfigureAwait(false)))
                 selectedDeclaration = candidate;
         }
         if (!includeGenerated && targetDeclarations.Length > 0 && selectedDeclaration is null)
             return McpToolResults.InvalidArgument("The selected declaration is generated source and excluded by includeGenerated=false.", "$.includeGenerated",
                 "Set includeGenerated=true to inspect generated declarations.", maxResponseBytes: bytes, maxResponseTokens: tokens);
-        var declaration = BuildContextDeclaration(symbol, solution, source.Identity, target.CanonicalPath, "source", selectedDeclaration);
+        var declaration = BuildContextDeclaration(symbol, solution, target.CanonicalPath, selectedDeclaration,
+            symbolValue => source.FormatHandoff(symbolValue, solution));
         var sections = new List<object>();
         var omissions = new List<string>();
         string? currentSection = null;
@@ -955,8 +962,9 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 {
                 var body = selectedDeclaration is not null && symbol is INamedTypeSymbol
                     ? SourceSymbolBodyResolver.ResolveWithDeclaration(symbol, selectedDeclaration, bodyLines, startLine,
-                        handoffIdentity: source.Identity, solution: solution)
-                    : SourceSymbolBodyResolver.Resolve(symbol, bodyLines, startLine, handoffIdentity: source.Identity, solution: solution);
+                        handoffId: source.FormatHandoff(symbol, solution), solution: solution)
+                    : SourceSymbolBodyResolver.Resolve(symbol, bodyLines, startLine,
+                        handoffId: source.FormatHandoff(symbol, solution), solution: solution);
                 var reasons = body.HasMore ? new[] { "maxBodyLines" } : Array.Empty<string>();
                     sections.Add(new ContextSection("body", body.HasMore ? "partial" : "complete", "selected source declaration",
                     reasons, 1, new { body.Body, body.DisplayedStart, body.DisplayedEnd, body.TotalLines, body.HasMore,
@@ -978,8 +986,9 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         var hasVisibleDeclaration = false;
                         foreach (var memberDeclaration in member.DeclaringSyntaxReferences)
                         {
-                            var memberDocument = solution.GetDocument(memberDeclaration.SyntaxTree);
-                            if (memberDocument is null || !await GeneratedDocumentDetector.IsGeneratedDocumentAsync(memberDocument, ct).ConfigureAwait(false))
+                            var memberDocument = GetSourceDocument(solution, memberDeclaration.SyntaxTree, generatedDocumentOwners);
+                            if (memberDocument is null || (memberDocument is not SourceGeneratedDocument
+                                && !await GeneratedDocumentDetector.IsGeneratedDocumentAsync(memberDocument, ct).ConfigureAwait(false)))
                             {
                                 hasVisibleDeclaration = true;
                                 break;
@@ -993,7 +1002,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     {
                         var location = member.Locations.FirstOrDefault(item => item.IsInSource);
                         var line = location?.GetLineSpan().StartLinePosition.Line + 1 ?? 0;
-                        var handoff = source.Identity.FormatHandoff(member, solution);
+                        var handoff = source.FormatHandoff(member, solution);
                         return new { Kind = member.Kind.ToString().ToLowerInvariant(), member.Name,
                             Signature = member.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
                             FilePath = location?.SourceTree?.FilePath ?? string.Empty, Line = line,
@@ -1012,7 +1021,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 {
                 var refs = await FindReferencesResolver.FindReferencesAsync(symbol, solution, int.MaxValue, 1, ct,
                     scope: callerScope, includeGenerated: includeGenerated,
-                    handoffFormatter: CreateStableSourceReferenceFormatter(solution, source.Identity)).ConfigureAwait(false);
+                    handoffFormatter: symbolValue => source.FormatHandoff(symbolValue, solution)).ConfigureAwait(false);
                 var page = PageContextList(refs.References, target.CanonicalPath, source.Identity.ContentHash, selected, section,
                     pageSize, internalCursor, identifier, callerScope, null, includeGenerated, null, null, requestBinding, bytes, tokens);
                 if (page.Error is not null) return page.Error;
@@ -1024,7 +1033,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
             }
                 else
                 {
-                var tests = await TestRecommendationBuilder.BuildAsync(symbol, solution, source.Identity, ct,
+                var tests = await TestRecommendationBuilder.BuildAsync(symbol, solution, source.IdentityRequest, ct,
                     includeGenerated, SymbolScopeType.All).ConfigureAwait(false);
                 var fixtures = tests.TestFixtures;
                 var page = PageContextList(fixtures, target.CanonicalPath, source.Identity.ContentHash, selected, section,
@@ -1075,6 +1084,13 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
             omissions.ToArray(), sections.Any(item => item is ContextSection { ResultCursor: not null }));
     }
 
+    private static Document? GetSourceDocument(
+        Solution solution,
+        SyntaxTree syntaxTree,
+        IReadOnlyDictionary<SyntaxTree, SourceGeneratedDocument> generatedDocumentOwners) =>
+        solution.GetDocument(syntaxTree)
+        ?? (generatedDocumentOwners.TryGetValue(syntaxTree, out var generatedDocument) ? generatedDocument : null);
+
     private async Task<CallToolResult> BuildAssemblyContextAsync(AnalysisTarget target, string identifier, string[] selected,
         string[] active, string requestBinding, bool includeGenerated, bool includeReferences, int pageSize, int bodyLines, int startLine,
         string? internalCursor, string? continuationSection, int bytes, int? tokens, CancellationToken ct)
@@ -1104,7 +1120,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
             return McpToolResults.InvalidArgument("members requires a type target.", "$.sections",
                 "Select a type declaration or remove members.", maxResponseBytes: bytes, maxResponseTokens: tokens);
         var ownerFormatter = CreateAssemblyHandoffFormatter(scope.Solution, scope.Context);
-        var declaration = BuildContextDeclaration(symbol, scope.Solution, identity, scope.Context.Origin.CanonicalPath, "assembly",
+        var declaration = BuildContextDeclaration(symbol, scope.Solution, scope.Context.Origin.CanonicalPath,
             referenceFormatter: ownerFormatter);
         var sections = new List<object>();
         var omissions = new List<string>();
@@ -1211,7 +1227,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         var formatter = session.CreateInternalFormatter(owner);
         var internalHandoff = formatter(symbol);
         var handoff = AssemblyReferenceClosureSession.Externalize(internalHandoff);
-        var declaration = BuildContextDeclaration(symbol, owner.Scope.Solution, identity, owner.TargetPath, "assembly",
+        var declaration = BuildContextDeclaration(symbol, owner.Scope.Solution, owner.TargetPath,
             referenceFormatter: _ => handoff);
         var sections = new List<object>();
         var omissions = new List<string>();
@@ -1356,16 +1372,15 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         return (section, null);
     }
 
-    private static ContextDeclaration BuildContextDeclaration(ISymbol symbol, Solution solution, AnalysisSymbolIdentity identity,
-        string ownerPath, string targetKind, SyntaxReference? preferredDeclaration = null,
+    private static ContextDeclaration BuildContextDeclaration(ISymbol symbol, Solution solution,
+        string ownerPath, SyntaxReference? preferredDeclaration = null,
         Func<ISymbol, string?>? referenceFormatter = null)
     {
         var location = preferredDeclaration is null
             ? symbol.Locations.FirstOrDefault(item => item.IsInSource)
             : Location.Create(preferredDeclaration.SyntaxTree, preferredDeclaration.Span);
         var line = location?.GetLineSpan().StartLinePosition.Line + 1 ?? 0;
-        var handoff = referenceFormatter is not null ? referenceFormatter(symbol)
-            : targetKind == "source" ? identity.FormatHandoff(symbol, solution) : null;
+        var handoff = referenceFormatter?.Invoke(symbol);
         return new ContextDeclaration(symbol.Name, symbol.Kind.ToString().ToLowerInvariant(),
             symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat), SymbolVisibilityResolver.ResolveVisibility(symbol),
             location?.SourceTree?.FilePath ?? string.Empty, line, handoff, ownerPath, string.Empty);
@@ -1496,9 +1511,6 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     private static Func<ISymbol, string?> CreateAssemblyHandoffFormatter(AssemblySymbolReferenceAccess access)
         => AssemblyReferenceFormatting.Create(access.ScopeValue);
 
-    private static Func<ISymbol, string?> CreateStableSourceReferenceFormatter(Solution solution, AnalysisSymbolIdentity? identity)
-        => symbol => identity?.FormatHandoff(symbol, solution);
-
     private static Func<ISymbol, string?> CreateAssemblyHandoffFormatter(Solution solution, AssemblyContext context)
         => AssemblyReferenceFormatting.Create(solution, context);
 
@@ -1522,9 +1534,9 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     }
 
     private static async Task<(ISymbol? Symbol, ResultError? Error)> Resolve(Solution solution, string identifier,
-        AnalysisSymbolIdentity sourceIdentity, CancellationToken ct)
+        SourceIdentityRequest sourceIdentity, CancellationToken ct)
     {
-        var result = await SourceSymbolResolver.ResolveAsync(solution, identifier, sourceIdentity, ct).ConfigureAwait(false);
+        var result = await SourceSymbolResolver.ResolveAsync(solution, identifier, sourceIdentity.Identity, sourceIdentity, ct).ConfigureAwait(false);
         return result.IsSuccess ? (result.Symbol, null) : (null, result.Error);
     }
 

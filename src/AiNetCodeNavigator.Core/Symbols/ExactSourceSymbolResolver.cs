@@ -233,6 +233,24 @@ public static class ExactSourceSymbolResolver
         return ownerTrees;
     }
 
+    internal static async Task<Dictionary<SyntaxTree, SourceGeneratedDocument>> GetSourceGeneratedDocumentOwnersAsync(
+        Solution solution,
+        CancellationToken cancellationToken)
+    {
+        var owners = new Dictionary<SyntaxTree, SourceGeneratedDocument>();
+        foreach (var project in solution.Projects)
+        {
+            if (project.Language != LanguageNames.CSharp) continue;
+            foreach (var document in await project.GetSourceGeneratedDocumentsAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var tree = await document.GetSyntaxTreeAsync(cancellationToken).ConfigureAwait(false);
+                if (tree is not null) owners.TryAdd(tree, document);
+            }
+        }
+
+        return owners;
+    }
+
     private static ISymbol Normalize(ISymbol symbol) => symbol is IMethodSymbol { ReducedFrom: { } reduced }
         ? reduced.OriginalDefinition
         : symbol.OriginalDefinition;

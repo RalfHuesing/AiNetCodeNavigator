@@ -25,8 +25,9 @@ public sealed class GetSymbolBodyTests
 
         var greetMethod = greeterType.GetMembers("Greet").OfType<IMethodSymbol>().First();
 
-        var identity = await AnalysisSymbolIdentity.ForSourceAsync(fixture.Solution);
-        var result = SourceSymbolBodyResolver.Resolve(greetMethod, maxBodyLines: 50, handoffIdentity: identity, solution: fixture.Solution);
+        var formatter = await SourceReferenceFormattingContext.CreateFormatterAsync(fixture.Solution, default);
+        var result = SourceSymbolBodyResolver.Resolve(greetMethod, maxBodyLines: 50,
+            handoffId: formatter(greetMethod), solution: fixture.Solution);
 
         Assert.Equal("available", result.Availability);
         Assert.Equal("source", result.ContentMode);

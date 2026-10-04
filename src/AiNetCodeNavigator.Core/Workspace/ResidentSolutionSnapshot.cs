@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using Microsoft.CodeAnalysis;
+using AiNetCodeNavigator.Core.Symbols;
 
 namespace AiNetCodeNavigator.Core.Workspace;
 
@@ -13,6 +14,8 @@ public sealed record ResidentSolutionSnapshot(
     ResidentSolutionLoadError? Error,
     IReadOnlyDictionary<string, ConfiguredTargetFrameworks>? ConfiguredTargetFrameworks = null)
 {
+    internal SourceIdentityValidatedInputs? IdentityInputs { get; init; }
+
     public bool Succeeded => Solution is not null && Error is null;
 }
 

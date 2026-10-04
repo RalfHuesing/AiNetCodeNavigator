@@ -96,24 +96,20 @@ public sealed class FindSymbolScannerTests
     public async Task FindMatchesWithDetailsAsync_RejectsPublicSourceIdentityForAnotherTarget()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
-        var canonicalIdentity = await AnalysisSymbolIdentity.ForSourceAsync(fixture.Solution);
-        Assert.NotNull(canonicalIdentity);
-        var suppliedIdentity = AnalysisSymbolIdentity.ForSource(
-            @"C:\ForeignRepo\Other.slnx",
-            canonicalIdentity!.ContentHash,
-            fixture.Solution);
+        var (solution, currentRequest) = await CreateCurrentIdentityRequestAsync(fixture.Solution);
+        var canonicalIdentity = currentRequest.Identity;
+        var suppliedIdentity = canonicalIdentity with { CanonicalPath = @"C:\ForeignRepo\Other.slnx" };
 
         var result = await FindSymbolScanner.FindMatchesWithDetailsAsync(
-            new FindSymbolScanRequest(fixture.Solution, "Greeter", SourceIdentity: suppliedIdentity));
+            new FindSymbolScanRequest(solution, "Greeter", SourceIdentity: suppliedIdentity)
+            { CurrentIdentityRequest = currentRequest });
         Assert.Empty(result.Entries);
         Assert.Equal(NavigationErrorCodes.TargetMismatch, result.Error!.Value.Code);
 
-        var staleIdentity = AnalysisSymbolIdentity.ForSource(
-            fixture.Solution.FilePath!,
-            new string('f', 64),
-            fixture.Solution);
+        var staleIdentity = canonicalIdentity with { ContentHash = new string('f', 64) };
         var staleResult = await FindSymbolScanner.FindMatchesWithDetailsAsync(
-            new FindSymbolScanRequest(fixture.Solution, "Greeter", SourceIdentity: staleIdentity));
+            new FindSymbolScanRequest(solution, "Greeter", SourceIdentity: staleIdentity)
+            { CurrentIdentityRequest = currentRequest });
         Assert.Empty(staleResult.Entries);
         Assert.Equal(NavigationErrorCodes.StaleSnapshot, staleResult.Error!.Value.Code);
     }
@@ -128,21 +124,19 @@ public sealed class FindSymbolScannerTests
             @"c:\virtualrepo\sample.slnx",
             new ProjectSpec("Sample", [("Sample.cs", "public class SampleType { }")], VirtualProjectDirectory: "src/Sample"));
 
-        var original = await AnalysisSymbolIdentity.ForSourceAsync(upper.Solution);
-        var variant = await AnalysisSymbolIdentity.ForSourceAsync(lower.Solution);
-
-        Assert.NotNull(original);
-        Assert.NotNull(variant);
-        Assert.Equal(original!.ContentHash, variant!.ContentHash);
+        var (_, original) = await CreateCurrentIdentityRequestAsync(upper.Solution);
+        var (_, variant) = await CreateCurrentIdentityRequestAsync(lower.Solution);
+        Assert.True(original.Identity.Matches(variant.Identity));
+        Assert.Equal(original.Identity.ContentHash, variant.Identity.ContentHash);
     }
 
     [Fact]
     public async Task FindMatchesWithDetailsAsync_RejectsSourceIdentityWithForgedProjectMarker()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
-        var identity = await AnalysisSymbolIdentity.ForSourceAsync(fixture.Solution);
-        Assert.NotNull(identity);
-        var project = fixture.Solution.Projects.First();
+        var (solution, currentRequest) = await CreateCurrentIdentityRequestAsync(fixture.Solution);
+        var identity = currentRequest.Identity;
+        var project = solution.Projects.First();
         var forgedIdentity = identity! with
         {
             SourceProjectMarkers = new Dictionary<Microsoft.CodeAnalysis.ProjectId, string>
@@ -152,7 +146,8 @@ public sealed class FindSymbolScannerTests
         };
 
         var result = await FindSymbolScanner.FindMatchesWithDetailsAsync(
-            new FindSymbolScanRequest(fixture.Solution, "Greeter", Kind: SymbolKindFilter.Class, SourceIdentity: forgedIdentity));
+            new FindSymbolScanRequest(solution, "Greeter", Kind: SymbolKindFilter.Class, SourceIdentity: forgedIdentity)
+            { CurrentIdentityRequest = currentRequest });
 
         Assert.Empty(result.Entries);
         Assert.Equal(NavigationErrorCodes.TargetMismatch, result.Error!.Value.Code);
@@ -163,9 +158,9 @@ public sealed class FindSymbolScannerTests
     public async Task FeatureAndClassScanners_RejectSourceIdentityWithForgedProjectMarker()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
-        var identity = await AnalysisSymbolIdentity.ForSourceAsync(fixture.Solution);
-        Assert.NotNull(identity);
-        var project = fixture.Solution.Projects.First();
+        var (solution, currentRequest) = await CreateCurrentIdentityRequestAsync(fixture.Solution);
+        var identity = currentRequest.Identity;
+        var project = solution.Projects.First();
         var forgedIdentity = identity! with
         {
             SourceProjectMarkers = new Dictionary<Microsoft.CodeAnalysis.ProjectId, string>
@@ -174,13 +169,25 @@ public sealed class FindSymbolScannerTests
             },
         };
 
-        var sourceSymbol = await SourceSymbolResolver.ResolveAsync(fixture.Solution, "Greeter", forgedIdentity);
+        var sourceSymbol = await SourceSymbolResolver.ResolveAsync(solution, "Greeter", forgedIdentity, currentRequest);
         Assert.False(sourceSymbol.IsSuccess);
         Assert.Equal(NavigationErrorCodes.TargetMismatch, sourceSymbol.Error!.Value.Code);
 
         var classStructure = await ClassStructureScanner.ScanAsync(
-            new ClassStructureScanRequest(fixture.Solution, "Greeter", HandoffIdentity: forgedIdentity));
+            new ClassStructureScanRequest(solution, "Greeter", HandoffIdentity: forgedIdentity)
+            { CurrentIdentityRequest = currentRequest });
         Assert.Equal(NavigationErrorCodes.TargetMismatch, classStructure!.Error!.Value.Code);
+    }
+
+    private static async Task<(Solution Solution, SourceIdentityRequest Request)> CreateCurrentIdentityRequestAsync(Solution solution)
+    {
+        var provenance = Assert.IsType<WorkspaceInputProvenance>(WorkspaceInputProvenance.FindTestWorkspaceBuilderOutput(solution));
+        var captured = MetadataReferenceImageCapture.Capture(solution, previousInputs: null,
+            cancellationToken: default, provenance: provenance);
+        await using var service = new AnalysisSymbolIdentityService();
+        var result = await service.GetForSourceAsync(new SourceIdentityValidatedSnapshot(captured.Solution, captured.Inputs));
+        Assert.True(result.IsSuccess, result.Error?.Message);
+        return (captured.Solution, result.Value!);
     }
 
     [Fact]
@@ -491,7 +498,11 @@ public sealed class FindSymbolScannerTests
     public async Task FindMatchesWithDetailsAsync_MaxResults_TruncatesAndFlags()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
-        var request = new FindSymbolScanRequest(fixture.Solution, "*", MaxResults: 2);
+        var (solution, identityRequest) = await CreateCurrentIdentityRequestAsync(fixture.Solution);
+        var request = new FindSymbolScanRequest(solution, "*", MaxResults: 2)
+        {
+            CurrentIdentityRequest = identityRequest,
+        };
 
         var result = await FindSymbolScanner.FindMatchesWithDetailsAsync(request);
 
@@ -512,12 +523,19 @@ public sealed class FindSymbolScannerTests
                 ("Three.cs", "public class MarkerThree { }"),
             ], VirtualProjectDirectory: "src/Sample"));
 
+        var (solution, identityRequest) = await CreateCurrentIdentityRequestAsync(fixture.Solution);
         var first = await FindSymbolScanner.FindMatchesWithDetailsAsync(
-            new FindSymbolScanRequest(fixture.Solution, "Marker*", MaxResults: 2));
+            new FindSymbolScanRequest(solution, "Marker*", MaxResults: 2)
+            {
+                CurrentIdentityRequest = identityRequest,
+            });
         Assert.Equal(2, first.Entries.Count);
         Assert.NotNull(first.ResultCursor);
         var second = await FindSymbolScanner.FindMatchesWithDetailsAsync(
-            new FindSymbolScanRequest(fixture.Solution, "Marker*", MaxResults: 2, ResultCursor: first.ResultCursor));
+            new FindSymbolScanRequest(solution, "Marker*", MaxResults: 2, ResultCursor: first.ResultCursor)
+            {
+                CurrentIdentityRequest = identityRequest,
+            });
 
         Assert.Null(second.Error);
         Assert.Null(second.ResultCursor);

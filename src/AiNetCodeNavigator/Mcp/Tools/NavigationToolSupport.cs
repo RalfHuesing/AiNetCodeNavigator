@@ -314,16 +314,31 @@ internal static class NavigationToolSupport
         }
 
         var sourceSolution = snapshot.Solution!;
-        var identity = await AnalysisSymbolIdentity.ForSourceAsync(sourceSolution, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException("The loaded source solution has no analysis identity.");
+        if (snapshot.IdentityInputs is not { } identityInputs)
+        {
+            return McpToolResults.Recoverable(NavigationErrorCodes.WorkspaceDiagnostic,
+                "The current source snapshot has no validated metadata and loader-provenance evidence.",
+                "Repeat the query after the workspace reloads with complete immutable input evidence.",
+                context: target.CanonicalPath, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        }
+        var identityResult = await runtime.AnalysisIdentities.GetForSourceAsync(
+            new SourceIdentityValidatedSnapshot(sourceSolution, identityInputs), cancellationToken).ConfigureAwait(false);
+        if (!identityResult.IsSuccess)
+        {
+            var error = identityResult.Error!.Value;
+            return McpToolResults.Recoverable(error.Code, error.Message,
+                error.Hint ?? "Correct unsupported source project or loader inputs and repeat the query.",
+                context: target.CanonicalPath, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        }
         return await operation(sourceSolution,
-            new SourceAnalysisContext(identity, snapshot.ConfiguredTargetFrameworks), cancellationToken).ConfigureAwait(false);
+            new SourceAnalysisContext(identityResult.Value!, snapshot.ConfiguredTargetFrameworks), cancellationToken).ConfigureAwait(false);
     }
 
-    internal sealed class SourceAnalysisContext(AnalysisSymbolIdentity identity,
+    internal sealed class SourceAnalysisContext(SourceIdentityRequest identityRequest,
         IReadOnlyDictionary<string, AiNetCodeNavigator.Core.Workspace.ConfiguredTargetFrameworks>? configuredTargetFrameworks = null)
     {
-        internal AnalysisSymbolIdentity Identity { get; } = identity;
+        internal SourceIdentityRequest IdentityRequest { get; } = identityRequest;
+        internal AnalysisSymbolIdentity Identity => IdentityRequest.Identity;
         internal IReadOnlyDictionary<string, AiNetCodeNavigator.Core.Workspace.ConfiguredTargetFrameworks>? ConfiguredTargetFrameworks { get; } = configuredTargetFrameworks;
 
         internal CallToolResult WithMetadata(CallToolResult response, string analyzedScope, string[]? omissionReasons = null,
@@ -354,5 +369,7 @@ internal static class NavigationToolSupport
                 .Select(entry => $"{entry.Key}\0{entry.Value.IsKnown}\0{string.Join(";", entry.Value.Values)}"));
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{Identity.ContentHash}\0{metadata}")));
         }
+
+        internal string? FormatHandoff(ISymbol symbol, Solution solution) => IdentityRequest.FormatHandoff(symbol, solution);
     }
 }

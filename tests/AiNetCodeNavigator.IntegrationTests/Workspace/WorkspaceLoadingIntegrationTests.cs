@@ -111,6 +111,30 @@ public sealed class WorkspaceLoadingIntegrationTests
     }
 
     [Fact]
+    public async Task ResidentSolution_SynchronousOwnerReloadsChangedStructureFromItsSolutionPath()
+    {
+        using var tempDir = TestTempDirectory.Create("integration-sync-resident-reload-");
+        WriteProject(tempDir, "src/App/App.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        var solutionPath = await WriteSolutionAsync(tempDir, "src/App/App.csproj");
+        using var workspace = MSBuildSolutionLoader.CreateWorkspace();
+        var solution = await workspace.OpenSolutionAsync(solutionPath);
+        await using var resident = new ResidentSolution(solution, workspace, solutionPath);
+
+        var initial = await resident.GetCurrentSnapshotAsync();
+        Assert.True(initial.Succeeded, initial.Error?.Message);
+        Assert.Single(initial.Solution!.Projects);
+
+        WriteProject(tempDir, "src/Extra/Extra.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        await File.WriteAllTextAsync(tempDir.GetPath("src/Extra/Extra.cs"), "namespace Sample; public sealed class ExtraType;");
+        await File.WriteAllTextAsync(solutionPath, SolutionXml("src/App/App.csproj", "src/Extra/Extra.csproj"));
+
+        var refreshed = await resident.GetCurrentSnapshotAsync();
+
+        Assert.True(refreshed.Succeeded, refreshed.Error?.Message);
+        Assert.Equal(new[] { "App", "Extra" }, refreshed.Solution!.Projects.Select(project => project.Name).Order(StringComparer.Ordinal).ToArray());
+    }
+
+    [Fact]
     public async Task ProjectRegistry_MSBuildLoadFailureIncludesCauseAndCanRetryAfterRepair()
     {
         using var tempDir = TestTempDirectory.Create("integration-slnx-retry-");

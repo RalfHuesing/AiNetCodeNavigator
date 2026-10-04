@@ -53,9 +53,7 @@ public static class FindReferencesResolver
         var normalizedMaxResults = Math.Max(maxResults, 1);
         var effectiveDepth = Math.Clamp(requestedDepth, 1, MaxReferenceDepth);
         var effectiveNodeLimit = Math.Min(maxNodes, DefaultMaxVisitedSymbols);
-        var handoffIdentity = handoffFormatter is null
-            ? await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false)
-            : null;
+        handoffFormatter ??= await SourceReferenceFormattingContext.CreateFormatterAsync(solution, ct).ConfigureAwait(false);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
         var entries = new List<(ReferenceLocationEntry Entry, ISymbol? CallerSymbol, ISymbol ReachedFromSymbol,
             string CallerProjectPath, string CallerProjectId, string CallerSymbolId, string ReachedFromSymbolId)>();
@@ -203,14 +201,8 @@ public static class FindReferencesResolver
             .Take(normalizedMaxResults)
             .Select(item => item.Entry with
             {
-                EnclosingSymbolHandoffId = item.CallerSymbol is null
-                    ? null
-                    : handoffFormatter is null
-                        ? StableSourceReferenceFormatter.Format(item.CallerSymbol, solution, handoffIdentity)
-                        : handoffFormatter(item.CallerSymbol),
-                ReachedFromSymbolHandoffId = handoffFormatter is null
-                    ? StableSourceReferenceFormatter.Format(item.ReachedFromSymbol, solution, handoffIdentity)
-                    : handoffFormatter(item.ReachedFromSymbol),
+                EnclosingSymbolHandoffId = item.CallerSymbol is null ? null : handoffFormatter(item.CallerSymbol),
+                ReachedFromSymbolHandoffId = handoffFormatter(item.ReachedFromSymbol),
             })
             .ToList();
 
@@ -257,9 +249,7 @@ public static class FindReferencesResolver
         ArgumentNullException.ThrowIfNull(solution);
 
         var normalizedMaxResults = Math.Max(maxResults, 1);
-        var handoffIdentity = handoffFormatter is null
-            ? await AnalysisSymbolIdentity.ForSourceAsync(solution, ct).ConfigureAwait(false)
-            : null;
+        handoffFormatter ??= await SourceReferenceFormattingContext.CreateFormatterAsync(solution, ct).ConfigureAwait(false);
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
         var implementations = new List<ISymbol>();
         string? errorMessage = null;
@@ -358,9 +348,7 @@ public static class FindReferencesResolver
                 : string.Empty;
 
             var line = loc?.GetLineSpan().StartLinePosition.Line + 1 ?? 0;
-            var handoff = handoffFormatter is null
-                ? StableSourceReferenceFormatter.Format(impl, solution, handoffIdentity)
-                : handoffFormatter(impl);
+            var handoff = handoffFormatter(impl);
 
             var projectName = impl.ContainingAssembly?.Name ?? string.Empty;
             var signature = impl.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);

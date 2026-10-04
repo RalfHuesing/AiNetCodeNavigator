@@ -11,6 +11,7 @@ using AiNetCodeNavigator.Core.Common;
 using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
 
 namespace AiNetCodeNavigator.Core.Symbols;
@@ -25,9 +26,13 @@ public static class FindSymbolScanner
         FindSymbolScanRequest request,
         CancellationToken ct = default)
     {
-        var currentSourceIdentity = await AnalysisSymbolIdentity.ForSourceAsync(request.Solution, ct).ConfigureAwait(false);
+        var currentSourceIdentity = request.CurrentIdentityRequest is { } currentRequest
+            && currentRequest.IsForSolution(request.Solution) ? currentRequest.Identity : null;
         if (request.SourceIdentity is not null
-            && AnalysisSymbolIdentity.SourceMismatch(request.SourceIdentity, currentSourceIdentity) is { } identityError)
+            && (currentSourceIdentity is null
+                ? new ResultError(NavigationErrorCodes.TargetMismatch,
+                    "A caller-supplied source identity requires a current validated runtime identity request.")
+                : AnalysisSymbolIdentity.SourceMismatch(request.SourceIdentity, currentSourceIdentity)) is { } identityError)
         {
             return new FindSymbolScanResult(
                 identityError.Message,
@@ -46,9 +51,13 @@ public static class FindSymbolScanner
             nameFilter,
             SymbolFilter.TypeAndMember,
             ct).ConfigureAwait(false);
+        var generatedDocumentOwners = await ExactSourceSymbolResolver.GetSourceGeneratedDocumentOwnersAsync(request.Solution, ct)
+            .ConfigureAwait(false);
+        var generatedDeclarations = await GetGeneratedDeclarationsAsync(generatedDocumentOwners, request.NamePattern, ct)
+            .ConfigureAwait(false);
 
-        var nameMatches = symbols
-            .Where(symbol => HasCSharpSourceLocation(request.Solution, symbol))
+        var nameMatches = symbols.Concat(generatedDeclarations).Distinct(SymbolEqualityComparer.Default)
+            .Where(symbol => HasCSharpSourceLocation(request.Solution, symbol, generatedDocumentOwners))
             .Where(symbol => SymbolNameMatcher.MatchesSymbol(symbol, request.NamePattern))
             .ToList();
 
@@ -57,13 +66,16 @@ public static class FindSymbolScanner
 
         if (filtered.Count == 0)
         {
-            var missMessage = await FormatMissMessageAsync(request, nameMatches, ct).ConfigureAwait(false);
+            var missMessage = await FormatMissMessageAsync(request, nameMatches, generatedDocumentOwners, ct).ConfigureAwait(false);
             return new FindSymbolScanResult(missMessage, Array.Empty<SymbolLocationEntry>(), 0, 0, false, Array.Empty<string>(), kindAlternatives);
         }
 
         var outputRoot = Path.GetDirectoryName(request.Solution.FilePath) ?? string.Empty;
-        var sourceIdentity = currentSourceIdentity;
-        var allEntries = (await BuildVisibleEntriesAsync(request, filtered, outputRoot, sourceIdentity, ct).ConfigureAwait(false))
+        var formatter = request.CurrentIdentityRequest is { } exactRequest && exactRequest.IsForSolution(request.Solution)
+            ? new Func<ISymbol, string?>(symbol => exactRequest.FormatHandoff(symbol, request.Solution))
+            : await SourceReferenceFormattingContext.CreateFormatterAsync(request.Solution, ct).ConfigureAwait(false);
+        var allEntries = (await BuildVisibleEntriesAsync(request, filtered, outputRoot, formatter,
+                generatedDocumentOwners, ct).ConfigureAwait(false))
             .OrderBy(entry => GetMatchRank(entry, request.NamePattern))
             .ThenBy(entry => GetScopeRank(entry))
             .ThenBy(entry => entry.FilePath, StringComparer.OrdinalIgnoreCase)
@@ -83,7 +95,7 @@ public static class FindSymbolScanner
                 kindAlternatives);
         }
 
-        var identity = currentSourceIdentity ?? request.SourceIdentity;
+        var identity = currentSourceIdentity;
         if (identity is null && (request.ResultCursor is not null || allEntries.Count > request.MaxResults))
         {
             var error = new ResultError(NavigationErrorCodes.TargetMismatch,
@@ -134,7 +146,8 @@ public static class FindSymbolScanner
         FindSymbolScanRequest request,
         IReadOnlyList<ISymbol> symbols,
         string outputRoot,
-        AnalysisSymbolIdentity? sourceIdentity,
+        Func<ISymbol, string?>? handoffFormatter,
+        IReadOnlyDictionary<SyntaxTree, SourceGeneratedDocument> generatedDocumentOwners,
         CancellationToken ct)
     {
         var grouped = GroupSymbols(symbols);
@@ -144,7 +157,8 @@ public static class FindSymbolScanner
         {
             ct.ThrowIfCancellationRequested();
 
-            var locations = await CollectVisibleLocationsAsync(request, declarations, outputRoot, ct).ConfigureAwait(false);
+            var locations = await CollectVisibleLocationsAsync(request, declarations, outputRoot,
+                generatedDocumentOwners, ct).ConfigureAwait(false);
             if (locations.Count == 0) continue;
 
             locations.Sort((a, b) =>
@@ -155,7 +169,7 @@ public static class FindSymbolScanner
 
             var primaryLoc = locations[0];
             var docCommentId = symbol.GetDocumentationCommentId();
-            var handoffId = sourceIdentity?.FormatHandoff(symbol, request.Solution);
+            var handoffId = handoffFormatter?.Invoke(symbol);
 
             var kindName = DescribeKind(symbol);
             var signature = symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
@@ -180,6 +194,7 @@ public static class FindSymbolScanner
         FindSymbolScanRequest request,
         IReadOnlyList<ISymbol> declarations,
         string outputRoot,
+        IReadOnlyDictionary<SyntaxTree, SourceGeneratedDocument> generatedDocumentOwners,
         CancellationToken cancellationToken)
     {
         var result = new List<SymbolLocationItem>();
@@ -190,13 +205,14 @@ public static class FindSymbolScanner
             {
                 if (!loc.IsInSource || loc.SourceTree is null) continue;
                 var filePath = loc.SourceTree.FilePath;
-                var document = request.Solution.GetDocument(loc.SourceTree);
+                var document = GetSourceDocument(request.Solution, loc.SourceTree, generatedDocumentOwners);
                 if (document is null || !IsCSharpProject(document.Project) || !MatchesScope(document, request.ScopeType)) continue;
                 if (!request.IncludeGenerated)
                 {
                     if (!generatedDocuments.TryGetValue(document.Id, out var isGenerated))
                     {
-                        isGenerated = await GeneratedDocumentDetector.IsGeneratedDocumentAsync(document, cancellationToken).ConfigureAwait(false);
+                        isGenerated = document is SourceGeneratedDocument
+                            || await GeneratedDocumentDetector.IsGeneratedDocumentAsync(document, cancellationToken).ConfigureAwait(false);
                         generatedDocuments.Add(document.Id, isGenerated);
                     }
 
@@ -216,13 +232,59 @@ public static class FindSymbolScanner
         return result;
     }
 
-    private static bool HasCSharpSourceLocation(Solution solution, ISymbol symbol)
+    private static bool HasCSharpSourceLocation(
+        Solution solution,
+        ISymbol symbol,
+        IReadOnlyDictionary<SyntaxTree, SourceGeneratedDocument> generatedDocumentOwners)
     {
         return symbol.Locations.Any(location =>
             location.IsInSource
             && location.SourceTree is not null
-            && solution.GetDocument(location.SourceTree) is { } document
+            && GetSourceDocument(solution, location.SourceTree, generatedDocumentOwners) is { } document
             && IsCSharpProject(document.Project));
+    }
+
+    private static Document? GetSourceDocument(
+        Solution solution,
+        SyntaxTree syntaxTree,
+        IReadOnlyDictionary<SyntaxTree, SourceGeneratedDocument> generatedDocumentOwners) =>
+        solution.GetDocument(syntaxTree)
+        ?? (generatedDocumentOwners.TryGetValue(syntaxTree, out var generatedDocument) ? generatedDocument : null);
+
+    private static async Task<IReadOnlyList<ISymbol>> GetGeneratedDeclarationsAsync(
+        IReadOnlyDictionary<SyntaxTree, SourceGeneratedDocument> generatedDocumentOwners,
+        string namePattern,
+        CancellationToken cancellationToken)
+    {
+        var results = new List<ISymbol>();
+        foreach (var document in generatedDocumentOwners.Values.DistinctBy(document => document.Id))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
+            var semanticModel = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
+            if (root is null || semanticModel is null) continue;
+
+            foreach (var declaration in root.DescendantNodesAndSelf().OfType<MemberDeclarationSyntax>())
+                AddMatching(semanticModel.GetDeclaredSymbol(declaration, cancellationToken));
+            foreach (var declaration in root.DescendantNodesAndSelf().OfType<EnumMemberDeclarationSyntax>())
+                AddMatching(semanticModel.GetDeclaredSymbol(declaration, cancellationToken));
+            foreach (var variable in root.DescendantNodesAndSelf().OfType<VariableDeclaratorSyntax>())
+            {
+                if (variable.Parent?.Parent is FieldDeclarationSyntax or EventFieldDeclarationSyntax)
+                    AddMatching(semanticModel.GetDeclaredSymbol(variable, cancellationToken));
+            }
+        }
+
+        return results;
+
+        void AddMatching(ISymbol? symbol)
+        {
+            if (symbol is not null
+                && symbol is not INamespaceSymbol
+                && SymbolNameMatcher.MatchesSymbol(symbol, namePattern)
+                && !results.Contains(symbol, SymbolEqualityComparer.Default))
+                results.Add(symbol);
+        }
     }
 
     private static bool IsCSharpProject(Project project) =>
@@ -339,6 +401,7 @@ public static class FindSymbolScanner
     private static async Task<string> FormatMissMessageAsync(
         FindSymbolScanRequest request,
         IReadOnlyList<ISymbol> nameMatches,
+        IReadOnlyDictionary<SyntaxTree, SourceGeneratedDocument> generatedDocumentOwners,
         CancellationToken ct)
     {
         if (nameMatches.Count > 0)
@@ -351,7 +414,7 @@ public static class FindSymbolScanner
             request.Solution,
             request.NamePattern,
             ct,
-            symbol => HasCSharpSourceLocation(request.Solution, symbol)).ConfigureAwait(false);
+            symbol => HasCSharpSourceLocation(request.Solution, symbol, generatedDocumentOwners)).ConfigureAwait(false);
         if (suggestions.Count > 0)
         {
             return $"No matches for '{request.NamePattern}'. Did you mean: {string.Join(", ", suggestions)}?";
