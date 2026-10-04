@@ -11,7 +11,7 @@ The server runs locally over stdio. Source navigation uses Roslyn; assembly navi
 | Find declarations and read source or decompiled bodies | `find_symbol`, `get_symbol_body` |
 | Browse namespaces, file outlines, and type members | `browse_target` with `view=namespaces`, `get_file_skeleton`, `get_context` (`sections=[members]`) |
 | Trace callers, callees, references, and summarize discovered sites | `get_call_tree`, `find_references` (`includeSummary=true` for totals) |
-| Follow inheritance, implementations, and dependency edges | `get_type_relations`, `dependency_graph` |
+| Follow inheritance, source/metadata contract implementations, and dependency edges | `get_type_relations`, `dependency_graph` |
 | Inspect library APIs, search decompiled code, and find extension methods | `inspect_assembly`, `search_assembly`, `find_symbol` with `extensionOnly=true` |
 | Resolve a type to its source project or framework/NuGet assembly | `resolve_type_origin` |
 | Read selected body, members, direct uses, and static test candidates | `get_context` (`usageScope` filters source uses) |

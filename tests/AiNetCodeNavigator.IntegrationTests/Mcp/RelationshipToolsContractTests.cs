@@ -26,7 +26,7 @@ public sealed class RelationshipToolsContractTests
         var required = sdk.ProtocolTool.InputSchema.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToArray();
         Assert.Contains("relation", required);
         Assert.Contains("symbolIdentifier", required);
-        Assert.DoesNotContain("metadataOwnerPath", sdk.ProtocolTool.InputSchema.GetProperty("properties").EnumerateObject().Select(value => value.Name));
+        Assert.Contains("metadataOwnerPath", sdk.ProtocolTool.InputSchema.GetProperty("properties").EnumerateObject().Select(value => value.Name));
         using var missing = JsonDocument.Parse("""{"targetPath":"C:/missing.slnx","symbolIdentifier":"Probe.Target"}""");
         var error = await McpArgumentValidationFilter.ValidateArgumentsAsync(sdk,
             missing.RootElement.EnumerateObject().ToDictionary(property => property.Name, property => property.Value.Clone(), StringComparer.Ordinal));

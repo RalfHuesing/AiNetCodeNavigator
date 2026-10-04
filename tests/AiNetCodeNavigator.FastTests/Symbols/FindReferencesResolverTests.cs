@@ -16,6 +16,25 @@ namespace AiNetCodeNavigator.FastTests.Symbols;
 public sealed class FindReferencesResolverTests
 {
     [Fact]
+    public async Task FindImplementationsAsync_InterfaceAndVirtualEventsUseActualMappings()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\EventRelations.slnx",
+            new ProjectSpec("Contracts", [("Api.cs", "public interface IChanged { event System.Action Changed; } public abstract class Base { public abstract event System.Action Changed; }")]),
+            new ProjectSpec("App", [("App.cs", "public class Worker : IChanged { public event System.Action Changed { add { } remove { } } } public class OverrideWorker : Base { public override event System.Action Changed { add { } remove { } } }")], ProjectReferences: ["Contracts"]));
+        var compilation = await fixture.Solution.Projects.Single(project => project.Name == "Contracts").GetCompilationAsync();
+        foreach (var type in new[] { "IChanged", "Base" })
+        {
+            var seed = compilation!.GetTypeByMetadataName(type)!.GetMembers("Changed").OfType<IEventSymbol>().Single();
+            var result = await FindReferencesResolver.FindImplementationsAsync(seed, fixture.Solution);
+            Assert.Null(result.ErrorMessage);
+            var item = Assert.Single(result.Implementations);
+            Assert.Equal("event", item.Kind);
+            Assert.StartsWith("src:", item.HandoffId);
+        }
+    }
+
+    [Fact]
     public async Task FindReferencesAsync_FindsCrossProjectReferences()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();

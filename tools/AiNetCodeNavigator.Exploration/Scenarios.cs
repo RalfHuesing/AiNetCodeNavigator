@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AiNetCodeNavigator.TestKit;
 
 namespace AiNetCodeNavigator.Exploration;
 
@@ -16,6 +17,7 @@ internal static class Scenarios
             [nameof(ExploreBrowseTarget)] = ExploreBrowseTarget,
             [nameof(ExploreTypeRelations)] = ExploreTypeRelations,
             [nameof(ExploreExtensionDiscovery)] = ExploreExtensionDiscovery,
+            [nameof(ExploreMetadataRelations)] = ExploreMetadataRelations,
         };
 
     private static async Task ExploreExtensionDiscovery(ExplorationContext context)
@@ -84,6 +86,68 @@ internal static class Scenarios
                     targetPath = assemblyTarget, symbolIdentifiers = new[] { items[0].GetProperty("handoffId").GetString() }, maxBodyLines = 10,
                 }).ConfigureAwait(false);
         }
+    }
+
+    private static async Task ExploreMetadataRelations(ExplorationContext context)
+    {
+        using var first = TestTempDirectory.Create("explore-metadata-first-");
+        using var second = TestTempDirectory.Create("explore-metadata-second-");
+        const string api = "namespace W5.Contracts; public interface IService { int Read(); }";
+        var firstOwner = AssemblyTestHelper.EmitAssembly(first, "W5Contracts", api);
+        var secondOwner = AssemblyTestHelper.EmitAssembly(second, "W5Contracts", api + " public class OtherImage { }");
+        const string project = "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup><Reference Include=\"W5Contracts\"><HintPath>{0}</HintPath></Reference></ItemGroup></Project>";
+        first.CreateFile("One/One.csproj", string.Format(System.Globalization.CultureInfo.InvariantCulture, project, firstOwner));
+        first.CreateFile("Two/Two.csproj", string.Format(System.Globalization.CultureInfo.InvariantCulture, project, secondOwner));
+        first.CreateFile("One/Worker.cs", "namespace W5; public class Worker : Contracts.IService, System.IDisposable { public int Read() => 1; public void Dispose() { } } public class DerivedWorker : Worker { }");
+        first.CreateFile("Two/Worker.cs", "namespace W5; public class OtherWorker : Contracts.IService, System.IDisposable { public int Read() => 2; public void Dispose() { } }");
+        var target = first.CreateFile("W5.slnx", "<Solution><Project Path=\"One/One.csproj\" /><Project Path=\"Two/Two.csproj\" /></Solution>");
+        var ambiguous = await context.CallAsync("get_type_relations", new
+        {
+            targetPath = target, symbolIdentifier = "W5.Contracts.IService", relation = "implementations", maxResults = 1,
+        }, expectedErrorCode: "AMBIGUOUS_SYMBOL").ConfigureAwait(false);
+        var candidateText = ambiguous.Text[(ambiguous.Text.IndexOf("Candidates: ", StringComparison.Ordinal) + "Candidates: ".Length)..];
+        using var candidates = JsonDocument.Parse(candidateText[..(candidateText.IndexOf(']') + 1)]);
+        var selectedOwner = candidates.RootElement.EnumerateArray().Select(candidate => candidate.GetProperty("metadataOwnerPath").GetString())
+            .Single(path => string.Equals(path, firstOwner, StringComparison.OrdinalIgnoreCase));
+        foreach (var relation in new[] { "hierarchy", "implementations" })
+        {
+            string? cursor = null;
+            do
+            {
+                var response = await context.CallAsync("get_type_relations", new
+                {
+                    targetPath = target, symbolIdentifier = "W5.Contracts.IService", relation, metadataOwnerPath = selectedOwner,
+                    maxResults = 1, resultCursor = cursor,
+                }).ConfigureAwait(false);
+                using var page = JsonDocument.Parse(response.Payload);
+                var root = page.RootElement;
+                if (cursor is null)
+                {
+                    var external = root.GetProperty("metadataRoot");
+                    await context.CallAsync("get_symbol_body", new
+                    {
+                        targetPath = external.GetProperty("ownerTargetPath").GetString(),
+                        symbolIdentifiers = new[] { external.GetProperty("handoffId").GetString() }, maxBodyLines = 10,
+                    }).ConfigureAwait(false);
+                }
+                foreach (var item in root.GetProperty(relation == "hierarchy" ? "subtypes" : "implementations").EnumerateArray())
+                    await context.CallAsync("get_symbol_body", new
+                    {
+                        targetPath = target, symbolIdentifiers = new[] { item.GetProperty("handoffId").GetString() }, maxBodyLines = 10,
+                    }).ConfigureAwait(false);
+                cursor = root.TryGetProperty("resultCursor", out var next) ? next.GetString() : null;
+            } while (cursor is not null);
+        }
+        var bcl = await context.CallAsync("get_type_relations", new
+        {
+            targetPath = target, symbolIdentifier = "M:System.IDisposable.Dispose", relation = "implementations", maxResults = 10,
+        }).ConfigureAwait(false);
+        using var bclPage = JsonDocument.Parse(bcl.Payload);
+        foreach (var item in bclPage.RootElement.GetProperty("implementations").EnumerateArray())
+            await context.CallAsync("get_symbol_body", new
+            {
+                targetPath = target, symbolIdentifiers = new[] { item.GetProperty("handoffId").GetString() }, maxBodyLines = 10,
+            }).ConfigureAwait(false);
     }
 
     private static async Task ExploreFindSymbol(ExplorationContext context)

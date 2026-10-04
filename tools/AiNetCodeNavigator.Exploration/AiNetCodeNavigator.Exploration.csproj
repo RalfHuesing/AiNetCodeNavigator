@@ -5,5 +5,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/AiNetCodeNavigator/AiNetCodeNavigator.csproj" />
+    <ProjectReference Include="../../tests/AiNetCodeNavigator.TestKit/AiNetCodeNavigator.TestKit.csproj" />
   </ItemGroup>
 </Project>

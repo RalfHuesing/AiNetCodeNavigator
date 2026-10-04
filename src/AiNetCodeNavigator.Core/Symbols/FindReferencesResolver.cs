@@ -262,9 +262,7 @@ public static class FindReferencesResolver
         ArgumentNullException.ThrowIfNull(targetSymbol);
         ArgumentNullException.ThrowIfNull(solution);
 
-        var normalizedMaxResults = Math.Max(maxResults, 1);
         handoffFormatter ??= await SourceReferenceFormattingContext.CreateFormatterAsync(solution, ct).ConfigureAwait(false);
-        var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
         var implementations = new List<ISymbol>();
         string? errorMessage = null;
 
@@ -319,6 +317,15 @@ public static class FindReferencesResolver
                 errorMessage = $"Property '{property.ToDisplayString()}' is neither an interface member nor virtual/abstract.";
             }
         }
+        else if (targetSymbol is IEventSymbol evt)
+        {
+            if (evt.ContainingType?.TypeKind == TypeKind.Interface)
+                implementations.AddRange(await SymbolFinder.FindImplementationsAsync(evt, solution, cancellationToken: ct).ConfigureAwait(false));
+            else if (evt.IsAbstract || evt.IsVirtual || evt.IsOverride)
+                implementations.AddRange(await SymbolFinder.FindOverridesAsync(evt, solution, cancellationToken: ct).ConfigureAwait(false));
+            else
+                errorMessage = $"Event '{evt.ToDisplayString()}' is neither an interface member nor virtual/abstract.";
+        }
         else
         {
             errorMessage = $"Symbol '{targetSymbol.ToDisplayString()}' ({targetSymbol.Kind}) cannot have implementations or overrides.";
@@ -335,8 +342,19 @@ public static class FindReferencesResolver
                 ErrorMessage: errorMessage);
         }
 
+        return await ProjectImplementationsAsync(targetSymbol, solution,
+            implementations.Distinct(SymbolEqualityComparer.Default).ToList(), maxResults, ct, scope, includeGenerated, handoffFormatter).ConfigureAwait(false);
+    }
+
+    internal static async Task<FindImplementationsResult> ProjectImplementationsAsync(
+        ISymbol targetSymbol, Solution solution, IReadOnlyList<ISymbol> implementations, int maxResults,
+        CancellationToken ct, SymbolScopeType scope, bool includeGenerated, Func<ISymbol, string?>? handoffFormatter)
+    {
+        var normalizedMaxResults = Math.Max(maxResults, 1);
+        handoffFormatter ??= await SourceReferenceFormattingContext.CreateFormatterAsync(solution, ct).ConfigureAwait(false);
+        var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
         var entries = new List<ImplementationLocationEntry>();
-        var distinctImpls = implementations.Distinct(SymbolEqualityComparer.Default).ToList();
+        var distinctImpls = implementations;
         var generatedDocuments = new Dictionary<DocumentId, bool>();
 
         foreach (var impl in distinctImpls)

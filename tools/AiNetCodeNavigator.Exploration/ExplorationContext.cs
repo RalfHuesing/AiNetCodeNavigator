@@ -46,7 +46,7 @@ internal sealed class ExplorationContext
     internal string RepositorySolution { get; }
     internal string OutputDirectory { get; }
 
-    internal async Task<ExplorationResult> CallAsync(string toolName, object parameters)
+    internal async Task<ExplorationResult> CallAsync(string toolName, object parameters, string? expectedErrorCode = null)
     {
         var directory = Path.Combine(OutputDirectory, $"{++_callNumber:D2}-{toolName}");
         Directory.CreateDirectory(directory);
@@ -77,7 +77,14 @@ internal sealed class ExplorationContext
                 visible.Append(text).Append('\n');
                 await File.WriteAllTextAsync(Path.Combine(directory, "response.txt"), visible.ToString(), _cancellationToken).ConfigureAwait(false);
                 if (result.IsError == true)
+                {
+                    if (expectedErrorCode is not null && text.Contains(expectedErrorCode, StringComparison.Ordinal))
+                    {
+                        await File.WriteAllTextAsync(Path.Combine(directory, "payload.txt"), ResponseBody(text), _cancellationToken).ConfigureAwait(false);
+                        return new ExplorationResult(visible.ToString(), ResponseBody(text), result);
+                    }
                     throw new InvalidOperationException($"MCP tool '{toolName}' returned IsError=true. Inspect response.txt.");
+                }
 
                 if (text.StartsWith("Status: operation=running", StringComparison.Ordinal)
                     || text.StartsWith("Status: operation=retry", StringComparison.Ordinal))
@@ -104,6 +111,8 @@ internal sealed class ExplorationContext
                     continue;
                 }
 
+                if (expectedErrorCode is not null)
+                    throw new InvalidOperationException($"Expected {expectedErrorCode}, but MCP tool '{toolName}' succeeded.");
                 await File.WriteAllTextAsync(Path.Combine(directory, "payload.txt"), payload.ToString(), _cancellationToken).ConfigureAwait(false);
                 return new ExplorationResult(visible.ToString(), payload.ToString(), result);
             }

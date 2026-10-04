@@ -26,6 +26,16 @@ public static class TypeHierarchyScanner
         SymbolScopeType scope = SymbolScopeType.All,
         bool includeGenerated = false,
         Func<ISymbol, string?>? handoffFormatter = null)
+        => await ScanCoreAsync(type, solution, maxResults, ct, scope, includeGenerated, handoffFormatter, null).ConfigureAwait(false);
+
+    internal static Task<TypeHierarchyPayload> ScanResolvedAsync(INamedTypeSymbol type, Solution solution,
+        IReadOnlyList<INamedTypeSymbol> subtypes, int maxResults, CancellationToken ct,
+        SymbolScopeType scope, bool includeGenerated, Func<ISymbol, string?> handoffFormatter)
+        => ScanCoreAsync(type, solution, maxResults, ct, scope, includeGenerated, handoffFormatter, subtypes);
+
+    private static async Task<TypeHierarchyPayload> ScanCoreAsync(INamedTypeSymbol type, Solution solution,
+        int maxResults, CancellationToken ct, SymbolScopeType scope, bool includeGenerated,
+        Func<ISymbol, string?>? handoffFormatter, IReadOnlyList<INamedTypeSymbol>? resolvedSubtypes)
     {
         ArgumentNullException.ThrowIfNull(type);
         ArgumentNullException.ThrowIfNull(solution);
@@ -53,11 +63,11 @@ public static class TypeHierarchyScanner
         var isInterface = type.TypeKind == TypeKind.Interface;
         var subtypesHeading = isInterface ? "Implementing types:" : "Derived classes:";
 
-        var subtypesSymbols = isInterface
+        var subtypesSymbols = resolvedSubtypes ?? (isInterface
             ? (await SymbolFinder.FindImplementationsAsync(type, solution, transitive: true, cancellationToken: ct).ConfigureAwait(false)).OfType<INamedTypeSymbol>().ToList()
             : type.TypeKind == TypeKind.Class
                 ? (await SymbolFinder.FindDerivedClassesAsync(type, solution, transitive: true, cancellationToken: ct).ConfigureAwait(false)).ToList()
-                : [];
+                : []);
 
         var visibleSubtypes = new List<INamedTypeSymbol>();
         foreach (var subtype in subtypesSymbols)
