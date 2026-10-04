@@ -1,6 +1,9 @@
 #nullable enable
 
+using System;
+using System.Collections.Immutable;
 using System.Collections.Generic;
+using Microsoft.CodeAnalysis;
 using AiNetCodeNavigator.Core.Symbols;
 
 namespace AiNetCodeNavigator.Core.Dependencies;
@@ -38,6 +41,72 @@ public sealed record DependencyGraphScanOptions(
     IReadOnlyCollection<string>? TargetTypeIds = null,
     SymbolScopeType ScopeType = SymbolScopeType.All,
     bool IncludeGenerated = false);
+
+internal sealed record DependencyGraphCollectionOptions(
+    SymbolScopeType ScopeType = SymbolScopeType.All,
+    bool IncludeGenerated = false,
+    int DocumentOffset = 0,
+    int? MaxDocuments = null);
+
+internal sealed record DependencyGraphProjectionOptions(
+    int Offset = 0,
+    int PageSize = 100,
+    string? TargetFilePath = null,
+    string? TargetTypeName = null,
+    string? TargetProject = null,
+    DependencyGraphDirection Direction = DependencyGraphDirection.Both,
+    int Depth = 1,
+    int MaxNodes = DependencyGraphScanner.MaximumNodes,
+    string? TargetTypeId = null,
+    IReadOnlyCollection<string>? TargetTypeIds = null);
+
+internal sealed record DependencyGraphCollection(
+    ImmutableArray<DependencyTypeReference> TypeDependencies,
+    ImmutableArray<ProjectDependency> ProjectDependencies,
+    ImmutableArray<DependencyGraphScanError> Errors,
+    ImmutableArray<DependencyDocumentIdentity> EligibleDocuments,
+    ImmutableArray<DependencyDocumentIdentity> RequiredDocuments,
+    ImmutableArray<DependencyDocumentIdentity> AttemptedDocuments,
+    ImmutableArray<DependencyDocumentIdentity> CoveredDocuments,
+    ImmutableArray<DependencyTypeDeclaration> TypeDeclarations,
+    int EligibleDocumentCount,
+    int RequiredDocumentCount,
+    int CoveredDocumentCount,
+    int NewSemanticScanCount,
+    int DocumentOffset,
+    int? NextDocumentOffset,
+    bool DocumentLimitWasClamped,
+    SymbolScopeType ScopeType,
+    bool IncludeGenerated,
+    string SolutionDirectory,
+    bool ContinuationInputIncomplete = false);
+
+internal sealed record DependencyDocumentIdentity(
+    string OwnerProjectPath,
+    string OwnerContextFingerprint,
+    string DocumentPath,
+    string Name,
+    ImmutableArray<string> Folders,
+    string SourceCodeKind,
+    string TextHash,
+    int DuplicateOrdinal);
+
+internal sealed record DependencyTypeDeclaration(
+    string TypeId,
+    string DisplayName,
+    string Name,
+    string Namespace,
+    string Project,
+    string File,
+    string OwnerProjectPath,
+    string OwnerContextFingerprint,
+    string OriginalTypeId,
+    ImmutableArray<DependencyDocumentIdentity> DeclarationDocuments);
+
+internal sealed record DependencyGraphCollectionObserver(
+    Action<Project>? CompilationAcquired = null,
+    Action<Document>? DocumentCollected = null,
+    Action<string, ISymbol>? SymbolDiscovered = null);
 
 public sealed record DependencyGraphTraversalOptions(
     string? TargetFilePath = null,
@@ -113,6 +182,8 @@ public sealed record DependencyGraphPayload(
     int HiddenTypeDependencyCount = 0,
     bool ContinuationInputIncomplete = false)
 {
+    internal ImmutableArray<DependencyTypeDeclaration> TypeDeclarations { get; init; } = ImmutableArray<DependencyTypeDeclaration>.Empty;
+
     public bool HasMoreProjectDependencies => (long)Offset + ProjectDependencies.Count < TotalProjectDependencyCount;
     public bool HasMoreNamespaceDependencies => (long)Offset + NamespaceDependencies.Count < TotalNamespaceDependencyCount;
     public bool HasMoreFileDependencies => (long)Offset + FileDependencies.Count < TotalFileDependencyCount;

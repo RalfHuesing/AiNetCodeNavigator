@@ -2,12 +2,16 @@
 
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Common;
 using AiNetCodeNavigator.Core.Symbols;
+using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -32,27 +36,104 @@ public static class DependencyGraphScanner
         ArgumentNullException.ThrowIfNull(solution);
         options ??= new DependencyGraphScanOptions();
         ValidateOptions(options);
+        var symbols = new Dictionary<string, ISymbol>(StringComparer.Ordinal);
+        var collection = await CollectAsync(
+            solution,
+            new DependencyGraphCollectionOptions(options.ScopeType, options.IncludeGenerated, options.DocumentOffset, options.MaxDocuments),
+            ct,
+            observer: new DependencyGraphCollectionObserver(SymbolDiscovered: (id, symbol) => symbols.TryAdd(id, symbol)))
+            .ConfigureAwait(false);
+        return Project(collection, ToProjectionOptions(options), id => symbols.GetValueOrDefault(id), handoffFormatter);
+    }
+
+    internal static async Task<DependencyGraphCollection> CollectAsync(
+        Solution solution,
+        DependencyGraphCollectionOptions options,
+        CancellationToken ct = default,
+        IReadOnlyDictionary<ProjectId, string>? ownerContextFingerprints = null,
+        DependencyGraphCollectionObserver? observer = null)
+    {
+        ArgumentNullException.ThrowIfNull(solution);
+        ArgumentNullException.ThrowIfNull(options);
+        if (options.DocumentOffset < 0) throw new ArgumentOutOfRangeException(nameof(options), "DocumentOffset must be zero or greater.");
+        if (options.MaxDocuments is < 1) throw new ArgumentOutOfRangeException(nameof(options), "MaxDocuments must be at least one when provided.");
+        if (!Enum.IsDefined(options.ScopeType)) throw new ArgumentOutOfRangeException(nameof(options), "ScopeType is invalid.");
+        var maxDocuments = options.MaxDocuments is null ? int.MaxValue : Math.Min(options.MaxDocuments.Value, MaximumDocuments);
+        var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
+        var generatedDocumentOwners = await ExactSourceSymbolResolver.GetSourceGeneratedDocumentOwnersAsync(solution, ct).ConfigureAwait(false);
+        var documentSelection = await SelectDocumentsAsync(
+            solution, options, maxDocuments, ownerContextFingerprints, generatedDocumentOwners, ct).ConfigureAwait(false);
+        var projectDependencies = GetProjectDependencies(solution);
+        var typeScan = await CollectTypeReferencesAsync(
+            solution, documentSelection.Documents, solutionDir, ownerContextFingerprints, generatedDocumentOwners, ct, observer).ConfigureAwait(false);
+
+        return new DependencyGraphCollection(
+            typeScan.Edges.ToImmutableArray(),
+            projectDependencies.ToImmutableArray(),
+            typeScan.Errors.ToImmutableArray(),
+            documentSelection.EligibleDocuments.Select(item => item.ToIdentity()).ToImmutableArray(),
+            documentSelection.Documents.Select(item => item.ToIdentity()).ToImmutableArray(),
+            typeScan.AttemptedDocuments.ToImmutableArray(),
+            typeScan.CoveredDocuments.ToImmutableArray(),
+            typeScan.TypeDeclarations.ToImmutableArray(),
+            documentSelection.TotalDocumentCount,
+            documentSelection.Documents.Count,
+            typeScan.CollectedDocumentCount,
+            typeScan.NewSemanticScanCount,
+            options.DocumentOffset,
+            documentSelection.NextDocumentOffset,
+            options.MaxDocuments is not null && options.MaxDocuments.Value != maxDocuments,
+            options.ScopeType,
+            options.IncludeGenerated,
+            solutionDir);
+    }
+
+    internal static DependencyGraphPayload Project(
+        DependencyGraphCollection collection,
+        DependencyGraphProjectionOptions options,
+        Func<string, ISymbol?>? symbolResolver = null,
+        Func<ISymbol, string?>? handoffFormatter = null)
+    {
+        ArgumentNullException.ThrowIfNull(collection);
+        ArgumentNullException.ThrowIfNull(options);
+        if (options.Offset < 0) throw new ArgumentOutOfRangeException(nameof(options), "Offset must be zero or greater.");
+        if (options.PageSize < 1) throw new ArgumentOutOfRangeException(nameof(options), "PageSize must be at least one.");
+        if (options.MaxNodes < 1) throw new ArgumentOutOfRangeException(nameof(options), "MaxNodes must be at least one.");
+        if (!Enum.IsDefined(options.Direction)) throw new ArgumentOutOfRangeException(nameof(options), "Direction is invalid.");
+        if (options.TargetFilePath is not null && options.TargetTypeName is not null)
+            throw new ArgumentException("Specify either TargetFilePath or TargetTypeName, not both.", nameof(options));
+        if (options.TargetFilePath is not null && string.IsNullOrWhiteSpace(options.TargetFilePath))
+            throw new ArgumentException("TargetFilePath must not be empty.", nameof(options));
+        if (options.TargetTypeName is not null && string.IsNullOrWhiteSpace(options.TargetTypeName))
+            throw new ArgumentException("TargetTypeName must not be empty.", nameof(options));
+        if (options.TargetTypeId is not null && string.IsNullOrWhiteSpace(options.TargetTypeId))
+            throw new ArgumentException("TargetTypeId must not be empty.", nameof(options));
+        if (options.TargetTypeIds is not null && options.TargetTypeIds.Any(string.IsNullOrWhiteSpace))
+            throw new ArgumentException("TargetTypeIds must not contain empty values.", nameof(options));
+        if (options.TargetProject is not null && options.TargetFilePath is null && options.TargetTypeName is null && options.TargetTypeId is null && options.TargetTypeIds is null)
+            throw new ArgumentException("TargetProject requires a file or type target.", nameof(options));
 
         var pageSize = Math.Min(options.PageSize, MaximumPageSize);
-        var maxDocuments = Math.Min(options.MaxDocuments, MaximumDocuments);
         var maxNodes = Math.Min(options.MaxNodes, MaximumNodes);
-        var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
-        var documentSelection = await SelectDocumentsAsync(solution, options, maxDocuments, ct).ConfigureAwait(false);
-        var projectDependencies = GetProjectDependencies(solution);
-        var typeScan = await CollectTypeReferencesAsync(solution, documentSelection.Documents, solutionDir, ct).ConfigureAwait(false);
+        var solutionDir = collection.SolutionDirectory;
 
-        var rawEdges = typeScan.Edges;
+        var rawEdges = collection.TypeDependencies;
         var isTargeted = options.TargetFilePath is not null || options.TargetTypeName is not null || options.TargetTypeId is not null || options.TargetTypeIds is not null;
         var requestedDepth = isTargeted ? options.Depth : 1;
         var effectiveDepth = Math.Clamp(requestedDepth, 1, MaximumDepth);
         var traversal = isTargeted
-            ? Traverse(rawEdges, options.TargetFilePath, options.TargetTypeName, options.TargetProject, options.TargetTypeId, options.TargetTypeIds, options.Direction, solutionDir, effectiveDepth, maxNodes)
+            ? Traverse(rawEdges, options.TargetFilePath, options.TargetTypeName, options.TargetProject, options.TargetTypeId, options.TargetTypeIds,
+                options.Direction, solutionDir, effectiveDepth, maxNodes, collection.TypeDeclarations)
             : new DependencyGraphTraversalOutcome(rawEdges.Select(edge => edge with { Depth = 1 }).ToList(), 0, false, 0);
 
         return CreatePayload(
-            options, pageSize, maxDocuments, maxNodes, documentSelection, projectDependencies,
-            typeScan, traversal, isTargeted, requestedDepth, effectiveDepth, handoffFormatter);
+            options, pageSize, maxNodes, collection, traversal, isTargeted, requestedDepth, effectiveDepth,
+            symbolResolver, handoffFormatter, collection.DocumentLimitWasClamped, pageSize != options.PageSize);
     }
+
+    private static DependencyGraphProjectionOptions ToProjectionOptions(DependencyGraphScanOptions options) => new(
+        options.Offset, options.PageSize, options.TargetFilePath, options.TargetTypeName, options.TargetProject,
+        options.Direction, options.Depth, options.MaxNodes, options.TargetTypeId, options.TargetTypeIds);
 
     private static void ValidateOptions(DependencyGraphScanOptions options)
     {
@@ -80,29 +161,57 @@ public static class DependencyGraphScanner
 
     private static async Task<DocumentSelection> SelectDocumentsAsync(
         Solution solution,
-        DependencyGraphScanOptions options,
+        DependencyGraphCollectionOptions options,
         int maxDocuments,
+        IReadOnlyDictionary<ProjectId, string>? ownerContextFingerprints,
+        IReadOnlyDictionary<SyntaxTree, SourceGeneratedDocument> generatedDocumentOwners,
         CancellationToken ct)
     {
-        var candidateDocuments = solution.Projects
-            .OrderBy(project => project.Name, StringComparer.Ordinal)
-            .ThenBy(project => project.Id.Id)
-            .SelectMany(project => project.Documents
-                .OrderBy(document => document.FilePath ?? document.Name, StringComparer.Ordinal)
-                .Select(document => (Project: project, Document: document)))
-            .ToList();
-        var allDocuments = new List<(Project Project, Document Document)>(candidateDocuments.Count);
-        foreach (var candidate in candidateDocuments)
+        var allDocuments = new List<OrderedDocument>();
+        foreach (var project in solution.Projects)
         {
-            ct.ThrowIfCancellationRequested();
-            var isTestDocument = TestDetector.IsTestProject(candidate.Project)
-                || TestDetector.IsTestFile(candidate.Document.FilePath ?? candidate.Document.Name);
-            if (options.ScopeType == SymbolScopeType.Production && isTestDocument
-                || options.ScopeType == SymbolScopeType.Tests && !isTestDocument)
-                continue;
-            if (!options.IncludeGenerated && await GeneratedDocumentDetector.IsGeneratedDocumentAsync(candidate.Document, ct).ConfigureAwait(false))
-                continue;
-            allDocuments.Add(candidate);
+            IEnumerable<Document> projectDocuments = project.Documents;
+            if (options.IncludeGenerated)
+                projectDocuments = projectDocuments.Concat(generatedDocumentOwners.Values.Where(document => document.Project.Id == project.Id));
+            foreach (var document in projectDocuments)
+            {
+                ct.ThrowIfCancellationRequested();
+                var isTestDocument = TestDetector.IsTestProject(project)
+                    || TestDetector.IsTestFile(document.FilePath ?? document.Name);
+                if (options.ScopeType == SymbolScopeType.Production && isTestDocument
+                    || options.ScopeType == SymbolScopeType.Tests && !isTestDocument)
+                    continue;
+                if (!options.IncludeGenerated && await GeneratedDocumentDetector.IsGeneratedDocumentAsync(document, ct).ConfigureAwait(false))
+                    continue;
+                var textHash = await GetTextHashAsync(document, ct).ConfigureAwait(false);
+                allDocuments.Add(new OrderedDocument(
+                    project,
+                    document,
+                    CanonicalPath(project.FilePath),
+                    ownerContextFingerprints?.GetValueOrDefault(project.Id) ?? string.Empty,
+                    CanonicalPath(document.FilePath),
+                    textHash.Hash,
+                    textHash.Error,
+                    DuplicateOrdinal: 0));
+            }
+        }
+        allDocuments = allDocuments
+            .OrderBy(item => item.ProjectPath, StringComparer.Ordinal)
+            .ThenBy(item => item.ContextFingerprint, StringComparer.Ordinal)
+            .ThenBy(item => item.DocumentPath, StringComparer.Ordinal)
+            .ThenBy(item => item.Document.Name, StringComparer.Ordinal)
+            .ThenBy(item => item, OrderedDocumentFolderComparer.Instance)
+            .ThenBy(item => item.Document.SourceCodeKind)
+            .ThenBy(item => item.TextHash, StringComparer.Ordinal)
+            .ToList();
+        var duplicateOrdinals = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var index = 0; index < allDocuments.Count; index++)
+        {
+            var item = allDocuments[index];
+            var key = GetDocumentIdentityGroupKey(item);
+            duplicateOrdinals.TryGetValue(key, out var ordinal);
+            duplicateOrdinals[key] = ordinal + 1;
+            allDocuments[index] = item with { DuplicateOrdinal = ordinal };
         }
         if (options.DocumentOffset > allDocuments.Count)
             throw new ArgumentOutOfRangeException(nameof(options), "DocumentOffset exceeds the number of solution documents.");
@@ -111,8 +220,52 @@ public static class DependencyGraphScanner
         var nextDocumentOffset = options.DocumentOffset + documents.Count < allDocuments.Count
             ? options.DocumentOffset + documents.Count
             : (int?)null;
-        return new DocumentSelection(allDocuments.Count, documents, nextDocumentOffset);
+        return new DocumentSelection(allDocuments, documents, nextDocumentOffset);
     }
+
+    private static string CanonicalPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return string.Empty;
+        string fullPath;
+        try { fullPath = Path.GetFullPath(path); }
+        catch (ArgumentException) { return string.Empty; }
+        return AnalysisPathIdentity.TryNormalize(fullPath, out var canonicalPath) ? canonicalPath : string.Empty;
+    }
+
+    private static async Task<(string Hash, string? Error)> GetTextHashAsync(Document document, CancellationToken ct)
+    {
+        try
+        {
+            var text = await document.GetTextAsync(ct).ConfigureAwait(false);
+            var bytes = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true).GetBytes(text.ToString());
+            return (Convert.ToHexString(SHA256.HashData(bytes)), null);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or ArgumentException or InvalidOperationException)
+        {
+            return (string.Empty, "Source text could not be read for deterministic document identity.");
+        }
+    }
+
+    private static string GetDocumentIdentityGroupKey(OrderedDocument document)
+    {
+        var builder = new StringBuilder();
+        AppendKeyPart(builder, document.ProjectPath);
+        AppendKeyPart(builder, document.ContextFingerprint);
+        AppendKeyPart(builder, document.DocumentPath);
+        AppendKeyPart(builder, document.Document.Name);
+        builder.Append(document.Document.Folders.Count).Append(':');
+        foreach (var folder in document.Document.Folders) AppendKeyPart(builder, folder);
+        AppendKeyPart(builder, document.Document.SourceCodeKind.ToString());
+        AppendKeyPart(builder, document.TextHash);
+        return builder.ToString();
+    }
+
+    private static void AppendKeyPart(StringBuilder builder, string value) =>
+        builder.Append(value.Length).Append(':').Append(value);
 
     private static List<ProjectDependency> GetProjectDependencies(Solution solution) => solution.Projects
         .SelectMany(project => project.ProjectReferences.Select(reference =>
@@ -129,55 +282,120 @@ public static class DependencyGraphScanner
 
     private static async Task<TypeReferenceScan> CollectTypeReferencesAsync(
         Solution solution,
-        IReadOnlyList<(Project Project, Document Document)> documents,
+        IReadOnlyList<OrderedDocument> documents,
         string solutionDir,
-        CancellationToken ct)
+        IReadOnlyDictionary<ProjectId, string>? ownerContextFingerprints,
+        IReadOnlyDictionary<SyntaxTree, SourceGeneratedDocument> generatedDocumentOwners,
+        CancellationToken ct,
+        DependencyGraphCollectionObserver? observer)
     {
         var errors = new List<DependencyGraphScanError>();
         var rawTypeEdges = new Dictionary<(string FromTypeId, string ToTypeId), DependencyTypeReference>();
         var symbolsByTypeId = new Dictionary<string, INamedTypeSymbol>(StringComparer.Ordinal);
+        var typeDocumentsById = new Dictionary<string, (INamedTypeSymbol Symbol, List<DependencyDocumentIdentity> Documents)>(StringComparer.Ordinal);
         var compilations = new Dictionary<ProjectId, Compilation?>();
-        foreach (var (project, document) in documents)
+        var collectedDocumentCount = 0;
+        var newSemanticScanCount = 0;
+        var attemptedDocuments = new List<DependencyDocumentIdentity>();
+        var coveredDocuments = new List<DependencyDocumentIdentity>();
+        foreach (var batch in documents.Chunk(MaximumDocuments))
         {
-            ct.ThrowIfCancellationRequested();
-            if (!compilations.TryGetValue(project.Id, out var compilation))
+            foreach (var orderedDocument in batch)
             {
-                compilation = await project.GetCompilationAsync(ct).ConfigureAwait(false);
-                compilations[project.Id] = compilation;
-            }
-            if (compilation is null)
-            {
-                errors.Add(new DependencyGraphScanError(project.Name, document.Name, "Compilation was unavailable."));
-                continue;
-            }
+                var project = orderedDocument.Project;
+                var document = orderedDocument.Document;
+                var documentIdentity = orderedDocument.ToIdentity();
+                attemptedDocuments.Add(documentIdentity);
+                ct.ThrowIfCancellationRequested();
+                if (orderedDocument.TextError is not null)
+                {
+                    errors.Add(new DependencyGraphScanError(project.Name, document.Name, orderedDocument.TextError));
+                    continue;
+                }
+                if (!compilations.TryGetValue(project.Id, out var compilation))
+                {
+                    compilation = await project.GetCompilationAsync(ct).ConfigureAwait(false);
+                    compilations[project.Id] = compilation;
+                    observer?.CompilationAcquired?.Invoke(project);
+                }
+                if (compilation is null)
+                {
+                    errors.Add(new DependencyGraphScanError(project.Name, document.Name, "Compilation was unavailable."));
+                    continue;
+                }
 
-            await CollectDocumentTypeReferencesAsync(
-                solution, project, document, compilation, solutionDir, rawTypeEdges, symbolsByTypeId, errors, ct).ConfigureAwait(false);
+                observer?.DocumentCollected?.Invoke(document);
+                newSemanticScanCount++;
+                if (await CollectDocumentTypeReferencesAsync(
+                        solution, project, document, compilation, solutionDir, ownerContextFingerprints, generatedDocumentOwners, documentIdentity,
+                        rawTypeEdges, symbolsByTypeId, typeDocumentsById, errors, ct).ConfigureAwait(false))
+                {
+                    collectedDocumentCount++;
+                    coveredDocuments.Add(orderedDocument.ToIdentity());
+                }
+            }
         }
+
+        if (observer?.SymbolDiscovered is { } symbolDiscovered)
+            foreach (var (typeId, symbol) in symbolsByTypeId)
+                symbolDiscovered(typeId, symbol);
+
+        var typeDeclarations = typeDocumentsById.Select(pair =>
+        {
+            var symbol = pair.Value.Symbol;
+            var type = symbol.OriginalDefinition;
+            var location = type.Locations.Where(candidate => candidate.IsInSource)
+                .OrderBy(candidate => CanonicalPath(candidate.SourceTree?.FilePath ?? candidate.GetLineSpan().Path), StringComparer.Ordinal)
+                .FirstOrDefault();
+            var ownerProject = location?.SourceTree is { } tree
+                ? GetDocumentOwner(solution, tree, generatedDocumentOwners)?.Project
+                : null;
+            var ownerPath = ownerProject is null ? string.Empty : CanonicalPath(ownerProject.FilePath);
+            var ownerContext = ownerProject is null ? string.Empty : ownerContextFingerprints?.GetValueOrDefault(ownerProject.Id) ?? string.Empty;
+            return new DependencyTypeDeclaration(
+                pair.Key,
+                type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                type.Name,
+                type.ContainingNamespace?.ToDisplayString() ?? string.Empty,
+                ownerProject?.Name ?? string.Empty,
+                location is null ? string.Empty : PathNormalizer.ToRelative(solutionDir, location.SourceTree?.FilePath ?? location.GetLineSpan().Path),
+                ownerPath,
+                ownerContext,
+                pair.Key,
+                pair.Value.Documents.ToImmutableArray());
+        }).OrderBy(declaration => declaration.TypeId, StringComparer.Ordinal).ToList();
 
         var rawEdges = rawTypeEdges.Values
             .OrderBy(edge => edge.FromProject, StringComparer.Ordinal).ThenBy(edge => edge.FromFile, StringComparer.Ordinal)
             .ThenBy(edge => edge.FromTypeId, StringComparer.Ordinal).ThenBy(edge => edge.ToTypeId, StringComparer.Ordinal)
             .ToList();
-        return new TypeReferenceScan(rawEdges, symbolsByTypeId, errors);
+        return new TypeReferenceScan(rawEdges, errors, collectedDocumentCount, newSemanticScanCount,
+            attemptedDocuments, coveredDocuments, typeDeclarations);
     }
 
-    private static async Task CollectDocumentTypeReferencesAsync(
+    private static async Task<bool> CollectDocumentTypeReferencesAsync(
         Solution solution,
         Project project,
         Document document,
         Compilation compilation,
         string solutionDir,
+        IReadOnlyDictionary<ProjectId, string>? ownerContextFingerprints,
+        IReadOnlyDictionary<SyntaxTree, SourceGeneratedDocument> generatedDocumentOwners,
+        DependencyDocumentIdentity documentIdentity,
         Dictionary<(string FromTypeId, string ToTypeId), DependencyTypeReference> rawTypeEdges,
         Dictionary<string, INamedTypeSymbol> symbolsByTypeId,
+        Dictionary<string, (INamedTypeSymbol Symbol, List<DependencyDocumentIdentity> Documents)> typeDocumentsById,
         List<DependencyGraphScanError> errors,
         CancellationToken ct)
     {
+        var documentEdges = new Dictionary<(string FromTypeId, string ToTypeId), DependencyTypeReference>();
+        var documentSymbols = new Dictionary<string, INamedTypeSymbol>(StringComparer.Ordinal);
+        var documentTypeDocuments = new Dictionary<string, (INamedTypeSymbol Symbol, List<DependencyDocumentIdentity> Documents)>(StringComparer.Ordinal);
         var tree = await document.GetSyntaxTreeAsync(ct).ConfigureAwait(false);
         if (tree is null)
         {
             errors.Add(new DependencyGraphScanError(project.Name, document.Name, "Source was unavailable."));
-            return;
+            return false;
         }
 
         var model = compilation.GetSemanticModel(tree);
@@ -185,8 +403,16 @@ public static class DependencyGraphScanner
         foreach (var typeSyntax in root.DescendantNodes().OfType<TypeSyntax>())
         {
             if (model.GetTypeInfo(typeSyntax, ct).Type is not INamedTypeSymbol targetType || !HasSourceLocation(targetType)) continue;
-            var enclosingSymbol = model.GetEnclosingSymbol(typeSyntax.SpanStart, ct);
-            var enclosingType = enclosingSymbol as INamedTypeSymbol ?? enclosingSymbol?.ContainingType;
+            var containingDeclaration = typeSyntax.AncestorsAndSelf()
+                .FirstOrDefault(node => node is BaseTypeDeclarationSyntax or DelegateDeclarationSyntax);
+            var enclosingType = containingDeclaration is null
+                ? null
+                : model.GetDeclaredSymbol(containingDeclaration, ct) as INamedTypeSymbol;
+            if (enclosingType is null)
+            {
+                var enclosingSymbol = model.GetEnclosingSymbol(typeSyntax.SpanStart, ct);
+                enclosingType = enclosingSymbol as INamedTypeSymbol ?? enclosingSymbol?.ContainingType;
+            }
             if (enclosingType is null || !HasSourceLocation(enclosingType)) continue;
 
             var sourceLocation = SelectLocation(enclosingType, tree.FilePath);
@@ -196,18 +422,26 @@ public static class DependencyGraphScanner
             var targetFile = PathNormalizer.ToRelative(solutionDir, targetLocation.SourceTree?.FilePath ?? targetLocation.GetLineSpan().Path);
             if (string.IsNullOrEmpty(sourceFile) || string.IsNullOrEmpty(targetFile)) continue;
 
-            var sourceOwner = solution.GetDocument(sourceLocation.SourceTree!)?.Project ?? project;
-            var targetOwner = solution.GetDocument(targetLocation.SourceTree!)?.Project ?? project;
-            var source = ToTypeReferenceEnd(enclosingType, sourceOwner.Name, sourceFile, GetProjectIdentity(sourceOwner));
-            var target = ToTypeReferenceEnd(targetType, targetOwner.Name, targetFile, GetProjectIdentity(targetOwner));
-            symbolsByTypeId.TryAdd(source.TypeId, enclosingType.OriginalDefinition);
-            symbolsByTypeId.TryAdd(target.TypeId, targetType.OriginalDefinition);
+            var sourceOwner = GetDocumentOwner(solution, sourceLocation.SourceTree!, generatedDocumentOwners)?.Project;
+            var targetOwner = GetDocumentOwner(solution, targetLocation.SourceTree!, generatedDocumentOwners)?.Project;
+            if (sourceOwner is null || targetOwner is null)
+            {
+                errors.Add(new DependencyGraphScanError(project.Name, document.Name,
+                    "A source dependency endpoint did not have an exact loaded document owner."));
+                return false;
+            }
+            var source = ToTypeReferenceEnd(enclosingType, sourceOwner.Name, sourceFile,
+                GetProjectIdentity(sourceOwner, ownerContextFingerprints?.GetValueOrDefault(sourceOwner.Id)));
+            var target = ToTypeReferenceEnd(targetType, targetOwner.Name, targetFile,
+                GetProjectIdentity(targetOwner, ownerContextFingerprints?.GetValueOrDefault(targetOwner.Id)));
+            documentSymbols.TryAdd(source.TypeId, enclosingType.OriginalDefinition);
+            documentSymbols.TryAdd(target.TypeId, targetType.OriginalDefinition);
             if (source.TypeId == target.TypeId) continue;
 
             var key = (source.TypeId, target.TypeId);
-            if (!rawTypeEdges.ContainsKey(key))
+            if (!documentEdges.ContainsKey(key))
             {
-                rawTypeEdges.Add(key, new DependencyTypeReference(
+                documentEdges.Add(key, new DependencyTypeReference(
                     source.TypeId, target.TypeId,
                     source.Type, target.Type,
                     source.TypeName, target.TypeName,
@@ -216,21 +450,59 @@ public static class DependencyGraphScanner
                     source.File, target.File));
             }
         }
+
+        var declaredTypesInDocument = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var declaration in root.DescendantNodes().Where(node => node is BaseTypeDeclarationSyntax or DelegateDeclarationSyntax))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (model.GetDeclaredSymbol(declaration, ct) is not INamedTypeSymbol type || !HasSourceLocation(type)) continue;
+            var owner = GetDocumentOwner(solution, declaration.SyntaxTree, generatedDocumentOwners)?.Project;
+            if (owner is null)
+            {
+                errors.Add(new DependencyGraphScanError(project.Name, document.Name,
+                    "A declared source type did not have an exact loaded document owner."));
+                return false;
+            }
+            var typeId = CreateTypeId(type, GetProjectIdentity(owner, ownerContextFingerprints?.GetValueOrDefault(owner.Id)));
+            if (!declaredTypesInDocument.Add(typeId)) continue;
+            documentSymbols.TryAdd(typeId, type.OriginalDefinition);
+            if (!documentTypeDocuments.TryGetValue(typeId, out var typeDocuments))
+            {
+                typeDocuments = (type.OriginalDefinition, []);
+                documentTypeDocuments.Add(typeId, typeDocuments);
+            }
+            typeDocuments.Documents.Add(documentIdentity);
+        }
+
+        foreach (var (key, edge) in documentEdges)
+            if (!rawTypeEdges.ContainsKey(key)) rawTypeEdges.Add(key, edge);
+        foreach (var (typeId, symbol) in documentSymbols)
+            symbolsByTypeId.TryAdd(typeId, symbol);
+        foreach (var (typeId, typeDocuments) in documentTypeDocuments)
+        {
+            if (!typeDocumentsById.TryGetValue(typeId, out var existing))
+            {
+                typeDocumentsById.Add(typeId, typeDocuments);
+                continue;
+            }
+            existing.Documents.AddRange(typeDocuments.Documents);
+        }
+        return true;
     }
 
     private static DependencyGraphPayload CreatePayload(
-        DependencyGraphScanOptions options,
+        DependencyGraphProjectionOptions options,
         int pageSize,
-        int maxDocuments,
         int maxNodes,
-        DocumentSelection documentSelection,
-        List<ProjectDependency> projectDeps,
-        TypeReferenceScan typeScan,
+        DependencyGraphCollection collection,
         DependencyGraphTraversalOutcome traversal,
         bool isTargeted,
         int requestedDepth,
         int effectiveDepth,
-        Func<ISymbol, string?>? handoffFormatter)
+        Func<string, ISymbol?>? symbolResolver,
+        Func<ISymbol, string?>? handoffFormatter,
+        bool documentLimitWasClamped,
+        bool pageSizeWasClamped)
     {
         var selectedEdges = traversal.Edges;
 
@@ -252,39 +524,37 @@ public static class DependencyGraphScanner
             .ThenBy(edge => edge.ToProject, StringComparer.Ordinal).ThenBy(edge => edge.ToFile, StringComparer.Ordinal)
             .ToList();
 
-        var pagedProjects = Page(projectDeps, options.Offset, pageSize);
+        var pagedProjects = Page(collection.ProjectDependencies, options.Offset, pageSize);
         var pagedNamespaces = Page(allNamespaceDeps, options.Offset, pageSize);
         var pagedFiles = Page(allFileDeps, options.Offset, pageSize);
         var pagedTypeEdges = Page(selectedEdges, options.Offset, pageSize);
-        if (handoffFormatter is not null)
+        if (handoffFormatter is not null && symbolResolver is not null)
         {
             pagedTypeEdges = pagedTypeEdges.Select(edge => edge with
             {
-                FromHandoffId = typeScan.SymbolsByTypeId.TryGetValue(edge.FromTypeId, out var fromSymbol)
-                    ? handoffFormatter(fromSymbol) : null,
-                ToHandoffId = typeScan.SymbolsByTypeId.TryGetValue(edge.ToTypeId, out var toSymbol)
-                    ? handoffFormatter(toSymbol) : null,
+                FromHandoffId = symbolResolver(edge.FromTypeId) is { } fromSymbol ? handoffFormatter(fromSymbol) : null,
+                ToHandoffId = symbolResolver(edge.ToTypeId) is { } toSymbol ? handoffFormatter(toSymbol) : null,
             }).ToList();
         }
         return new DependencyGraphPayload(
             ProjectDependencies: pagedProjects,
             NamespaceDependencies: pagedNamespaces,
             FileDependencies: pagedFiles,
-            TotalProjectDependencyCount: projectDeps.Count,
+            TotalProjectDependencyCount: collection.ProjectDependencies.Length,
             TotalNamespaceDependencyCount: allNamespaceDeps.Count,
             TotalFileDependencyCount: allFileDeps.Count,
             Offset: options.Offset,
             PageSize: pageSize,
-            ScannedDocumentCount: documentSelection.Documents.Count,
-            TotalDocumentCount: documentSelection.TotalDocumentCount,
-            DocumentLimitReached: documentSelection.NextDocumentOffset is not null,
-            PageSizeWasClamped: pageSize != options.PageSize,
-            DocumentLimitWasClamped: maxDocuments != options.MaxDocuments,
-            Errors: typeScan.Errors,
+            ScannedDocumentCount: collection.CoveredDocumentCount,
+            TotalDocumentCount: collection.EligibleDocumentCount,
+            DocumentLimitReached: collection.NextDocumentOffset is not null,
+            PageSizeWasClamped: pageSizeWasClamped,
+            DocumentLimitWasClamped: documentLimitWasClamped || collection.DocumentLimitWasClamped,
+            Errors: collection.Errors,
             TypeDependencies: pagedTypeEdges,
             TotalTypeDependencyCount: selectedEdges.Count,
-            DocumentOffset: options.DocumentOffset,
-            NextDocumentOffset: documentSelection.NextDocumentOffset,
+            DocumentOffset: collection.DocumentOffset,
+            NextDocumentOffset: collection.NextDocumentOffset,
             Direction: isTargeted ? options.Direction : DependencyGraphDirection.Both,
             RequestedDepth: requestedDepth,
             EffectiveDepth: effectiveDepth,
@@ -296,18 +566,71 @@ public static class DependencyGraphScanner
             EffectiveNodeLimit: maxNodes,
             IsNodeLimitClamped: options.MaxNodes != maxNodes,
             NodeLimitReached: traversal.NodeLimitReached,
-            HiddenTypeDependencyCount: traversal.HiddenTypeDependencyCount);
+            HiddenTypeDependencyCount: traversal.HiddenTypeDependencyCount,
+            ContinuationInputIncomplete: collection.ContinuationInputIncomplete)
+        {
+            TypeDeclarations = collection.TypeDeclarations
+        };
     }
 
     private sealed record DocumentSelection(
-        int TotalDocumentCount,
-        IReadOnlyList<(Project Project, Document Document)> Documents,
-        int? NextDocumentOffset);
+        IReadOnlyList<OrderedDocument> EligibleDocuments,
+        IReadOnlyList<OrderedDocument> Documents,
+        int? NextDocumentOffset)
+    {
+        public int TotalDocumentCount => EligibleDocuments.Count;
+    }
+
+    private sealed record OrderedDocument(
+        Project Project,
+        Document Document,
+        string ProjectPath,
+        string ContextFingerprint,
+        string DocumentPath,
+        string TextHash,
+        string? TextError,
+        int DuplicateOrdinal)
+    {
+        public DependencyDocumentIdentity ToIdentity() => new(
+            ProjectPath,
+            ContextFingerprint,
+            DocumentPath,
+            Document.Name,
+            Document.Folders.ToImmutableArray(),
+            Document.SourceCodeKind.ToString(),
+            TextHash,
+            DuplicateOrdinal);
+    }
+
+    private sealed class OrderedDocumentFolderComparer : IComparer<OrderedDocument>
+    {
+        public static OrderedDocumentFolderComparer Instance { get; } = new();
+
+        public int Compare(OrderedDocument? left, OrderedDocument? right)
+        {
+            if (ReferenceEquals(left, right)) return 0;
+            if (left is null) return -1;
+            if (right is null) return 1;
+            var leftFolders = left.Document.Folders;
+            var rightFolders = right.Document.Folders;
+            var commonCount = Math.Min(leftFolders.Count, rightFolders.Count);
+            for (var index = 0; index < commonCount; index++)
+            {
+                var comparison = StringComparer.Ordinal.Compare(leftFolders[index], rightFolders[index]);
+                if (comparison != 0) return comparison;
+            }
+            return leftFolders.Count.CompareTo(rightFolders.Count);
+        }
+    }
 
     private sealed record TypeReferenceScan(
         IReadOnlyList<DependencyTypeReference> Edges,
-        IReadOnlyDictionary<string, INamedTypeSymbol> SymbolsByTypeId,
-        IReadOnlyList<DependencyGraphScanError> Errors);
+        IReadOnlyList<DependencyGraphScanError> Errors,
+        int CollectedDocumentCount,
+        int NewSemanticScanCount,
+        IReadOnlyList<DependencyDocumentIdentity> AttemptedDocuments,
+        IReadOnlyList<DependencyDocumentIdentity> CoveredDocuments,
+        IReadOnlyList<DependencyTypeDeclaration> TypeDeclarations);
 
     internal static DependencyGraphTraversalOutcome Traverse(
         IReadOnlyList<DependencyTypeReference> edges,
@@ -319,7 +642,8 @@ public static class DependencyGraphScanner
         DependencyGraphDirection direction,
         string solutionDir,
         int maxDepth,
-        int maxNodes)
+        int maxNodes,
+        IReadOnlyList<DependencyTypeDeclaration>? typeDeclarations = null)
     {
         var targetPath = NormalizeTargetPath(targetFilePath, solutionDir);
         var targetType = NormalizeTypeName(targetTypeName);
@@ -334,6 +658,26 @@ public static class DependencyGraphScanner
              (targetProject is null || string.Equals(project, targetProject, StringComparison.Ordinal)));
 
         var seeds = new HashSet<string>(StringComparer.Ordinal);
+        if (typeDeclarations is not null)
+        {
+            foreach (var declaration in typeDeclarations)
+            {
+                if (targetTypeId is not null || exactTypeIds is not null)
+                {
+                    if (string.Equals(declaration.TypeId, targetTypeId, StringComparison.Ordinal) || exactTypeIds?.Contains(declaration.TypeId) == true)
+                        seeds.Add(declaration.TypeId);
+                }
+                else if ((targetFilePath is not null &&
+                          (MatchesTargetPath(declaration.File, targetPath) || declaration.DeclarationDocuments.Any(document =>
+                              MatchesTargetPath(PathNormalizer.ToRelative(solutionDir, document.DocumentPath), targetPath)))
+                          && (targetProject is null || string.Equals(declaration.Project, targetProject, StringComparison.Ordinal)))
+                         || (targetTypeName is not null && MatchesTypeName(declaration.DisplayName, targetType)
+                             && (targetProject is null || string.Equals(declaration.Project, targetProject, StringComparison.Ordinal))))
+                {
+                    seeds.Add(declaration.TypeId);
+                }
+            }
+        }
         foreach (var edge in edges)
         {
             if (targetTypeId is not null || exactTypeIds is not null)
@@ -347,6 +691,8 @@ public static class DependencyGraphScanner
                 if (Matches(edge.ToType, edge.ToProject, edge.ToFile)) seeds.Add(edge.ToTypeId);
             }
         }
+        if (targetTypeId is not null) seeds.Add(targetTypeId);
+        if (exactTypeIds is not null) seeds.UnionWith(exactTypeIds);
 
         var discovered = new Dictionary<(string From, string To), DependencyTypeReference>();
         var hiddenEdges = new HashSet<(string From, string To)>();
@@ -363,8 +709,6 @@ public static class DependencyGraphScanner
             else
             {
                 nodeLimitReached = true;
-                foreach (var edge in edges.Where(edge => CanTraverse(edge, seed)))
-                    hiddenEdges.Add((edge.FromTypeId, edge.ToTypeId));
             }
         }
         for (var depth = 1; depth <= maxDepth && frontier.Count > 0; depth++)
@@ -372,28 +716,34 @@ public static class DependencyGraphScanner
             var next = new List<string>();
             foreach (var node in frontier)
             {
-                foreach (var edge in edges)
+                foreach (var edge in edges.Where(edge => CanTraverse(edge, node))
+                             .OrderBy(edge => edge.FromTypeId, StringComparer.Ordinal)
+                             .ThenBy(edge => edge.ToTypeId, StringComparer.Ordinal)
+                             .ThenBy(edge => edge.FromFile, StringComparer.Ordinal)
+                             .ThenBy(edge => edge.ToFile, StringComparer.Ordinal))
                 {
-                    if (!CanTraverse(edge, node)) continue;
                     var outgoing = edge.FromTypeId == node;
                     var key = (edge.FromTypeId, edge.ToTypeId);
-                    if (!discovered.ContainsKey(key)) discovered[key] = edge with { Depth = depth };
                     var neighbor = outgoing ? edge.ToTypeId : edge.FromTypeId;
-                    if (visited.Contains(neighbor)) continue;
-                    if (visited.Count < maxNodes)
+                    if (visited.Contains(neighbor))
                     {
-                        visited.Add(neighbor);
-                        next.Add(neighbor);
+                        if (!discovered.ContainsKey(key)) discovered[key] = edge with { Depth = depth };
+                        continue;
                     }
-                    else
+
+                    if (visited.Count >= maxNodes)
                     {
                         nodeLimitReached = true;
-                        foreach (var hiddenEdge in edges.Where(candidate => CanTraverse(candidate, neighbor)))
-                            hiddenEdges.Add((hiddenEdge.FromTypeId, hiddenEdge.ToTypeId));
+                        hiddenEdges.Add(key);
+                        continue;
                     }
+
+                    visited.Add(neighbor);
+                    next.Add(neighbor);
+                    if (!discovered.ContainsKey(key)) discovered[key] = edge with { Depth = depth };
                 }
             }
-            frontier = next;
+            frontier = next.OrderBy(node => node, StringComparer.Ordinal).ToList();
         }
 
         var sorted = discovered.Values
@@ -436,11 +786,25 @@ public static class DependencyGraphScanner
 
     private static Location? SelectLocation(INamedTypeSymbol type, string preferredPath) =>
         type.Locations.Where(location => location.IsInSource)
-            .OrderByDescending(location => string.Equals(location.SourceTree?.FilePath, preferredPath, StringComparison.OrdinalIgnoreCase))
-            .ThenBy(location => location.SourceTree?.FilePath, StringComparer.Ordinal)
+            .OrderBy(location => string.Equals(
+                CanonicalPath(location.SourceTree?.FilePath ?? location.GetLineSpan().Path), CanonicalPath(preferredPath), StringComparison.Ordinal) ? 0 : 1)
+            .ThenBy(location => CanonicalPath(location.SourceTree?.FilePath ?? location.GetLineSpan().Path), StringComparer.Ordinal)
             .FirstOrDefault();
 
-    public static string GetSourceTypeId(Solution solution, ISymbol symbol)
+    private static Document? GetDocumentOwner(
+        Solution solution,
+        SyntaxTree tree,
+        IReadOnlyDictionary<SyntaxTree, SourceGeneratedDocument> generatedDocumentOwners) =>
+        solution.GetDocument(tree) ?? (generatedDocumentOwners.TryGetValue(tree, out var generated) ? generated : null);
+
+    public static string GetSourceTypeId(Solution solution, ISymbol symbol) =>
+        GetSourceTypeId(solution, symbol, null, null);
+
+    internal static string GetSourceTypeId(
+        Solution solution,
+        ISymbol symbol,
+        IReadOnlyDictionary<ProjectId, string>? ownerContextFingerprints,
+        IReadOnlyDictionary<SyntaxTree, SourceGeneratedDocument>? generatedDocumentOwners = null)
     {
         ArgumentNullException.ThrowIfNull(solution);
         ArgumentNullException.ThrowIfNull(symbol);
@@ -448,12 +812,18 @@ public static class DependencyGraphScanner
             ?? throw new ArgumentException("The symbol has no containing source type.", nameof(symbol));
         var location = type.Locations.FirstOrDefault(candidate => candidate.IsInSource && candidate.SourceTree is not null)
             ?? throw new ArgumentException("The symbol has no source declaration.", nameof(symbol));
-        var project = solution.GetDocument(location.SourceTree!)?.Project
+        var project = GetDocumentOwner(solution, location.SourceTree!, generatedDocumentOwners ?? ImmutableDictionary<SyntaxTree, SourceGeneratedDocument>.Empty)?.Project
             ?? throw new ArgumentException("The symbol's source project is not in the solution.", nameof(symbol));
-        return CreateTypeId(type, GetProjectIdentity(project));
+        return CreateTypeId(type, GetProjectIdentity(project, ownerContextFingerprints?.GetValueOrDefault(project.Id)));
     }
 
-    public static async Task<IReadOnlyCollection<string>> GetDocumentTypeIdsAsync(Document document, CancellationToken ct = default)
+    public static Task<IReadOnlyCollection<string>> GetDocumentTypeIdsAsync(Document document, CancellationToken ct = default) =>
+        GetDocumentTypeIdsAsync(document, ct, null);
+
+    internal static async Task<IReadOnlyCollection<string>> GetDocumentTypeIdsAsync(
+        Document document,
+        CancellationToken ct,
+        IReadOnlyDictionary<ProjectId, string>? ownerContextFingerprints)
     {
         ArgumentNullException.ThrowIfNull(document);
         var tree = await document.GetSyntaxTreeAsync(ct).ConfigureAwait(false)
@@ -461,7 +831,7 @@ public static class DependencyGraphScanner
         var root = await tree.GetRootAsync(ct).ConfigureAwait(false);
         var model = await document.GetSemanticModelAsync(ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException("Source semantic model was unavailable.");
-        var projectIdentity = GetProjectIdentity(document.Project);
+        var projectIdentity = GetProjectIdentity(document.Project, ownerContextFingerprints?.GetValueOrDefault(document.Project.Id));
         var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (var declaration in root.DescendantNodes().Where(node => node is BaseTypeDeclarationSyntax or DelegateDeclarationSyntax))
         {
@@ -472,11 +842,10 @@ public static class DependencyGraphScanner
         return ids;
     }
 
-    private static string GetProjectIdentity(Project project)
+    private static string GetProjectIdentity(Project project, string? ownerContextFingerprint = null)
     {
-        if (string.IsNullOrWhiteSpace(project.FilePath)) return project.Name;
-        try { return Path.GetFullPath(project.FilePath); }
-        catch (ArgumentException) { return project.FilePath; }
+        var path = string.IsNullOrWhiteSpace(project.FilePath) ? project.Name : CanonicalPath(project.FilePath);
+        return string.IsNullOrEmpty(ownerContextFingerprint) ? path : $"{path}|context:{ownerContextFingerprint}";
     }
 
     private static string CreateTypeId(INamedTypeSymbol type, string projectIdentity)

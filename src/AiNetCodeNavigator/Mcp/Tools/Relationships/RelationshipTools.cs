@@ -511,10 +511,10 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                             return McpToolResults.InvalidArgument("The reference has no source type in this assembly.", "$.symbolIdentifier",
                                 "Use an asm: reference for a type or member declared in the selected assembly source.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                         }
-                        var scan = await DependencyGraphScanner.ScanSolutionAsync(access.Solution, ct,
-                            new DependencyGraphScanOptions(PageSize: maxResults, TargetTypeName: targetSymbol.ToDisplayString(),
-                                TargetTypeId: targetTypeId, Direction: parsedDirection, Depth: depth, ScopeType: parsedScope,
-                                IncludeGenerated: includeGenerated), CreateAssemblyHandoffFormatter(access)).ConfigureAwait(false);
+                        var scan = await CollectAndProjectDependencyGraphAsync(access.Solution,
+                            new DependencyGraphProjectionOptions(PageSize: maxResults, TargetTypeName: targetSymbol.ToDisplayString(),
+                                TargetTypeId: targetTypeId, Direction: parsedDirection, Depth: depth),
+                            parsedScope, includeGenerated, null, CreateAssemblyHandoffFormatter(access), ct).ConfigureAwait(false);
                         var response = NavigationToolSupport.Success(scan, scan.IsTruncated,
                             "Increase maxResults, depth, or document coverage and repeat the query.");
                         var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
@@ -532,7 +532,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         return McpToolResults.Recoverable(NavigationErrorCodes.AssemblyTargetUnsupported,
                             "The assembly has no materialized decompiled source tree.", "Use inspect_assembly for metadata-only navigation.",
                             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-                    var selectedDocument = ResolveDependencyDocument(scope.Solution, filePath!);
+                    var selectedDocument = await ResolveDependencyDocumentAsync(scope.Solution, filePath!, ct).ConfigureAwait(false);
                     if (selectedDocument.Document is null)
                         return McpToolResults.InvalidArgument("The requested assembly source file could not be selected.", "$.filePath",
                             selectedDocument.Error!, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
@@ -540,10 +540,10 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                         return McpToolResults.InvalidArgument("The requested source file is outside this assembly's decompiled source.", "$.filePath",
                             "Choose a file emitted by this assembly's source tree.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
                     var fileTypeIds = await DependencyGraphScanner.GetDocumentTypeIdsAsync(selectedDocument.Document, ct).ConfigureAwait(false);
-                    var fileScan = await DependencyGraphScanner.ScanSolutionAsync(scope.Solution, ct,
-                        new DependencyGraphScanOptions(PageSize: maxResults, TargetFilePath: filePath,
-                            TargetTypeIds: fileTypeIds, Direction: parsedDirection, Depth: depth, ScopeType: parsedScope,
-                            IncludeGenerated: includeGenerated), CreateAssemblyHandoffFormatter(scope.Solution, scope.Context)).ConfigureAwait(false);
+                    var fileScan = await CollectAndProjectDependencyGraphAsync(scope.Solution,
+                        new DependencyGraphProjectionOptions(PageSize: maxResults, TargetFilePath: filePath,
+                            TargetTypeIds: fileTypeIds, Direction: parsedDirection, Depth: depth),
+                        parsedScope, includeGenerated, null, CreateAssemblyHandoffFormatter(scope.Solution, scope.Context), ct).ConfigureAwait(false);
                     var fileResponse = NavigationToolSupport.Success(fileScan, fileScan.IsTruncated,
                         "Increase maxResults, depth, or document coverage and repeat the query.");
                     var fileIdentity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath,
@@ -567,20 +567,26 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     var type = resolved.Symbol is INamedTypeSymbol namedType ? namedType : resolved.Symbol!.ContainingType;
                     typeName = type?.ToDisplayString();
                     if (type is null) return McpToolResults.InvalidArgument("The symbol has no containing type.", "$.symbolIdentifier", "Choose a type or member declared in a type.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-                    typeId = DependencyGraphScanner.GetSourceTypeId(solution, type);
+                    IReadOnlyDictionary<SyntaxTree, SourceGeneratedDocument>? generatedDocumentOwners = null;
+                    var sourceTree = type.Locations.FirstOrDefault(location => location.IsInSource)?.SourceTree;
+                    if (sourceTree is not null && solution.GetDocument(sourceTree) is null)
+                        generatedDocumentOwners = await ExactSourceSymbolResolver.GetSourceGeneratedDocumentOwnersAsync(solution, ct).ConfigureAwait(false);
+                    typeId = DependencyGraphScanner.GetSourceTypeId(solution, type,
+                        source.IdentityRequest.OwnerContextFingerprints, generatedDocumentOwners);
                 }
                 else if (filePath is not null)
                 {
-                    var selectedDocument = ResolveDependencyDocument(solution, filePath);
+                    var selectedDocument = await ResolveDependencyDocumentAsync(solution, filePath, ct).ConfigureAwait(false);
                     if (selectedDocument.Document is null)
                         return McpToolResults.InvalidArgument("The requested source file could not be selected.", "$.filePath", selectedDocument.Error!, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-                    fileTypeIds = await DependencyGraphScanner.GetDocumentTypeIdsAsync(selectedDocument.Document, ct).ConfigureAwait(false);
+                    fileTypeIds = await DependencyGraphScanner.GetDocumentTypeIdsAsync(selectedDocument.Document,
+                        ct, source.IdentityRequest.OwnerContextFingerprints).ConfigureAwait(false);
                 }
-                var scan = await ScanSourceDependencyGraphAcrossDocumentsAsync(solution,
-                    new DependencyGraphTraversalOptions(TargetFilePath: filePath,
+                var scan = await CollectAndProjectDependencyGraphAsync(solution,
+                    new DependencyGraphProjectionOptions(TargetFilePath: filePath,
                         TargetTypeName: typeName, Direction: parsedDirection, Depth: depth,
                         PageSize: maxResults, TargetTypeId: typeId, TargetTypeIds: fileTypeIds),
-                    new DependencyGraphScanOptions(ScopeType: parsedScope, IncludeGenerated: includeGenerated),
+                    parsedScope, includeGenerated, source.IdentityRequest,
                     symbolValue => source.FormatHandoff(symbolValue, solution), ct).ConfigureAwait(false);
                 var response = NavigationToolSupport.Success(scan, scan.IsTruncated, "Increase maxResults, depth, or document coverage and repeat the query.");
                 var omissions = new List<string>();
@@ -599,115 +605,27 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
     }
 
-    private static async Task<DependencyGraphPayload> ScanSourceDependencyGraphAcrossDocumentsAsync(
+    private static async Task<DependencyGraphPayload> CollectAndProjectDependencyGraphAsync(
         Solution solution,
-        DependencyGraphTraversalOptions traversalOptions,
-        DependencyGraphScanOptions scanOptions,
-        Func<ISymbol, string?> handoffFormatter,
+        DependencyGraphProjectionOptions projectionOptions,
+        SymbolScopeType scopeType,
+        bool includeGenerated,
+        SourceIdentityRequest? sourceIdentityRequest,
+        Func<ISymbol, string?>? handoffFormatter,
         CancellationToken cancellationToken)
     {
-        var pages = new List<DependencyGraphPayload>();
-        var documentOffset = 0;
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var relationshipOffset = 0;
-            DependencyGraphPayload? firstPage = null;
-            while (true)
-            {
-                var page = await DependencyGraphScanner.ScanSolutionAsync(solution, cancellationToken,
-                    scanOptions with
-                    {
-                        Offset = relationshipOffset,
-                        PageSize = DependencyGraphScanner.MaximumPageSize,
-                        MaxDocuments = DependencyGraphScanner.MaximumDocuments,
-                        DocumentOffset = documentOffset,
-                        TargetFilePath = null,
-                        TargetTypeName = null,
-                        TargetProject = null,
-                        TargetTypeId = null,
-                        TargetTypeIds = null,
-                    }).ConfigureAwait(false);
-                pages.Add(page);
-                firstPage ??= page;
-                var relationshipTotal = Math.Max(page.TotalProjectDependencyCount,
-                    Math.Max(page.TotalNamespaceDependencyCount,
-                        Math.Max(page.TotalFileDependencyCount, page.TotalTypeDependencyCount)));
-                if (relationshipOffset + page.PageSize >= relationshipTotal) break;
-                relationshipOffset += page.PageSize;
-            }
-
-            if (firstPage!.NextDocumentOffset is not int nextDocumentOffset) break;
-            documentOffset = nextDocumentOffset;
-        }
-
-        var merged = DependencyGraphTraversal.MergeAndTraverse(pages, traversalOptions);
-        var visibleEdges = merged.TypeDependencies ?? [];
-        if (visibleEdges.Count == 0) return merged;
-
-        var requestedTypeIds = visibleEdges.SelectMany(edge => new[] { edge.FromTypeId, edge.ToTypeId })
-            .ToHashSet(StringComparer.Ordinal);
-        var symbolsByTypeId = await ResolveSourceDependencyTypesAsync(solution, requestedTypeIds, cancellationToken).ConfigureAwait(false);
-        return merged with
-        {
-            TypeDependencies = visibleEdges.Select(edge => edge with
-            {
-                FromHandoffId = symbolsByTypeId.TryGetValue(edge.FromTypeId, out var fromSymbol) ? handoffFormatter(fromSymbol) : null,
-                ToHandoffId = symbolsByTypeId.TryGetValue(edge.ToTypeId, out var toSymbol) ? handoffFormatter(toSymbol) : null,
-            }).ToArray(),
-        };
+        var symbolsByTypeId = new Dictionary<string, ISymbol>(StringComparer.Ordinal);
+        var collection = await DependencyGraphScanner.CollectAsync(solution,
+            new DependencyGraphCollectionOptions(scopeType, includeGenerated), cancellationToken,
+            sourceIdentityRequest?.OwnerContextFingerprints,
+            new DependencyGraphCollectionObserver(SymbolDiscovered: (typeId, symbol) => symbolsByTypeId.TryAdd(typeId, symbol)))
+            .ConfigureAwait(false);
+        return DependencyGraphScanner.Project(collection, projectionOptions,
+            typeId => symbolsByTypeId.GetValueOrDefault(typeId), handoffFormatter);
     }
 
-    private static async Task<IReadOnlyDictionary<string, INamedTypeSymbol>> ResolveSourceDependencyTypesAsync(
-        Solution solution,
-        HashSet<string> requestedTypeIds,
-        CancellationToken cancellationToken)
-    {
-        var symbolsByTypeId = new Dictionary<string, INamedTypeSymbol>(StringComparer.Ordinal);
-        foreach (var project in solution.Projects.OrderBy(project => project.FilePath, StringComparer.Ordinal))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var compilation = await project.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
-            if (compilation is null) continue;
-            VisitNamespace(compilation.Assembly.GlobalNamespace);
-            if (symbolsByTypeId.Count == requestedTypeIds.Count) break;
-        }
-        return symbolsByTypeId;
-
-        void VisitNamespace(INamespaceSymbol namespaceSymbol)
-        {
-            if (symbolsByTypeId.Count == requestedTypeIds.Count) return;
-            cancellationToken.ThrowIfCancellationRequested();
-            foreach (var childNamespace in namespaceSymbol.GetNamespaceMembers())
-            {
-                VisitNamespace(childNamespace);
-                if (symbolsByTypeId.Count == requestedTypeIds.Count) return;
-            }
-            foreach (var type in namespaceSymbol.GetTypeMembers())
-            {
-                VisitType(type);
-                if (symbolsByTypeId.Count == requestedTypeIds.Count) return;
-            }
-        }
-
-        void VisitType(INamedTypeSymbol type)
-        {
-            if (symbolsByTypeId.Count == requestedTypeIds.Count) return;
-            cancellationToken.ThrowIfCancellationRequested();
-            if (type.Locations.Any(location => location.IsInSource))
-            {
-                var typeId = DependencyGraphScanner.GetSourceTypeId(solution, type);
-                if (requestedTypeIds.Contains(typeId)) symbolsByTypeId.TryAdd(typeId, type.OriginalDefinition);
-            }
-            foreach (var nestedType in type.GetTypeMembers())
-            {
-                VisitType(nestedType);
-                if (symbolsByTypeId.Count == requestedTypeIds.Count) return;
-            }
-        }
-    }
-
-    private static (Document? Document, string? Error) ResolveDependencyDocument(Solution solution, string filePath)
+    private static async Task<(Document? Document, string? Error)> ResolveDependencyDocumentAsync(
+        Solution solution, string filePath, CancellationToken cancellationToken)
     {
         var solutionDirectory = Path.GetDirectoryName(solution.FilePath) ?? Environment.CurrentDirectory;
         string requestedPath;
@@ -720,8 +638,16 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
             return (null, "Provide a valid path relative to the solution or an absolute document path.");
         }
 
+        var loadedDocuments = new List<Document>();
+        foreach (var project in solution.Projects.OrderBy(project => project.FilePath, StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            loadedDocuments.AddRange(project.Documents);
+            loadedDocuments.AddRange(await project.GetSourceGeneratedDocumentsAsync(cancellationToken).ConfigureAwait(false));
+        }
+
         var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-        var exactMatches = solution.Projects.SelectMany(project => project.Documents)
+        var exactMatches = loadedDocuments
             .Where(document => !string.IsNullOrWhiteSpace(document.FilePath))
             .Where(document =>
             {
@@ -730,20 +656,35 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
             })
             .ToList();
         if (exactMatches.Count == 1) return (exactMatches[0], null);
-        if (exactMatches.Count > 1) return (null, "The path is linked into multiple projects; use a symbolIdentifier or a unique source path.");
+        if (exactMatches.Count > 1) return (null, AmbiguousDependencyDocumentHint(exactMatches));
 
-        var suffix = filePath.Replace('\\', '/').TrimStart('.', '/');
-        var suffixMatches = solution.Projects.SelectMany(project => project.Documents)
-            .Where(document => !string.IsNullOrWhiteSpace(document.FilePath))
-            .Where(document => document.FilePath!.Replace('\\', '/').EndsWith("/" + suffix, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(Path.GetFileName(document.FilePath), suffix, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        return suffixMatches.Count switch
+        return (null, "The canonical path does not identify a loaded source file. Choose a loaded path relative to the solution or an absolute document path, or use find_symbol and select a unique owner-bound symbol reference.");
+    }
+
+    private static string AmbiguousDependencyDocumentHint(IEnumerable<Document> documents)
+    {
+        var candidates = documents.Select(document => CanonicalDependencyOwnerPath(document.Project.FilePath))
+            .Where(path => path is not null)
+            .Cast<string>()
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(path => path, StringComparer.Ordinal);
+        return "The file path has multiple loaded owners. Candidate owning project paths: "
+            + string.Join(", ", candidates)
+            + ". Use find_symbol and select a unique owner-bound symbol reference.";
+    }
+
+    private static string? CanonicalDependencyOwnerPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        try
         {
-            1 => (suffixMatches[0], null),
-            > 1 => (null, "The relative path matches multiple documents; pass a longer solution-relative path or an absolute document path."),
-            _ => (null, "The path does not identify a source document in the loaded solution."),
-        };
+            var canonical = Path.GetFullPath(path).Replace('\\', '/');
+            return OperatingSystem.IsWindows() ? canonical.ToUpperInvariant() : canonical;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return path.Replace('\\', '/');
+        }
     }
 
     [McpServerTool(Name = "resolve_type_origin", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]

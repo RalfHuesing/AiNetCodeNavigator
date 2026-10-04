@@ -353,9 +353,12 @@ public sealed class SourceRelationshipToolsContractTests
         var graph = await relationships.DependencyGraph(target, symbolIdentifier: "T:RelationshipProbe.LateRoot",
             direction: "outgoing", depth: 1, maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(graph, 65536, 4096);
-        Assert.Contains("LateRoot", TextOf(graph), StringComparison.Ordinal);
-        Assert.Contains("LaterDependency", TextOf(graph), StringComparison.Ordinal);
-        Assert.Contains("isComplete\": true", TextOf(graph), StringComparison.OrdinalIgnoreCase);
+        using var document = JsonDocument.Parse(JsonBody(TextOf(graph)));
+        var root = document.RootElement;
+        var edges = root.GetProperty("typeDependencies").EnumerateArray().ToArray();
+        Assert.Contains(edges, edge => edge.GetProperty("fromTypeName").GetString() == "LateRoot"
+            && edge.GetProperty("toTypeName").GetString() == "LaterDependency");
+        Assert.True(root.GetProperty("isComplete").GetBoolean(), TextOf(graph));
     }
 
     [Fact]

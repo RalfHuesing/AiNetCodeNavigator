@@ -1,5 +1,6 @@
 #nullable enable
 
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Dependencies;
@@ -144,6 +145,96 @@ public sealed class DependencyGraphScannerTests
     }
 
     [Fact]
+    public async Task CollectAsync_ProjectsRelationshipPagesWithoutRescanningDocuments()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\DependencyPageCollection.slnx",
+            new ProjectSpec("Contracts", [
+                ("Types.cs", "namespace Contracts; public class First { } public class Second { }")], VirtualProjectDirectory: "src/Contracts"),
+            new ProjectSpec("App", [
+                ("Consumer.cs", "namespace App; public class Consumer { public Contracts.First First = new(); public Contracts.Second Second = new(); }")],
+                ProjectReferences: ["Contracts"], VirtualProjectDirectory: "src/App"));
+        var compilationAcquisitions = new List<string>();
+        var documentCollections = new List<string>();
+
+        var collection = await DependencyGraphScanner.CollectAsync(
+            fixture.Solution,
+            new DependencyGraphCollectionOptions(),
+            observer: new DependencyGraphCollectionObserver(
+                project => compilationAcquisitions.Add(project.Name),
+                document => documentCollections.Add(document.FilePath ?? document.Name)));
+        var firstPage = DependencyGraphScanner.Project(collection,
+            new DependencyGraphProjectionOptions(Offset: 0, PageSize: 1));
+        var secondPage = DependencyGraphScanner.Project(collection,
+            new DependencyGraphProjectionOptions(Offset: 1, PageSize: 1));
+
+        Assert.Single(firstPage.TypeDependencies!);
+        Assert.Single(secondPage.TypeDependencies!);
+        Assert.Equal(2, firstPage.TotalTypeDependencyCount);
+        Assert.Equal(2, secondPage.TotalTypeDependencyCount);
+        Assert.Equal(2, collection.NewSemanticScanCount);
+        Assert.Equal(2, collection.CoveredDocumentCount);
+        Assert.Equal(2, compilationAcquisitions.Distinct(StringComparer.Ordinal).Count());
+        Assert.All(compilationAcquisitions.GroupBy(name => name), group => Assert.Single(group));
+        Assert.Equal(2, documentCollections.Distinct(StringComparer.Ordinal).Count());
+        Assert.All(documentCollections.GroupBy(path => path), group => Assert.Single(group));
+    }
+
+    [Fact]
+    public async Task CollectAsync_RetainsIdenticalDocumentMultiplicityWithDeterministicOrdinals()
+    {
+        const string partialClass = "namespace App; public partial class Duplicate { }";
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\DependencyDuplicateDocuments.slnx",
+            new ProjectSpec("App", [
+                ("Duplicate.cs", partialClass),
+                ("Duplicate.cs", partialClass)], VirtualProjectDirectory: "src/App"));
+
+        var collection = await DependencyGraphScanner.CollectAsync(fixture.Solution, new DependencyGraphCollectionOptions());
+
+        Assert.Equal(2, collection.EligibleDocumentCount);
+        Assert.Equal(2, collection.RequiredDocumentCount);
+        Assert.Equal(2, collection.AttemptedDocuments.Length);
+        Assert.Equal(2, collection.CoveredDocuments.Length);
+        Assert.Equal(new[] { 0, 1 }, collection.RequiredDocuments.Select(document => document.DuplicateOrdinal).ToArray());
+    }
+
+    [Fact]
+    public async Task CollectAsync_DrainsMoreThanOneThousandDocumentsAndFindsLateRoot()
+    {
+        var appDocuments = Enumerable.Range(0, 1000)
+            .Select(index => ($"Filler{index:D4}.cs", $"namespace App; public class Filler{index:D4} {{ }}"))
+            .Append(("ZRoot.cs", "namespace App; public class LateRoot { public Contracts.Target Value = new(); }"))
+            .ToList();
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\DependencyCollectionDrain.slnx",
+            new ProjectSpec("App", appDocuments, ProjectReferences: ["Contracts"], VirtualProjectDirectory: "src/App"),
+            new ProjectSpec("Contracts", [("Target.cs", "namespace Contracts; public class Target { }")], VirtualProjectDirectory: "src/Contracts"));
+        var compilationAcquisitions = new List<string>();
+        var semanticScans = 0;
+
+        var collection = await DependencyGraphScanner.CollectAsync(
+            fixture.Solution,
+            new DependencyGraphCollectionOptions(),
+            observer: new DependencyGraphCollectionObserver(
+                project => compilationAcquisitions.Add(project.Name),
+                _ => semanticScans++));
+        var graph = DependencyGraphScanner.Project(collection, new DependencyGraphProjectionOptions(
+            TargetTypeName: "App.LateRoot", Direction: DependencyGraphDirection.Outgoing, Depth: 1));
+
+        Assert.Equal(1002, collection.EligibleDocumentCount);
+        Assert.Equal(1002, collection.NewSemanticScanCount);
+        Assert.Equal(1002, semanticScans);
+        Assert.Equal(1002, collection.CoveredDocumentCount);
+        Assert.Equal(2, compilationAcquisitions.Distinct(StringComparer.Ordinal).Count());
+        Assert.All(compilationAcquisitions.GroupBy(name => name), group => Assert.Single(group));
+        Assert.Equal(0, graph.DocumentOffset);
+        Assert.Null(graph.NextDocumentOffset);
+        Assert.Equal(1002, graph.ScannedDocumentCount);
+        Assert.Contains(graph.TypeDependencies!, edge => edge.FromType == "global::App.LateRoot" && edge.ToType == "global::Contracts.Target");
+    }
+
+    [Fact]
     public async Task ScanSolutionAsync_ReportsDocumentLimitAndClampedBounds()
     {
         using var fixture = TestWorkspaceBuilder.CreateSolution(
@@ -226,6 +317,72 @@ public sealed class DependencyGraphScannerTests
         Assert.Single(incoming.TypeDependencies!);
         Assert.Equal("global::App.CallerA", incoming.TypeDependencies![0].FromType);
     }
+
+    [Fact]
+    public async Task ScanSolutionAsync_CollectsNestedRecordPrimaryConstructorParameterDependency()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\DependencyPrimaryConstructor.slnx",
+            new ProjectSpec("App", [(
+                "Root.cs",
+                "namespace RootProbe; public class Outer { public sealed record NestedRecord(Dependency Value); } public sealed class Dependency { }")],
+                VirtualProjectDirectory: "src/App"));
+
+        var graph = await DependencyGraphScanner.ScanSolutionAsync(fixture.Solution,
+            options: new DependencyGraphScanOptions(
+                TargetFilePath: "src/App/Root.cs",
+                Direction: DependencyGraphDirection.Outgoing,
+                Depth: 1));
+
+        Assert.Contains(graph.TypeDependencies!, edge => edge.FromType == "global::RootProbe.Outer.NestedRecord"
+            && edge.ToType == "global::RootProbe.Dependency");
+    }
+
+    [Fact]
+    public void Traverse_AdmitsSameDepthNeighborsInOrdinalOrderBeforeApplyingNodeCap()
+    {
+        var edges = new[]
+        {
+            CreateEdge("R", "A"),
+            CreateEdge("R", "B"),
+            CreateEdge("A", "Z"),
+            CreateEdge("B", "C"),
+            CreateEdge("Z", "X"),
+            CreateEdge("C", "D"),
+        };
+
+        var traversal = DependencyGraphScanner.Traverse(
+            edges,
+            targetFilePath: null,
+            targetTypeName: "App.R",
+            targetProject: null,
+            targetTypeId: null,
+            targetTypeIds: null,
+            DependencyGraphDirection.Outgoing,
+            solutionDir: string.Empty,
+            maxDepth: 3,
+            maxNodes: 6);
+
+        Assert.Equal(6, traversal.VisitedTypeCount);
+        Assert.True(traversal.NodeLimitReached);
+        Assert.Equal(1, traversal.HiddenTypeDependencyCount);
+        Assert.Contains(traversal.Edges, edge => edge.FromTypeId == "C" && edge.ToTypeId == "D" && edge.Depth == 3);
+        Assert.DoesNotContain(traversal.Edges, edge => edge.FromTypeId == "Z" && edge.ToTypeId == "X");
+    }
+
+    private static DependencyTypeReference CreateEdge(string from, string to) => new(
+        from,
+        to,
+        $"global::App.{from}",
+        $"global::App.{to}",
+        from,
+        to,
+        "App",
+        "App",
+        "App",
+        "App",
+        $"src/App/{from}.cs",
+        $"src/App/{to}.cs");
 
     [Fact]
     public async Task ScanSolutionAsync_ContinuesDocumentScanWithoutRepeatingPriorPage()
@@ -411,5 +568,90 @@ public sealed class DependencyGraphScannerTests
         Assert.Single(merged.ProjectDependencies);
         Assert.False(missingTypePage.IsComplete);
         Assert.True(missingTypePage.ContinuationInputIncomplete);
+    }
+
+    [Fact]
+    public void MergeAndTraverse_DoesNotInventDocumentCursorForFullyAttemptedPartialCoverage()
+    {
+        var scanPage = new DependencyGraphPayload(
+            ProjectDependencies: [],
+            NamespaceDependencies: [],
+            FileDependencies: [],
+            TotalProjectDependencyCount: 0,
+            TotalNamespaceDependencyCount: 0,
+            TotalFileDependencyCount: 0,
+            ScannedDocumentCount: 1,
+            TotalDocumentCount: 2,
+            Errors: [new DependencyGraphScanError("App", "Broken.cs", "Source was unavailable.")],
+            TypeDependencies: [],
+            TotalTypeDependencyCount: 0,
+            DocumentOffset: 0,
+            NextDocumentOffset: null);
+
+        var result = DependencyGraphTraversal.MergeAndTraverse(
+            [scanPage],
+            new DependencyGraphTraversalOptions(TargetTypeName: "App.Root", Direction: DependencyGraphDirection.Outgoing));
+
+        Assert.Equal(1, result.ScannedDocumentCount);
+        Assert.Equal(2, result.TotalDocumentCount);
+        Assert.Null(result.NextDocumentOffset);
+        Assert.False(result.DocumentLimitReached);
+        Assert.False(result.ContinuationInputIncomplete);
+        Assert.Equal("Broken.cs", Assert.Single(result.Errors!).Document);
+        Assert.True(result.IsTruncated);
+    }
+
+    [Fact]
+    public void MergeAndTraverse_UsesSharedPageOffsetsWhenACollectionIsShorterThanThePageWindow()
+    {
+        var projectDependencies = Enumerable.Range(0, 101)
+            .Select(index => new ProjectDependency($"Project{index:D3}", "Dependency"))
+            .ToArray();
+        var edge = new DependencyTypeReference(
+            "app-root", "contracts-target", "global::App.Root", "global::Contracts.Target", "Root", "Target",
+            "App", "Contracts", "App", "Contracts", "src/App/Root.cs", "src/Contracts/Target.cs");
+        var firstPage = new DependencyGraphPayload(
+            ProjectDependencies: projectDependencies.Take(100).ToArray(),
+            NamespaceDependencies: [],
+            FileDependencies: [],
+            TotalProjectDependencyCount: 101,
+            Offset: 0,
+            PageSize: 100,
+            ScannedDocumentCount: 2,
+            TotalDocumentCount: 2,
+            TypeDependencies: [edge],
+            TotalTypeDependencyCount: 1,
+            DocumentOffset: 0);
+        var secondPage = firstPage with
+        {
+            ProjectDependencies = projectDependencies.Skip(100).ToArray(),
+            Offset = 100,
+            TypeDependencies = []
+        };
+
+        var result = DependencyGraphTraversal.MergeAndTraverse(
+            [firstPage, secondPage],
+            new DependencyGraphTraversalOptions(TargetTypeName: "App.Root", Direction: DependencyGraphDirection.Outgoing));
+
+        Assert.Equal(101, result.TotalProjectDependencyCount);
+        Assert.Single(result.TypeDependencies!);
+        Assert.False(result.ContinuationInputIncomplete);
+        Assert.True(result.IsTruncated);
+    }
+
+    [Fact]
+    public async Task MergeAndTraverse_PreservesEdgeFreeTypeSeedsFromSourceScan()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:\VirtualRepo\DependencyEdgeFreeType.slnx",
+            new ProjectSpec("App", [("Empty.cs", "namespace App; public sealed class Empty { }")], VirtualProjectDirectory: "src/App"));
+        var scanPage = await DependencyGraphScanner.ScanSolutionAsync(fixture.Solution);
+
+        var result = DependencyGraphTraversal.MergeAndTraverse(
+            [scanPage],
+            new DependencyGraphTraversalOptions(TargetTypeName: "App.Empty", Direction: DependencyGraphDirection.Outgoing));
+
+        Assert.Equal(1, result.VisitedTypeCount);
+        Assert.Empty(result.TypeDependencies!);
     }
 }
