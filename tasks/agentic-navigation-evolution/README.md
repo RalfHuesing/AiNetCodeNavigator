@@ -1,6 +1,6 @@
 # Agentic navigation evolution
 
-This directory is the implementation basis and maintained knowledge store for the improvements approved on 2026-10-03. The user authorized consolidation, a sequential roadmap and its complete execution. See the roadmap for the authoritative verified completion state and subsequent work.
+This directory is the implementation basis and maintained knowledge store for the improvements approved on 2026-10-03. The user authorized consolidation, a sequential roadmap and its complete execution. R01–R08 are complete; the final eligible routine gate passed all 680 Fast and 100 Integration cases. See the roadmap for verified commits/checks and findings.md for the expressly deferred F01–F05 additional evidence.
 
 Start at [roadmap.md](roadmap.md). This compact index owns execution order and the eight completion checkboxes. Read the [shared execution rules](roadmap/execution.md); each linked point file under `roadmap/` owns its detailed checklist and implementation evidence. The four specifications below own their contracts; the roadmap links to them instead of duplicating them.
 
@@ -15,7 +15,7 @@ Task-local agent roles: the user's 2026-10-04 override requires `gpt-6.1-sol` / 
 
 ## Authority and scope
 
-These are planned acceptance requirements, not evidence of current behavior. All four specifications and the roadmap are binding together. Repository rules in [.agents/rules](../../.agents/rules/README.md) continue to apply. Invoking an orchestrator later does not implicitly invoke optional steps in [.agents/agent-workflow](../../.agents/agent-workflow/README.md).
+These specifications define acceptance requirements; the point records and verified commits provide evidence of implemented behavior. All four specifications and the roadmap are binding together with the later user-approved execution/evidence policy. Repository rules in [.agents/rules](../../.agents/rules/README.md) continue to apply. Invoking an orchestrator does not implicitly invoke optional steps in [.agents/agent-workflow](../../.agents/agent-workflow/README.md).
 
 The selected scope is complete removal of Base62 `h:` navigation handles; readable source and assembly declaration references; dependency collection once, bounded reuse and targeted outgoing analysis; source identity once per immutable snapshot; and reliable short status polls with real progress. Existing output presentation and tool purposes remain unchanged.
 

@@ -1,6 +1,6 @@
 # Fresh snapshots and reusable analysis
 
-Status: specified for implementation. Execution: [R03](roadmap/R03-snapshot-identity.md) and [R05](roadmap/R05-dependency-cache.md).
+Status: implemented and verified through R03/R05; see executed gates, cause corrections and independent audits. Additional platform/shared-host/concurrency and measurement evidence remains explicitly deferred as F01–F04 in [findings.md](findings.md). Execution: [R03](roadmap/R03-snapshot-identity.md) and [R05](roadmap/R05-dependency-cache.md).
 
 ## Fresh analysis boundary
 

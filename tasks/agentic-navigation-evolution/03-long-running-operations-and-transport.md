@@ -1,6 +1,6 @@
 # Long-running operations and transport
 
-Status: specified for implementation. Execution: [R07](roadmap/R07-polling-and-transport.md).
+Status: implemented with verified automated contracts and independent audit through R07. The user-approved execution policy explicitly defers the new-build connected-client/expanded EOF evidence as F05 in [findings.md](findings.md); that check is not claimed passed. Execution: [R07](roadmap/R07-polling-and-transport.md).
 
 ## One operation and ordinary tool results
 

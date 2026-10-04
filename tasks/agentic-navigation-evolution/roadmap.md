@@ -1,6 +1,6 @@
 # Sequential implementation roadmap
 
-Status: implementation execution started on 2026-10-03 by the explicitly invoked orchestrator. R01–R07 are complete after verified fixes and independent audits, including the R05 shutdown boundary and R07 fixture proof; R08 final routine verification remains open. Specifications were consolidated on 2026-10-03 from the approved discussion.
+Status: implementation execution started on 2026-10-03 by the explicitly invoked orchestrator. R01–R08 are complete after verified implementation, independent audits and final 780-case routine PASS. F01–F05 remain expressly deferred additional evidence under the user-approved execution policy. Specifications were consolidated on 2026-10-03 from the approved discussion.
 
 Read the [shared execution contract, completion rules and verification policy](roadmap/execution.md) before starting any point. Then read that point's file and linked specifications. The orchestrator executes the points in order.
 
@@ -13,7 +13,7 @@ Read the [shared execution contract, completion rules and verification policy](r
 - [x] R05 — [Bounded dependency reuse](roadmap/R05-dependency-cache.md)
 - [x] R06 — [Targeted outgoing traversal](roadmap/R06-targeted-outgoing.md)
 - [x] R07 — [Short polls, progress and transport diagnosis](roadmap/R07-polling-and-transport.md)
-- [ ] R08 — [Final gates and completed handoff](roadmap/R08-final-verification.md)
+- [x] R08 — [Final gates and completed handoff](roadmap/R08-final-verification.md)
 
 These eight checkboxes are the authoritative point completion state. Only the orchestrator changes them after reviewing every acceptance checkbox and the actual evidence in that point's file. See each point for its current execution evidence.
 

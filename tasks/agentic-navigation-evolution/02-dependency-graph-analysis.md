@@ -1,6 +1,6 @@
 # Dependency collection and traversal
 
-Status: specified for implementation. Execution: [R04](roadmap/R04-single-collection.md), [R05](roadmap/R05-dependency-cache.md) and [R06](roadmap/R06-targeted-outgoing.md). Cache ownership and bounds: [specification 04](04-snapshot-refresh-and-analysis-cache.md).
+Status: implemented and verified through R04–R06; see their executed gates, work-count evidence and independent audits. Expanded measurement matrices remain explicitly deferred as F03 in [findings.md](findings.md). Execution: [R04](roadmap/R04-single-collection.md), [R05](roadmap/R05-dependency-cache.md) and [R06](roadmap/R06-targeted-outgoing.md). Cache ownership and bounds: [specification 04](04-snapshot-refresh-and-analysis-cache.md).
 
 ## Required separation
 
@@ -101,4 +101,4 @@ Record refresh, identity, compilation, semantic collection, projection and end-t
 
 ## Inspected entry points
 
-[DependencyGraphScanner](../../src/AiNetCodeNavigator.Core/Dependencies/DependencyGraphScanner.cs) currently collects before producing each page. [RelationshipTools](../../src/AiNetCodeNavigator/Mcp/Tools/Relationships/RelationshipTools.cs) drains those pages and document batches, then merges/traverses. [Models](../../src/AiNetCodeNavigator.Core/Dependencies/DependencyGraphModels.cs) and [traversal](../../src/AiNetCodeNavigator.Core/Dependencies/DependencyGraphTraversal.cs) own the current payload and graph semantics.
+[DependencyGraphScanner](../../src/AiNetCodeNavigator.Core/Dependencies/DependencyGraphScanner.cs) separates immutable document collection from projection. [DependencyGraphCache](../../src/AiNetCodeNavigator.Core/Dependencies/DependencyGraphCache.cs) owns bounded successful facts and subscriptions; [DependencyGraphOutgoingCollector](../../src/AiNetCodeNavigator.Core/Dependencies/DependencyGraphOutgoingCollector.cs) schedules only admitted outgoing declaration frontiers. [RelationshipTools](../../src/AiNetCodeNavigator/Mcp/Tools/Relationships/RelationshipTools.cs) selects broad or targeted collection and formats the common projection. [Models](../../src/AiNetCodeNavigator.Core/Dependencies/DependencyGraphModels.cs) and [traversal](../../src/AiNetCodeNavigator.Core/Dependencies/DependencyGraphTraversal.cs) own the payload and shared graph semantics. Point evidence records actual verification separately from these source links.
