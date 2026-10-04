@@ -8,6 +8,14 @@ The orchestrator executes R01 through R08 in order, one active implementation po
 
 Technical behavior is defined in [01](../01-symbol-identity-and-recovery.md), [02](../02-dependency-graph-analysis.md), [03](../03-long-running-operations-and-transport.md) and [04](../04-snapshot-refresh-and-analysis-cache.md). Their specified decisions replace the earlier open questions and proposals. Internal class/file placement may follow the existing owners; that freedom does not reopen the public contract.
 
+### Approved delivery priority and deferred evidence
+
+On 2026-10-04 the user explicitly approved the generator creator contract and prioritized completing the entire implementation over repeated testing/evidence loops. Additional evidence may be deferred to [findings.md](../findings.md) for later review. This steering supersedes earlier point-level completion gates for explicitly deferred measurements, expanded test matrices and environment-dependent connected-client evidence; it does not change observable product behavior or permit claiming an unrun check passed.
+
+For each point, finish production wiring/consumers/docs and focused behavioral tests, execute the official build and the narrow affected eligible tests, and obtain one independent actual-code audit. Fix confirmed functional defects and rerun their affected checks. Re-audit the corrections and changed areas rather than restarting the entire audit without new evidence. Consolidate broader routine coverage at R08; do not repeat successful gates without a relevant change or unresolved concrete failure. Repository stall handling and E2E exclusion still apply.
+
+Record deferred items with a stable ID, exact missing evidence, reason, follow-up command/acceptance and owner in findings.md, and link their IDs from point evidence. Distinguish confirmed correctness defects from unexecuted scenarios and observations. An unresolved confirmed functional defect remains a blocker; a user-approved evidence deferral does not. Point checklist/evidence obligations may be completed with such explicit deferrals once implementation, focused gates and independent review are complete. Never mark the deferred check itself PASS. Retain all exact executed commands and their outcomes. R08 reports every still-open deferred item.
+
 Before each point, inspect current HEAD/status, the linked specifications, affected definitions/callers/runtime wiring, relevant tests and repository rules. Recheck sources because earlier file links may be renamed or removed. Preserve unrelated work and stop on staged-file conflicts. No automatic push, deployment or optional agent-workflow step is included.
 
 Every completed point must include:

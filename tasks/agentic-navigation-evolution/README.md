@@ -30,3 +30,6 @@ The subsequent [Luna concept review](reviews/luna-concept-review.md) records ind
 ## Maintenance
 
 Keep each requirement in its owning specification. Record working status, implementation commits, executed checks, measurements and concrete blockers in the corresponding roadmap point file; the orchestrator updates the index checkbox only after verifying that evidence. Update current-state `docs/` and affected agent navigation rules only in the implementation commits that establish and verify their new behavior. Keep chat updates short.
+## Delivery findings
+
+The 2026-10-04 delivery steering and deferred evidence are recorded in [findings.md](findings.md) and the [roadmap execution policy](roadmap/execution.md). Product behavior and confirmed functional defects remain separate from deferred measurements or expanded proof matrices.

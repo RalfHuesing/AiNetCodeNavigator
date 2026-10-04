@@ -39,6 +39,16 @@ In Roslyn 5.9.0, CompilationOptions.Features, ReferencesSupersedeLowerVersions, 
 
 Preserve the current separate `get_index_scope` identity domain: its fingerprint additionally includes configured-framework inventory metadata. An inventory snapshot ID can therefore differ from ordinary source-tool IDs without an edit. Document this existing difference in current-state docs during implementation; do not unify snapshot domains or add new expected-snapshot parameters. Cursors retain their existing exact owner/reference/section bindings.
 
+## Supported generator creator inputs
+
+The user approved this explicit creator boundary on 2026-10-04. A normal MSBuild origin, rooted analyzer path, static assembly-reference closure or absence of an observed loader failure is not by itself a complete generator-input contract.
+
+Admit a source generator for reusable identity only through an internal capability supplied by its actual trusted creating owner. Bind that capability to the exact captured generator artifact and its project input context. The owner contract identifies every effective input, supplies immutable image/text/configuration evidence, and guarantees that execution binds those captured inputs. Validate external declared inputs at each fresh boundary; a changed artifact or input creates a new reference/Solution before reuse. Capabilities and their producer-owned resources have explicit weak/runtime lifetime ownership and are not retained in completed scalar identity memo entries.
+
+Built-in SDK generator support requires an explicit trusted SDK producer contract and complete recorded snapshot inputs. File names, path resemblance, object identities and synthetic provenance flags do not establish that contract. A repository test factory may supply a capability only for the real artifact and input contract it creates; tests must not attest arbitrary already loaded generator code as complete.
+
+An unknown generator or one whose effective inputs cannot be established returns concrete WORKSPACE_DIAGNOSTIC before identity/cache publication. Identify the project/generator and missing creator/input proof. Preserve supported positive generator and public-handler behavior through real creator capabilities, and keep untracked dynamic/external input cases negative. Distinguish source generators from analyzers that are not executed by navigation. This boundary introduces no public configuration, general sandbox, code-audit/IL-analysis feature or dependency platform.
+
 ## Identity memoization
 
 Use one Core identity-memoization service owned by the host/runtime. Key it by the exact immutable Roslyn `Solution` object, not only its path, displayed snapshot ID, version stamp or document timestamps. Use weak-key retention so completed memo entries cannot keep old solutions alive. Identical semantic content in a different Solution object may be recomputed; the requirement is once per unchanged object while its memo entry remains live.

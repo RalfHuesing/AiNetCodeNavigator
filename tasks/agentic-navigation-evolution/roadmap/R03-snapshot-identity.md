@@ -27,11 +27,11 @@ The orchestrator records this point's implementation evidence here under the [sh
 
 | Field | Recorded evidence |
 | --- | --- |
-| Working state | Blocked on the supported generator-creator input contract; started from clean verified R02 HEAD `671496d` on 2026-10-04 |
+| Working state | In progress; creator contract and bounded evidence deferral explicitly approved on 2026-10-04 |
 | Implementation commit(s) | — |
 | Executed verification | Latest build and narrow normal MSBuild resolver check pass; P03-D01 actually fails and is independently confirmed; earlier passing/failed selections are recorded below; full affected acceptance remains pending |
 | Measurements / artifacts | — |
-| Blocker / next action | Obtain the required supported generator-creator contract decision, implement the full proof-or-diagnostic boundary through Luna, then complete all affected gates, measurements and independent full Sol audit |
+| Blocker / next action | Implement the approved creator capability/diagnostic boundary, finish focused gates and independent audit, and record optional deferred evidence in findings.md before continuing R04 |
 
 ### Prerequisites and independent ownership
 
