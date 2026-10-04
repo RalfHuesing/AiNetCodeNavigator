@@ -52,6 +52,8 @@ The runner waits for `operation=running` and `operation=retry`, respecting the r
 
 `ExploreBrowseTarget` reads the loaded source scope, passes its returned canonical Core project path to a selected namespace prefix, then follows a returned type reference to its source body.
 
+`ExploreTypeRelations` exhausts one-item source pages for both relationship modes, follows returned references with the unchanged solution owner, and inspects both modes plus body handoffs against the runner's own assembly. Its two declared interface implementations provide real source/assembly mappings.
+
 ## Execution boundary
 
 The runner creates the real `NavigatorHostRuntime`, loads targets through the production MSBuild/assembly infrastructure, discovers attributed production tool classes, generates their SDK schemas, runs the production argument validator and invokes the SDK binder and handler. It has no mock navigation results and uses the production output formatter and operation store.

@@ -14,7 +14,50 @@ internal static class Scenarios
             [nameof(ExploreContextUses)] = ExploreContextUses,
             [nameof(ExploreContextMembers)] = ExploreContextMembers,
             [nameof(ExploreBrowseTarget)] = ExploreBrowseTarget,
+            [nameof(ExploreTypeRelations)] = ExploreTypeRelations,
         };
+
+    private static async Task ExploreTypeRelations(ExplorationContext context)
+    {
+        // Declared runner fixtures exercise real Roslyn mappings and assembly ownership.
+        var target = context.RepositorySolution;
+        var identifier = "T:AiNetCodeNavigator.Exploration.IExplorationRelationProbe";
+        foreach (var relation in new[] { "hierarchy", "implementations" })
+        {
+            string? cursor = null;
+            do
+            {
+                var response = await context.CallAsync("get_type_relations", new
+                {
+                    targetPath = target, symbolIdentifier = identifier, relation, maxResults = 1, resultCursor = cursor,
+                }).ConfigureAwait(false);
+                using var page = JsonDocument.Parse(response.Payload);
+                var root = page.RootElement;
+                var items = root.GetProperty(relation == "hierarchy" ? "subtypes" : "implementations");
+                if (cursor is null && items.GetArrayLength() > 0)
+                    await context.CallAsync("get_symbol_body", new
+                    {
+                        targetPath = target, symbolIdentifiers = new[] { items[0].GetProperty("handoffId").GetString() }, maxBodyLines = 10,
+                    }).ConfigureAwait(false);
+                cursor = root.TryGetProperty("resultCursor", out var next) ? next.GetString() : null;
+            } while (cursor is not null);
+        }
+        var assemblyTarget = typeof(Scenarios).Assembly.Location;
+        foreach (var relation in new[] { "hierarchy", "implementations" })
+        {
+            var response = await context.CallAsync("get_type_relations", new
+            {
+                targetPath = assemblyTarget, symbolIdentifier = identifier, relation, maxResults = 1,
+            }).ConfigureAwait(false);
+            using var page = JsonDocument.Parse(response.Payload);
+            var items = page.RootElement.GetProperty(relation == "hierarchy" ? "subtypes" : "implementations");
+            if (items.GetArrayLength() > 0)
+                await context.CallAsync("get_symbol_body", new
+                {
+                    targetPath = assemblyTarget, symbolIdentifiers = new[] { items[0].GetProperty("handoffId").GetString() }, maxBodyLines = 10,
+                }).ConfigureAwait(false);
+        }
+    }
 
     private static async Task ExploreFindSymbol(ExplorationContext context)
     {
@@ -223,4 +266,19 @@ internal static class Scenarios
             maxBodyLines = 100,
         }).ConfigureAwait(false);
     }
+}
+
+internal interface IExplorationRelationProbe
+{
+    int Read();
+}
+
+internal sealed class ExplorationRelationFirst : IExplorationRelationProbe
+{
+    public int Read() => 1;
+}
+
+internal sealed class ExplorationRelationSecond : IExplorationRelationProbe
+{
+    int IExplorationRelationProbe.Read() => 2;
 }

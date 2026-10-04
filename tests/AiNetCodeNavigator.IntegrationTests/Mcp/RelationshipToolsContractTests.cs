@@ -16,6 +16,28 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class RelationshipToolsContractTests
 {
     [Fact]
+    public async Task TypeRelationsSdkContractRequiresExplicitModeAndSymbol()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var tools = new RelationshipTools(runtime);
+        var sdk = McpServerTool.Create(typeof(RelationshipTools).GetMethod(nameof(RelationshipTools.GetTypeRelations))!, tools,
+            new McpServerToolCreateOptions { Name = "get_type_relations" });
+        var required = sdk.ProtocolTool.InputSchema.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToArray();
+        Assert.Contains("relation", required);
+        Assert.Contains("symbolIdentifier", required);
+        Assert.DoesNotContain("metadataOwnerPath", sdk.ProtocolTool.InputSchema.GetProperty("properties").EnumerateObject().Select(value => value.Name));
+        using var missing = JsonDocument.Parse("""{"targetPath":"C:/missing.slnx","symbolIdentifier":"Probe.Target"}""");
+        var error = await McpArgumentValidationFilter.ValidateArgumentsAsync(sdk,
+            missing.RootElement.EnumerateObject().ToDictionary(property => property.Name, property => property.Value.Clone(), StringComparer.Ordinal));
+        Assert.NotNull(error);
+        Assert.Contains("$.relation", TextOf(error!), StringComparison.Ordinal);
+        Assert.Contains("$.relation", TextOf(await tools.GetTypeRelations("C:/missing.slnx", "Probe.Target", "unknown")), StringComparison.Ordinal);
+        Assert.Contains("$.scopeType", TextOf(await tools.GetTypeRelations("C:/missing.slnx", "Probe.Target", "hierarchy", scopeType: "unknown")), StringComparison.Ordinal);
+        Assert.Contains("$.maxResults", TextOf(await tools.GetTypeRelations("C:/missing.slnx", "Probe.Target", "implementations", maxResults: 0)), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ContextSdkContractPublishesUsesAndRejectsLegacyAndIneffectiveScope()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();

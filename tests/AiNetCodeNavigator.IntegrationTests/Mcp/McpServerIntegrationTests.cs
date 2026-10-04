@@ -29,8 +29,7 @@ public sealed class McpServerIntegrationTests
 
             var navigationTools = new[]
             {
-                "browse_target", "find_symbol", "get_symbol_body", "get_file_skeleton", "get_call_tree", "find_references", "get_type_hierarchy",
-                "find_implementations", "dependency_graph", "resolve_type_origin", "get_context",
+                "browse_target", "find_symbol", "get_symbol_body", "get_file_skeleton", "get_call_tree", "find_references", "get_type_relations", "dependency_graph", "resolve_type_origin", "get_context",
                 "inspect_assembly", "search_assembly", "find_assembly_extensions",
             };
             foreach (var name in navigationTools)
@@ -474,13 +473,13 @@ public sealed class McpServerIntegrationTests
                 .Select(tool => tool.GetProperty("name").GetString()!)
                 .Order(StringComparer.Ordinal)
                 .ToArray();
-            Assert.Equal(14, tools.Length);
+            Assert.Equal(13, tools.Length);
             Assert.Equal(new[]
             {
-                "browse_target", "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol",
+                "browse_target", "dependency_graph", "find_assembly_extensions", "find_references", "find_symbol",
                 "get_call_tree", "get_context", "get_file_skeleton",
                 "get_symbol_body",
-                "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly",
+                "get_type_relations", "inspect_assembly", "resolve_type_origin", "search_assembly",
             }, tools);
             Assert.DoesNotContain("get_server_health", tools);
             Assert.DoesNotContain("reload_config", tools);
@@ -600,8 +599,8 @@ public sealed class McpServerIntegrationTests
                 ("browse_target", new(StringComparer.Ordinal) { ["view"] = "scope", ["targetPath"] = assemblyPath }, "INVALID_ARGUMENT"),
                 ("get_call_tree", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "h:unknown", ["direction"] = "sideways" }, "INVALID_ARGUMENT"),
                 ("find_references", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "h:unknown" }, "INVALID_SYMBOL_REFERENCE"),
-                ("get_type_hierarchy", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "INVALID_SYMBOL_REFERENCE"),
-                ("find_implementations", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "INVALID_SYMBOL_REFERENCE"),
+                ("get_type_relations", new(StringComparer.Ordinal) { ["relation"] = "hierarchy", ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "INVALID_SYMBOL_REFERENCE"),
+                ("get_type_relations", new(StringComparer.Ordinal) { ["relation"] = "implementations", ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "INVALID_SYMBOL_REFERENCE"),
                 ("find_references", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = " " }, "INVALID_ARGUMENT"),
                 ("dependency_graph", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath }, "INVALID_ARGUMENT"),
                 ("resolve_type_origin", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "", ["typeName"] = "" }, "INVALID_ARGUMENT"),
@@ -674,7 +673,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                 .Order(StringComparer.Ordinal)
                 .ToArray();
             Assert.Equal(14, names.Length);
-            Assert.Equal(new[] { "browse_target", "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol", "get_call_tree", "get_context", "get_file_skeleton", "get_symbol_body", "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly" }, names);
+            Assert.Equal(new[] { "browse_target", "dependency_graph", "find_assembly_extensions", "find_references", "find_symbol", "get_call_tree", "get_context", "get_file_skeleton", "get_symbol_body", "get_type_relations", "inspect_assembly", "resolve_type_origin", "search_assembly" }, names);
             Assert.DoesNotContain("get_server_health", names);
             Assert.DoesNotContain("reload_config", names);
             Assert.DoesNotContain("get_file_tree", names);
@@ -748,8 +747,8 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
 
             await SendRequestAsync(process, 12, "tools/call", new
             {
-                name = "get_type_hierarchy",
-                arguments = new { targetPath = solutionPath, symbolIdentifier = sourceHandle, maxResults = 5 },
+                name = "get_type_relations",
+                arguments = new { relation = "hierarchy", targetPath = solutionPath, symbolIdentifier = sourceHandle, maxResults = 5 },
             }, timeout.Token);
             var hierarchy = await ReadResponseAsync(process, 12, timeout.Token);
             Assert.False(hierarchy.GetProperty("result").GetProperty("isError").GetBoolean());
@@ -792,7 +791,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             var interfaceFind = await ReadResponseAsync(process, 26, timeout.Token);
             Assert.False(interfaceFind.GetProperty("result").GetProperty("isError").GetBoolean());
             var interfaceHandle = ExtractHandoff(GetFirstText(interfaceFind));
-            await SendRequestAsync(process, 27, "tools/call", new { name = "find_implementations", arguments = new { targetPath = solutionPath, symbolIdentifier = interfaceHandle, maxResults = 5 } }, timeout.Token);
+            await SendRequestAsync(process, 27, "tools/call", new { name = "get_type_relations", arguments = new { relation = "implementations", targetPath = solutionPath, symbolIdentifier = interfaceHandle, maxResults = 5 } }, timeout.Token);
             var implementations = await ReadResponseAsync(process, 27, timeout.Token);
             Assert.False(implementations.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("Counter", GetFirstText(implementations), StringComparison.Ordinal);
@@ -1867,8 +1866,8 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 112, "tools/call", new
             {
-                name = "get_type_hierarchy",
-                arguments = new { targetPath = ownedCPath, symbolIdentifier = "T:ClosureFixture.ClosureOnlyC", maxResults = 20 },
+                name = "get_type_relations",
+                arguments = new { relation = "hierarchy", targetPath = ownedCPath, symbolIdentifier = "T:ClosureFixture.ClosureOnlyC", maxResults = 20 },
             }, timeout.Token);
             var rawTypeHierarchy = await ReadResponseAsync(process, 112, timeout.Token);
             Assert.False(rawTypeHierarchy.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(rawTypeHierarchy));
@@ -1876,8 +1875,8 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 113, "tools/call", new
             {
-                name = "find_implementations",
-                arguments = new { targetPath = ownedCPath, symbolIdentifier = "M:ClosureFixture.ClosureOnlyC.Read", maxResults = 20 },
+                name = "get_type_relations",
+                arguments = new { relation = "implementations", targetPath = ownedCPath, symbolIdentifier = "M:ClosureFixture.ClosureOnlyC.Read", maxResults = 20 },
             }, timeout.Token);
             var rawImplementations = await ReadResponseAsync(process, 113, timeout.Token);
             Assert.False(rawImplementations.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(rawImplementations));
@@ -2468,8 +2467,8 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 42, "tools/call", new
             {
-                name = "get_type_hierarchy",
-                arguments = new { targetPath = assemblyPath, symbolIdentifier = firstHits[0].GetProperty("handoffId").GetString(), maxResults = 10 },
+                name = "get_type_relations",
+                arguments = new { relation = "hierarchy", targetPath = assemblyPath, symbolIdentifier = firstHits[0].GetProperty("handoffId").GetString(), maxResults = 10 },
             }, timeout.Token);
             var hierarchy = await ReadResponseAsync(process, 42, timeout.Token);
             var hierarchyText = GetFirstText(hierarchy);
@@ -2485,8 +2484,8 @@ if (Directory.Exists(fixtureRoot))
             var interfaceHandle = ParsePayload(interfaceSearchText).GetProperty("results")[0].GetProperty("handoffId").GetString();
             await SendRequestAsync(process, 44, "tools/call", new
             {
-                name = "find_implementations",
-                arguments = new { targetPath = assemblyPath, symbolIdentifier = interfaceHandle, maxResults = 10 },
+                name = "get_type_relations",
+                arguments = new { relation = "implementations", targetPath = assemblyPath, symbolIdentifier = interfaceHandle, maxResults = 10 },
             }, timeout.Token);
             var implementations = await ReadResponseAsync(process, 44, timeout.Token);
             var implementationsText = GetFirstText(implementations);
@@ -2521,8 +2520,8 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 47, "tools/call", new
             {
-                name = "get_type_hierarchy",
-                arguments = new { targetPath = hostAssemblyPath, symbolIdentifier = firstHits[0].GetProperty("handoffId").GetString(), maxResults = 10 },
+                name = "get_type_relations",
+                arguments = new { relation = "hierarchy", targetPath = hostAssemblyPath, symbolIdentifier = firstHits[0].GetProperty("handoffId").GetString(), maxResults = 10 },
             }, timeout.Token);
             var foreignHierarchy = await ReadResponseAsync(process, 47, timeout.Token);
             Assert.True(foreignHierarchy.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignHierarchy));
@@ -2530,8 +2529,8 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 48, "tools/call", new
             {
-                name = "find_implementations",
-                arguments = new { targetPath = hostAssemblyPath, symbolIdentifier = interfaceHandle, maxResults = 10 },
+                name = "get_type_relations",
+                arguments = new { relation = "implementations", targetPath = hostAssemblyPath, symbolIdentifier = interfaceHandle, maxResults = 10 },
             }, timeout.Token);
             var foreignImplementations = await ReadResponseAsync(process, 48, timeout.Token);
             Assert.True(foreignImplementations.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignImplementations));
@@ -2550,8 +2549,8 @@ if (Directory.Exists(fixtureRoot))
                 .GetProperty("handoffId").GetString();
             await SendRequestAsync(process, 50, "tools/call", new
             {
-                name = "find_implementations",
-                arguments = new { targetPath = assemblyPath, symbolIdentifier = baseMethodHandle, maxResults = 10 },
+                name = "get_type_relations",
+                arguments = new { relation = "implementations", targetPath = assemblyPath, symbolIdentifier = baseMethodHandle, maxResults = 10 },
             }, timeout.Token);
             var methodOverrides = await ReadResponseAsync(process, 50, timeout.Token);
             var methodOverridesText = GetFirstText(methodOverrides);
@@ -2579,8 +2578,8 @@ if (Directory.Exists(fixtureRoot))
             var basePropertyHandle = ParsePayload(propertySearchText).GetProperty("sections")[0].GetProperty("items")[0].GetProperty("handoffId").GetString();
             await SendRequestAsync(process, 53, "tools/call", new
             {
-                name = "find_implementations",
-                arguments = new { targetPath = assemblyPath, symbolIdentifier = basePropertyHandle, maxResults = 10 },
+                name = "get_type_relations",
+                arguments = new { relation = "implementations", targetPath = assemblyPath, symbolIdentifier = basePropertyHandle, maxResults = 10 },
             }, timeout.Token);
             var propertyOverrides = await ReadResponseAsync(process, 53, timeout.Token);
             var propertyOverridesText = GetFirstText(propertyOverrides);
@@ -2609,8 +2608,8 @@ if (Directory.Exists(fixtureRoot))
                 .GetProperty("handoffId").GetString();
             await SendRequestAsync(process, 56, "tools/call", new
             {
-                name = "find_implementations",
-                arguments = new { targetPath = assemblyPath, symbolIdentifier = contractMethodHandle, maxResults = 10 },
+                name = "get_type_relations",
+                arguments = new { relation = "implementations", targetPath = assemblyPath, symbolIdentifier = contractMethodHandle, maxResults = 10 },
             }, timeout.Token);
             var contractMethodImplementations = await ReadResponseAsync(process, 56, timeout.Token);
             var contractMethodImplementationsText = GetFirstText(contractMethodImplementations);
@@ -2873,8 +2872,8 @@ if (Directory.Exists(fixtureRoot))
             var contractPropertyHandle = ParsePayload(contractPropertySearchText).GetProperty("sections")[0].GetProperty("items")[0].GetProperty("handoffId").GetString();
             await SendRequestAsync(process, 59, "tools/call", new
             {
-                name = "find_implementations",
-                arguments = new { targetPath = assemblyPath, symbolIdentifier = contractPropertyHandle, maxResults = 10 },
+                name = "get_type_relations",
+                arguments = new { relation = "implementations", targetPath = assemblyPath, symbolIdentifier = contractPropertyHandle, maxResults = 10 },
             }, timeout.Token);
             var contractPropertyImplementations = await ReadResponseAsync(process, 59, timeout.Token);
             var contractPropertyImplementationsText = GetFirstText(contractPropertyImplementations);

@@ -391,7 +391,7 @@ public sealed class AssemblyToolsContractTests
         seen.Clear();
         cursor = null;
         pages = 0;
-        var broadHierarchy = await relationships.GetTypeHierarchy(assemblyPath, "T:AssemblyImpactPages.Target",
+        var broadHierarchy = await relationships.GetTypeRelations(assemblyPath, "T:AssemblyImpactPages.Target", "hierarchy",
             maxResults: 100, maxResponseBytes: 32768, maxResponseTokens: 4096);
         Assert.False(broadHierarchy.IsError ?? false, TextOf(broadHierarchy));
         using var broadHierarchyDocument = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(broadHierarchy)));
@@ -400,7 +400,7 @@ public sealed class AssemblyToolsContractTests
             .ToArray();
         do
         {
-            var response = await relationships.GetTypeHierarchy(assemblyPath, "T:AssemblyImpactPages.Target",
+            var response = await relationships.GetTypeRelations(assemblyPath, "T:AssemblyImpactPages.Target", "hierarchy",
                 maxResults: 2, resultCursor: cursor, maxResponseBytes: 32768, maxResponseTokens: 4096);
             Assert.False(response.IsError ?? false, TextOf(response));
             await FollowAssemblyHandoffAsync(symbols, assemblyPath, response);
@@ -420,19 +420,19 @@ public sealed class AssemblyToolsContractTests
         Assert.Equal(8, broadHierarchyDocument.RootElement.GetProperty("totalSubtypes").GetInt32());
         Assert.Equal(expectedHierarchy, seen);
         Assert.NotNull(firstHierarchyCursor);
-        AssertErrorWithinBudget(await relationships.GetTypeHierarchy(assemblyPath, "T:AssemblyImpactPages.Target",
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(assemblyPath, "T:AssemblyImpactPages.Target", "hierarchy",
             maxResults: 3, resultCursor: firstHierarchyCursor, maxResponseBytes: 32768, maxResponseTokens: 4096),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 32768, 4096);
         AssertErrorWithinBudget(await relationships.FindReferences(assemblyPath, "M:AssemblyImpactPages.Target.Read",
             maxResults: 2, resultCursor: "malformed-cursor", maxResponseBytes: 32768, maxResponseTokens: 4096, includeSummary: true),
             "RESULT_CURSOR_EXPIRED", 32768, 4096);
-        AssertErrorWithinBudget(await relationships.GetTypeHierarchy(assemblyPath, "T:AssemblyImpactPages.Target",
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(assemblyPath, "T:AssemblyImpactPages.Target", "hierarchy",
             maxResults: 2, resultCursor: "malformed-cursor", maxResponseBytes: 32768, maxResponseTokens: 4096),
             "RESULT_CURSOR_EXPIRED", 32768, 4096);
         AssertErrorWithinBudget(await relationships.FindReferences(referenceCopyPath, "M:AssemblyImpactPages.Target.Read",
             maxResults: 2, resultCursor: firstImpactCursor, maxResponseBytes: 32768, maxResponseTokens: 4096, includeSummary: true),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 32768, 4096);
-        AssertErrorWithinBudget(await relationships.GetTypeHierarchy(referenceCopyPath, "T:AssemblyImpactPages.Target",
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(referenceCopyPath, "T:AssemblyImpactPages.Target", "hierarchy",
             maxResults: 2, resultCursor: firstHierarchyCursor, maxResponseBytes: 32768, maxResponseTokens: 4096),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 32768, 4096);
         var changedAssemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "AssemblyImpactPagesChanged", """
@@ -445,7 +445,7 @@ public sealed class AssemblyToolsContractTests
         AssertErrorWithinBudget(await relationships.FindReferences(assemblyPath, "M:AssemblyImpactPages.Target.Read",
             maxResults: 2, resultCursor: firstImpactCursor, maxResponseBytes: 32768, maxResponseTokens: 4096, includeSummary: true),
             "STALE_SNAPSHOT", 32768, 4096);
-        AssertErrorWithinBudget(await relationships.GetTypeHierarchy(assemblyPath, "T:AssemblyImpactPages.Target",
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(assemblyPath, "T:AssemblyImpactPages.Target", "hierarchy",
             maxResults: 2, resultCursor: firstHierarchyCursor, maxResponseBytes: 32768, maxResponseTokens: 4096),
             "STALE_SNAPSHOT", 32768, 4096);
     }
@@ -471,7 +471,7 @@ public sealed class AssemblyToolsContractTests
         string? cursor = null;
         string? firstImplementationCursor = null;
         var pages = 0;
-        var broadImplementations = await relationships.FindImplementations(assemblyPath, "T:AssemblyImplementationPages.IReadable",
+        var broadImplementations = await relationships.GetTypeRelations(assemblyPath, "T:AssemblyImplementationPages.IReadable", "implementations",
             maxResults: 100, maxResponseBytes: 32768, maxResponseTokens: 4096);
         Assert.False(broadImplementations.IsError ?? false, TextOf(broadImplementations));
         using var broadImplementationsDocument = System.Text.Json.JsonDocument.Parse(IntegrationMcpAssertions.BodyOf(TextOf(broadImplementations)));
@@ -480,7 +480,7 @@ public sealed class AssemblyToolsContractTests
             .ToArray();
         do
         {
-            var response = await relationships.FindImplementations(assemblyPath, "T:AssemblyImplementationPages.IReadable",
+            var response = await relationships.GetTypeRelations(assemblyPath, "T:AssemblyImplementationPages.IReadable", "implementations",
                 maxResults: 2, resultCursor: cursor, maxResponseBytes: cursor is null ? 32768 : 65536,
                 maxResponseTokens: cursor is null ? 4096 : 8192);
             Assert.False(response.IsError ?? false, TextOf(response));
@@ -501,21 +501,21 @@ public sealed class AssemblyToolsContractTests
         Assert.Equal(6, seen.Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(expectedImplementations, seen);
         Assert.NotNull(firstImplementationCursor);
-        AssertErrorWithinBudget(await relationships.FindImplementations(assemblyPath, "T:AssemblyImplementationPages.IReadable",
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(assemblyPath, "T:AssemblyImplementationPages.IReadable", "implementations",
             maxResults: 3, resultCursor: firstImplementationCursor, maxResponseBytes: 16384, maxResponseTokens: 2048),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 2048);
-        AssertErrorWithinBudget(await relationships.FindImplementations(assemblyPath, "M:AssemblyImplementationPages.IReadable.Read",
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(assemblyPath, "M:AssemblyImplementationPages.IReadable.Read", "implementations",
             maxResults: 2, resultCursor: firstImplementationCursor, maxResponseBytes: 16384, maxResponseTokens: 2048),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 2048);
-        AssertErrorWithinBudget(await relationships.FindImplementations(assemblyPath, "T:AssemblyImplementationPages.IReadable",
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(assemblyPath, "T:AssemblyImplementationPages.IReadable", "implementations",
             scopeType: "tests", maxResults: 2, resultCursor: firstImplementationCursor, maxResponseBytes: 16384, maxResponseTokens: 2048),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 2048);
-        AssertErrorWithinBudget(await relationships.FindImplementations(assemblyPath, "T:AssemblyImplementationPages.IReadable",
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(assemblyPath, "T:AssemblyImplementationPages.IReadable", "implementations",
             maxResults: 2, resultCursor: "malformed-cursor", maxResponseBytes: 16384, maxResponseTokens: 2048),
             "RESULT_CURSOR_EXPIRED", 16384, 2048);
         var implementationCopyPath = Path.Combine(Path.GetDirectoryName(assemblyPath)!, "AssemblyImplementationPages-copy.dll");
         File.Copy(assemblyPath, implementationCopyPath);
-        AssertErrorWithinBudget(await relationships.FindImplementations(implementationCopyPath, "T:AssemblyImplementationPages.IReadable",
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(implementationCopyPath, "T:AssemblyImplementationPages.IReadable", "implementations",
             maxResults: 2, resultCursor: firstImplementationCursor, maxResponseBytes: 16384, maxResponseTokens: 2048),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 2048);
         var changedAssemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "AssemblyImplementationPagesChanged", """
@@ -524,7 +524,7 @@ public sealed class AssemblyToolsContractTests
             public sealed class Replacement : IReadable { public int Read() => 9; public string Label => "replacement"; }
             """);
         File.Copy(changedAssemblyPath, assemblyPath, overwrite: true);
-        AssertErrorWithinBudget(await relationships.FindImplementations(assemblyPath, "T:AssemblyImplementationPages.IReadable",
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(assemblyPath, "T:AssemblyImplementationPages.IReadable", "implementations",
             maxResults: 2, resultCursor: firstImplementationCursor, maxResponseBytes: 16384, maxResponseTokens: 2048),
             "STALE_SNAPSHOT", 16384, 2048);
     }
@@ -1348,7 +1348,7 @@ public sealed class AssemblyToolsContractTests
     }
 
     [Fact]
-    public async Task AssemblyNavigationHandlersReturnOwnerResultsAcrossAllFourteenRoutes()
+    public async Task AssemblyNavigationHandlersReturnOwnerResultsAcrossAllThirteenRoutes()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
@@ -1451,16 +1451,16 @@ public sealed class AssemblyToolsContractTests
                 reference.GetProperty("reachedFromSymbolName").GetString()));
             Assert.Contains(references, reference => reference.GetProperty("enclosingSymbolName").GetString() == "Probe.Entry");
         }
-        var hierarchy = await relationships.GetTypeHierarchy(assemblyPath, typeHandle, maxResponseBytes: 32768);
+        var hierarchy = await relationships.GetTypeRelations(assemblyPath, typeHandle, "hierarchy", maxResponseBytes: 32768);
         AssertOwnerResult(hierarchy, "Probe");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, hierarchy);
-        var implementations = await relationships.FindImplementations(assemblyPath, interfaceHandle, maxResponseBytes: 32768);
+        var implementations = await relationships.GetTypeRelations(assemblyPath, interfaceHandle, "implementations", maxResponseBytes: 32768);
         AssertOwnerResult(implementations, "Probe");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, implementations);
-        var methodOverrides = await relationships.FindImplementations(assemblyPath, "M:AssemblyRouteProbe.BaseProbe.Value", maxResponseBytes: 32768);
+        var methodOverrides = await relationships.GetTypeRelations(assemblyPath, "M:AssemblyRouteProbe.BaseProbe.Value", "implementations", maxResponseBytes: 32768);
         AssertOwnerResult(methodOverrides, "Value");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, methodOverrides);
-        var propertyOverrides = await relationships.FindImplementations(assemblyPath, "P:AssemblyRouteProbe.BaseProbe.Label", maxResponseBytes: 32768);
+        var propertyOverrides = await relationships.GetTypeRelations(assemblyPath, "P:AssemblyRouteProbe.BaseProbe.Label", "implementations", maxResponseBytes: 32768);
         AssertOwnerResult(propertyOverrides, "Label");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, propertyOverrides);
         var impact = await relationships.FindReferences(assemblyPath, "M:AssemblyRouteProbe.Probe.Read", maxResponseBytes: 32768, includeSummary: true);
@@ -1511,8 +1511,8 @@ public sealed class AssemblyToolsContractTests
             maxResponseBytes: 16384), "INVALID_ARGUMENT");
         AssertError(await symbols.GetSymbolBody(assemblyPath, ["h:zzzz"], maxResponseBytes: 16384), "INVALID_SYMBOL_REFERENCE");
         AssertError(await new RelationshipTools(runtime).GetContext(assemblyPath, "h:zzzz", ["members"], maxResponseBytes: 16384), "INVALID_SYMBOL_REFERENCE");
-        AssertError(await relationships.GetTypeHierarchy(assemblyPath, "h:zzzz", maxResponseBytes: 16384), "INVALID_SYMBOL_REFERENCE");
-        AssertError(await relationships.FindImplementations(assemblyPath, "h:zzzz", maxResponseBytes: 16384), "INVALID_SYMBOL_REFERENCE");
+        AssertError(await relationships.GetTypeRelations(assemblyPath, "h:zzzz", "hierarchy", maxResponseBytes: 16384), "INVALID_SYMBOL_REFERENCE");
+        AssertError(await relationships.GetTypeRelations(assemblyPath, "h:zzzz", "implementations", maxResponseBytes: 16384), "INVALID_SYMBOL_REFERENCE");
         AssertError(await assemblies.SearchAssembly(assemblyPath, pattern: "(", isRegex: true, maxResponseBytes: 16384), "INVALID_ARGUMENT");
         AssertError(await assemblies.SearchAssembly(assemblyPath, pattern: null, maxResponseBytes: 16384), "INVALID_ARGUMENT");
 
@@ -1525,8 +1525,8 @@ public sealed class AssemblyToolsContractTests
             (bytes, tokens) => structure.BrowseTarget(assemblyPath, "namespaces", namespacePrefix: "AssemblyRouteProbe", maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => relationships.GetCallTree(assemblyPath, entryHandle, direction: "outgoing", maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => relationships.FindReferences(assemblyPath, "M:AssemblyRouteProbe.Probe.Read", maxResponseBytes: bytes, maxResponseTokens: tokens),
-            (bytes, tokens) => relationships.GetTypeHierarchy(assemblyPath, typeHandle, maxResponseBytes: bytes, maxResponseTokens: tokens),
-            (bytes, tokens) => relationships.FindImplementations(assemblyPath, interfaceHandle, maxResponseBytes: bytes, maxResponseTokens: tokens),
+            (bytes, tokens) => relationships.GetTypeRelations(assemblyPath, typeHandle, "hierarchy", maxResponseBytes: bytes, maxResponseTokens: tokens),
+            (bytes, tokens) => relationships.GetTypeRelations(assemblyPath, interfaceHandle, "implementations", maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => relationships.FindReferences(assemblyPath, "M:AssemblyRouteProbe.Probe.Read", maxResponseBytes: bytes, maxResponseTokens: tokens, includeSummary: true),
             (bytes, tokens) => relationships.DependencyGraph(assemblyPath, symbolIdentifier: typeHandle, maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => relationships.ResolveTypeOrigin(assemblyPath, typeName: "AssemblyRouteProbe.Probe", maxResponseBytes: bytes, maxResponseTokens: tokens),

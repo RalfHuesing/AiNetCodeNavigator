@@ -61,7 +61,7 @@ public sealed class SourceRelationshipToolsContractTests
         var pageCount = 0;
         do
         {
-            var response = await relationships.FindImplementations(target, "M:RelationshipProbe.Base.Run",
+            var response = await relationships.GetTypeRelations(target, "M:RelationshipProbe.Base.Run", "implementations",
                 maxResults: 4, resultCursor: cursor, maxResponseBytes: 65536, maxResponseTokens: 4096);
             AssertSuccessWithinBudget(response, 65536, 4096);
             using var document = System.Text.Json.JsonDocument.Parse(JsonBody(TextOf(response)));
@@ -107,7 +107,7 @@ public sealed class SourceRelationshipToolsContractTests
             var hierarchyPages = 0;
             do
             {
-                var hierarchyPage = await relationships.GetTypeHierarchy(target, "T:RelationshipProbe.Base",
+                var hierarchyPage = await relationships.GetTypeRelations(target, "T:RelationshipProbe.Base", "hierarchy",
                     maxResults: 2, scopeType: scope, resultCursor: hierarchyCursor,
                     maxResponseBytes: 32768, maxResponseTokens: 4096);
                 AssertSuccessWithinBudget(hierarchyPage, 32768, 4096);
@@ -132,7 +132,7 @@ public sealed class SourceRelationshipToolsContractTests
             if (scope == "all")
             {
                 Assert.NotNull(firstHierarchyCursor);
-                AssertErrorWithinBudget(await relationships.GetTypeHierarchy(target, "T:RelationshipProbe.Base",
+                AssertErrorWithinBudget(await relationships.GetTypeRelations(target, "T:RelationshipProbe.Base", "hierarchy",
                     maxResults: 2, scopeType: "tests", resultCursor: firstHierarchyCursor,
                     maxResponseBytes: 32768, maxResponseTokens: 4096),
                     "RESULT_CURSOR_ARGUMENT_MISMATCH", 32768, 4096);
@@ -186,7 +186,7 @@ public sealed class SourceRelationshipToolsContractTests
         Assert.EndsWith(":TargetTests.Invoke", Assert.Single(testReferences.Items), StringComparison.Ordinal);
 
         var implementations = await ReadRelationshipPagesAsync(
-            (cursor, pageSize, scope, bytes, tokens, continuation) => relationships.FindImplementations(target, "M:RelationshipProbe.Base.Run",
+            (cursor, pageSize, scope, bytes, tokens, continuation) => relationships.GetTypeRelations(target, "M:RelationshipProbe.Base.Run", "implementations",
                 maxResults: pageSize, scopeType: scope, resultCursor: cursor,
                 maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation),
             "implementations", "symbolName", pageSize: 2, scope: "all");
@@ -194,12 +194,12 @@ public sealed class SourceRelationshipToolsContractTests
         Assert.Equal(5, implementations.Items.Count);
         Assert.True(implementations.Pages > 1);
         Assert.DoesNotContain(implementations.Items, item => item.Contains("Generated.g.cs", StringComparison.Ordinal));
-        AssertErrorWithinBudget(await relationships.FindImplementations(target, "M:RelationshipProbe.Base.Run",
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(target, "M:RelationshipProbe.Base.Run", "implementations",
             maxResults: 3, resultCursor: implementations.FirstCursor, maxResponseBytes: 16384, maxResponseTokens: 2048),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 2048);
 
         var productionImplementations = await ReadRelationshipPagesAsync(
-            (cursor, pageSize, scope, bytes, tokens, continuation) => relationships.FindImplementations(target, "M:RelationshipProbe.Base.Run",
+            (cursor, pageSize, scope, bytes, tokens, continuation) => relationships.GetTypeRelations(target, "M:RelationshipProbe.Base.Run", "implementations",
                 maxResults: pageSize, scopeType: scope, resultCursor: cursor,
                 maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation),
             "implementations", "symbolName", pageSize: 2, scope: "production");
@@ -207,7 +207,7 @@ public sealed class SourceRelationshipToolsContractTests
         Assert.DoesNotContain(productionImplementations.Items, item => item.Contains("RelationshipProbe.Tests.cs", StringComparison.Ordinal));
 
         var testImplementations = await ReadRelationshipPagesAsync(
-            (cursor, pageSize, scope, bytes, tokens, continuation) => relationships.FindImplementations(target, "M:RelationshipProbe.Base.Run",
+            (cursor, pageSize, scope, bytes, tokens, continuation) => relationships.GetTypeRelations(target, "M:RelationshipProbe.Base.Run", "implementations",
                 maxResults: pageSize, scopeType: scope, resultCursor: cursor,
                 maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation),
             "implementations", "symbolName", pageSize: 2, scope: "tests");
@@ -232,7 +232,9 @@ public sealed class SourceRelationshipToolsContractTests
         File.Copy(target, copiedTarget);
         await using var testHost = InMemorySourceTestHost.CreateForSolutions([(target, [project]), (copiedTarget, [project])]);
         var relationships = new RelationshipTools(testHost.Runtime);
-        var broadResponse = await relationships.GetTypeHierarchy(target, "T:RelationshipProbe.Base",
+        var scanners = new List<string>();
+        relationships.BeforeTypeRelationScanForTesting = scanners.Add;
+        var broadResponse = await relationships.GetTypeRelations(target, "T:RelationshipProbe.Base", "hierarchy",
             maxResults: 100, maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(broadResponse, 65536, 4096);
         using var broadDocument = System.Text.Json.JsonDocument.Parse(JsonBody(TextOf(broadResponse)));
@@ -246,7 +248,7 @@ public sealed class SourceRelationshipToolsContractTests
         var pageCount = 0;
         do
         {
-            var response = await relationships.GetTypeHierarchy(target, "T:RelationshipProbe.Base",
+            var response = await relationships.GetTypeRelations(target, "T:RelationshipProbe.Base", "hierarchy",
                 maxResults: 4, resultCursor: cursor, maxResponseBytes: 65536, maxResponseTokens: 4096);
             AssertSuccessWithinBudget(response, 65536, 4096);
             using var document = System.Text.Json.JsonDocument.Parse(JsonBody(TextOf(response)));
@@ -269,19 +271,34 @@ public sealed class SourceRelationshipToolsContractTests
         Assert.Equal(expected, seen);
         Assert.Contains(seen, item => item.Contains("Subtype09", StringComparison.Ordinal));
         Assert.NotNull(firstCursor);
-        AssertErrorWithinBudget(await relationships.GetTypeHierarchy(target, "T:RelationshipProbe.Base",
+        Assert.All(scanners, scanner => Assert.Equal("hierarchy", scanner));
+        scanners.Clear();
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(target, "T:RelationshipProbe.Base", "implementations",
+            maxResults: 4, resultCursor: firstCursor, maxResponseBytes: 65536, maxResponseTokens: 4096),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 4096);
+        AssertSuccessWithinBudget(await relationships.GetTypeRelations(target, "T:RelationshipProbe.Base", "implementations",
+            maxResults: 4, maxResponseBytes: 65536, maxResponseTokens: 4096), 65536, 4096);
+        Assert.Equal(["implementations"], scanners);
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(target, "T:RelationshipProbe.Base", "hierarchy",
+            maxResults: 4, scopeType: "all", resultCursor: firstCursor, maxResponseBytes: 65536, maxResponseTokens: 4096),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 4096);
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(target, "T:RelationshipProbe.Base", "hierarchy",
+            maxResults: 4, includeGenerated: false, resultCursor: firstCursor, maxResponseBytes: 65536, maxResponseTokens: 4096),
+            "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 4096);
+
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(target, "T:RelationshipProbe.Base", "hierarchy",
             maxResults: 5, resultCursor: firstCursor, maxResponseBytes: 65536, maxResponseTokens: 4096),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 4096);
-        AssertErrorWithinBudget(await relationships.GetTypeHierarchy(target, "T:RelationshipProbe.Base",
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(target, "T:RelationshipProbe.Base", "hierarchy",
             maxResults: 4, resultCursor: "malformed-cursor", maxResponseBytes: 65536, maxResponseTokens: 4096),
             "RESULT_CURSOR_EXPIRED", 65536, 4096);
-        AssertErrorWithinBudget(await relationships.GetTypeHierarchy(copiedTarget, "T:RelationshipProbe.Base",
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(copiedTarget, "T:RelationshipProbe.Base", "hierarchy",
             maxResults: 4, resultCursor: firstCursor, maxResponseBytes: 65536, maxResponseTokens: 4096),
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 4096);
         var sourcePath = Path.Combine(fixture.DirectoryPath, "src", "App", "Relationships.cs");
         await File.AppendAllTextAsync(sourcePath, "\nnamespace RelationshipProbe; public sealed class SnapshotMarker { }");
         File.SetLastWriteTimeUtc(sourcePath, DateTime.UtcNow.AddSeconds(2));
-        AssertErrorWithinBudget(await relationships.GetTypeHierarchy(target, "T:RelationshipProbe.Base",
+        AssertErrorWithinBudget(await relationships.GetTypeRelations(target, "T:RelationshipProbe.Base", "hierarchy",
             maxResults: 4, resultCursor: firstCursor, maxResponseBytes: 65536, maxResponseTokens: 4096),
             "STALE_SNAPSHOT", 65536, 4096);
     }
@@ -419,20 +436,20 @@ public sealed class SourceRelationshipToolsContractTests
             (bytes, tokens, continuation) => relationships.FindReferences(target, targetId,
                 maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation));
 
-        var hierarchy = await relationships.GetTypeHierarchy(target, baseId,
+        var hierarchy = await relationships.GetTypeRelations(target, baseId, "hierarchy",
             maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(hierarchy, 65536, 4096);
         Assert.Contains("Derived", TextOf(hierarchy), StringComparison.Ordinal);
         await AssertHandoffReachesBodyAsync(symbols, target, hierarchy, "Derived",
-            (bytes, tokens, continuation) => relationships.GetTypeHierarchy(target, baseId,
+            (bytes, tokens, continuation) => relationships.GetTypeRelations(target, baseId, "hierarchy",
                 maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation));
 
-        var implementations = await relationships.FindImplementations(target, contractMethodId,
+        var implementations = await relationships.GetTypeRelations(target, contractMethodId, "implementations",
             maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(implementations, 65536, 4096);
         Assert.Contains("Derived.Work", TextOf(implementations), StringComparison.Ordinal);
         await AssertHandoffReachesBodyAsync(symbols, target, implementations, "public int Work",
-            (bytes, tokens, continuation) => relationships.FindImplementations(target, contractMethodId,
+            (bytes, tokens, continuation) => relationships.GetTypeRelations(target, contractMethodId, "implementations",
                 maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation));
 
         var dependencies = await relationships.DependencyGraph(target, symbolIdentifier: genericId,
@@ -497,11 +514,11 @@ public sealed class SourceRelationshipToolsContractTests
         await AssertProjectionMatchesAsync("find_references", references,
             (bytes, tokens, operation, continuation) => relationships.FindReferences(target, targetId,
                 maxResponseBytes: bytes, maxResponseTokens: tokens, operationToken: operation, continuationToken: continuation));
-        await AssertProjectionMatchesAsync("get_type_hierarchy", hierarchy,
-            (bytes, tokens, operation, continuation) => relationships.GetTypeHierarchy(target, baseId,
+        await AssertProjectionMatchesAsync("get_type_relations", hierarchy,
+            (bytes, tokens, operation, continuation) => relationships.GetTypeRelations(target, baseId, "hierarchy",
                 maxResponseBytes: bytes, maxResponseTokens: tokens, operationToken: operation, continuationToken: continuation));
-        await AssertProjectionMatchesAsync("find_implementations", implementations,
-            (bytes, tokens, operation, continuation) => relationships.FindImplementations(target, contractMethodId,
+        await AssertProjectionMatchesAsync("get_type_relations", implementations,
+            (bytes, tokens, operation, continuation) => relationships.GetTypeRelations(target, contractMethodId, "implementations",
                 maxResponseBytes: bytes, maxResponseTokens: tokens, operationToken: operation, continuationToken: continuation));
         await AssertProjectionMatchesAsync("dependency_graph", dependencies,
             (bytes, tokens, operation, continuation) => relationships.DependencyGraph(target, symbolIdentifier: genericId,
