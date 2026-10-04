@@ -10,6 +10,7 @@ namespace AiNetCodeNavigator.Mcp;
 public sealed class NavigatorHostRuntime : IAsyncDisposable, IDisposable
 {
     internal static readonly TimeSpan ResponseWindow = TimeSpan.FromSeconds(15);
+    internal static readonly TimeSpan PollResponseWindow = TimeSpan.FromSeconds(1);
     private int _disposeStarted;
 
     // Internal override keeps routing and polling tests deterministic; hosts retain the production default.
@@ -17,7 +18,8 @@ public sealed class NavigatorHostRuntime : IAsyncDisposable, IDisposable
         IHostApplicationLifetime lifetime,
         TimeSpan? operationResponseWindow = null,
         ProjectRegistry? projectRegistry = null,
-        DependencyGraphCache? dependencyGraphCache = null)
+        DependencyGraphCache? dependencyGraphCache = null,
+        TimeSpan? operationPollResponseWindow = null)
     {
         ArgumentNullException.ThrowIfNull(lifetime);
         ProjectRegistry = projectRegistry ?? new ProjectRegistry(ProjectRegistryOptions.ForMSBuild());
@@ -25,7 +27,8 @@ public sealed class NavigatorHostRuntime : IAsyncDisposable, IDisposable
         ProjectRegistry.SourceOwnerRetiring = DependencyGraphCache.RetireTargetAsync;
         AssemblyRegistry = AssemblyAnalysisSessionRegistry.Default;
         AnalysisIdentities = new AnalysisSymbolIdentityService(lifetime.ApplicationStopping);
-        Operations = new LongRunningToolCallStore(operationResponseWindow ?? ResponseWindow, lifetime.ApplicationStopping);
+        Operations = new LongRunningToolCallStore(operationResponseWindow ?? ResponseWindow, lifetime.ApplicationStopping,
+            pollResponseWindow: operationPollResponseWindow ?? PollResponseWindow);
     }
 
     internal ProjectRegistry ProjectRegistry { get; }

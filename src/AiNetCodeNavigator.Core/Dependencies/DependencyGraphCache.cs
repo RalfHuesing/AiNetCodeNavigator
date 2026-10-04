@@ -143,7 +143,8 @@ internal sealed class DependencyGraphCache : IAsyncDisposable
         string canonicalTargetPath,
         long snapshotTicket,
         CancellationToken cancellationToken = default,
-        IReadOnlyDictionary<ProjectId, string>? ownerContextFingerprints = null)
+        IReadOnlyDictionary<ProjectId, string>? ownerContextFingerprints = null,
+        Action<DependencyGraphProgress>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(solution);
         ArgumentNullException.ThrowIfNull(options);
@@ -156,7 +157,8 @@ internal sealed class DependencyGraphCache : IAsyncDisposable
         var targetPath = CanonicalizeTarget(canonicalTargetPath);
         var plan = await DependencyGraphScanner.PrepareCollectionPlanAsync(solution, options, ownerContextFingerprints, requestToken)
             .ConfigureAwait(false);
-        return await CollectPlanAsync(plan, targetPath, snapshotTicket, requestToken).ConfigureAwait(false);
+        progress?.Invoke(new DependencyRequiredDocumentsKnown(plan.RequiredDocuments.Length));
+        return await CollectPlanAsync(plan, targetPath, snapshotTicket, requestToken, progress).ConfigureAwait(false);
     }
 
     internal DependencyGraphCollection? GetFullRetainedCollection(
@@ -183,7 +185,8 @@ internal sealed class DependencyGraphCache : IAsyncDisposable
 
     internal async Task<DependencyGraphCollection> CollectPlanAsync(
         DependencyGraphCollectionPlan plan, string targetPath, long snapshotTicket,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Action<DependencyGraphProgress>? progress = null)
     {
         using var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, shutdown.Token);
         var requestToken = requestCancellation.Token;
@@ -257,21 +260,25 @@ internal sealed class DependencyGraphCache : IAsyncDisposable
         if (retirementWaits.Length > 0)
         {
             await Task.WhenAll(retirementWaits).WaitAsync(requestToken).ConfigureAwait(false);
-            return await CollectPlanAsync(plan, targetPath, snapshotTicket, requestToken).ConfigureAwait(false);
+            return await CollectPlanAsync(plan, targetPath, snapshotTicket, requestToken, progress).ConfigureAwait(false);
         }
 
         if (quiescing.Length > 0)
         {
             foreach (var slot in quiescingSlots) observer?.QuiescingWait?.Invoke(slot.Item.Document);
             await Task.WhenAll(quiescing).WaitAsync(requestToken).ConfigureAwait(false);
-            return await CollectPlanAsync(plan, targetPath, snapshotTicket, requestToken).ConfigureAwait(false);
+            return await CollectPlanAsync(plan, targetPath, snapshotTicket, requestToken, progress).ConfigureAwait(false);
         }
 
         var retry = false;
         try
         {
+            foreach (var item in plan.RequiredDocuments)
+                if (facts.ContainsKey(item.Identity))
+                    progress?.Invoke(new DependencyDocumentSatisfied(snapshotTicket, item.Project.Id, item.Document.Id));
             foreach (var slot in subscriptions) observer?.SubscriptionAdded?.Invoke(slot.Item.Document);
-            var pending = outcomes.Select(pair => AwaitOutcomeAsync(pair.Key, pair.Value, requestToken)).ToArray();
+            var pending = plan.RequiredDocuments.Where(item => outcomes.ContainsKey(item.Identity))
+                .Select(item => AwaitOutcomeAsync(item, outcomes[item.Identity], requestToken, snapshotTicket, progress)).ToArray();
             foreach (var (identity, outcome) in await Task.WhenAll(pending).ConfigureAwait(false))
             {
                 if (outcome.Fact is not null) facts[identity] = outcome.Fact;
@@ -308,15 +315,22 @@ internal sealed class DependencyGraphCache : IAsyncDisposable
         }
 
         if (retry)
-            return await CollectPlanAsync(plan, targetPath, snapshotTicket, requestToken).ConfigureAwait(false);
+            return await CollectPlanAsync(plan, targetPath, snapshotTicket, requestToken, progress).ConfigureAwait(false);
         throw new InvalidOperationException("Dependency collection completed without a result.");
     }
 
     private static async Task<(DependencyDocumentIdentity Identity, DependencyDocumentScanOutcome Outcome)> AwaitOutcomeAsync(
-        DependencyDocumentIdentity identity,
+        DependencyDocumentWorkItem item,
         Task<DependencyDocumentScanOutcome> outcome,
-        CancellationToken cancellationToken) =>
-        (identity, await outcome.WaitAsync(cancellationToken).ConfigureAwait(false));
+        CancellationToken cancellationToken,
+        long snapshotTicket,
+        Action<DependencyGraphProgress>? progress)
+    {
+        var completed = await outcome.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (completed.Fact is not null)
+            progress?.Invoke(new DependencyDocumentSatisfied(snapshotTicket, item.Project.Id, item.Document.Id));
+        return (item.Identity, completed);
+    }
 
     internal async Task RetireTargetAsync(string canonicalTargetPath, long maximumRetiredSnapshotTicket)
     {

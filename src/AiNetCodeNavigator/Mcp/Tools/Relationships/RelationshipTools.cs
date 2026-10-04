@@ -642,13 +642,16 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         CancellationToken cancellationToken)
     {
         var collectionOptions = new DependencyGraphCollectionOptions(scopeType, includeGenerated);
+        var operationProgress = NavigationOperationProgress.Current;
+        Action<DependencyGraphProgress>? reportProgress = operationProgress is null ? null : operationProgress.Report;
         var collection = projectionOptions.Direction == DependencyGraphDirection.Outgoing
             ? await DependencyGraphOutgoingCollector.CollectAsync(runtime.DependencyGraphCache, solution,
                 collectionOptions, projectionOptions, outgoingRoots, canonicalTargetPath, sourceIdentityRequest.SnapshotTicket,
-                sourceIdentityRequest.OwnerContextFingerprints, cancellationToken).ConfigureAwait(false)
+                sourceIdentityRequest.OwnerContextFingerprints, cancellationToken, reportProgress).ConfigureAwait(false)
             : await runtime.DependencyGraphCache.CollectAsync(solution, collectionOptions, canonicalTargetPath,
                 sourceIdentityRequest.SnapshotTicket, cancellationToken,
-                sourceIdentityRequest.OwnerContextFingerprints).ConfigureAwait(false);
+                sourceIdentityRequest.OwnerContextFingerprints, reportProgress).ConfigureAwait(false);
+        operationProgress?.Advance(NavigationAnalysisPhase.Formatting);
         var payload = DependencyGraphScanner.Project(collection, projectionOptions);
         return await DependencyGraphScanner.FormatVisibleHandoffsAsync(collection, payload, solution,
             sourceIdentityRequest.OwnerContextFingerprints,

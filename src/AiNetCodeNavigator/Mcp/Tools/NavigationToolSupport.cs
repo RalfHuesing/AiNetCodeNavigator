@@ -32,6 +32,7 @@ internal static class NavigationToolSupport
 
     internal static CallToolResult Success(object payload, bool domainTruncated = false, string? nextAction = null)
     {
+        NavigationOperationProgress.Current?.Advance(NavigationAnalysisPhase.Formatting);
         var text = JsonSerializer.Serialize(payload, JsonOptions);
         return domainTruncated
             ? McpToolResults.DomainTruncated(text, nextAction ?? "Increase a supported result or traversal limit and repeat the query.")
@@ -40,6 +41,7 @@ internal static class NavigationToolSupport
 
     internal static CallToolResult SuccessCompact(object payload, bool domainTruncated = false, string? nextAction = null)
     {
+        NavigationOperationProgress.Current?.Advance(NavigationAnalysisPhase.Formatting);
         var compactJson = JsonSerializer.Serialize(payload, CompactJsonOptions);
         using var document = JsonDocument.Parse(compactJson);
         var text = FormatCompactJson(document.RootElement);
@@ -266,7 +268,8 @@ internal static class NavigationToolSupport
             maxResponseBytes,
             maxResponseTokens,
             DomainCursor: resultCursor,
-            ResultSection: resultSection);
+            ResultSection: resultSection,
+            ProvidesDetailedProgress: target.TargetType == AnalysisTargetType.Project);
         return await runtime.Operations.RunAsync(request, cancellationToken).ConfigureAwait(false);
     }
 
@@ -291,6 +294,12 @@ internal static class NavigationToolSupport
         }
 
         using var lease = leased.Lease!;
+        if (lease.ResidentSolution.LoadTask is { } initialLoad)
+        {
+            await initialLoad.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        NavigationOperationProgress.Current?.Advance(NavigationAnalysisPhase.Refreshing);
         var snapshot = await lease.ResidentSolution.GetCurrentSnapshotAsync(cancellationToken).ConfigureAwait(false);
         if (!snapshot.Succeeded)
         {
@@ -321,6 +330,7 @@ internal static class NavigationToolSupport
                 "Repeat the query after the workspace reloads with complete immutable input evidence.",
                 context: target.CanonicalPath, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         }
+        NavigationOperationProgress.Current?.Advance(NavigationAnalysisPhase.Identifying);
         var identityResult = await runtime.AnalysisIdentities.GetForSourceAsync(
             new SourceIdentityValidatedSnapshot(sourceSolution, identityInputs), cancellationToken).ConfigureAwait(false);
         if (!identityResult.IsSuccess)
@@ -331,6 +341,7 @@ internal static class NavigationToolSupport
                 context: target.CanonicalPath, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         }
         runtime.ProjectRegistry.RecordValidatedSourceSnapshot(lease, identityResult.Value!.SnapshotTicket);
+        NavigationOperationProgress.Current?.Advance(NavigationAnalysisPhase.Analyzing);
         return await operation(sourceSolution,
             new SourceAnalysisContext(identityResult.Value!, snapshot.ConfiguredTargetFrameworks), cancellationToken).ConfigureAwait(false);
     }

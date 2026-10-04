@@ -735,11 +735,11 @@ public sealed class LongRunningToolCallStoreTests
         await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
         var loading = McpToolResults.Loading();
         var direct = await store.RunAsync(Request("load_workspace", "target", "query=Foo", _ => Task.FromResult(loading),
-            maxResponseBytes: 512, maxResponseTokens: 100));
+            maxResponseBytes: 512, maxResponseTokens: 256));
 
         var customLoading = McpToolResults.Loading("Still indexing the workspace.", "Wait for the index and retry.", 512, 100);
         var custom = await store.RunAsync(Request("load_workspace", "target", "query=Bar", _ => Task.FromResult(customLoading),
-            maxResponseBytes: 512, maxResponseTokens: 100));
+            maxResponseBytes: 512, maxResponseTokens: 256));
 
         Assert.False(direct.IsError ?? false);
         Assert.Equal(TextOf(loading), TextOf(direct));
@@ -757,13 +757,17 @@ public sealed class LongRunningToolCallStoreTests
     [Fact]
     public async Task OversizedDelegateLoadingControlsReturnAtomicBudgetErrors()
     {
-        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromMilliseconds(20));
         var longAction = new string('R', 450);
         var oversized = McpToolResults.Loading("Still loading.", longAction, 1_024, 500);
         var byteLimited = await store.RunAsync(Request("load_workspace", "target", "bytes", _ => Task.FromResult(oversized),
             maxResponseBytes: 512, maxResponseTokens: 500));
-        var tokenLimited = await store.RunAsync(Request("load_workspace", "target", "tokens", _ => Task.FromResult(oversized),
-            maxResponseBytes: 1_024, maxResponseTokens: 80));
+        var release = new TaskCompletionSource<CallToolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = await store.RunAsync(Request("load_workspace", "target", "tokens", _ => release.Task,
+            maxResponseBytes: 1_024, maxResponseTokens: 500));
+        release.SetResult(oversized);
+        var tokenLimited = await store.RunAsync(Request("load_workspace", "target", "tokens", _ => release.Task,
+            operationToken: TokenOf(pending, "operationToken"), maxResponseBytes: 1_024, maxResponseTokens: 80));
 
         Assert.True(byteLimited.IsError);
         Assert.Contains("RESPONSE_BUDGET_TOO_SMALL", TextOf(byteLimited), StringComparison.Ordinal);
@@ -780,9 +784,9 @@ public sealed class LongRunningToolCallStoreTests
     public async Task DelegateRunningControlIsRejectedInsteadOfWrappedAsSuccess()
     {
         await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
-        var nestedRunning = McpToolResults.Running("foreign-token", 512, 100);
+        var nestedRunning = McpToolResults.Running("foreign-token", 512, 256);
         var actual = await store.RunAsync(Request("nested_call", "target", "query=Foo", _ => Task.FromResult(nestedRunning),
-            maxResponseBytes: 512, maxResponseTokens: 100));
+            maxResponseBytes: 512, maxResponseTokens: 256));
 
         Assert.True(actual.IsError);
         Assert.Contains("OPERATION_CONTROL_UNSUPPORTED", TextOf(actual), StringComparison.Ordinal);
@@ -797,10 +801,10 @@ public sealed class LongRunningToolCallStoreTests
         var release = new TaskCompletionSource<CallToolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var starts = 0;
         Task<CallToolResult> Work(CancellationToken _) { Interlocked.Increment(ref starts); return release.Task; }
-        var pending = await store.RunAsync(Request("load_workspace", "target", "query=Foo", Work, maxResponseBytes: 512, maxResponseTokens: 100));
+        var pending = await store.RunAsync(Request("load_workspace", "target", "query=Foo", Work, maxResponseBytes: 512, maxResponseTokens: 256));
         var operationToken = TokenOf(pending, "operationToken");
         release.SetResult(McpToolResults.Loading("Workspace remains unavailable.", "Wait for loading to finish.", 512, 100));
-        var poll = Request("load_workspace", "target", "query=Foo", Work, operationToken: operationToken, maxResponseBytes: 512, maxResponseTokens: 100);
+        var poll = Request("load_workspace", "target", "query=Foo", Work, operationToken: operationToken, maxResponseBytes: 512, maxResponseTokens: 256);
         var firstPoll = await store.RunAsync(poll);
         var replay = await store.RunAsync(poll);
 
@@ -1055,7 +1059,8 @@ public sealed class LongRunningToolCallStoreTests
     public async Task ValidPollResetsRunningIdleDeadline()
     {
         await using var store = new LongRunningToolCallStore(
-            TimeSpan.FromMilliseconds(15), runningIdleTtl: TimeSpan.FromMilliseconds(800));
+            TimeSpan.FromMilliseconds(15), runningIdleTtl: TimeSpan.FromMilliseconds(800),
+            pollResponseWindow: TimeSpan.FromMilliseconds(15));
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         async Task<CallToolResult> Work(CancellationToken token)
         {

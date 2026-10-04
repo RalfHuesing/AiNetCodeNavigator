@@ -24,12 +24,21 @@ internal static class DependencyGraphOutgoingCollector
         string targetPath,
         long snapshotTicket,
         IReadOnlyDictionary<ProjectId, string>? ownerContextFingerprints = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Action<DependencyGraphProgress>? progress = null)
     {
         var plan = await DependencyGraphScanner.PrepareCollectionPlanAsync(solution, collectionOptions,
             ownerContextFingerprints, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        if (cache.GetFullRetainedCollection(plan, targetPath, snapshotTicket) is { } full) return full;
+        progress?.Invoke(new DependencyCollectionStarted());
+        if (cache.GetFullRetainedCollection(plan, targetPath, snapshotTicket) is { } full)
+        {
+            if (Math.Clamp(projectionOptions.Depth, 1, DependencyGraphScanner.MaximumDepth) == 1)
+                progress?.Invoke(new DependencyRequiredDocumentsKnown(plan.RequiredDocuments.Length));
+            foreach (var item in plan.RequiredDocuments)
+                progress?.Invoke(new DependencyDocumentSatisfied(snapshotTicket, item.Project.Id, item.Document.Id));
+            return full;
+        }
 
         var symbols = roots.GroupBy(type => DependencyGraphScanner.GetSourceTypeId(solution, type,
                 plan.OwnerContextFingerprints, plan.GeneratedDocumentOwners), StringComparer.Ordinal)
@@ -82,6 +91,8 @@ internal static class DependencyGraphOutgoingCollector
                 }
             }
 
+            if (distance == 0 && depth == 1)
+                progress?.Invoke(new DependencyRequiredDocumentsKnown(required.Count));
             if (needs.Count > 0)
             {
                 var selected = plan with
@@ -91,7 +102,7 @@ internal static class DependencyGraphOutgoingCollector
                     NextDocumentOffset = null
                 };
                 var collected = await cache.CollectPlanAsync(selected, targetPath, snapshotTicket,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken, progress).ConfigureAwait(false);
                 facts.AddRange(collected.DocumentFacts);
                 errors.AddRange(collected.Errors);
                 newScans += collected.NewSemanticScanCount;

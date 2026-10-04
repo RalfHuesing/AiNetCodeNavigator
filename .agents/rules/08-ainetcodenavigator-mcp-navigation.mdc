@@ -49,7 +49,7 @@ Preserve the same tool, target and query for polling/paging, including options a
 
 | Response / next step | Request |
 |---|---|
-| `operation=running` | Poll with returned `operationToken`; preserve active `resultCursor` if present; omit `continuationToken`. Running is not a result. |
+| `operation=running` | Wait at least the returned `retryAfterMilliseconds` (1000 ms), then poll the same tool, target and query with the returned `operationToken`; preserve active `resultCursor` if present; omit `continuationToken`. Running is not a result. |
 | `operation=retry`, `completeness=not_applicable` | Wait briefly; repeat as instructed. Persistent failure: diagnose or fall back; avoid busy loops. |
 | Outer response page | Use returned `continuationToken`; omit `operationToken` and `resultCursor`. Reconstruct all outer pages first. |
 | Next known-result page | Use returned `resultCursor`; omit `continuationToken` and the previous `operationToken`. Poll if running. |

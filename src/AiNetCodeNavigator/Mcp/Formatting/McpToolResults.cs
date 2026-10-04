@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using AiNetCodeNavigator.Core.Models;
 using ModelContextProtocol.Protocol;
 
 namespace AiNetCodeNavigator.Mcp.Formatting;
@@ -214,17 +215,74 @@ internal static class McpToolResults
         return Create(formatted.Text, isError: false);
     }
 
-    internal static CallToolResult Running(string operationToken, int maxResponseBytes, int? maxResponseTokens)
+    internal const string RunningNextAction = "Wait at least 1000 ms, then repeat the same tool, target and query with this operationToken; preserve an active resultCursor and omit continuationToken.";
+
+    internal static (int Bytes, int Tokens) RunningAdmissionMinimum(string operationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(operationToken);
-        var formatted = McpResponseFormatter.Format(
-            $"operationToken={operationToken}\nretry: repeat the same tool call with this operationToken.",
-            maxResponseBytes,
-            maxResponseTokens,
-            responsePrefix: RunningStatusPrefix);
-        return formatted.ErrorCode is null
-            ? Create(formatted.Text, isError: false)
-            : BudgetTooSmall(formatted, maxResponseBytes, maxResponseTokens);
+        var variants = Enum.GetValues<NavigationAnalysisPhase>().Select(phase =>
+            RunningControlText(operationToken, new(long.MaxValue, phase), includeCounters: false)).ToArray();
+        return (Math.Max(McpResponseBudgetLimits.MinimumBytes, variants.Max(Encoding.UTF8.GetByteCount)),
+            variants.Max(McpResponseFormatter.CountTokens));
+    }
+
+    internal static CallToolResult? PreflightRunningControl(string token, int bytes, int? tokens)
+    {
+        _ = Fits(string.Empty, bytes, tokens);
+        var minimum = RunningAdmissionMinimum(token);
+        return bytes < minimum.Bytes || tokens is { } budget && budget < minimum.Tokens
+            ? RunningBudgetError(minimum, bytes, tokens, isPoll: false)
+            : null;
+    }
+
+    internal static CallToolResult Running(string operationToken, int maxResponseBytes, int? maxResponseTokens) =>
+        Running(operationToken, new(0, NavigationAnalysisPhase.Loading), maxResponseBytes, maxResponseTokens,
+            RunningAdmissionMinimum(operationToken));
+
+    internal static CallToolResult Running(string token, NavigationOperationProgressSnapshot progress,
+        int bytes, int? tokens, (int Bytes, int Tokens) minimum)
+    {
+        var required = RunningControlText(token, progress, includeCounters: false);
+        if (!Fits(required, bytes, tokens)) return RunningBudgetError(minimum, bytes, tokens, isPoll: true);
+        var measured = RunningControlText(token, progress, includeCounters: true);
+        return Create(Fits(measured, bytes, tokens) ? measured : required, isError: false);
+    }
+
+    internal static string RunningControlText(string token, NavigationOperationProgressSnapshot progress, bool includeCounters)
+    {
+        var lines = new List<string>
+        {
+            RunningStatusPrefix.TrimEnd('\n'),
+            $"operationToken={token}",
+            FormattableString.Invariant($"elapsedMilliseconds: {progress.ElapsedMilliseconds}"),
+            $"phase: {progress.Phase.ToString().ToLowerInvariant()}",
+            "retryAfterMilliseconds: 1000"
+        };
+        if (includeCounters && progress.ProcessedDocuments is { } processed)
+            lines.Add(FormattableString.Invariant($"processedDocuments: {processed}"));
+        if (includeCounters && progress.TotalDocuments is { } total)
+            lines.Add(FormattableString.Invariant($"totalDocuments: {total}"));
+        lines.Add($"nextAction: {RunningNextAction}");
+        return string.Join("\n", lines);
+    }
+
+    private static CallToolResult RunningBudgetError((int Bytes, int Tokens) minimum, int bytes, int? tokens, bool isPoll)
+    {
+        var action = isPoll
+            ? $"Repeat the unchanged poll with maxResponseBytes={minimum.Bytes} and maxResponseTokens={minimum.Tokens}, the same operationToken and active resultCursor; omit continuationToken."
+            : $"Repeat the unchanged fresh call with maxResponseBytes={minimum.Bytes} and maxResponseTokens={minimum.Tokens}.";
+        var text = ErrorStatusPrefix + $"RESPONSE_BUDGET_TOO_SMALL\nminimumResponseBytes: {minimum.Bytes}\nminimumResponseTokens: {minimum.Tokens}\nnextAction: {action}";
+        // Error envelopes are atomic too; preserve the existing unrepresentable-budget validation.
+        if (!Fits(text, bytes, tokens))
+            throw new ArgumentOutOfRangeException(nameof(tokens), "The response budget cannot represent the complete budget error envelope.");
+        return Create(text, isError: true);
+    }
+
+    private static bool Fits(string text, int bytes, int? tokens)
+    {
+        if (!McpResponseBudgetLimits.IsPublicBudget(bytes)) throw new ArgumentOutOfRangeException(nameof(bytes));
+        if (tokens is <= 0) throw new ArgumentOutOfRangeException(nameof(tokens));
+        return Encoding.UTF8.GetByteCount(text) <= bytes && (tokens is null || McpResponseFormatter.CountTokens(text) <= tokens);
     }
 
     internal static CallToolResult TextResult(string text, bool isError, JsonElement? structuredContent = null) =>

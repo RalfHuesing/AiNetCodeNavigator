@@ -25,16 +25,21 @@ internal sealed record LongRunningToolCallRequest(
     string? AnalysisSnapshotId = null,
     string? CoreDomainCursor = null,
     string? ResultSection = null,
-    NavigationAnalysisMetadata? AnalysisMetadata = null);
+    NavigationAnalysisMetadata? AnalysisMetadata = null,
+    bool ProvidesDetailedProgress = false);
 
 /// <summary>Owns bounded tool executions and their opaque operation/continuation tokens.</summary>
 internal sealed class LongRunningToolCallStore : IAsyncDisposable
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, OperationEntry> _operations = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _reservedTokens = new(StringComparer.Ordinal);
     private readonly HashSet<OperationEntry> _running = [];
     private readonly McpResponseContinuationStore _continuations;
     private readonly TimeSpan _responseWindow;
+    private readonly TimeSpan _pollResponseWindow;
+    private readonly TimeProvider _timeProvider;
+    private readonly Func<string> _operationTokenFactory;
     private readonly TimeSpan _runningIdleTtl;
     private readonly TimeSpan _completedIdleTtl;
     private readonly int _maxRunning;
@@ -54,7 +59,10 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         int maxContinuationSnapshots = 32,
         long maxContinuationBytes = 8 * 1024 * 1024,
         int maxContinuationPages = 512,
-        int maxContinuationBudgetVariants = 4)
+        int maxContinuationBudgetVariants = 4,
+        TimeSpan? pollResponseWindow = null,
+        TimeProvider? timeProvider = null,
+        Func<string>? operationTokenFactory = null)
     {
         if (responseWindow <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(responseWindow));
         if (maxRunning <= 0) throw new ArgumentOutOfRangeException(nameof(maxRunning));
@@ -64,6 +72,10 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         if (maxContinuationPages <= 0) throw new ArgumentOutOfRangeException(nameof(maxContinuationPages));
         if (maxContinuationBudgetVariants <= 0) throw new ArgumentOutOfRangeException(nameof(maxContinuationBudgetVariants));
         _responseWindow = responseWindow;
+        _pollResponseWindow = pollResponseWindow ?? TimeSpan.FromSeconds(1);
+        if (_pollResponseWindow <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(pollResponseWindow));
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _operationTokenFactory = operationTokenFactory ?? McpResponseContinuationStore.CreateOpaqueToken;
         _runningIdleTtl = runningIdleTtl ?? TimeSpan.FromMinutes(30);
         _completedIdleTtl = completedIdleTtl ?? TimeSpan.FromMinutes(30);
         if (_runningIdleTtl <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(runningIdleTtl));
@@ -108,25 +120,38 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
             request = request with { AnalysisSnapshotId = resolvedCursor.SnapshotId, CoreDomainCursor = resolvedCursor.CoreCursor };
         }
 
-        var token = Guid.NewGuid().ToString("N");
-        var runningResult = McpToolResults.Running(token, request.MaxResponseBytes, request.MaxResponseTokens);
-        if (runningResult.IsError == true) return runningResult;
-
-        OperationEntry entry;
+        string token;
         lock (_gate)
         {
             ThrowIfDisposed();
-            if (_running.Count >= _maxRunning)
+            do { token = _operationTokenFactory(); }
+            while (_operations.ContainsKey(token) || !_reservedTokens.Add(token));
+        }
+        OperationEntry entry;
+        try
+        {
+            if (McpToolResults.PreflightRunningControl(token, request.MaxResponseBytes, request.MaxResponseTokens) is { } budgetError)
+                return budgetError;
+            lock (_gate)
             {
-                return McpToolResults.Recoverable("TOO_MANY_OPERATIONS", "The server is at its active operation limit.",
-                    "Retry after an active operation completes.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
-            }
+                ThrowIfDisposed();
+                if (_running.Count >= _maxRunning)
+                {
+                    return McpToolResults.Recoverable("TOO_MANY_OPERATIONS", "The server is at its active operation limit.",
+                        "Retry after an active operation completes.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
+                }
 
-            entry = new OperationEntry(token, request, _lifetime.Token, DateTimeOffset.UtcNow, _runningIdleTtl);
-            entry.ResetIdleDeadline(_runningIdleTtl);
-            _operations.Add(token, entry);
-            _running.Add(entry);
-            entry.Task = ExecuteAsync(entry);
+                entry = new OperationEntry(token, request, _lifetime.Token, DateTimeOffset.UtcNow, _runningIdleTtl,
+                    _timeProvider, McpToolResults.RunningAdmissionMinimum(token));
+                entry.ResetIdleDeadline(_runningIdleTtl);
+                _operations.Add(token, entry);
+                _running.Add(entry);
+                entry.Task = ExecuteAsync(entry);
+            }
+        }
+        finally
+        {
+            lock (_gate) _reservedTokens.Remove(token);
         }
 
         return await WaitForResultAsync(entry, request, cancellationToken, initialRequest: true).ConfigureAwait(false);
@@ -177,7 +202,8 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
     {
         try
         {
-            var result = await entry.Task.WaitAsync(_responseWindow, cancellationToken).ConfigureAwait(false);
+            var result = await entry.Task.WaitAsync(initialRequest ? _responseWindow : _pollResponseWindow,
+                _timeProvider, cancellationToken).ConfigureAwait(false);
             lock (_gate)
             {
                 entry.LastAccess = DateTimeOffset.UtcNow;
@@ -187,7 +213,8 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         }
         catch (TimeoutException)
         {
-            return McpToolResults.Running(entry.Token, request.MaxResponseBytes, request.MaxResponseTokens);
+            return McpToolResults.Running(entry.Token, entry.Progress.Snapshot(), request.MaxResponseBytes,
+                request.MaxResponseTokens, entry.AdmissionMinimum);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -210,7 +237,14 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         try
         {
             return await Task.Run(
-                async () => await entry.Request.Operation(entry.Request.CoreDomainCursor, entry.Cancellation.Token).ConfigureAwait(false),
+                async () =>
+                {
+                    using var progressScope = NavigationOperationProgress.Enter(entry.Progress);
+                    if (!entry.Request.ProvidesDetailedProgress) entry.Progress.Advance(NavigationAnalysisPhase.Analyzing);
+                    var result = await entry.Request.Operation(entry.Request.CoreDomainCursor, entry.Cancellation.Token).ConfigureAwait(false);
+                    entry.Progress.Advance(NavigationAnalysisPhase.Formatting);
+                    return result;
+                },
                 entry.Cancellation.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (entry.Cancellation.IsCancellationRequested)
@@ -219,6 +253,7 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         }
         catch
         {
+            entry.Progress.Advance(NavigationAnalysisPhase.Formatting);
             return McpToolResults.Recoverable("OPERATION_FAILED", "The tool operation failed.", "Correct the request and retry.",
                 maxResponseBytes: entry.Request.MaxResponseBytes, maxResponseTokens: entry.Request.MaxResponseTokens);
         }
@@ -336,12 +371,15 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
         if (_disposed) throw new ObjectDisposedException(nameof(LongRunningToolCallStore));
     }
 
-    private sealed class OperationEntry(string token, LongRunningToolCallRequest request, CancellationToken lifetimeToken, DateTimeOffset lastAccess, TimeSpan runningIdleTtl)
+    private sealed class OperationEntry(string token, LongRunningToolCallRequest request, CancellationToken lifetimeToken,
+        DateTimeOffset lastAccess, TimeSpan runningIdleTtl, TimeProvider timeProvider, (int Bytes, int Tokens) admissionMinimum)
     {
         private readonly object _cancellationGate = new();
         private Task? _cancellationTask;
         private bool _cancellationSourceDisposed;
         internal string Token { get; } = token;
+        internal NavigationOperationProgress Progress { get; } = new(timeProvider);
+        internal (int Bytes, int Tokens) AdmissionMinimum { get; } = admissionMinimum;
         internal LongRunningToolCallRequest Request { get; } = request;
         internal CancellationTokenSource Cancellation { get; } = CancellationTokenSource.CreateLinkedTokenSource(lifetimeToken);
         internal string SnapshotId { get; } = request.AnalysisSnapshotId ?? McpResponseContinuationStore.CreateOpaqueToken();
