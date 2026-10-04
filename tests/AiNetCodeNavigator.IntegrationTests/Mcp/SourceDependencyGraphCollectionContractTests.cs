@@ -1,11 +1,9 @@
 using System.IO;
 using System.Linq;
 using System.Text.Json;
-using AiNetCodeNavigator.Mcp;
 using AiNetCodeNavigator.Mcp.Tools.Relationships;
 using AiNetCodeNavigator.TestKit;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
+using AiNetCodeNavigator.TestKit.Builders;
 using static AiNetCodeNavigator.IntegrationTests.Mcp.IntegrationMcpAssertions;
 
 namespace AiNetCodeNavigator.IntegrationTests.Mcp;
@@ -16,11 +14,10 @@ public sealed class SourceDependencyGraphCollectionContractTests
     [Fact]
     public async Task DependencyGraph_BroadIncomingAndBothCoverLateDocuments()
     {
-        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
-        var relationships = new RelationshipTools(runtime);
         using var fixture = TestTempDirectory.Create("ainet-source-dependency-graph-broad-window-");
-        var target = await CreateSolutionAsync(fixture.DirectoryPath, fillerCount: 1000, includeLateRoot: true);
+        var (target, project) = CreateSolution(fixture, fillerCount: 1000, includeLateRoot: true);
+        await using var testHost = InMemorySourceTestHost.Create(target, [project]);
+        var relationships = new RelationshipTools(testHost.Runtime);
 
         foreach (var direction in new[] { "incoming", "both" })
         {
@@ -49,11 +46,10 @@ public sealed class SourceDependencyGraphCollectionContractTests
     [Fact]
     public async Task DependencyGraph_FileSelectorRejectsLinkedPhysicalFileWithSortedOwnerCandidates()
     {
-        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
-        var relationships = new RelationshipTools(runtime);
         using var fixture = TestTempDirectory.Create("ainet-source-dependency-graph-linked-owner-");
-        var (target, linkedPath, firstProject, secondProject) = await CreateLinkedFileSolutionAsync(fixture.DirectoryPath);
+        var (target, linkedPath, firstProject, secondProject, projects) = CreateLinkedFileSolution(fixture);
+        await using var testHost = InMemorySourceTestHost.Create(target, projects);
+        var relationships = new RelationshipTools(testHost.Runtime);
 
         var response = await relationships.DependencyGraph(target, filePath: linkedPath,
             maxResponseBytes: 32768, maxResponseTokens: 4096);
@@ -73,11 +69,10 @@ public sealed class SourceDependencyGraphCollectionContractTests
     [Fact]
     public async Task DependencyGraph_FileSelectorRejectsForeignAbsolutePathWithLoadedBasename()
     {
-        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
-        var relationships = new RelationshipTools(runtime);
         using var fixture = TestTempDirectory.Create("ainet-source-dependency-graph-foreign-file-");
-        var target = await CreateSolutionAsync(fixture.DirectoryPath);
+        var (target, project) = CreateSolution(fixture);
+        await using var testHost = InMemorySourceTestHost.Create(target, [project]);
+        var relationships = new RelationshipTools(testHost.Runtime);
         var foreignAbsolutePath = Path.Combine(Path.DirectorySeparatorChar.ToString(), "Relationships.cs");
         Assert.True(Path.IsPathRooted(foreignAbsolutePath));
         Assert.False(File.Exists(foreignAbsolutePath), $"Expected an unloaded foreign path: {foreignAbsolutePath}");
@@ -92,11 +87,10 @@ public sealed class SourceDependencyGraphCollectionContractTests
     [Fact]
     public async Task DependencyGraph_FileSelectorSeedsNestedAndEdgeFreeTypesAndIncludesPartialDeclarations()
     {
-        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
-        var relationships = new RelationshipTools(runtime);
         using var fixture = TestTempDirectory.Create("ainet-source-dependency-graph-file-seeds-");
-        var (target, selectedFile, partialFile) = await CreateNamedTypeFileSolutionAsync(fixture.DirectoryPath);
+        var (target, selectedFile, partialFile, project) = CreateNamedTypeFileSolution(fixture);
+        await using var testHost = InMemorySourceTestHost.Create(target, [project]);
+        var relationships = new RelationshipTools(testHost.Runtime);
 
         var response = await relationships.DependencyGraph(target, filePath: selectedFile,
             direction: "outgoing", depth: 1, maxResponseBytes: 65536, maxResponseTokens: 4096);
@@ -119,16 +113,14 @@ public sealed class SourceDependencyGraphCollectionContractTests
     [Fact]
     public async Task DependencyGraph_AppliesScopeAndGeneratedFiltersToCollectionDocuments()
     {
-        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
-        var relationships = new RelationshipTools(runtime);
         using var fixture = TestTempDirectory.Create("ainet-source-dependency-graph-filters-");
-        var target = await CreateSolutionAsync(fixture.DirectoryPath);
-        var appDirectory = Path.Combine(fixture.DirectoryPath, "src", "App");
-        await File.WriteAllTextAsync(Path.Combine(appDirectory, "RelationshipProbe.Tests.cs"),
-            "namespace RelationshipProbe; public sealed class ScopedTestCaller { public Target Value { get; set; } = new(); }");
-        await File.WriteAllTextAsync(Path.Combine(appDirectory, "Generated.g.cs"),
-            "// <auto-generated/>\nnamespace RelationshipProbe; public sealed class ScopedGeneratedCaller { public Target Value { get; set; } = new(); }");
+        var (target, project) = CreateSolution(fixture, additionalDocuments:
+        [
+            ("RelationshipProbe.Tests.cs", "namespace RelationshipProbe; public sealed class ScopedTestCaller { public Target Value { get; set; } = new(); }"),
+            ("Generated.g.cs", "// <auto-generated/>\nnamespace RelationshipProbe; public sealed class ScopedGeneratedCaller { public Target Value { get; set; } = new(); }")
+        ]);
+        await using var testHost = InMemorySourceTestHost.Create(target, [project]);
+        var relationships = new RelationshipTools(testHost.Runtime);
 
         var all = await relationships.DependencyGraph(target, symbolIdentifier: "T:RelationshipProbe.Target",
             direction: "incoming", maxResponseBytes: 65536, maxResponseTokens: 4096);
@@ -162,60 +154,52 @@ public sealed class SourceDependencyGraphCollectionContractTests
         return text[start..];
     }
 
-    private static async Task<string> CreateSolutionAsync(string root, int fillerCount = 0, bool includeLateRoot = false)
+    private static (string Target, ProjectSpec Project) CreateSolution(
+        TestTempDirectory fixture,
+        int fillerCount = 0,
+        bool includeLateRoot = false,
+        IReadOnlyList<(string FileName, string Content)>? additionalDocuments = null)
     {
-        var solution = Path.Combine(root, "DependencyGraph.slnx");
-        var projectDirectory = Path.Combine(root, "src", "App");
-        Directory.CreateDirectory(projectDirectory);
-        await File.WriteAllTextAsync(solution, "<Solution><Project Path=\"src/App/DependencyGraph.csproj\" /></Solution>");
-        await File.WriteAllTextAsync(Path.Combine(projectDirectory, "DependencyGraph.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>");
-        await File.WriteAllTextAsync(Path.Combine(projectDirectory, "Relationships.cs"),
-            "namespace RelationshipProbe; public sealed class Target { } public sealed class ProductionCaller { public Target Value { get; set; } = new(); }");
+        var target = fixture.CreateFile("DependencyGraph.slnx", string.Empty);
+        var sourceDocuments = new List<(string FileName, string Content)>();
+        const string rootSource = "namespace RelationshipProbe; public sealed class Target { } public sealed class ProductionCaller { public Target Value { get; set; } = new(); }";
+        sourceDocuments.Add((fixture.CreateFile("src/App/Relationships.cs", rootSource), rootSource));
         foreach (var index in Enumerable.Range(0, fillerCount))
-            await File.WriteAllTextAsync(Path.Combine(projectDirectory, $"A{index:D4}.cs"), $"namespace Filler{index:D4}; public sealed class Filler{index:D4} {{ }}");
+        {
+            var source = $"namespace Filler{index:D4}; public sealed class Filler{index:D4} {{ }}";
+            sourceDocuments.Add((fixture.CreateFile($"src/App/A{index:D4}.cs", source), source));
+        }
         if (includeLateRoot)
-            await File.WriteAllTextAsync(Path.Combine(projectDirectory, "ZLater.cs"),
-                "namespace RelationshipProbe; public sealed class LaterDependency { } public sealed class LateRoot { public LaterDependency Value { get; set; } = new(); } public sealed class LateCaller { public LateRoot Value { get; set; } = new(); }");
-        var nugetConfig = Path.Combine(root, "NuGet.Config");
-        await File.WriteAllTextAsync(nugetConfig, "<configuration><packageSources><clear /></packageSources></configuration>");
-        await FixtureRestore.RunAsync(solution, root, nugetConfig, "Dependency-graph fixture restore");
-        return solution;
+        {
+            const string source = "namespace RelationshipProbe; public sealed class LaterDependency { } public sealed class LateRoot { public LaterDependency Value { get; set; } = new(); } public sealed class LateCaller { public LateRoot Value { get; set; } = new(); }";
+            sourceDocuments.Add((fixture.CreateFile("src/App/ZLater.cs", source), source));
+        }
+        foreach (var (fileName, source) in additionalDocuments ?? [])
+            sourceDocuments.Add((fixture.CreateFile("src/App/" + fileName, source), source));
+        var project = new ProjectSpec("DependencyGraph", sourceDocuments, VirtualProjectDirectory: "src/App");
+        return (target, project);
     }
 
-    private static async Task<(string Solution, string LinkedFile, string FirstProject, string SecondProject)> CreateLinkedFileSolutionAsync(string root)
+    private static (string Target, string LinkedFile, string FirstProject, string SecondProject, ProjectSpec[] Projects) CreateLinkedFileSolution(TestTempDirectory fixture)
     {
-        var solution = Path.Combine(root, "LinkedOwners.slnx");
-        var firstProject = Path.Combine(root, "src", "First", "First.csproj");
-        var secondProject = Path.Combine(root, "src", "Second", "Second.csproj");
-        var linkedFile = Path.Combine(root, "src", "Shared", "Linked.cs");
-        Directory.CreateDirectory(Path.GetDirectoryName(firstProject)!);
-        Directory.CreateDirectory(Path.GetDirectoryName(secondProject)!);
-        Directory.CreateDirectory(Path.GetDirectoryName(linkedFile)!);
-        await File.WriteAllTextAsync(solution,
-            "<Solution><Project Path=\"src/First/First.csproj\" /><Project Path=\"src/Second/Second.csproj\" /></Solution>");
-        const string projectText = "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup><ItemGroup><Compile Include=\"../Shared/Linked.cs\" Link=\"Linked.cs\" /></ItemGroup></Project>";
-        await File.WriteAllTextAsync(firstProject, projectText);
-        await File.WriteAllTextAsync(secondProject, projectText);
-        await File.WriteAllTextAsync(linkedFile,
+        var target = fixture.CreateFile("LinkedOwners.slnx", string.Empty);
+        var linkedFile = fixture.CreateFile("src/Shared/Linked.cs",
             "namespace LinkedProbe; public sealed class SharedRoot { public SharedDependency Value { get; set; } = new(); } public sealed class SharedDependency { }");
-        var nugetConfig = Path.Combine(root, "NuGet.Config");
-        await File.WriteAllTextAsync(nugetConfig, "<configuration><packageSources><clear /></packageSources></configuration>");
-        await FixtureRestore.RunAsync(solution, root, nugetConfig, "Linked-file owner fixture restore");
-        return (solution, linkedFile, Path.GetFullPath(firstProject).Replace('\\', '/'), Path.GetFullPath(secondProject).Replace('\\', '/'));
+        var firstProject = Path.Combine(fixture.DirectoryPath, "src", "First", "First.csproj").Replace('\\', '/');
+        var secondProject = Path.Combine(fixture.DirectoryPath, "src", "Second", "Second.csproj").Replace('\\', '/');
+        const string source = "namespace LinkedProbe; public sealed class SharedRoot { public SharedDependency Value { get; set; } = new(); } public sealed class SharedDependency { }";
+        var projects = new[]
+        {
+            new ProjectSpec("First", [(linkedFile, source)], VirtualProjectDirectory: "src/First"),
+            new ProjectSpec("Second", [(linkedFile, source)], VirtualProjectDirectory: "src/Second")
+        };
+        return (target, linkedFile, firstProject, secondProject, projects);
     }
 
-    private static async Task<(string Solution, string SelectedFile, string PartialFile)> CreateNamedTypeFileSolutionAsync(string root)
+    private static (string Target, string SelectedFile, string PartialFile, ProjectSpec Project) CreateNamedTypeFileSolution(TestTempDirectory fixture)
     {
-        var solution = Path.Combine(root, "NamedTypes.slnx");
-        var projectDirectory = Path.Combine(root, "src", "App");
-        var selectedFile = Path.Combine(projectDirectory, "Root.cs");
-        var partialFile = Path.Combine(projectDirectory, "Outer.Partial.cs");
-        Directory.CreateDirectory(projectDirectory);
-        await File.WriteAllTextAsync(solution, "<Solution><Project Path=\"src/App/NamedTypes.csproj\" /></Solution>");
-        await File.WriteAllTextAsync(Path.Combine(projectDirectory, "NamedTypes.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>");
-        await File.WriteAllTextAsync(selectedFile, """
+        var target = fixture.CreateFile("NamedTypes.slnx", string.Empty);
+        var selectedFile = fixture.CreateFile("src/App/Root.cs", """
             namespace RootProbe;
             public sealed partial class Outer
             {
@@ -228,11 +212,23 @@ public sealed class SourceDependencyGraphCollectionContractTests
             }
             public sealed class Dependency { }
             """);
-        await File.WriteAllTextAsync(partialFile,
+        var partialFile = fixture.CreateFile("src/App/Outer.Partial.cs",
             "namespace RootProbe; public sealed partial class Outer { public Dependency PartialValue { get; set; } = new(); }");
-        var nugetConfig = Path.Combine(root, "NuGet.Config");
-        await File.WriteAllTextAsync(nugetConfig, "<configuration><packageSources><clear /></packageSources></configuration>");
-        await FixtureRestore.RunAsync(solution, root, nugetConfig, "Named-type file-root fixture restore");
-        return (solution, selectedFile, partialFile);
+        var project = new ProjectSpec("NamedTypes",
+            [(selectedFile, """
+                namespace RootProbe;
+                public sealed partial class Outer
+                {
+                    public sealed class NestedClass { public Dependency Value { get; set; } = new(); }
+                    public sealed record NestedRecord(Dependency Value);
+                    public struct NestedStruct { public int Value; }
+                    public interface NestedInterface { }
+                    public enum NestedEnum { Value }
+                    public delegate void NestedDelegate();
+                }
+                public sealed class Dependency { }
+                """), (partialFile, "namespace RootProbe; public sealed partial class Outer { public Dependency PartialValue { get; set; } = new(); }")],
+            VirtualProjectDirectory: "src/App");
+        return (target, selectedFile, partialFile, project);
     }
 }

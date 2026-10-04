@@ -2,12 +2,10 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Text.Json;
 using AiNetCodeNavigator.Core.Dependencies;
-using AiNetCodeNavigator.Mcp;
 using AiNetCodeNavigator.Mcp.Tools.Relationships;
 using AiNetCodeNavigator.Mcp.Tools.Symbols;
 using AiNetCodeNavigator.TestKit;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
+using AiNetCodeNavigator.TestKit.Builders;
 using ModelContextProtocol.Protocol;
 using static AiNetCodeNavigator.IntegrationTests.Mcp.IntegrationMcpAssertions;
 
@@ -22,7 +20,7 @@ public sealed class SourceDependencyGraphOutgoingContractTests
     public async Task DependencyGraph_ColdPartialRootsScanOnlyNeededFrontiersAndMatchBroadProjection(int depth, string broadDirection)
     {
         using var fixture = TestTempDirectory.Create("ainet-outgoing-frontiers-");
-        var target = await CreateSolutionAsync(fixture, new Dictionary<string, string>
+        var (target, project) = CreateSolution(fixture, new Dictionary<string, string>
         {
             ["Root.cs"] = "namespace OutgoingProbe; public partial class Root { public Left Value = new(); } public class Unrelated { public Noise Value = new(); }",
             ["Root.Partial.cs"] = "namespace OutgoingProbe; public partial class Root { public Right Other = new(); }",
@@ -34,11 +32,10 @@ public sealed class SourceDependencyGraphOutgoingContractTests
             ["Excluded.Tests.cs"] = "namespace OutgoingProbe; public class TestCaller { public Root Value = new(); }"
         });
         var scans = new ConcurrentQueue<string>();
-        await using var cache = new DependencyGraphCache(observer: new DependencyGraphCollectionObserver(
+        var cache = new DependencyGraphCache(observer: new DependencyGraphCollectionObserver(
             DocumentCollected: document => scans.Enqueue(document.Name)));
-        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>(), dependencyGraphCache: cache);
-        var relationships = new RelationshipTools(runtime);
+        await using var testHost = InMemorySourceTestHost.Create(target, [project], cache);
+        var relationships = new RelationshipTools(testHost.Runtime);
 
         var cold = await relationships.DependencyGraph(target, symbolIdentifier: "T:OutgoingProbe.Root", direction: "outgoing", depth: depth,
             maxResponseBytes: 65536, maxResponseTokens: 8192);
@@ -78,7 +75,7 @@ public sealed class SourceDependencyGraphOutgoingContractTests
         Assert.Equal(8, scans.Count);
         var endpoint = partialEdge.GetProperty("toHandoffId").GetString();
         Assert.False(string.IsNullOrWhiteSpace(endpoint));
-        var body = await new SymbolTools(runtime).GetSymbolBody(target, [endpoint!], maxResponseBytes: 32768, maxResponseTokens: 4096);
+        var body = await new SymbolTools(testHost.Runtime).GetSymbolBody(target, [endpoint!], maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(body, 32768, 4096);
         Assert.Contains("Resolution status: resolved", TextOf(body), StringComparison.Ordinal);
         Assert.Contains("class Right", TextOf(body), StringComparison.Ordinal);
@@ -98,7 +95,7 @@ public sealed class SourceDependencyGraphOutgoingContractTests
     public async Task DependencyGraph_FileSeedsEveryNamedTypeAndEmptyFilePreservesProjectSummary()
     {
         using var fixture = TestTempDirectory.Create("ainet-outgoing-file-seeds-");
-        var target = await CreateSolutionAsync(fixture, new Dictionary<string, string>
+        var (target, app) = CreateSolution(fixture, new Dictionary<string, string>
         {
             ["Selected.cs"] = """
                 namespace FileProbe;
@@ -116,12 +113,14 @@ public sealed class SourceDependencyGraphOutgoingContractTests
             ["Partial.cs"] = "namespace FileProbe; public partial class Outer { public Dependency Value = new(); }",
             ["Dependency.cs"] = "namespace FileProbe; public class Dependency { }",
             ["Empty.cs"] = "namespace FileProbe; // no named type"
-        }, includeReferencedProject: true);
+        });
+        var libraryFile = fixture.CreateFile("src/Library/Library.cs", "namespace LibraryProbe; public class LibraryType { }");
+        var library = new ProjectSpec("Library", [(libraryFile, await File.ReadAllTextAsync(libraryFile))], VirtualProjectDirectory: "src/Library");
         var scans = new ConcurrentQueue<string>();
-        await using var cache = new DependencyGraphCache(observer: new DependencyGraphCollectionObserver(DocumentCollected: document => scans.Enqueue(document.Name)));
-        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>(), dependencyGraphCache: cache);
-        var relationships = new RelationshipTools(runtime);
+        var cache = new DependencyGraphCache(observer: new DependencyGraphCollectionObserver(DocumentCollected: document => scans.Enqueue(document.Name)));
+        app = app with { ProjectReferences = ["Library"] };
+        await using var testHost = InMemorySourceTestHost.Create(target, [app, library], cache);
+        var relationships = new RelationshipTools(testHost.Runtime);
 
         var empty = await relationships.DependencyGraph(target, filePath: fixture.GetPath("src/App/Empty.cs"), direction: "outgoing",
             maxResponseBytes: 65536, maxResponseTokens: 8192);
@@ -159,17 +158,16 @@ public sealed class SourceDependencyGraphOutgoingContractTests
     public async Task DependencyGraph_FileValidationPrecedesCollectionAndExcludedRootRemainsAnchor()
     {
         using var fixture = TestTempDirectory.Create("ainet-outgoing-validation-");
-        var target = await CreateSolutionAsync(fixture, new Dictionary<string, string>
+        var (target, project) = CreateSolution(fixture, new Dictionary<string, string>
         {
             ["Anchor.Tests.cs"] = "namespace FilterProbe; public class Anchor { public Caller Value = new(); }",
             ["Caller.cs"] = "namespace FilterProbe; public class Caller { public Anchor Value = new(); }"
         });
         var foreign = fixture.CreateFile("foreign/Caller.cs", "namespace Foreign; public class Caller { }");
         var scans = new ConcurrentQueue<string>();
-        await using var cache = new DependencyGraphCache(observer: new DependencyGraphCollectionObserver(DocumentCollected: document => scans.Enqueue(document.Name)));
-        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>(), dependencyGraphCache: cache);
-        var relationships = new RelationshipTools(runtime);
+        var cache = new DependencyGraphCache(observer: new DependencyGraphCollectionObserver(DocumentCollected: document => scans.Enqueue(document.Name)));
+        await using var testHost = InMemorySourceTestHost.Create(target, [project], cache);
+        var relationships = new RelationshipTools(testHost.Runtime);
         foreach (var direction in new[] { "outgoing", "incoming", "both" })
         {
             var invalid = await relationships.DependencyGraph(target, filePath: foreign, direction: direction, scopeType: "production",
@@ -198,23 +196,27 @@ public sealed class SourceDependencyGraphOutgoingContractTests
     public async Task DependencyGraph_LinkedGeneratedFileIsAmbiguousBeforeFiltersOrCollection()
     {
         using var fixture = TestTempDirectory.Create("ainet-outgoing-linked-");
-        var target = fixture.CreateFile("Linked.slnx", "<Solution><Project Path=\"src/Zebra/Zebra.csproj\" /><Project Path=\"src/Alpha/Alpha.csproj\" /></Solution>");
+        var target = fixture.CreateFile("Linked.slnx", string.Empty);
         var linked = fixture.CreateFile("src/Shared/Linked.g.cs", "// <auto-generated/>\nnamespace LinkedProbe; public class Root { }");
-        var owners = new[] { "Alpha", "Zebra" }.Select(name => fixture.CreateFile($"src/{name}/{name}.csproj",
-            ProjectXml("<ItemGroup><Compile Include=\"../Shared/Linked.g.cs\" Link=\"Linked.g.cs\" /></ItemGroup>"))).ToArray();
-        await RestoreAsync(fixture, target);
+        var source = await File.ReadAllTextAsync(linked);
+        var projects = new[]
+        {
+            new ProjectSpec("Zebra", [(linked, source)], VirtualProjectDirectory: "src/Zebra"),
+            new ProjectSpec("Alpha", [(linked, source)], VirtualProjectDirectory: "src/Alpha")
+        };
         var scans = new ConcurrentQueue<string>();
-        await using var cache = new DependencyGraphCache(observer: new DependencyGraphCollectionObserver(DocumentCollected: document => scans.Enqueue(document.Name)));
-        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>(), dependencyGraphCache: cache);
-        var relationships = new RelationshipTools(runtime);
+        await using var cache = new DependencyGraphCache(observer: new DependencyGraphCollectionObserver(DocumentCollected: _ => scans.Enqueue("collected")));
+        await using var testHost = InMemorySourceTestHost.Create(target, projects, cache);
+        var relationships = new RelationshipTools(testHost.Runtime);
         foreach (var direction in new[] { "outgoing", "incoming", "both" })
         {
             var result = await relationships.DependencyGraph(target, filePath: linked, direction: direction, scopeType: "tests", includeGenerated: false,
                 maxResponseBytes: 65536, maxResponseTokens: 8192);
             AssertErrorWithinBudget(result, "INVALID_ARGUMENT", 65536, 8192);
             var text = TextOf(result);
-            var candidates = owners.Select(path => OperatingSystem.IsWindows() ? path.Replace('\\', '/').ToUpperInvariant() : path.Replace('\\', '/')).ToArray();
+            var candidates = new[] { "Alpha", "Zebra" }.Select(name =>
+                (OperatingSystem.IsWindows() ? Path.Combine(fixture.DirectoryPath, "src", name, name + ".csproj").ToUpperInvariant()
+                    : Path.Combine(fixture.DirectoryPath, "src", name, name + ".csproj")).Replace('\\', '/')).ToArray();
             Assert.Contains("$.filePath", text, StringComparison.Ordinal);
             Assert.Contains("unique owner-bound symbol reference", text, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(candidates[0], text, StringComparison.Ordinal);
@@ -227,10 +229,7 @@ public sealed class SourceDependencyGraphOutgoingContractTests
     private static JsonElement Payload(CallToolResult result)
     {
         AssertSuccessWithinBudget(result, 65536, 8192);
-        var text = TextOf(result);
-        var start = text.IndexOf('{');
-        Assert.True(start >= 0, text);
-        using var payload = JsonDocument.Parse(text[start..]);
+        using var payload = JsonDocument.Parse(BodyOf(TextOf(result)));
         return payload.RootElement.Clone();
     }
 
@@ -253,28 +252,18 @@ public sealed class SourceDependencyGraphOutgoingContractTests
         return edge;
     }
 
-    private static async Task<string> CreateSolutionAsync(TestTempDirectory fixture, Dictionary<string, string> documents, bool includeReferencedProject = false)
+    private static (string Target, ProjectSpec Project) CreateSolution(TestTempDirectory fixture, Dictionary<string, string> documents,
+        bool includeReferencedProject = false)
     {
-        var library = includeReferencedProject ? "<Project Path=\"src/Library/Library.csproj\" />" : string.Empty;
-        var target = fixture.CreateFile("Outgoing.slnx", $"<Solution><Project Path=\"src/App/App.csproj\" />{library}</Solution>");
-        fixture.CreateFile("src/App/App.csproj", ProjectXml(includeReferencedProject
-            ? "<ItemGroup><ProjectReference Include=\"../Library/Library.csproj\" /></ItemGroup>" : string.Empty));
-        foreach (var (name, source) in documents) fixture.CreateFile($"src/App/{name}", source);
-        if (includeReferencedProject)
+        var target = fixture.CreateFile("Outgoing.slnx", string.Empty);
+        var sourceDocuments = documents.Select(pair =>
         {
-            fixture.CreateFile("src/Library/Library.csproj", ProjectXml(string.Empty));
-            fixture.CreateFile("src/Library/Library.cs", "namespace LibraryProbe; public class LibraryType { }");
-        }
-        await RestoreAsync(fixture, target);
-        return target;
-    }
-
-    private static string ProjectXml(string items) =>
-        "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>disable</ImplicitUsings><Nullable>enable</Nullable><GenerateAssemblyInfo>false</GenerateAssemblyInfo><GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute></PropertyGroup>" + items + "</Project>";
-
-    private static Task RestoreAsync(TestTempDirectory fixture, string target)
-    {
-        var configuration = fixture.CreateFile("NuGet.Config", "<configuration><packageSources><clear /></packageSources></configuration>");
-        return FixtureRestore.RunAsync(target, fixture.DirectoryPath, configuration, "Outgoing dependency-graph fixture restore");
+            var path = fixture.CreateFile("src/App/" + pair.Key, pair.Value);
+            return (path, pair.Value);
+        }).ToArray();
+        var project = new ProjectSpec("App", sourceDocuments,
+            ProjectReferences: includeReferencedProject ? ["Library"] : null,
+            VirtualProjectDirectory: "src/App");
+        return (target, project);
     }
 }

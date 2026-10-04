@@ -234,7 +234,8 @@ public sealed class IndexScopeContractTests
         Assert.Contains("STALE_SNAPSHOT", TextOf(changedSnapshot), StringComparison.Ordinal);
 
         var assemblyTools = new AssemblyTools(runtime);
-        var assemblyPath = typeof(TestTempDirectory).Assembly.Location;
+        var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "IndexScopeAssemblyProbe",
+            "namespace IndexScopeAssemblyProbe; public sealed class Probe { public int Read() => 1; }");
         var assemblyPendingTask = assemblyTools.InspectAssembly(assemblyPath, maxResponseBytes: 65536, maxResponseTokens: 4096);
         await WaitUntilAsync(() => runtime.AssemblyRegistry.GetActiveAccessCount(assemblyPath) > 0,
             TimeSpan.FromSeconds(10));

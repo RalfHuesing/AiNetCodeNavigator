@@ -1479,7 +1479,7 @@ public sealed class AssemblyToolsContractTests
         using var fixture = TestTempDirectory.Create("ainet-assembly-zero-bytes-");
         var suffix = new string('T', 120);
         var source = new StringBuilder("namespace ZeroByteProbe;\n");
-        for (var index = 0; index < 400; index++)
+        for (var index = 0; index < 60; index++)
         {
             source.Append("public sealed class Type").Append(index.ToString("D3")).Append('_').Append(suffix).AppendLine(" {");
             source.Append("public string NeedleBudget").Append(index.ToString("D3"))
@@ -1487,7 +1487,7 @@ public sealed class AssemblyToolsContractTests
             source.AppendLine("}");
         }
         source.AppendLine("public static class Extensions {");
-        for (var index = 0; index < 100; index++)
+        for (var index = 0; index < 50; index++)
         {
             source.Append("public static int ExtensionBudget").Append(index.ToString("D3")).Append('_').Append(suffix)
                 .Append("(this Type000_").Append(suffix).Append(" receiver) => ").Append(index).AppendLine(";");

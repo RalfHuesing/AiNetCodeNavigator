@@ -25,19 +25,19 @@ public sealed class SourceToolsContractTests
     public async Task StructureInventoriesReachEntriesBeyondThePreviousTwoHundredEntryCaps()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        using var fixture = TestTempDirectory.Create("ainet-structure-over-cap-");
+        using var fixture = TestTempDirectory.Create("structure-");
         var solutionPath = fixture.CreateFile("Workspace.slnx", string.Empty);
         var sourcePath = fixture.CreateFile("ManyTypes.cs", string.Empty);
         var members = string.Join(Environment.NewLine, Enumerable.Range(0, 205).Select(index => $"    public void Member{index:D3}() {{ }}"));
         var types = string.Join(Environment.NewLine, Enumerable.Range(0, 205).Select(index => $"public sealed class Type{index:D3} {{ }}"));
         var source = $"namespace CapProbe;{Environment.NewLine}public sealed class ManyMembers{Environment.NewLine}{{{Environment.NewLine}{members}{Environment.NewLine}}}{Environment.NewLine}{types}";
         await File.WriteAllTextAsync(sourcePath, source);
-        var workspace = TestWorkspaceBuilder.Create().WithVirtualSolutionPath(solutionPath)
+        var workspace = TestWorkspaceBuilder.Create().WithVirtualSolutionPath(solutionPath).WithCapturedCoreReferences()
             .WithProject("CapProbe", (sourcePath, source)).Build();
         await using var registry = new ProjectRegistry(new ProjectRegistryOptions(_ => ResidentSolutionCreation.Resident(new ResidentSolution(workspace.Solution)), TimeProvider.System));
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>(), projectRegistry: registry);
         var tools = new StructureTools(runtime);
-        using var emitted = TestTempDirectory.Create("ainet-structure-over-cap-assembly-");
+        using var emitted = TestTempDirectory.Create("structure-assembly-");
         var assemblyPath = AssemblyTestHelper.EmitAssembly(emitted, "CapProbe", source);
 
         var sourceMembers = await ReadClassMemberPagesAsync(tools, solutionPath, "CapProbe.ManyMembers");
@@ -416,17 +416,12 @@ public sealed class SourceToolsContractTests
     [Fact]
     public async Task SourceHandlersReturnNavigableResultsAndTypedDomainErrorsWithoutTransport()
     {
-        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
-        var symbols = new SymbolTools(runtime);
-        var structure = new StructureTools(runtime);
-        var relationships = new RelationshipTools(runtime);
-
         using var fixture = TestTempDirectory.Create("ainet-source-tools-contract-");
-        var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
-        var appFile = Path.Combine(fixture.DirectoryPath, "src", "App", "Target.cs");
-        await File.WriteAllTextAsync(Path.Combine(fixture.DirectoryPath, "src", "App", "NamespaceRecovery.cs"),
-            "namespace ScopeProbe.Recovery.Deep { public sealed class NestedType { } }");
+        var (target, appFile, testHost) = CreateSourceToolsHost(fixture.DirectoryPath);
+        await using var ownedTestHost = testHost;
+        var symbols = new SymbolTools(testHost.Runtime);
+        var structure = new StructureTools(testHost.Runtime);
+        var relationships = new RelationshipTools(testHost.Runtime);
 
         var found = await symbols.FindSymbol(target, pattern: "Run", kind: "method", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(found, 16384, 1024);
@@ -531,18 +526,27 @@ public sealed class SourceToolsContractTests
         var partialSkeleton = await structure.GetFileSkeleton(target, [partialTypeReference],
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(partialSkeleton, 16384, 1024);
-        Assert.Contains("Zebra", TextOf(partialSkeleton), StringComparison.Ordinal);
-        Assert.Contains("GeneratedMember", TextOf(partialSkeleton), StringComparison.Ordinal);
+        var partialSkeletonText = await ReconstructOuterPagesAsync(partialSkeleton, continuation =>
+            structure.GetFileSkeleton(target, [partialTypeReference], continuationToken: continuation,
+                maxResponseBytes: 16384, maxResponseTokens: 1024));
+        Assert.Contains("Zebra", partialSkeletonText, StringComparison.Ordinal);
+        Assert.Contains("GeneratedMember", partialSkeletonText, StringComparison.Ordinal);
         var filteredPartialStructure = await structure.GetClassStructure(target, partialTypeReference,
             includeGenerated: false, maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(filteredPartialStructure, 16384, 1024);
-        Assert.Contains("Zebra", TextOf(filteredPartialStructure), StringComparison.Ordinal);
-        Assert.DoesNotContain("GeneratedMember", TextOf(filteredPartialStructure), StringComparison.Ordinal);
+        var filteredPartialStructureText = await ReconstructOuterPagesAsync(filteredPartialStructure, continuation =>
+            structure.GetClassStructure(target, partialTypeReference, includeGenerated: false,
+                continuationToken: continuation, maxResponseBytes: 16384, maxResponseTokens: 1024));
+        Assert.Contains("Zebra", filteredPartialStructureText, StringComparison.Ordinal);
+        Assert.DoesNotContain("GeneratedMember", filteredPartialStructureText, StringComparison.Ordinal);
         var generatedPartialStructure = await structure.GetClassStructure(target, partialTypeReference,
             includeGenerated: true, maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(generatedPartialStructure, 16384, 1024);
-        Assert.Contains("Zebra", TextOf(generatedPartialStructure), StringComparison.Ordinal);
-        Assert.Contains("GeneratedMember", TextOf(generatedPartialStructure), StringComparison.Ordinal);
+        var generatedPartialStructureText = await ReconstructOuterPagesAsync(generatedPartialStructure, continuation =>
+            structure.GetClassStructure(target, partialTypeReference, includeGenerated: true,
+                continuationToken: continuation, maxResponseBytes: 16384, maxResponseTokens: 1024));
+        Assert.Contains("Zebra", generatedPartialStructureText, StringComparison.Ordinal);
+        Assert.Contains("GeneratedMember", generatedPartialStructureText, StringComparison.Ordinal);
 
         var pagedSkeleton = await ReadAllSkeletonPagesAsync(structure, target, appFile, 1024, 4096);
         Assert.True(pagedSkeleton.Pages > 1);
@@ -848,16 +852,17 @@ public sealed class SourceToolsContractTests
     [Fact]
     public async Task GetContextTestsPagesAllCandidatesAndKeepsExpansionLimitPartialOnFinalPage()
     {
-        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
-        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
-        var relationships = new RelationshipTools(runtime);
-        using var fixture = TestTempDirectory.Create("ainet-get-context-test-candidate-limit-");
-        var target = await CreateSourceSolutionAsync(fixture.DirectoryPath);
-        var testSourcePath = Path.Combine(fixture.DirectoryPath, "tests", "ScopeProbe.Tests", "TargetTests.cs");
-        var methods = string.Join(Environment.NewLine, Enumerable.Range(0, TestRecommendationBuilder.MaxCandidateFixtures + 3)
-            .Select(index => $"public sealed class DirectTest{index:D3} {{ [Xunit.Fact] public void UsesTarget() => new ScopeProbe.Target().Run(); }}"));
-        await File.WriteAllTextAsync(testSourcePath,
-            $"using System; namespace Xunit {{ public sealed class FactAttribute : Attribute {{ }} }} namespace ScopeProbe.Tests {{ {methods} }}");
+        using var fixture = TestTempDirectory.Create("context-limit-");
+        using var otherFixture = TestTempDirectory.Create("context-other-");
+        var (target, targetProjects) = CreateTestCandidateProjects(fixture.DirectoryPath,
+            TestRecommendationBuilder.MaxCandidateFixtures + 3);
+        var (otherTarget, otherProjects) = CreateTestCandidateProjects(otherFixture.DirectoryPath, 1);
+        await using var testHost = InMemorySourceTestHost.CreateForSolutions(
+        [
+            (target, targetProjects),
+            (otherTarget, otherProjects),
+        ]);
+        var relationships = new RelationshipTools(testHost.Runtime);
 
         var names = new List<string>();
         string? cursor = null;
@@ -925,8 +930,6 @@ public sealed class SourceToolsContractTests
             "ScopeProbe.Target.Run", ["tests"], includeGenerated: true, maxResults: 100, resultCursor: firstCursor,
             maxResponseBytes: 65536, maxResponseTokens: 8192)), StringComparison.Ordinal);
 
-        using var otherFixture = TestTempDirectory.Create("ainet-get-context-tests-other-target-");
-        var otherTarget = await CreateSourceSolutionAsync(otherFixture.DirectoryPath);
         Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(await relationships.GetContext(otherTarget,
             "ScopeProbe.Target.Run", ["tests"], maxResults: 100, resultCursor: firstCursor,
             maxResponseBytes: 65536, maxResponseTokens: 8192)), StringComparison.Ordinal);
@@ -1216,6 +1219,119 @@ public sealed class SourceToolsContractTests
         var end = line.IndexOf('`', start);
         Assert.True(end > start, line);
         return line[start..end];
+    }
+
+    private static (string Target, string AppFile, InMemorySourceTestHost Host) CreateSourceToolsHost(string root)
+    {
+        var solutionPath = Path.Combine(root, "SourceTools.slnx");
+        var appDirectory = Path.Combine(root, "src", "App");
+        var testsDirectory = Path.Combine(root, "tests", "ScopeProbe.Tests");
+        Directory.CreateDirectory(appDirectory);
+        Directory.CreateDirectory(testsDirectory);
+        var appFile = Path.Combine(appDirectory, "Target.cs");
+        var generatedFile = Path.Combine(appDirectory, "Generated.g.cs");
+        var recoveryFile = Path.Combine(appDirectory, "NamespaceRecovery.cs");
+        var testsFile = Path.Combine(testsDirectory, "TargetTests.cs");
+
+        var pageEntries = string.Join(Environment.NewLine, Enumerable.Range(0, 16)
+            .Select(index => $"    public void PageEntry{index:D2}() {{ }}"));
+        var bodyLines = string.Join(Environment.NewLine, Enumerable.Range(0, 20)
+            .Select(index => $"        // body-line-{index:D2} 😀 {new string('x', 90)}"));
+        var source = $$"""
+            namespace ScopeProbe;
+            public class Target
+            {
+                public const int Version = 1;
+                public void Run()
+                {
+                    var marker = 1;
+                    marker++;
+                    _ = marker;
+                }
+                public void LargeBody()
+                {
+            {{bodyLines}}
+                    // body-end
+                }
+            }
+            public partial class OrderProbe
+            {
+                public void Zebra() { }
+                public void Alpha() { }
+            }
+            public static class Fields { public static int First = 1, Second = 2; }
+            public static class Paged
+            {
+            {{pageEntries}}
+            }
+            """;
+        var generated = "namespace ScopeProbe.GeneratedOnly { public class GeneratedProbe { } } namespace ScopeProbe { public partial class OrderProbe { public void GeneratedMember() { } } }";
+        var recovery = "namespace ScopeProbe.Recovery.Deep { public sealed class NestedType { } }";
+        var testSource = """
+            using System;
+            namespace Xunit { public sealed class FactAttribute : Attribute { } }
+            namespace ScopeProbe.Tests
+            {
+                public sealed class TargetTests
+                {
+                    [Xunit.Fact]
+                    public void RunTest() => new Target().Run();
+                }
+                public sealed class OtherBehavior
+                {
+                    [Xunit.Fact]
+                    public void UsesTarget() => new Target().Run();
+                }
+            }
+            """;
+
+        File.WriteAllText(solutionPath, "<Solution><Project Path=\"src/App/ScopeProbe.App.csproj\" /><Project Path=\"tests/ScopeProbe.Tests/ScopeProbe.Tests.csproj\" /></Solution>");
+        File.WriteAllText(Path.Combine(appDirectory, "ScopeProbe.App.csproj"), "<Project />");
+        File.WriteAllText(Path.Combine(testsDirectory, "ScopeProbe.Tests.csproj"), "<Project />");
+        File.WriteAllText(appFile, source);
+        File.WriteAllText(generatedFile, generated);
+        File.WriteAllText(recoveryFile, recovery);
+        File.WriteAllText(testsFile, testSource);
+
+        var host = InMemorySourceTestHost.Create(solutionPath,
+        [
+            new ProjectSpec("ScopeProbe.App",
+                [(appFile, source), (generatedFile, generated), (recoveryFile, recovery)],
+                VirtualProjectDirectory: "src/App"),
+            new ProjectSpec("ScopeProbe.Tests", [(testsFile, testSource)], ProjectReferences: ["ScopeProbe.App"],
+                VirtualProjectDirectory: "tests/ScopeProbe.Tests"),
+        ]);
+        return (solutionPath, appFile, host);
+    }
+
+    private static (string Target, IReadOnlyList<ProjectSpec> Projects) CreateTestCandidateProjects(string root, int testCount)
+    {
+        var solutionPath = Path.Combine(root, "SourceTools.slnx");
+        var appDirectory = Path.Combine(root, "src", "App");
+        var testsDirectory = Path.Combine(root, "tests", "ScopeProbe.Tests");
+        Directory.CreateDirectory(appDirectory);
+        Directory.CreateDirectory(testsDirectory);
+
+        var targetFilePath = Path.Combine(appDirectory, "Target.cs");
+        var testFilePath = Path.Combine(testsDirectory, "TargetTests.cs");
+        var targetSource = "namespace ScopeProbe; public sealed class Target { public void Run() { } public void LargeBody() { } }";
+        var methods = string.Join(Environment.NewLine, Enumerable.Range(0, testCount)
+            .Select(index => $"public sealed class DirectTest{index:D3} {{ [Xunit.Fact] public void UsesTarget() => new ScopeProbe.Target().Run(); }}"));
+        var testSource = $"using System; namespace Xunit {{ public sealed class FactAttribute : Attribute {{ }} }} namespace ScopeProbe.Tests {{ {methods} }}";
+
+        File.WriteAllText(solutionPath, "<Solution><Project Path=\"src/App/ScopeProbe.App.csproj\" /><Project Path=\"tests/ScopeProbe.Tests/ScopeProbe.Tests.csproj\" /></Solution>");
+        File.WriteAllText(Path.Combine(appDirectory, "ScopeProbe.App.csproj"), "<Project />");
+        File.WriteAllText(Path.Combine(testsDirectory, "ScopeProbe.Tests.csproj"), "<Project />");
+        File.WriteAllText(targetFilePath, targetSource);
+        File.WriteAllText(testFilePath, testSource);
+
+        IReadOnlyList<ProjectSpec> projects =
+        [
+            new ProjectSpec("ScopeProbe.App", [(targetFilePath, targetSource)], VirtualProjectDirectory: "src/App"),
+            new ProjectSpec("ScopeProbe.Tests", [(testFilePath, testSource)], ProjectReferences: ["ScopeProbe.App"],
+                VirtualProjectDirectory: "tests/ScopeProbe.Tests"),
+        ];
+        return (solutionPath, projects);
     }
 
     private static async Task<string> CreateSourceSolutionAsync(string root)

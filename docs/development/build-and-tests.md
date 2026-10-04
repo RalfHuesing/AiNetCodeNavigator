@@ -19,7 +19,9 @@ Core, Host, and TestKit expose internal members to the test assemblies via `Inte
 
 ## Shared Test Support
 
-`AiNetCodeNavigator.TestKit` provides disposable in-memory Roslyn solutions through `TestWorkspaceBuilder`. A `ProjectSpec` can set project references, metadata references, nullable options, preprocessor symbols, output kind, and virtual file paths. The returned `Solution` matches the owning workspace's `CurrentSolution`. The builder reuses its BCL metadata references and validates project and document inputs before creating the workspace. Virtual paths describe documents without creating files.
+`AiNetCodeNavigator.TestKit` provides disposable in-memory Roslyn solutions through `TestWorkspaceBuilder`. A `ProjectSpec` can set project references, metadata references, nullable options, preprocessor symbols, output kind, virtual file paths, and an assembly name independent of its project name. The returned `Solution` matches the owning workspace's `CurrentSolution`. The builder reuses its BCL metadata references and validates project and document inputs before creating the workspace. Virtual paths describe documents without creating files.
+
+`TestWorkspaceBuilder.WithCapturedCoreReferences()` opts into cached immutable framework images and captured XML documentation sidecars. Handler contract fixtures use this mode when framework metadata should remain fixed, avoiding repeated framework-file reads during resident freshness checks. The default builder and explicitly supplied additional references retain their physical-reference behavior for metadata replacement tests.
 
 `SampleCodeFixtures` contains compilable examples for callers, interfaces and implementations, inheritance, records, record structs, and extension methods. `NavigationAssertions` checks symbol names, canonical stable source/assembly references, line ranges, and result text patterns. Fast tests verify these helpers against real Roslyn syntax trees, compilations, and symbols.
 
@@ -27,7 +29,9 @@ Core, Host, and TestKit expose internal members to the test assemblies via `Inte
 
 `IntegrationMcpAssertions` belongs to the IntegrationTests project. It extracts MCP text responses, removes continuation headers while reconstructing response bodies, reads continuation and budget fields, and checks UTF-8 and `cl100k_base` limits using SharpToken directly. These assertions measure returned text independently of the production formatter's token counter.
 
-The source, source-relationship, relationship, and index-scope contract fixtures share a restore helper that disables persistent build servers, limits each restore process to two minutes, and bounds redirected output-stream completion to ten seconds. A timed-out restore process tree is terminated before the test reports failure.
+`InMemorySourceTestHost` owns explicitly constructed Roslyn projects, their workspace, and the real navigation runtime for source handler contracts. Fixtures retain physical source files when testing content refresh, cursor staleness, or linked-file ownership. MSBuild loading, project-option changes, generator identity, and loading-progress contracts continue to use real MSBuild workspaces.
+
+MSBuild-based contract fixtures share a restore helper that disables persistent build servers, limits each restore process to two minutes, and bounds redirected output-stream completion to ten seconds. A timed-out restore process tree is terminated before the test reports failure.
 
 ## Analysis Target Resolution
 

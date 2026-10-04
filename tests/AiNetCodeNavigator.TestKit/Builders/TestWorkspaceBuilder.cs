@@ -21,6 +21,7 @@ using AiNetCodeNavigator.Core.Workspace;
 /// <see cref="CapturedMetadataReference"/> with immutable XML bytes so their documentation input is
 /// part of the captured identity evidence.
 /// </param>
+/// <param name="AssemblyName">Optional metadata assembly identity; defaults to <paramref name="Name"/>.</param>
 public sealed record ProjectSpec(
     string Name,
     IReadOnlyList<(string FileName, string Content)> Documents,
@@ -31,7 +32,8 @@ public sealed record ProjectSpec(
     OutputKind OutputKind = OutputKind.DynamicallyLinkedLibrary,
     string? VirtualProjectDirectory = null,
     IReadOnlyList<(string FileName, string Content)>? AdditionalDocuments = null,
-    IReadOnlyList<(string FileName, string Content)>? AnalyzerConfigDocuments = null);
+    IReadOnlyList<(string FileName, string Content)>? AnalyzerConfigDocuments = null,
+    string? AssemblyName = null);
 
 /// <summary>
 /// A solution snapshot and the workspace that owns its lifetime.
@@ -47,11 +49,19 @@ public sealed record TestSolutionHandle(Solution Solution, Workspace Workspace) 
 public sealed class TestWorkspaceBuilder
 {
     private static readonly Lazy<ImmutableArray<MetadataReference>> CoreReferencesLazy = new(BuildCoreReferences);
+    private static readonly Lazy<ImmutableArray<MetadataReference>> CapturedCoreReferencesLazy = new(BuildCapturedCoreReferences);
 
     private readonly List<ProjectSpec> _projects = [];
     private string? _virtualSolutionFilePath;
+    private bool _useCapturedCoreReferences;
 
     public static ImmutableArray<MetadataReference> CoreReferences => CoreReferencesLazy.Value;
+
+    /// <summary>
+    /// Framework references backed by cached immutable images and their captured XML documentation sidecars.
+    /// Use these for fixtures whose metadata inputs should remain fixed for the process lifetime.
+    /// </summary>
+    public static ImmutableArray<MetadataReference> CapturedCoreReferences => CapturedCoreReferencesLazy.Value;
 
     public static TestWorkspaceBuilder Create() => new();
 
@@ -59,6 +69,16 @@ public sealed class TestWorkspaceBuilder
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         _virtualSolutionFilePath = path;
+        return this;
+    }
+
+    /// <summary>
+    /// Uses cached immutable images for the builder's default framework references. Additional project
+    /// references remain exactly as supplied by each <see cref="ProjectSpec"/>.
+    /// </summary>
+    public TestWorkspaceBuilder WithCapturedCoreReferences()
+    {
+        _useCapturedCoreReferences = true;
         return this;
     }
 
@@ -76,7 +96,8 @@ public sealed class TestWorkspaceBuilder
 
     public TestSolutionHandle Build()
     {
-        return CreateSolutionCore(_virtualSolutionFilePath, [.. _projects]);
+        var coreReferences = _useCapturedCoreReferences ? CapturedCoreReferences : CoreReferences;
+        return CreateSolutionCore(_virtualSolutionFilePath, [.. _projects], coreReferences);
     }
 
     public static TestSolutionHandle CreateSolution(string source, string projectName = "TestProj", string docName = "Doc.cs")
@@ -86,17 +107,20 @@ public sealed class TestWorkspaceBuilder
 
     public static TestSolutionHandle CreateSolution(params ProjectSpec[] specs)
     {
-        return CreateSolutionCore(null, specs);
+        return CreateSolutionCore(null, specs, CoreReferences);
     }
 
     public static TestSolutionHandle CreateSolution(string virtualSolutionFilePath, params ProjectSpec[] specs)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(virtualSolutionFilePath);
-        return CreateSolutionCore(virtualSolutionFilePath, specs);
+        return CreateSolutionCore(virtualSolutionFilePath, specs, CoreReferences);
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "Ownership of AdhocWorkspace is transferred to TestSolutionHandle which implements IDisposable.")]
-    private static TestSolutionHandle CreateSolutionCore(string? virtualSolutionFilePath, ProjectSpec[] specs)
+    private static TestSolutionHandle CreateSolutionCore(
+        string? virtualSolutionFilePath,
+        ProjectSpec[] specs,
+        ImmutableArray<MetadataReference> coreReferences)
     {
         ArgumentNullException.ThrowIfNull(specs);
         ValidateProjectSpecs(specs);
@@ -125,7 +149,7 @@ public sealed class TestWorkspaceBuilder
             {
                 var projectId = ProjectId.CreateNewId(spec.Name);
                 projectIdsByName.Add(spec.Name, projectId);
-                solution = AddProject(solution, projectId, spec, solutionDirectory);
+                solution = AddProject(solution, projectId, spec, solutionDirectory, coreReferences);
             }
 
             foreach (var spec in specs)
@@ -228,11 +252,15 @@ public sealed class TestWorkspaceBuilder
     }
 
     private static Solution AddProject(
-        Solution solution, ProjectId projectId, ProjectSpec spec, string? solutionDirectory)
+        Solution solution,
+        ProjectId projectId,
+        ProjectSpec spec,
+        string? solutionDirectory,
+        ImmutableArray<MetadataReference> coreReferences)
     {
         var references = spec.AdditionalReferences is { Count: > 0 }
-            ? CoreReferences.Concat(spec.AdditionalReferences).ToImmutableArray()
-            : CoreReferences;
+            ? coreReferences.Concat(spec.AdditionalReferences).ToImmutableArray()
+            : coreReferences;
 
         var compilationOptions = new CSharpCompilationOptions(
             spec.OutputKind,
@@ -247,7 +275,7 @@ public sealed class TestWorkspaceBuilder
                 projectId,
                 VersionStamp.Create(),
                 spec.Name,
-                spec.Name,
+                spec.AssemblyName ?? spec.Name,
                 LanguageNames.CSharp,
                 filePath: projectFilePath)
             .WithMetadataReferences(references)
@@ -312,5 +340,36 @@ public sealed class TestWorkspaceBuilder
             .Distinct(StringComparer.Ordinal)
             .Select(location => (MetadataReference)MetadataReference.CreateFromFile(location))
             .ToImmutableArray();
+    }
+
+    private static ImmutableArray<MetadataReference> BuildCapturedCoreReferences()
+    {
+        var assemblies = new[]
+        {
+            typeof(object).Assembly,
+            typeof(System.Runtime.GCSettings).Assembly,
+            typeof(Enumerable).Assembly,
+            typeof(System.Threading.Tasks.Task).Assembly,
+        };
+
+        return assemblies
+            .Select(assembly => assembly.Location)
+            .Distinct(StringComparer.Ordinal)
+            .Select(CreateCapturedFrameworkReference)
+            .ToImmutableArray();
+    }
+
+    private static MetadataReference CreateCapturedFrameworkReference(string assemblyPath)
+    {
+        var image = ImmutableArray.CreateRange(File.ReadAllBytes(assemblyPath));
+        var documentationPath = Path.ChangeExtension(assemblyPath, ".xml");
+        var documentationBytes = File.Exists(documentationPath)
+            ? ImmutableArray.CreateRange(File.ReadAllBytes(documentationPath))
+            : default;
+
+        return CapturedMetadataReference.CreateFromImage(
+            image,
+            filePath: assemblyPath,
+            documentationXmlBytes: documentationBytes);
     }
 }

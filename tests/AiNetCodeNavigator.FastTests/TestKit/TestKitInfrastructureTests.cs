@@ -111,6 +111,66 @@ public sealed class TestKitInfrastructureTests
     }
 
     [Fact]
+    public async Task TestWorkspaceBuilder_CapturedCoreReferencesReuseImmutableImagesAndPreserveAdditionalReferences()
+    {
+        var additionalReference = MetadataReference.CreateFromFile(typeof(MetadataReference).Assembly.Location);
+        using var handle = TestWorkspaceBuilder.Create()
+            .WithCapturedCoreReferences()
+            .WithProject(new ProjectSpec(
+                "Captured",
+                [("Captured.cs", "public class CapturedType { public object Value { get; } = new(); }")],
+                AdditionalReferences: [additionalReference]))
+            .Build();
+
+        var references = Assert.Single(handle.Solution.Projects).MetadataReferences;
+        var capturedCoreReferences = TestWorkspaceBuilder.CapturedCoreReferences;
+
+        Assert.Equal(capturedCoreReferences.Length + 1, references.Count);
+        for (var index = 0; index < capturedCoreReferences.Length; index++)
+        {
+            Assert.Same(capturedCoreReferences[index], references[index]);
+        }
+
+        Assert.Same(additionalReference, references[^1]);
+        var compilation = await Assert.Single(handle.Solution.Projects).GetCompilationAsync();
+        Assert.NotNull(compilation);
+        Assert.Empty(compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
+    }
+
+    [Fact]
+    public async Task TestWorkspaceBuilder_AllowsDistinctProjectOwnersWithTheSameAssemblyIdentity()
+    {
+        var solutionPath = Path.Combine(Path.GetTempPath(), $"navigator-{Guid.NewGuid():N}", "Owners.slnx");
+        using var handle = TestWorkspaceBuilder.Create()
+            .WithVirtualSolutionPath(solutionPath)
+            .WithProject(new ProjectSpec(
+                "FirstOwner",
+                [("First.cs", "namespace OwnerProbe; public sealed class FirstType { }")],
+                VirtualProjectDirectory: "src/FirstOwner",
+                AssemblyName: "Shared.Identity"))
+            .WithProject(new ProjectSpec(
+                "SecondOwner",
+                [("Second.cs", "namespace OwnerProbe; public sealed class SecondType { }")],
+                VirtualProjectDirectory: "src/SecondOwner",
+                AssemblyName: "Shared.Identity"))
+            .Build();
+
+        var projects = handle.Solution.Projects.OrderBy(project => project.Name, StringComparer.Ordinal).ToArray();
+        Assert.Equal(new[] { "FirstOwner", "SecondOwner" }, projects.Select(project => project.Name));
+        Assert.Equal("Shared.Identity", projects[0].AssemblyName);
+        Assert.Equal("Shared.Identity", projects[1].AssemblyName);
+        Assert.NotEqual(projects[0].FilePath, projects[1].FilePath);
+
+        foreach (var project in projects)
+        {
+            var compilation = await project.GetCompilationAsync();
+            Assert.NotNull(compilation);
+            Assert.Equal("Shared.Identity", compilation.Assembly.Identity.Name);
+            Assert.Empty(compilation.GetDiagnostics().Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
+        }
+    }
+
+    [Fact]
     public void TestWorkspaceBuilder_UnknownProjectReferenceNamesMissingProject()
     {
         var exception = Assert.Throws<InvalidOperationException>(() =>
