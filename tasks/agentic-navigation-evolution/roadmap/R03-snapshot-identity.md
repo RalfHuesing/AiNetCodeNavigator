@@ -29,9 +29,9 @@ The orchestrator records this point's implementation evidence here under the [sh
 | --- | --- |
 | Working state | In progress; started from clean verified R02 HEAD `671496d` on 2026-10-04 |
 | Implementation commit(s) | — |
-| Executed verification | Original reference freshness regressions failed as required before correction; first candidate build failed (see rounds below); candidate acceptance gates remain pending |
+| Executed verification | Original P01/P02 freshness regressions failed before correction and now pass; latest focused selection has 74 passed / one fixture failure; full affected acceptance gates remain pending |
 | Measurements / artifacts | — |
-| Blocker / next action | Finish authorized P01/P02 corrections, shared fresh-boundary budget and provider lifetime/binding semantics; freeze all workers, execute complete affected gates and separate measurements, then independent Sol audit |
+| Blocker / next action | Execute P03 private generator dependency baseline and required binding correction; finish the syntax-provider fixture, then run complete affected gates, separate measurements and independent Sol audit |
 
 ### Prerequisites and independent ownership
 
@@ -147,3 +147,19 @@ The pinned public Roslyn API has no getter for an arbitrary physical PE referenc
 Read-only review confirms the candidate captures a rooted AnalyzerFileReference primary image and netmodules, but does not capture private dependent assemblies or rebind analyzer loading to those immutable bytes. A new MSBuildWorkspace alone does not prove same-path generator image consumption or indirect dependency reload. This is a concrete source gap, not yet an executed failing regression or an environmental blocker.
 
 Workspace Luna/high owns a new focused Workspace fixture only: emit a real file generator plus separate private dependency, materialize actual output, establish its unchanged primary hash and otherwise valid creator context, then require WORKSPACE_DIAGNOSTIC for incomplete dependency inputs. Product correction is held until the official narrow regression reaches this actual invariant. Its follow-up must honor specification 04's complete captured creator inputs or explicit diagnostic boundary; no general analyzer framework or acceptance weakening is authorized. Root owns baseline execution, evidence, any correction release and subsequent gates. R03-P03 and all R03 detail boxes remain open.
+
+### R03-P03 initial fixture baseline — insufficient dependency proof
+
+- `pwsh -File ./scripts/build.ps1`: PASS, exit 0, zero warnings/errors, 3.47 seconds.
+- `pwsh -File ./scripts/test-fast.ps1 -Filter 'FullyQualifiedName~ResidentSolutionAnalyzerFreshnessTests' --logger 'console;verbosity=normal'`: actual FAIL, exit 1, one completed failing test / zero skipped, 2.9358 seconds, at identity Assert.False because current code returns success.
+- Root reviewed the emitted dependency after execution and found its Marker.Value is const; C# embeds the value in the generator assembly. The passing generated-text assertion therefore does not establish runtime dependency consumption. This run is not claimed as valid private-dependency regression proof. Production correction remains held.
+- Luna is assigned tests-only correction to a real runtime getter/method, plus independent generator PE AssemblyReference and observed private DLL loader-path assertions before the identity invariant. Artifacts: `temp/roadmap-evidence/R03/analyzer-dependency-baseline-run1/{build.log,test-fast.log,FastTests.trx}`. No stall.
+
+### R03-P03 valid dependency baseline / normal-loader integration regression
+
+- Corrected tests-only P03 fixture uses a runtime getter, independently asserts the private AssemblyRef in the generator PE, observes the exact dependency load path, and verifies the runtime-derived generated output before capture/identity assertions.
+- `pwsh -File ./scripts/build.ps1`: PASS, exit 0, zero warnings/errors, 1.17 seconds.
+- `pwsh -File ./scripts/test-fast.ps1 -Filter 'FullyQualifiedName~ResidentSolutionAnalyzerFreshnessTests' --logger 'console;verbosity=normal'`: actual FAIL, exit 1, one completed failing test / zero skipped, 2.7781 seconds. Actual private DLL use, primary image SHA and omitted private input assertions pass; identity incorrectly succeeds at Assert.False line 80. This is the valid P03 regression proof before production correction. Artifacts: `temp/roadmap-evidence/R03/analyzer-dependency-baseline-run2/{build.log,test-fast.log,FastTests.trx}`.
+- Existing six-class focused Fast command: PASS, exit 0, 75 completed tests / zero skipped, 5.4529 seconds, saved in `temp/roadmap-evidence/R03/focused-fast-pre-P03/`. P03 remains failing and explicitly outside that passing selection; no point completion is inferred.
+- `pwsh -File ./scripts/test-integration.ps1 -Filter 'FullyQualifiedName~SourceSnapshotIdentityContractTests' --logger 'console;verbosity=normal'`: actual FAIL, exit 1, three completed failures / zero skipped, 6.9820 seconds. All normal MSBuild source handlers fail on the capture owner's blanket rejection of every non-null MetadataReferenceResolver before metadata/options/inventory acceptance assertions. The prescribed normal-loader contract requires complete actual captured binding evidence or a specific genuinely unsupported input diagnostic, not blanket rejection of its normal resolver. Artifacts: `temp/roadmap-evidence/R03/source-handler-candidate-run1/{test-integration.log,IntegrationTests.trx}`.
+- All gates terminate normally; no stall. Workspace Luna is released for the narrow P03 complete-byte/closure-or-diagnostic correction and normal-loader metadata-resolver integration. Tests, docs, final affected gates and independent audit remain required; acceptance is unchanged.
