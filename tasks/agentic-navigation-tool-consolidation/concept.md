@@ -168,7 +168,7 @@ Use existing bound source relationship evidence and a breadth-first walk with cy
 
 Each indirect test candidate includes its shortest proven path, project/file/location information, and available references. Sort direct evidence first, indirect evidence second, and name heuristics last; use deterministic owner/location ordering within each group. Do not promote a heuristic fixture into proof of test use. A reached traversal bound reports partial analysis; depth zero does not promise indirect candidates.
 
-Return the owning test project path and an executable test-name filter where the runner/test identity can be proven. Parameterized or unresolved runner identities must explicitly lack an executable filter. Never execute tests or claim runtime coverage.
+Return the owning test project path, qualified fixture/method names, locations, and available declaration references. This is navigation data that a client can use to select its test runner. Do not generate executable commands, runner-specific filter expressions, or data-row identities. Never execute tests or claim runtime coverage.
 
 ## 6. Performance, compactness, and concurrency
 
@@ -178,9 +178,19 @@ Reuse existing runtime owners, weak identity memoization, dependency fact cachin
 
 Keep response budgets hard, and preserve recoverable errors, concrete omissions, and known-result continuation. Reduce repeated owner/path/signature data only where all results remain understandable and follow-up arguments remain available. Do not shorten, parse, or replace stable references. Paging delivery completeness and analysis completeness remain distinct.
 
-For saturation, consider a bounded fair admission queue inside the existing operation store, with a maximum queue size, queued status, and cancellation. Preserve the existing admission and work-ownership rules. Queue records may not become unbounded background work. Profile contention and memory before changing the active-work limit; raising the limit or adding a scheduler is not the default fix.
+For saturation, keep the existing bounded admission model and `TOO_MANY_OPERATIONS` response. Add a clear retry delay and next action to that existing error. A rejected request must start no work and allocate no operation token; the client waits and retries its original request. Existing admitted operations still poll normally and must release capacity on completion/cancellation. Do not add a queue, queued state, automatic server retry, or priority scheduler. First remove measured redundant work and test overlapping requests; increasing the active-work limit is not a substitute for this work.
 
 Existing retry/poll/page tokens remain opaque. Provide a concise next action at every transition; keep the original query identity and domain section visible where needed. Do not introduce a fourth continuation mechanism.
+
+### 6.1 Keep the implementation small
+
+Use direct selection in the existing handlers: one browse-view branch, one type-relation branch, and the existing explicit context sections. A shared formatter or collector is appropriate only where the same domain behavior is actually reused. Do not introduce a universal tool dispatcher, provider registry, generic graph framework, query language, or new service layer merely to reduce public tool names.
+
+Consolidate entry points, not unrelated analysis algorithms. Call trees, type references, namespace inventory, and API inspection need not share an engine. Context bodies and batched bodies should share their current extraction behavior, not be routed through nested MCP calls. Keep the current relationship scanners until a concrete defect or measured duplicate traversal requires a focused correction.
+
+The source metadata-contract lookup uses the existing compilation/reference information; the test helper walk uses existing relationship evidence with a small local breadth-first traversal. Neither needs a second persistent index. Dependency project traversal can be a bounded projection over already collected project references; it does not need a general graph package or another semantic collection pass.
+
+Profile first, then make the smallest demonstrated fix. Do not preemptively add any new cache. A performance finding that no longer reproduces on the identified baseline is closed with its reproduction evidence rather than by adding speculative infrastructure.
 
 ## 7. Implementation sequence
 
@@ -191,7 +201,7 @@ Existing retry/poll/page tokens remain opaque. Provide a concise next action at 
 | P2: coherent entry points | Class structure into context, two type tools into one, scope/namespace views into one. | Complete preserved result sets, filtered partial/generated members, unsupported-mode errors, and no execution of unselected scanners; twelve-tool count is completed after P3. |
 | P3: discovery and assembly transitions | Integrate extensions, add symbol filters and source metadata-contract resolution. | No lost extension results; declared receiver limits explicit; BCL/interface-member implementation lookup works; ownership ambiguity fails rather than guesses. |
 | P4: focused output | Single-level dependency output and compact assembly overview. | Root-specific relationships with evidence, truthful incoming coverage, all selected API members reachable, and documented defaults. |
-| P5: test navigation | Bounded helper paths and actionable proven test identity. | Direct/indirect/heuristic evidence remains separate; cycles and caps terminate; parameterized filters are not guessed. |
+| P5: test navigation | Bounded helper paths and navigable test identities. | Direct/indirect/heuristic evidence remains separate; cycles and caps terminate; no runner adapter or generated execution filters. |
 | P6: measured runtime improvements | Fix reproduced shared/runtime hotspots and handle contention. | Compare identical queries and scopes; freshness, owner leases, cancellation, and resource limits hold; no arbitrary limit increase masks the cause. |
 | P7: final verification | Update docs, examples, rules, catalog and agent comparisons. | Exactly twelve public tools; no removed names remain registered; preserved capabilities and task-level improvements demonstrated. |
 
@@ -205,7 +215,7 @@ For repeated before/after measurements, keep the sample inputs, target configura
 
 Use a small paired task comparison: unique overloaded-symbol discovery, reference ownership, body-plus-selected-context navigation, interface-member implementations, helper-based test discovery, source-to-DLL ownership, and assembly extension declaration search. Compare shell/file/decompiler workflows with those workflows plus MCP; add an LSP comparison only when it is actually accessible. Keep model, fixture, requested answer, and stopping rule equal. Include failures instead of dropping them. This is a repeatable task comparison, not a new evaluation platform.
 
-Completion requires all P1-P6 capabilities to be implemented and verified, not just new tool names or narrower output. Show a measured improvement in the reproduced runtime hotspots and smaller default replies without losing requested evidence. Demonstrate that metadata-contract and helper-test scenarios previously missing now work. Any remaining material performance regression or unverified owner/snapshot behavior remains open; do not declare the server substantially improved on tool count alone.
+Completion requires all P1-P6 capabilities to be implemented and verified, not just new tool names or narrower output. Show a measured improvement in every still-reproduced runtime hotspot selected in P0 and smaller default replies without losing requested evidence. A historical hotspot that no longer reproduces needs no speculative fix, but its baseline reproduction result must be recorded. Demonstrate that metadata-contract and helper-test scenarios previously missing now work. Any remaining material performance regression or unverified owner/snapshot behavior remains open; do not declare the server substantially improved on tool count alone.
 
 For production slices run the official `scripts/build.ps1` and the narrowest affected fast/integration selection, relevant selected extended relationship/host/workspace contracts where required, and the eligible routine solution selection once at completion. Official scripts exclude `E2EIntegration`; do not present transport-free tests as client handshake coverage. Final validation also performs actual MCP calls against the identified implementation build, exercises polling/pages and follow-up references, and records that separate transport smoke result.
 
@@ -213,7 +223,7 @@ Update the affected `docs/`, root README, SDK catalog expectations, client examp
 
 ## 9. Explicitly deferred directions
 
-Expression-aware completion or extension applicability, automatic DI/Reflection interpretation, complete runtime impact, batch references for a modification set, a universal navigation mega-tool, a new storage/indexing system, a separate scheduling platform, and a new benchmark platform are not required by this concept. Git-derived functionality is excluded, not deferred.
+Expression-aware completion or extension applicability, automatic DI/Reflection interpretation, complete runtime impact, batch references for a modification set, and runner-specific test execution integration are not required by this concept. A universal navigation mega-tool, a new storage/indexing system, an admission queue/scheduling platform, and a new benchmark platform are not implementation requirements. Git-derived functionality is excluded, not deferred.
 
 ## 10. Concept review record
 
@@ -222,5 +232,5 @@ The required review order is: commit the complete initial concept; review it for
 | Review | Status | Disposition |
 |---|---|---|
 | Initial concept | Complete. | Covers all seventeen tools, final catalog, navigation improvements, boundaries, verification, and implementation sequence. |
-| Overengineering review | Pending. | Review necessity of each new parameter, queue, test-filter output, batch behavior, and abstraction. |
+| Overengineering review | Complete. | Removed the admission-queue proposal and executable test-filter generation. Required direct reuse of current scanners, simple bounded traversals, existing saturation/recovery, and profiling before any new cache. Historical non-reproducing slow paths do not justify speculative fixes. |
 | Luna comprehension review | Pending. | Reviewer must identify unclear decisions, missing contracts, contradictions, and unnecessary complexity. |
