@@ -1,6 +1,6 @@
 # Sequential implementation roadmap
 
-Status: implementation execution started on 2026-10-03 by the explicitly invoked orchestrator. R01–R04 are complete after verified implementation and independent audits; R05–R08 remain open. Specifications were consolidated on 2026-10-03 from the approved discussion.
+Status: implementation execution started on 2026-10-03 by the explicitly invoked orchestrator. R01–R05 are complete after verified implementation and independent audits; R06–R08 remain open. Specifications were consolidated on 2026-10-03 from the approved discussion.
 
 Read the [shared execution contract, completion rules and verification policy](roadmap/execution.md) before starting any point. Then read that point's file and linked specifications. The orchestrator executes the points in order.
 
@@ -10,7 +10,7 @@ Read the [shared execution contract, completion rules and verification policy](r
 - [x] R02 — [Switch every public route and remove handles](roadmap/R02-public-reference-migration.md)
 - [x] R03 — [Fresh snapshot identity once](roadmap/R03-snapshot-identity.md)
 - [x] R04 — [Collect each document batch once](roadmap/R04-single-collection.md)
-- [ ] R05 — [Bounded dependency reuse](roadmap/R05-dependency-cache.md)
+- [x] R05 — [Bounded dependency reuse](roadmap/R05-dependency-cache.md)
 - [ ] R06 — [Targeted outgoing traversal](roadmap/R06-targeted-outgoing.md)
 - [ ] R07 — [Short polls, progress and transport diagnosis](roadmap/R07-polling-and-transport.md)
 - [ ] R08 — [Final gates and completed handoff](roadmap/R08-final-verification.md)
