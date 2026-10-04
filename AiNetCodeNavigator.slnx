@@ -8,4 +8,7 @@
     <Project Path="tests/AiNetCodeNavigator.IntegrationTests/AiNetCodeNavigator.IntegrationTests.csproj" />
     <Project Path="tests/AiNetCodeNavigator.TestKit/AiNetCodeNavigator.TestKit.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/AiNetCodeNavigator.Exploration/AiNetCodeNavigator.Exploration.csproj" />
+  </Folder>
 </Solution>

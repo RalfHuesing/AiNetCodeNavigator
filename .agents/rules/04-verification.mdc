@@ -22,6 +22,7 @@ alwaysApply: true
 - Use the scripts' `-Filter` parameter for test selection. A filter without `-IncludeExtended` still excludes extended tests. See [Build and Tests](../../docs/development/build-and-tests.md#e2e-and-extended-integration-tests) for categories and commands.
 - All scripts stream their console output into static log files under `temp/*.log` (`temp/build.log`, `temp/test-fast.log`, `temp/test-integration.log`, `temp/test.log`). When diagnosing build or test failures, inspect the corresponding log in `temp/`.
 - Do not run performance tests as a routine per-commit gate; run them when the relevant acceptance criteria require them.
+- For manual inspection of actual MCP tool output, add or run an on-demand scenario using [Manual MCP Exploration](../../docs/development/mcp-exploration.md). Inspect the saved output for usefulness; these experiments do not replace verification tests and must not run in routine tests or CI.
 
 ## Slow or stalled tests
 

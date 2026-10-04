@@ -24,6 +24,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="AiNetCodeNavigator.FastTests" />
     <InternalsVisibleTo Include="AiNetCodeNavigator.IntegrationTests" />
+    <InternalsVisibleTo Include="AiNetCodeNavigator.Exploration" />
   </ItemGroup>
 
 </Project>
