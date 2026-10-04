@@ -91,7 +91,7 @@ public sealed class SourceAnalyzerIdentityContractTests
             CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo("de-DE");
 
             var structures = new StructureTools(runtime);
-            var indexScope = await CompleteAsync(operation => structures.GetIndexScope(solutionPath,
+            var indexScope = await CompleteAsync(operation => structures.BrowseTarget(solutionPath, "scope",
                 maxResponseBytes: 16384, maxResponseTokens: 1024, operationToken: operation));
             var indexScopeText = TextOf(indexScope);
             Assert.False(indexScope.IsError ?? false, indexScopeText);
@@ -340,7 +340,7 @@ public sealed class SourceAnalyzerIdentityContractTests
         await lease.ResidentSolution.LoadTask!.WaitAsync(TimeSpan.FromSeconds(30));
 
         var structures = new StructureTools(runtime);
-        var indexScope = await CompleteAsync(operation => structures.GetIndexScope(solutionPath,
+        var indexScope = await CompleteAsync(operation => structures.BrowseTarget(solutionPath, "scope",
             maxResponseBytes: 16384, maxResponseTokens: 1024, operationToken: operation));
         var indexScopeText = TextOf(indexScope);
         Assert.False(indexScope.IsError ?? false, indexScopeText);

@@ -1022,7 +1022,7 @@ public sealed class AssemblyToolsContractTests
         Assert.Contains("analyzedScope=get_context(symbol=StructureOrderProbe.OrderProbe", TextOf(sourceStructure), StringComparison.Ordinal);
         AssertDeclarationOrder(TextOf(sourceStructure));
         Assert.Equal(ReadMemberNames(TextOf(sourceStructure)), ReadMemberNames(TextOf(complete)));
-        var sourceNamespaceTree = await structureTools.GetNamespaceTree(sourceSolution,
+        var sourceNamespaceTree = await structureTools.BrowseTarget(sourceSolution, "namespaces",
             namespacePrefix: "StructureOrderProbe", maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(sourceNamespaceTree, 32768, 4096);
         var sourceNamespaceHandle = ReadAnyStableReference(TextOf(sourceNamespaceTree));
@@ -1261,7 +1261,7 @@ public sealed class AssemblyToolsContractTests
         var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "NamespaceRecoveryProbe", "namespace NamespaceRecoveryProbe.One.Two.Three; public sealed class Target { }");
         var structure = new StructureTools(runtime);
 
-        var result = await structure.GetNamespaceTree(assemblyPath, namespacePrefix: "NamespaceRecoveryProbe", depth: 1,
+        var result = await structure.BrowseTarget(assemblyPath, "namespaces", namespacePrefix: "NamespaceRecoveryProbe", depth: 1,
             maxResponseBytes: 16384, maxResponseTokens: 2048);
 
         AssertSuccessWithinBudget(result, 16384, 2048);
@@ -1348,7 +1348,7 @@ public sealed class AssemblyToolsContractTests
     }
 
     [Fact]
-    public async Task AssemblyNavigationHandlersReturnOwnerResultsAcrossAllFifteenRoutes()
+    public async Task AssemblyNavigationHandlersReturnOwnerResultsAcrossAllFourteenRoutes()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
@@ -1408,7 +1408,7 @@ public sealed class AssemblyToolsContractTests
         var readFromSkeleton = ReadAnyHandoff(readSkeletonLine!);
         AssertOwnerResult(await symbols.GetSymbolBody(assemblyPath, [readFromSkeleton], maxResponseBytes: 32768), "Read");
         AssertOwnerResult(await new RelationshipTools(runtime).GetContext(assemblyPath, typeHandle, ["members"], maxResponseBytes: 32768), "Entry");
-        var namespaceTree = await structure.GetNamespaceTree(assemblyPath, namespacePrefix: "AssemblyRouteProbe", maxResponseBytes: 32768);
+        var namespaceTree = await structure.BrowseTarget(assemblyPath, "namespaces", namespacePrefix: "AssemblyRouteProbe", maxResponseBytes: 32768);
         AssertOwnerResult(namespaceTree, "Probe");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, namespaceTree);
         var assemblyInventory = new List<string>();
@@ -1416,7 +1416,7 @@ public sealed class AssemblyToolsContractTests
         var assemblyInventoryPages = 0;
         do
         {
-            var page = await structure.GetNamespaceTree(assemblyPath, namespacePrefix: "AssemblyRouteProbe", maxResults: 2,
+            var page = await structure.BrowseTarget(assemblyPath, "namespaces", namespacePrefix: "AssemblyRouteProbe", maxResults: 2,
                 resultCursor: assemblyInventoryCursor, maxResponseBytes: 16384, maxResponseTokens: 2048);
             AssertSuccessWithinBudget(page, 16384, 2048);
             using var document = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(page)));
@@ -1522,7 +1522,7 @@ public sealed class AssemblyToolsContractTests
             (bytes, tokens) => symbols.GetSymbolBody(assemblyPath, [entryHandle], maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => structure.GetFileSkeleton(assemblyPath, [probeHandoff], maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => new RelationshipTools(runtime).GetContext(assemblyPath, typeHandle, ["members"], maxResponseBytes: bytes, maxResponseTokens: tokens),
-            (bytes, tokens) => structure.GetNamespaceTree(assemblyPath, namespacePrefix: "AssemblyRouteProbe", maxResponseBytes: bytes, maxResponseTokens: tokens),
+            (bytes, tokens) => structure.BrowseTarget(assemblyPath, "namespaces", namespacePrefix: "AssemblyRouteProbe", maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => relationships.GetCallTree(assemblyPath, entryHandle, direction: "outgoing", maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => relationships.FindReferences(assemblyPath, "M:AssemblyRouteProbe.Probe.Read", maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => relationships.GetTypeHierarchy(assemblyPath, typeHandle, maxResponseBytes: bytes, maxResponseTokens: tokens),

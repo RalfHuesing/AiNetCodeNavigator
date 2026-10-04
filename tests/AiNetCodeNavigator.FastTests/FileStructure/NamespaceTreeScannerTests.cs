@@ -19,6 +19,26 @@ namespace AiNetCodeNavigator.FastTests.FileStructure;
 public sealed class NamespaceTreeScannerTests
 {
     [Fact]
+    public async Task ScanSolutionAsync_PrefixDepthOmissionsExcludeUnrelatedBranches()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(
+            @"C:/virtual/NamespacePrefixDepth.slnx",
+            new ProjectSpec("One", [
+                ("Types.cs", "namespace Selected { public class Visible {} } namespace Other.Deep { public class Hidden {} }"),
+            ]));
+        var selected = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution,
+            options: new NamespaceTreeScanOptions(MaxDepth: 1, NamespacePrefix: "Selected"));
+        Assert.Null(selected.Error);
+        Assert.Equal(2, selected.TotalTypes); // Retained project-wide type denominator.
+        Assert.Equal("Selected", Assert.Single(selected.RootNamespaces).FullName);
+        Assert.DoesNotContain("maxDepth", selected.TruncatedBy!);
+        Assert.False(selected.Truncated);
+        var other = await NamespaceTreeScanner.ScanSolutionAsync(fixture.Solution,
+            options: new NamespaceTreeScanOptions(MaxDepth: 1, NamespacePrefix: "Other"));
+        Assert.Contains("maxDepth", other.TruncatedBy!);
+    }
+
+    [Fact]
     public async Task ScanSolutionAsync_BuildsHierarchicalNamespaceTree()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();

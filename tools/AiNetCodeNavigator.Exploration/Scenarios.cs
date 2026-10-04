@@ -13,6 +13,7 @@ internal static class Scenarios
             [nameof(ExploreConsolidationBaseline)] = ExploreConsolidationBaseline,
             [nameof(ExploreContextUses)] = ExploreContextUses,
             [nameof(ExploreContextMembers)] = ExploreContextMembers,
+            [nameof(ExploreBrowseTarget)] = ExploreBrowseTarget,
         };
 
     private static async Task ExploreFindSymbol(ExplorationContext context)
@@ -163,6 +164,32 @@ internal static class Scenarios
         await context.CallAsync("get_symbol_body", new
         {
             targetPath = owner, symbolIdentifiers = new[] { memberReference }, maxBodyLines = 20,
+        }).ConfigureAwait(false);
+    }
+
+    private static async Task ExploreBrowseTarget(ExplorationContext context)
+    {
+        var scope = await context.CallAsync("browse_target", new
+        {
+            targetPath = context.RepositorySolution, view = "scope", maxResults = 100,
+        }).ConfigureAwait(false);
+        using var inventory = JsonDocument.Parse(scope.Payload);
+        var projectPath = inventory.RootElement.GetProperty("items").EnumerateArray()
+            .Single(item => item.GetProperty("kind").GetString() == "project" && item.GetProperty("name").GetString() == "AiNetCodeNavigator.Core")
+            .GetProperty("projectPath").GetString();
+        var namespaces = await context.CallAsync("browse_target", new
+        {
+            targetPath = context.RepositorySolution, view = "namespaces", project = projectPath,
+            namespacePrefix = "AiNetCodeNavigator.Core.Models", depth = 1, maxResults = 50,
+        }).ConfigureAwait(false);
+        using var types = JsonDocument.Parse(namespaces.Payload);
+        var reference = types.RootElement.GetProperty("items").EnumerateArray()
+            .First(item => item.GetProperty("kind").GetString() == "type" && item.TryGetProperty("handoffId", out _))
+            .GetProperty("handoffId").GetString();
+        if (reference is null) throw new InvalidOperationException("Expected a navigable source type in the selected project/prefix.");
+        await context.CallAsync("get_symbol_body", new
+        {
+            targetPath = context.RepositorySolution, symbolIdentifiers = new[] { reference }, maxBodyLines = 20,
         }).ConfigureAwait(false);
     }
 

@@ -50,6 +50,8 @@ The runner waits for `operation=running` and `operation=retry`, respecting the r
 
 `ExploreContextMembers` discovers the source codec type, exhausts one-item member pages with name/kind/sort/source-scope filters, and follows a returned member reference with its unchanged owner target to a body window.
 
+`ExploreBrowseTarget` reads the loaded source scope, passes its returned canonical Core project path to a selected namespace prefix, then follows a returned type reference to its source body.
+
 ## Execution boundary
 
 The runner creates the real `NavigatorHostRuntime`, loads targets through the production MSBuild/assembly infrastructure, discovers attributed production tool classes, generates their SDK schemas, runs the production argument validator and invokes the SDK binder and handler. It has no mock navigation results and uses the production output formatter and operation store.

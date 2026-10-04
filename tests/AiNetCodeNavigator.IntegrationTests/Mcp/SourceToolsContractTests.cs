@@ -162,24 +162,29 @@ public sealed class SourceToolsContractTests
         Assert.Equal(expectedInventory, assemblyInventory.Items);
         foreach (var (target, cursor) in new[] { (solutionPath, sourceInventory.FirstCursor), (assemblyPath, assemblyInventory.FirstCursor) })
         {
-            AssertErrorWithinBudget(await tools.GetNamespaceTree(target, namespacePrefix: "CapProbe", resultCursor: "malformed-cursor"), "RESULT_CURSOR_EXPIRED", 16384, 4096);
-            AssertErrorWithinBudget(await tools.GetNamespaceTree(target, namespacePrefix: "OtherNamespace", maxResults: 200, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
-            AssertErrorWithinBudget(await tools.GetNamespaceTree(target, namespacePrefix: "CapProbe", project: "OtherProject", maxResults: 200, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
-            AssertErrorWithinBudget(await tools.GetNamespaceTree(target, namespacePrefix: "CapProbe", maxResults: 199, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+            AssertErrorWithinBudget(await tools.BrowseTarget(target, "namespaces", namespacePrefix: "CapProbe", resultCursor: "malformed-cursor"), "RESULT_CURSOR_EXPIRED", 16384, 4096);
+            AssertErrorWithinBudget(await tools.BrowseTarget(target, "namespaces", namespacePrefix: "OtherNamespace", maxResults: 200, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+            AssertErrorWithinBudget(await tools.BrowseTarget(target, "namespaces", namespacePrefix: "CapProbe", project: "OtherProject", maxResults: 200, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+            AssertErrorWithinBudget(await tools.BrowseTarget(target, "namespaces", namespacePrefix: "CapProbe", maxResults: 199, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
         }
-        AssertErrorWithinBudget(await tools.GetNamespaceTree(assemblyPath, namespacePrefix: "CapProbe", maxResults: 200,
+        AssertErrorWithinBudget(await tools.BrowseTarget(assemblyPath, "namespaces", namespacePrefix: "CapProbe", maxResults: 200,
+            resultCursor: sourceInventory.FirstCursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+
+        AssertErrorWithinBudget(await tools.BrowseTarget(solutionPath, "namespaces", namespacePrefix: "CapProbe", depth: 1,
+            maxResults: 200, resultCursor: sourceInventory.FirstCursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+        AssertErrorWithinBudget(await tools.BrowseTarget(solutionPath, "scope", maxResults: 100,
             resultCursor: sourceInventory.FirstCursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
 
         await File.WriteAllTextAsync(sourcePath, source + Environment.NewLine + "public sealed class SnapshotAdded { }");
         AssertErrorWithinBudget(await new RelationshipTools(runtime).GetContext(solutionPath, "CapProbe.ManyMembers", ["members"], maxResults: 100,
             resultCursor: sourceMembers.FirstCursor), "STALE_SNAPSHOT", 16384, 4096);
-        AssertErrorWithinBudget(await tools.GetNamespaceTree(solutionPath, namespacePrefix: "CapProbe", maxResults: 200,
+        AssertErrorWithinBudget(await tools.BrowseTarget(solutionPath, "namespaces", namespacePrefix: "CapProbe", maxResults: 200,
             resultCursor: sourceInventory.FirstCursor), "STALE_SNAPSHOT", 16384, 4096);
 
         AssemblyTestHelper.EmitAssembly(emitted, "CapProbe", source + Environment.NewLine + "public sealed class SnapshotAdded { }");
         AssertErrorWithinBudget(await new RelationshipTools(runtime).GetContext(assemblyPath, "CapProbe.ManyMembers", ["members"], maxResults: 100,
             resultCursor: assemblyMembers.FirstCursor), "STALE_SNAPSHOT", 16384, 4096);
-        AssertErrorWithinBudget(await tools.GetNamespaceTree(assemblyPath, namespacePrefix: "CapProbe", maxResults: 200,
+        AssertErrorWithinBudget(await tools.BrowseTarget(assemblyPath, "namespaces", namespacePrefix: "CapProbe", maxResults: 200,
             resultCursor: assemblyInventory.FirstCursor), "STALE_SNAPSHOT", 16384, 4096);
     }
 
@@ -708,18 +713,25 @@ public sealed class SourceToolsContractTests
         AssertSuccessWithinBudget(generatedMember, 16384, 1024);
         Assert.Contains("GeneratedMember", TextOf(generatedMember), StringComparison.Ordinal);
 
-        var namespaceTree = await structure.GetNamespaceTree(target, project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"), namespacePrefix: "ScopeProbe",
+        var browseScans = new List<string>();
+        structure.BeforeBrowseScanForTesting = browseScans.Add;
+        var namespaceTree = await structure.BrowseTarget(target, "namespaces", project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"), namespacePrefix: "ScopeProbe",
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(namespaceTree, 16384, 1024);
         using (var namespaceDocument = System.Text.Json.JsonDocument.Parse(JsonBody(TextOf(namespaceTree))))
         {
             var items = namespaceDocument.RootElement.GetProperty("items").EnumerateArray().ToArray();
+            var totals = namespaceDocument.RootElement.GetProperty("totalsScope");
+            Assert.Equal("selectedPrefix", totals.GetProperty("namespaces").GetString());
+            Assert.Equal("selectedProject", totals.GetProperty("types").GetString());
             Assert.Contains(items, item => item.GetProperty("kind").GetString() == "namespace"
                 && item.GetProperty("fullName").GetString() == "ScopeProbe");
             Assert.Contains(items, item => item.GetProperty("kind").GetString() == "type"
                 && item.GetProperty("name").GetString() == "Target");
         }
-        var selectedProjectDepthRecovery = await structure.GetNamespaceTree(target,
+        Assert.Equal(["namespaces"], browseScans);
+        browseScans.Clear();
+        var selectedProjectDepthRecovery = await structure.BrowseTarget(target, "namespaces",
             project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
             namespacePrefix: "ScopeProbe", depth: 1, maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(selectedProjectDepthRecovery, 16384, 1024);
@@ -732,7 +744,7 @@ public sealed class SourceToolsContractTests
         var namespacePages = 0;
         do
         {
-            var page = await structure.GetNamespaceTree(target, project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
+            var page = await structure.BrowseTarget(target, "namespaces", project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
                 namespacePrefix: "ScopeProbe", depth: 1, maxResults: 2, resultCursor: namespaceCursor,
                 maxResponseBytes: 16384, maxResponseTokens: 1024);
             AssertSuccessWithinBudget(page, 16384, 1024);
@@ -751,7 +763,7 @@ public sealed class SourceToolsContractTests
         Assert.Equal(3, namespacePages);
         Assert.Equal(6, pagedNamespaceItems.Count);
         Assert.Equal(6, pagedNamespaceItems.Distinct(StringComparer.Ordinal).Count());
-        var namespaceBytes = await structure.GetNamespaceTree(target,
+        var namespaceBytes = await structure.BrowseTarget(target, "namespaces",
             project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
             namespacePrefix: "ScopeProbe", depth: 1, includeTypes: false, maxResults: 1,
             maxResponseBytes: 512, maxResponseTokens: 4096);
@@ -759,14 +771,14 @@ public sealed class SourceToolsContractTests
         {
             AssertErrorWithinBudget(namespaceBytes, "RESPONSE_BUDGET_TOO_SMALL", 512, 4096);
             var minimumBytes = ReadBudget(TextOf(namespaceBytes), "minimumResponseBytes");
-            var retry = await structure.GetNamespaceTree(target,
+            var retry = await structure.BrowseTarget(target, "namespaces",
                 project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
                 namespacePrefix: "ScopeProbe", depth: 1, includeTypes: false, maxResults: 1,
                 maxResponseBytes: minimumBytes, maxResponseTokens: 4096);
             AssertSuccessWithinBudget(retry, minimumBytes, 4096);
         }
         else AssertSuccessWithinBudget(namespaceBytes, 512, 4096);
-        var namespaceTokens = await structure.GetNamespaceTree(target,
+        var namespaceTokens = await structure.BrowseTarget(target, "namespaces",
             project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
             namespacePrefix: "ScopeProbe", depth: 1, includeTypes: false, maxResults: 1,
             maxResponseBytes: 65536, maxResponseTokens: 512);
@@ -774,27 +786,30 @@ public sealed class SourceToolsContractTests
         {
             AssertErrorWithinBudget(namespaceTokens, "RESPONSE_BUDGET_TOO_SMALL", 65536, 512);
             var minimumTokens = ReadBudget(TextOf(namespaceTokens), "minimumResponseTokens");
-            var retry = await structure.GetNamespaceTree(target,
+            var retry = await structure.BrowseTarget(target, "namespaces",
                 project: Path.Combine(fixture.DirectoryPath, "src", "App", "ScopeProbe.App.csproj"),
                 namespacePrefix: "ScopeProbe", depth: 1, includeTypes: false, maxResults: 1,
                 maxResponseBytes: 65536, maxResponseTokens: minimumTokens);
             AssertSuccessWithinBudget(retry, 65536, minimumTokens);
         }
         else AssertSuccessWithinBudget(namespaceTokens, 65536, 512);
-        var generatedNamespaceExcluded = await structure.GetNamespaceTree(target, namespacePrefix: "ScopeProbe.GeneratedOnly",
+        var generatedNamespaceExcluded = await structure.BrowseTarget(target, "namespaces", namespacePrefix: "ScopeProbe.GeneratedOnly",
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(generatedNamespaceExcluded, "INVALID_ARGUMENT", 16384, 1024);
-        var generatedNamespaceIncluded = await structure.GetNamespaceTree(target, namespacePrefix: "ScopeProbe.GeneratedOnly",
+        var generatedNamespaceIncluded = await structure.BrowseTarget(target, "namespaces", namespacePrefix: "ScopeProbe.GeneratedOnly",
             includeGenerated: true, maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(generatedNamespaceIncluded, 16384, 1024);
         Assert.Contains("GeneratedProbe", TextOf(generatedNamespaceIncluded), StringComparison.Ordinal);
-        var invalidKind = await structure.GetNamespaceTree(target, kind: "unsupported", maxResponseBytes: 16384, maxResponseTokens: 1024);
+        var invalidKind = await structure.BrowseTarget(target, "namespaces", kind: "unsupported", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(invalidKind, "INVALID_ARGUMENT", 16384, 1024);
 
-        var indexScope = await structure.GetIndexScope(target, maxResponseBytes: 16384, maxResponseTokens: 1024);
+        browseScans.Clear();
+        var indexScope = await structure.BrowseTarget(target, "scope", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(indexScope, 16384, 1024);
         Assert.Contains("Roslyn documents", TextOf(indexScope), StringComparison.Ordinal);
-        var assemblyAsSource = await structure.GetIndexScope(typeof(SourceToolsContractTests).Assembly.Location,
+        Assert.Equal(["scope"], browseScans);
+        structure.BeforeBrowseScanForTesting = null;
+        var assemblyAsSource = await structure.BrowseTarget(typeof(SourceToolsContractTests).Assembly.Location, "scope",
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(assemblyAsSource, "INVALID_ARGUMENT", 16384, 1024);
 
@@ -1594,10 +1609,10 @@ public sealed class SourceToolsContractTests
         {
             var bytes = cursor is null ? 65536 : 16384;
             var tokens = cursor is null ? 8192 : 2048;
-            var result = await tools.GetNamespaceTree(target, namespacePrefix: "CapProbe", maxResults: pageSize, resultCursor: cursor,
+            var result = await tools.BrowseTarget(target, "namespaces", namespacePrefix: "CapProbe", maxResults: pageSize, resultCursor: cursor,
                 maxResponseBytes: bytes, maxResponseTokens: tokens);
             var payload = await ReconstructOuterPagesAsync(result, async continuation =>
-                await tools.GetNamespaceTree(target, namespacePrefix: "CapProbe", maxResults: pageSize, continuationToken: continuation,
+                await tools.BrowseTarget(target, "namespaces", namespacePrefix: "CapProbe", maxResults: pageSize, continuationToken: continuation,
                     maxResponseBytes: bytes, maxResponseTokens: tokens));
             using var document = JsonDocument.Parse(payload);
             var root = document.RootElement;

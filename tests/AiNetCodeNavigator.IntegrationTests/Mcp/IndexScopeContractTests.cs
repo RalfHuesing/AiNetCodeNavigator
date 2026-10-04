@@ -23,20 +23,20 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class IndexScopeContractTests
 {
     [Fact]
-    public async Task GetIndexScope_SdkDefinitionPublishesSharedRoutingParameters()
+    public async Task BrowseTarget_SdkDefinitionPublishesSharedRoutingParameters()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>(),
             operationResponseWindow: TimeSpan.FromMilliseconds(1));
         var tools = new StructureTools(runtime);
         AssertNavigationSdkToolCatalog(runtime);
-        Func<string, int, int, int?, string?, string?, string?, CancellationToken, Task<ModelContextProtocol.Protocol.CallToolResult>> handler = tools.GetIndexScope;
-        var sdkTool = McpServerTool.Create(handler, new McpServerToolCreateOptions { Name = "get_index_scope" });
+        var sdkTool = McpServerTool.Create(typeof(StructureTools).GetMethod(nameof(StructureTools.BrowseTarget))!, tools,
+            new McpServerToolCreateOptions { Name = "browse_target" });
 
         var schema = sdkTool.ProtocolTool.InputSchema;
         var properties = schema.GetProperty("properties");
         var required = schema.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToArray();
-        Assert.Equal(new[] { "targetPath" }, required);
+        Assert.Equal(new[] { "targetPath", "view" }, required);
         Assert.Contains("maxResponseBytes", properties.EnumerateObject().Select(property => property.Name));
         Assert.Contains("maxResponseTokens", properties.EnumerateObject().Select(property => property.Name));
         Assert.Contains("operationToken", properties.EnumerateObject().Select(property => property.Name));
@@ -44,19 +44,19 @@ public sealed class IndexScopeContractTests
         Assert.Contains("outer response page", properties.GetProperty("continuationToken").GetProperty("description").GetString(), StringComparison.Ordinal);
         Assert.Contains("background work", properties.GetProperty("operationToken").GetProperty("description").GetString(), StringComparison.Ordinal);
 
-        using var validDocument = JsonDocument.Parse("""{"targetPath":"C:\\source.slnx","maxResponseBytes":512,"maxResponseTokens":120,"operationToken":"op","continuationToken":"1"}""");
+        using var validDocument = JsonDocument.Parse("""{"view":"scope","targetPath":"C:\\source.slnx","maxResponseBytes":512,"maxResponseTokens":120,"operationToken":"op","continuationToken":"1"}""");
         var validArguments = validDocument.RootElement.EnumerateObject()
             .ToDictionary(property => property.Name, property => property.Value.Clone(), StringComparer.Ordinal);
         Assert.Null(await McpArgumentValidationFilter.ValidateArgumentsAsync(sdkTool, validArguments));
 
         foreach (var invalidJson in new[]
         {
-            """{"targetPath":null}""",
-            """{"targetPath":["C:\\source.slnx"]}""",
-            """{"targetPath":"C:\\source.slnx","maxResponseBytes":512.5}""",
-            """{"targetPath":"C:\\source.slnx","maxResponseBytes":65537}""",
-            """{"targetPath":"C:\\source.slnx","maxResponseTokens":1.5}""",
-            """{"targetPath":"C:\\source.slnx","operationToken":["op"]}""",
+            """{"view":"scope","targetPath":null}""",
+            """{"view":"scope","targetPath":["C:\\source.slnx"]}""",
+            """{"view":"scope","targetPath":"C:\\source.slnx","maxResponseBytes":512.5}""",
+            """{"view":"scope","targetPath":"C:\\source.slnx","maxResponseBytes":65537}""",
+            """{"view":"scope","targetPath":"C:\\source.slnx","maxResponseTokens":1.5}""",
+            """{"view":"scope","targetPath":"C:\\source.slnx","operationToken":["op"]}""",
         })
         {
             var invalid = await ValidateJsonArgumentsAsync(sdkTool, invalidJson);
@@ -64,7 +64,7 @@ public sealed class IndexScopeContractTests
             Assert.True(invalid!.IsError, TextOf(invalid));
         }
 
-        using var invalidBudgetDocument = JsonDocument.Parse("""{"targetPath":"C:\\source.slnx","maxResponseBytes":511}""");
+        using var invalidBudgetDocument = JsonDocument.Parse("""{"view":"scope","targetPath":"C:\\source.slnx","maxResponseBytes":511}""");
         var invalidBudgetArguments = invalidBudgetDocument.RootElement.EnumerateObject()
             .ToDictionary(property => property.Name, property => property.Value.Clone(), StringComparer.Ordinal);
         var invalidBudget = await McpArgumentValidationFilter.ValidateArgumentsAsync(sdkTool, invalidBudgetArguments);
@@ -72,7 +72,7 @@ public sealed class IndexScopeContractTests
         Assert.True(invalidBudget!.IsError);
         Assert.Contains("maxResponseBytes", TextOf(invalidBudget), StringComparison.Ordinal);
 
-        using var unknownDocument = JsonDocument.Parse("""{"targetPath":"C:\\source.slnx","unexpected":true}""");
+        using var unknownDocument = JsonDocument.Parse("""{"view":"scope","targetPath":"C:\\source.slnx","unexpected":true}""");
         var unknownArguments = unknownDocument.RootElement.EnumerateObject()
             .ToDictionary(property => property.Name, property => property.Value.Clone(), StringComparer.Ordinal);
         var unknownField = await McpArgumentValidationFilter.ValidateArgumentsAsync(sdkTool, unknownArguments);
@@ -80,28 +80,40 @@ public sealed class IndexScopeContractTests
         Assert.True(unknownField!.IsError);
         Assert.Contains("unexpected", TextOf(unknownField), StringComparison.Ordinal);
 
+        Assert.Contains("$.view", TextOf(await tools.BrowseTarget(@"C:\missing.slnx", "unknown")), StringComparison.Ordinal);
+        Assert.Contains("$.view", TextOf(await tools.BrowseTarget(@"C:\missing.dll", "scope")), StringComparison.Ordinal);
+        Assert.Contains("$.project", TextOf(await tools.BrowseTarget(@"C:\missing.slnx", "scope", project: "")), StringComparison.Ordinal);
+        Assert.Contains("$.namespacePrefix", TextOf(await tools.BrowseTarget(@"C:\missing.slnx", "scope", namespacePrefix: "")), StringComparison.Ordinal);
+        Assert.Contains("$.depth", TextOf(await tools.BrowseTarget(@"C:\missing.slnx", "scope", depth: 1)), StringComparison.Ordinal);
+        Assert.Contains("$.includeTypes", TextOf(await tools.BrowseTarget(@"C:\missing.slnx", "scope", includeTypes: true)), StringComparison.Ordinal);
+        Assert.Contains("$.kind", TextOf(await tools.BrowseTarget(@"C:\missing.slnx", "scope", kind: "all")), StringComparison.Ordinal);
+        Assert.Contains("$.includeGenerated", TextOf(await tools.BrowseTarget(@"C:\missing.slnx", "scope", includeGenerated: false)), StringComparison.Ordinal);
+        Assert.Contains("$.maxResults", TextOf(await tools.BrowseTarget(@"C:\missing.slnx", "scope", maxResults: 129)), StringComparison.Ordinal);
+        Assert.NotNull(await ValidateJsonArgumentsAsync(sdkTool, """{"targetPath":"missing.slnx"}"""));
+
         using var fixture = TestTempDirectory.Create("ainet-index-scope-route-");
         var solutionPath = await CreateSourceFixtureAsync(fixture.DirectoryPath);
-        var firstPageTask = tools.GetIndexScope(solutionPath, maxResponseBytes: 512, maxResponseTokens: 120);
+        var firstPageTask = tools.BrowseTarget(solutionPath, "scope", maxResponseBytes: 512, maxResponseTokens: 120);
         await WaitUntilAsync(() => runtime.ProjectRegistry.ActiveLoadCount > 0, TimeSpan.FromSeconds(10));
         var firstPage = await firstPageTask;
         Assert.StartsWith(McpToolResults.RunningStatusPrefix, TextOf(firstPage), StringComparison.Ordinal);
         var sdkBound = await InvokeSdkBinderAsync(sdkTool, new AIFunctionArguments
         {
             ["targetPath"] = solutionPath,
+            ["view"] = "scope",
             ["maxResponseBytes"] = 65536,
             ["maxResponseTokens"] = 4096,
         });
         Assert.IsType<ModelContextProtocol.Protocol.CallToolResult>(sdkBound);
         Assert.False(((ModelContextProtocol.Protocol.CallToolResult)sdkBound!).IsError ?? false, TextOf((ModelContextProtocol.Protocol.CallToolResult)sdkBound));
-        var expected = await tools.GetIndexScope(solutionPath, maxResponseBytes: 65536, maxResponseTokens: 4096);
+        var expected = await tools.BrowseTarget(solutionPath, "scope", maxResponseBytes: 65536, maxResponseTokens: 4096);
         if (TextOf(expected).StartsWith(McpToolResults.RunningStatusPrefix, StringComparison.Ordinal))
         {
             var expectedOperation = ReadOperationToken(TextOf(expected));
             for (var poll = 0; poll < 100; poll++)
             {
                 await Task.Delay(20);
-                expected = await tools.GetIndexScope(solutionPath, maxResponseBytes: 65536, maxResponseTokens: 4096,
+                expected = await tools.BrowseTarget(solutionPath, "scope", maxResponseBytes: 65536, maxResponseTokens: 4096,
                     operationToken: expectedOperation);
                 if (!TextOf(expected).StartsWith(McpToolResults.RunningStatusPrefix, StringComparison.Ordinal)) break;
             }
@@ -120,7 +132,7 @@ public sealed class IndexScopeContractTests
             ModelContextProtocol.Protocol.CallToolResult page = new();
             for (var poll = 0; poll < 100; poll++)
             {
-                page = await tools.GetIndexScope(solutionPath, maxResults: 2,
+                page = await tools.BrowseTarget(solutionPath, "scope", maxResults: 2,
                     maxResponseBytes: 16384, maxResponseTokens: 2048,
                     operationToken: operation, resultCursor: inventoryCursor);
                 if (!TextOf(page).StartsWith(McpToolResults.RunningStatusPrefix, StringComparison.Ordinal)) break;
@@ -143,6 +155,8 @@ public sealed class IndexScopeContractTests
                     Assert.StartsWith(Path.GetFullPath(solutionPath[..solutionPath.LastIndexOf(Path.DirectorySeparatorChar)]).Replace('\\', '/'),
                         projectIdentity, StringComparison.OrdinalIgnoreCase);
                     Assert.Equal("net10.0", item.GetProperty("loadedFrameworkContext").GetString());
+                    Assert.True(Path.IsPathFullyQualified(Assert.IsType<string>(item.GetProperty("projectPath").GetString())));
+                    Assert.True(File.Exists(item.GetProperty("projectPath").GetString()));
                     Assert.Equal(2, item.GetProperty("documentCount").GetInt32());
                     Assert.Equal(2, item.GetProperty("cSharpDocumentCount").GetInt32());
                     Assert.True(item.GetProperty("configuredFrameworksKnown").GetBoolean());
@@ -180,12 +194,12 @@ public sealed class IndexScopeContractTests
         await using (var reloadedRuntime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>()))
         {
             var reloadedTools = new StructureTools(reloadedRuntime);
-            var reloaded = await reloadedTools.GetIndexScope(solutionPath, maxResponseBytes: 65536, maxResponseTokens: 4096);
+            var reloaded = await reloadedTools.BrowseTarget(solutionPath, "scope", maxResponseBytes: 65536, maxResponseTokens: 4096);
             for (var poll = 0; poll < 100 && TextOf(reloaded).StartsWith(McpToolResults.RunningStatusPrefix, StringComparison.Ordinal); poll++)
             {
                 var operation = ReadOperationToken(TextOf(reloaded));
                 await Task.Delay(50);
-                reloaded = await reloadedTools.GetIndexScope(solutionPath, maxResponseBytes: 65536, maxResponseTokens: 4096,
+                reloaded = await reloadedTools.BrowseTarget(solutionPath, "scope", maxResponseBytes: 65536, maxResponseTokens: 4096,
                     operationToken: operation);
             }
             Assert.False(reloaded.IsError ?? false, TextOf(reloaded));
@@ -195,6 +209,8 @@ public sealed class IndexScopeContractTests
                 .Select(item =>
                 {
                     Assert.Equal("net10.0", item.GetProperty("loadedFrameworkContext").GetString());
+                    Assert.True(Path.IsPathFullyQualified(Assert.IsType<string>(item.GetProperty("projectPath").GetString())));
+                    Assert.True(File.Exists(item.GetProperty("projectPath").GetString()));
                     Assert.True(item.GetProperty("configuredFrameworksKnown").GetBoolean());
                     Assert.Equal(new[] { "net9.0" }, item.GetProperty("configuredFrameworksNotAnalyzed")
                         .EnumerateArray().Select(value => value.GetString()).ToArray());
@@ -287,17 +303,17 @@ public sealed class IndexScopeContractTests
         await AssertSourceAndAssemblyCancellationUsesOwnerRoutesAsync(host.Services.GetRequiredService<IHostApplicationLifetime>(),
             solutionPath, typeof(IndexScopeContractTests).Assembly.Location);
 
-        var expiredOperation = await tools.GetIndexScope(solutionPath, maxResponseBytes: 512, maxResponseTokens: 512, operationToken: "unknown-operation");
+        var expiredOperation = await tools.BrowseTarget(solutionPath, "scope", maxResponseBytes: 512, maxResponseTokens: 512, operationToken: "unknown-operation");
         Assert.True(expiredOperation.IsError);
         Assert.Contains("OPERATION_EXPIRED", TextOf(expiredOperation), StringComparison.Ordinal);
         AssertBudget(TextOf(expiredOperation), 512, 512);
 
-        var expiredContinuation = await tools.GetIndexScope(solutionPath, maxResponseBytes: 512, maxResponseTokens: 512, continuationToken: "unknown-continuation");
+        var expiredContinuation = await tools.BrowseTarget(solutionPath, "scope", maxResponseBytes: 512, maxResponseTokens: 512, continuationToken: "unknown-continuation");
         Assert.True(expiredContinuation.IsError);
         Assert.Contains("CONTINUATION_EXPIRED", TextOf(expiredContinuation), StringComparison.Ordinal);
         AssertBudget(TextOf(expiredContinuation), 512, 512);
 
-        var mixedTokens = await tools.GetIndexScope(solutionPath, maxResponseBytes: 512, maxResponseTokens: 512,
+        var mixedTokens = await tools.BrowseTarget(solutionPath, "scope", maxResponseBytes: 512, maxResponseTokens: 512,
             operationToken: "unknown-operation", continuationToken: "unknown-continuation");
         Assert.True(mixedTokens.IsError);
         Assert.Contains("INVALID_ARGUMENT", TextOf(mixedTokens), StringComparison.Ordinal);
@@ -316,7 +332,7 @@ public sealed class IndexScopeContractTests
         ModelContextProtocol.Protocol.CallToolResult result = new();
         for (var poll = 0; poll < 100; poll++)
         {
-            result = await tools.GetIndexScope(solutionPath, maxResults: maxResults,
+            result = await tools.BrowseTarget(solutionPath, "scope", maxResults: maxResults,
                 maxResponseBytes: 16384, maxResponseTokens: 2048, operationToken: operation,
                 resultCursor: resultCursor);
             if (!TextOf(result).StartsWith(McpToolResults.RunningStatusPrefix, StringComparison.Ordinal))
@@ -380,12 +396,12 @@ public sealed class IndexScopeContractTests
         }
 
         var names = registered.Select(item => item.Tool.ProtocolTool.Name).Order(StringComparer.Ordinal).ToArray();
-        Assert.Equal(15, names.Length);
+        Assert.Equal(14, names.Length);
         Assert.Equal(new[]
         {
-            "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol",
+            "browse_target", "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol",
             "get_call_tree", "get_context", "get_file_skeleton",
-            "get_index_scope", "get_namespace_tree", "get_symbol_body",
+            "get_symbol_body",
             "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly",
         }, names);
         Assert.DoesNotContain("get_server_health", names);
@@ -479,7 +495,7 @@ public sealed class IndexScopeContractTests
                 var minimumTokens = ReadBudget(text, "minimumResponseTokens");
                 responseBytes = minimumBytes;
                 responseTokens = minimumTokens;
-                result = await tools.GetIndexScope(solutionPath, maxResponseBytes: minimumBytes, maxResponseTokens: minimumTokens,
+                result = await tools.BrowseTarget(solutionPath, "scope", maxResponseBytes: minimumBytes, maxResponseTokens: minimumTokens,
                     operationToken: operationToken, continuationToken: continuationToken);
                 continue;
             }
@@ -488,7 +504,7 @@ public sealed class IndexScopeContractTests
             {
                 operationToken = pendingOperation;
                 await Task.Delay(50);
-                result = await tools.GetIndexScope(solutionPath, maxResponseBytes: responseBytes, maxResponseTokens: responseTokens,
+                result = await tools.BrowseTarget(solutionPath, "scope", maxResponseBytes: responseBytes, maxResponseTokens: responseTokens,
                     operationToken: operationToken, continuationToken: continuationToken);
                 continue;
             }
@@ -496,7 +512,7 @@ public sealed class IndexScopeContractTests
             if (text.Contains("operation=retry", StringComparison.Ordinal))
             {
                 await Task.Delay(50);
-                result = await tools.GetIndexScope(solutionPath, maxResponseBytes: responseBytes, maxResponseTokens: responseTokens,
+                result = await tools.BrowseTarget(solutionPath, "scope", maxResponseBytes: responseBytes, maxResponseTokens: responseTokens,
                     operationToken: operationToken, continuationToken: continuationToken);
                 continue;
             }
@@ -512,7 +528,7 @@ public sealed class IndexScopeContractTests
             }
 
             continuationToken = nextContinuation;
-            result = await tools.GetIndexScope(solutionPath, maxResponseBytes: responseBytes, maxResponseTokens: responseTokens,
+            result = await tools.BrowseTarget(solutionPath, "scope", maxResponseBytes: responseBytes, maxResponseTokens: responseTokens,
                 operationToken: operationToken, continuationToken: continuationToken);
         }
 
@@ -536,7 +552,7 @@ public sealed class IndexScopeContractTests
         var structure = new StructureTools(runtime);
         using (var sourceCancellation = new CancellationTokenSource())
         {
-            var sourceCall = structure.GetIndexScope(solutionPath, cancellationToken: sourceCancellation.Token);
+            var sourceCall = structure.BrowseTarget(solutionPath, "scope", cancellationToken: sourceCancellation.Token);
             await WaitUntilAsync(() => runtime.ProjectRegistry.ActiveLoadCount > 0, TimeSpan.FromSeconds(10));
             await sourceCancellation.CancelAsync();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sourceCall);

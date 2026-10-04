@@ -196,7 +196,7 @@ public sealed class SourceSnapshotIdentityContractTests
             operationToken: operation, continuationToken: continuation), 16384, 1024);
         var sourceSnapshot = ReadHeader(source.FirstPage, "snapshotId");
         var sourceReference = Assert.Single(ReadStableReferences(source.Text));
-        var index = await ReadPagesAsync((bytes, tokens, operation, continuation) => structure.GetIndexScope(solutionPath,
+        var index = await ReadPagesAsync((bytes, tokens, operation, continuation) => structure.BrowseTarget(solutionPath, "scope",
             maxResponseBytes: bytes, maxResponseTokens: tokens, operationToken: operation,
             continuationToken: continuation), 16384, 1024);
         var indexSnapshot = ReadHeader(index.FirstPage, "snapshotId");
@@ -221,7 +221,7 @@ public sealed class SourceSnapshotIdentityContractTests
         Assert.Equal(sourceSnapshot, reloadedSourceSnapshot);
         Assert.Equal(sourceReference, Assert.Single(ReadStableReferences(reloadedSource.Text)));
 
-        var updatedIndex = await ReadPagesAsync((bytes, tokens, operation, continuation) => structure.GetIndexScope(solutionPath,
+        var updatedIndex = await ReadPagesAsync((bytes, tokens, operation, continuation) => structure.BrowseTarget(solutionPath, "scope",
             maxResponseBytes: bytes, maxResponseTokens: tokens, operationToken: operation,
             continuationToken: continuation), 16384, 1024);
         var updatedIndexSnapshot = ReadHeader(updatedIndex.FirstPage, "snapshotId");
@@ -235,7 +235,7 @@ public sealed class SourceSnapshotIdentityContractTests
         Assert.Equal(new[] { "net8.0" }, updatedProject.GetProperty("configuredFrameworksNotAnalyzed")
             .EnumerateArray().Select(value => value.GetString()).ToArray());
 
-        var repeatedIndex = await ReadPagesAsync((bytes, tokens, operation, continuation) => structure.GetIndexScope(solutionPath,
+        var repeatedIndex = await ReadPagesAsync((bytes, tokens, operation, continuation) => structure.BrowseTarget(solutionPath, "scope",
             maxResponseBytes: bytes, maxResponseTokens: tokens, operationToken: operation,
             continuationToken: continuation), 16384, 1024);
         Assert.Equal(updatedIndexSnapshot, ReadHeader(repeatedIndex.FirstPage, "snapshotId"));

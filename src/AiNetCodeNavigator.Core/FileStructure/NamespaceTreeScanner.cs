@@ -143,7 +143,7 @@ public static class NamespaceTreeScanner
                     ct,
                     kind,
                     requestedOptions.IncludeTypes,
-                    requestedOptions.FormatTypeHandoff);
+                    requestedOptions.FormatTypeHandoff, prefix);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -346,7 +346,8 @@ public static class NamespaceTreeScanner
         CancellationToken ct,
         string kind,
         bool includeTypes,
-        Func<INamedTypeSymbol, string?>? formatTypeHandoff = null)
+        Func<INamedTypeSymbol, string?>? formatTypeHandoff = null,
+        string? selectedPrefix = null)
     {
         ct.ThrowIfCancellationRequested();
         var path = ns.IsGlobalNamespace ? parentPath : [.. parentPath, ns.Name];
@@ -387,7 +388,10 @@ public static class NamespaceTreeScanner
                 var typesBelowDepth = CountProjectSourceTypesInHierarchy(childNs, sourceTrees, ct, kind);
                 if (typesBelowDepth > 0)
                 {
-                    depthWasTruncated = true;
+                    var omittedNamespace = childNs.ToDisplayString();
+                    if (selectedPrefix is null || omittedNamespace.Equals(selectedPrefix, StringComparison.Ordinal)
+                        || omittedNamespace.StartsWith(selectedPrefix + ".", StringComparison.Ordinal))
+                        depthWasTruncated = true;
                     var visiblePrefix = string.Join('.', path);
                     nsTypeCounts.TryAdd(visiblePrefix, 0);
                     totalTypes += typesBelowDepth;
@@ -396,7 +400,7 @@ public static class NamespaceTreeScanner
             }
 
             CollectNamespacesAndTypes(childNs, sourceTrees, path, maxDepth, nsTypeCounts, namespaceTypes, ref totalTypes,
-                ref depthWasTruncated, ct, kind, includeTypes, formatTypeHandoff);
+                ref depthWasTruncated, ct, kind, includeTypes, formatTypeHandoff, selectedPrefix);
         }
     }
 
