@@ -209,13 +209,13 @@ public sealed class SourceAnalyzerIdentityContractTests
         Assert.True(generatedTypeReferences.Length == 1, generatedTypeDiscovery.Text);
         var generatedTypeReference = generatedTypeReferences[0];
 
-        var structures = new StructureTools(runtime);
-        var excludedStructure = await ReadPagesAsync((bytes, tokens, operation, continuation) => structures.GetClassStructure(solutionPath,
-            generatedTypeReference, includeGenerated: false, maxResponseBytes: bytes, maxResponseTokens: tokens,
-            operationToken: operation, continuationToken: continuation), 16384, 1024);
-        Assert.DoesNotContain("Read", excludedStructure.Text, StringComparison.Ordinal);
-        var includedStructure = await ReadPagesAsync((bytes, tokens, operation, continuation) => structures.GetClassStructure(solutionPath,
-            generatedTypeReference, includeGenerated: true, maxResponseBytes: bytes, maxResponseTokens: tokens,
+        var excludedStructure = await CompleteAsync(operation => new RelationshipTools(runtime).GetContext(solutionPath,
+            generatedTypeReference, ["members"], includeGenerated: false, maxResponseBytes: 16384, maxResponseTokens: 1024,
+            operationToken: operation));
+        AssertErrorWithinBudget(excludedStructure, "INVALID_ARGUMENT", 16384, 1024);
+        Assert.DoesNotContain("\"name\":\"Read\"", TextOf(excludedStructure), StringComparison.Ordinal);
+        var includedStructure = await ReadPagesAsync((bytes, tokens, operation, continuation) => new RelationshipTools(runtime).GetContext(solutionPath,
+            generatedTypeReference, ["members"], includeGenerated: true, maxResponseBytes: bytes, maxResponseTokens: tokens,
             operationToken: operation, continuationToken: continuation), 16384, 1024);
         Assert.Contains("Read", includedStructure.Text, StringComparison.Ordinal);
 

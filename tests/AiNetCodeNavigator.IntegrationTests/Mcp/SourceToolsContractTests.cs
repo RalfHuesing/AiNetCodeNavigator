@@ -112,10 +112,10 @@ public sealed class SourceToolsContractTests
         using var emitted = TestTempDirectory.Create("structure-assembly-");
         var assemblyPath = AssemblyTestHelper.EmitAssembly(emitted, "CapProbe", source);
 
-        var sourceMembers = await ReadClassMemberPagesAsync(tools, solutionPath, "CapProbe.ManyMembers");
-        var assemblyMembers = await ReadClassMemberPagesAsync(tools, assemblyPath, "CapProbe.ManyMembers");
-        Assert.Equal(2, sourceMembers.Pages);
-        Assert.Equal(2, assemblyMembers.Pages);
+        var sourceMembers = await ReadClassMemberPagesAsync(new RelationshipTools(runtime), solutionPath, "CapProbe.ManyMembers");
+        var assemblyMembers = await ReadClassMemberPagesAsync(new RelationshipTools(runtime), assemblyPath, "CapProbe.ManyMembers");
+        Assert.Equal(3, sourceMembers.Pages);
+        Assert.Equal(3, assemblyMembers.Pages);
         Assert.Equal(205, sourceMembers.Items.Count);
         Assert.Equal(205, assemblyMembers.Items.Count);
         Assert.Equal(205, sourceMembers.Items.Distinct(StringComparer.Ordinal).Count());
@@ -125,23 +125,28 @@ public sealed class SourceToolsContractTests
         Assert.Equal(expectedMembers, assemblyMembers.Items);
         foreach (var (target, cursor) in new[] { (solutionPath, sourceMembers.FirstCursor), (assemblyPath, assemblyMembers.FirstCursor) })
         {
-            AssertErrorWithinBudget(await tools.GetClassStructure(target, "CapProbe.ManyMembers", resultCursor: "malformed-cursor"), "RESULT_CURSOR_EXPIRED", 16384, 4096);
-            AssertErrorWithinBudget(await tools.GetClassStructure(target, "CapProbe.ManyMembers", sortBy: "name", maxMembers: 200, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
-            AssertErrorWithinBudget(await tools.GetClassStructure(target, "CapProbe.ManyMembers", scopeType: "tests", maxMembers: 200, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
-            AssertErrorWithinBudget(await tools.GetClassStructure(target, "CapProbe.Type000", maxMembers: 200, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
-            AssertErrorWithinBudget(await tools.GetClassStructure(target, "CapProbe.ManyMembers", maxMembers: 199, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+            AssertErrorWithinBudget(await new RelationshipTools(runtime).GetContext(target, "CapProbe.ManyMembers", ["members"], resultCursor: "malformed-cursor"), "RESULT_CURSOR_EXPIRED", 16384, 4096);
+            AssertErrorWithinBudget(await new RelationshipTools(runtime).GetContext(target, "CapProbe.ManyMembers", ["members"], memberSortBy: "name", maxResults: 100, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+            AssertErrorWithinBudget(await new RelationshipTools(runtime).GetContext(target, "CapProbe.ManyMembers", ["members"], memberScope: "tests", maxResults: 100, resultCursor: cursor), target == assemblyPath ? "INVALID_ARGUMENT" : "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+            AssertErrorWithinBudget(await new RelationshipTools(runtime).GetContext(target, "CapProbe.Type000", ["members"], maxResults: 100, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+            AssertErrorWithinBudget(await new RelationshipTools(runtime).GetContext(target, "CapProbe.ManyMembers", ["members"], maxResults: 99, resultCursor: cursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
         }
-        AssertErrorWithinBudget(await tools.GetClassStructure(assemblyPath, "CapProbe.ManyMembers", maxMembers: 200,
+        AssertErrorWithinBudget(await new RelationshipTools(runtime).GetContext(assemblyPath, "CapProbe.ManyMembers", ["members"], maxResults: 100,
             resultCursor: sourceMembers.FirstCursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
         foreach (var target in new[] { solutionPath, assemblyPath })
         {
-            var filtered = await tools.GetClassStructure(target, "CapProbe.ManyMembers", nameFilter: "Member204", maxMembers: 200);
+            var filtered = await new RelationshipTools(runtime).GetContext(target, "CapProbe.ManyMembers", ["members"], memberNameFilter: "Member204", maxResults: 100);
             AssertSuccessWithinBudget(filtered, 16 * 1024, 4096);
             using var filteredDocument = JsonDocument.Parse(BodyOf(TextOf(filtered)));
-            Assert.Equal(1, filteredDocument.RootElement.GetProperty("totalMemberCount").GetInt32());
-            Assert.Equal("Member204", Assert.Single(filteredDocument.RootElement.GetProperty("members").EnumerateArray())
+            Assert.Equal(1, filteredDocument.RootElement.GetProperty("sections")[0].GetProperty("totalCount").GetInt32());
+            Assert.Equal("Member204", Assert.Single(filteredDocument.RootElement.GetProperty("sections")[0].GetProperty("items").EnumerateArray())
                 .GetProperty("name").GetString());
         }
+
+        AssertErrorWithinBudget(await new RelationshipTools(runtime).GetContext(solutionPath, "CapProbe.ManyMembers", ["members"],
+            memberSortBy: "lines", maxResults: 100, resultCursor: sourceMembers.FirstCursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
+        AssertErrorWithinBudget(await new RelationshipTools(runtime).GetContext(solutionPath, "CapProbe.ManyMembers", ["members"],
+            memberScope: "all", maxResults: 100, resultCursor: sourceMembers.FirstCursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
 
         var sourceInventory = await ReadNamespaceItemPagesAsync(tools, solutionPath);
         var assemblyInventory = await ReadNamespaceItemPagesAsync(tools, assemblyPath);
@@ -166,13 +171,13 @@ public sealed class SourceToolsContractTests
             resultCursor: sourceInventory.FirstCursor), "RESULT_CURSOR_ARGUMENT_MISMATCH", 16384, 4096);
 
         await File.WriteAllTextAsync(sourcePath, source + Environment.NewLine + "public sealed class SnapshotAdded { }");
-        AssertErrorWithinBudget(await tools.GetClassStructure(solutionPath, "CapProbe.ManyMembers", maxMembers: 200,
+        AssertErrorWithinBudget(await new RelationshipTools(runtime).GetContext(solutionPath, "CapProbe.ManyMembers", ["members"], maxResults: 100,
             resultCursor: sourceMembers.FirstCursor), "STALE_SNAPSHOT", 16384, 4096);
         AssertErrorWithinBudget(await tools.GetNamespaceTree(solutionPath, namespacePrefix: "CapProbe", maxResults: 200,
             resultCursor: sourceInventory.FirstCursor), "STALE_SNAPSHOT", 16384, 4096);
 
         AssemblyTestHelper.EmitAssembly(emitted, "CapProbe", source + Environment.NewLine + "public sealed class SnapshotAdded { }");
-        AssertErrorWithinBudget(await tools.GetClassStructure(assemblyPath, "CapProbe.ManyMembers", maxMembers: 200,
+        AssertErrorWithinBudget(await new RelationshipTools(runtime).GetContext(assemblyPath, "CapProbe.ManyMembers", ["members"], maxResults: 100,
             resultCursor: assemblyMembers.FirstCursor), "STALE_SNAPSHOT", 16384, 4096);
         AssertErrorWithinBudget(await tools.GetNamespaceTree(assemblyPath, namespacePrefix: "CapProbe", maxResults: 200,
             resultCursor: assemblyInventory.FirstCursor), "STALE_SNAPSHOT", 16384, 4096);
@@ -643,19 +648,19 @@ public sealed class SourceToolsContractTests
                 maxResponseBytes: 16384, maxResponseTokens: 1024));
         Assert.Contains("Zebra", partialSkeletonText, StringComparison.Ordinal);
         Assert.Contains("GeneratedMember", partialSkeletonText, StringComparison.Ordinal);
-        var filteredPartialStructure = await structure.GetClassStructure(target, partialTypeReference,
+        var filteredPartialStructure = await relationships.GetContext(target, partialTypeReference, ["members"],
             includeGenerated: false, maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(filteredPartialStructure, 16384, 1024);
         var filteredPartialStructureText = await ReconstructOuterPagesAsync(filteredPartialStructure, continuation =>
-            structure.GetClassStructure(target, partialTypeReference, includeGenerated: false,
+            relationships.GetContext(target, partialTypeReference, ["members"], includeGenerated: false,
                 continuationToken: continuation, maxResponseBytes: 16384, maxResponseTokens: 1024));
         Assert.Contains("Zebra", filteredPartialStructureText, StringComparison.Ordinal);
         Assert.DoesNotContain("GeneratedMember", filteredPartialStructureText, StringComparison.Ordinal);
-        var generatedPartialStructure = await structure.GetClassStructure(target, partialTypeReference,
+        var generatedPartialStructure = await relationships.GetContext(target, partialTypeReference, ["members"],
             includeGenerated: true, maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(generatedPartialStructure, 16384, 1024);
         var generatedPartialStructureText = await ReconstructOuterPagesAsync(generatedPartialStructure, continuation =>
-            structure.GetClassStructure(target, partialTypeReference, includeGenerated: true,
+            relationships.GetContext(target, partialTypeReference, ["members"], includeGenerated: true,
                 continuationToken: continuation, maxResponseBytes: 16384, maxResponseTokens: 1024));
         Assert.Contains("Zebra", generatedPartialStructureText, StringComparison.Ordinal);
         Assert.Contains("GeneratedMember", generatedPartialStructureText, StringComparison.Ordinal);
@@ -673,32 +678,32 @@ public sealed class SourceToolsContractTests
         var outsideSkeleton = await structure.GetFileSkeleton(target, [outsideFile], maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(outsideSkeleton, "INVALID_ARGUMENT", 16384, 1024);
 
-        var classStructure = await structure.GetClassStructure(target, "ScopeProbe.Target", maxResponseBytes: 16384, maxResponseTokens: 1024);
+        var classStructure = await relationships.GetContext(target, "ScopeProbe.Target", ["members"], maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(classStructure, 16384, 1024);
         Assert.Contains("Run", TextOf(classStructure), StringComparison.Ordinal);
-        var unknownType = await structure.GetClassStructure(target, "h:zzzz", maxResponseBytes: 16384, maxResponseTokens: 1024);
+        var unknownType = await relationships.GetContext(target, "h:zzzz", ["members"], maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(unknownType, "INVALID_SYMBOL_REFERENCE", 16384, 1024);
-        var declarationOrder = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", maxMembers: 1,
-            sortBy: "lines", maxResponseBytes: 16384, maxResponseTokens: 1024);
+        var declarationOrder = await relationships.GetContext(target, "ScopeProbe.OrderProbe", ["members"], maxResults: 1,
+            memberSortBy: "lines", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(declarationOrder, 16384, 1024);
         Assert.Contains("Zebra", TextOf(declarationOrder), StringComparison.Ordinal);
         Assert.DoesNotContain("Alpha", TextOf(declarationOrder), StringComparison.Ordinal);
-        var classStructureBytes = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", maxMembers: 1,
-            sortBy: "lines", maxResponseBytes: 512, maxResponseTokens: 4096);
+        var classStructureBytes = await relationships.GetContext(target, "ScopeProbe.OrderProbe", ["members"], maxResults: 1,
+            memberSortBy: "lines", maxResponseBytes: 512, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(classStructureBytes, 512, 4096);
         Assert.True(TryReadToken(TextOf(classStructureBytes), "continuationToken", out _), TextOf(classStructureBytes));
-        var classStructureTokens = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", maxMembers: 1,
-            sortBy: "lines", maxResponseBytes: 65536, maxResponseTokens: 512);
+        var classStructureTokens = await relationships.GetContext(target, "ScopeProbe.OrderProbe", ["members"], maxResults: 1,
+            memberSortBy: "lines", maxResponseBytes: 65536, maxResponseTokens: 512);
         if (classStructureTokens.IsError == true)
         {
             AssertErrorWithinBudget(classStructureTokens, "RESPONSE_BUDGET_TOO_SMALL", 65536, 512);
             var minimumTokens = ReadBudget(TextOf(classStructureTokens), "minimumResponseTokens");
-            var retry = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", maxMembers: 1,
-                sortBy: "lines", maxResponseBytes: 65536, maxResponseTokens: minimumTokens);
+            var retry = await relationships.GetContext(target, "ScopeProbe.OrderProbe", ["members"], maxResults: 1,
+                memberSortBy: "lines", maxResponseBytes: 65536, maxResponseTokens: minimumTokens);
             AssertSuccessWithinBudget(retry, 65536, minimumTokens);
         }
         else AssertSuccessWithinBudget(classStructureTokens, 65536, 512);
-        var generatedMember = await structure.GetClassStructure(target, "ScopeProbe.OrderProbe", includeGenerated: true,
+        var generatedMember = await relationships.GetContext(target, "ScopeProbe.OrderProbe", ["members"], includeGenerated: true,
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(generatedMember, 16384, 1024);
         Assert.Contains("GeneratedMember", TextOf(generatedMember), StringComparison.Ordinal);
@@ -877,6 +882,40 @@ public sealed class SourceToolsContractTests
             Assert.Contains("OtherBehavior", sections[1].GetProperty("items").ToString(), StringComparison.Ordinal);
         }
         Assert.Equal(["uses", "tests"], invoked);
+
+        // Member scope and filters affect only that section, preserving the common declaration and all other sections.
+        var fullContext = await relationships.GetContext(target, "ScopeProbe.Target", ["body", "members", "uses", "tests"],
+            maxResults: 10, maxResponseBytes: 65536, maxResponseTokens: 16000);
+        var testMembersContext = await relationships.GetContext(target, "ScopeProbe.Target", ["body", "members", "uses", "tests"],
+            memberScope: "tests", maxResults: 10, maxResponseBytes: 65536, maxResponseTokens: 16000);
+        AssertSuccessWithinBudget(fullContext, 65536, 16000);
+        AssertSuccessWithinBudget(testMembersContext, 65536, 16000);
+        using (var full = JsonDocument.Parse(JsonBody(TextOf(fullContext))))
+        using (var scoped = JsonDocument.Parse(JsonBody(TextOf(testMembersContext))))
+        {
+            Assert.Equal(full.RootElement.GetProperty("target").GetRawText(), scoped.RootElement.GetProperty("target").GetRawText());
+            var fullSections = full.RootElement.GetProperty("sections");
+            var scopedSections = scoped.RootElement.GetProperty("sections");
+            Assert.NotEmpty(fullSections[1].GetProperty("items").EnumerateArray());
+            Assert.Empty(scopedSections[1].GetProperty("items").EnumerateArray());
+            Assert.Equal("complete", scopedSections[1].GetProperty("status").GetString());
+            foreach (var index in new[] { 0, 2, 3 })
+                Assert.Equal(fullSections[index].GetRawText(), scopedSections[index].GetRawText());
+            var member = fullSections[1].GetProperty("items")[0];
+            foreach (var field in new[] { "visibility", "signature", "startLine", "endLine", "lineCount", "filePath", "kind" })
+                Assert.True(member.TryGetProperty(field, out _));
+            Assert.True(fullSections[1].GetProperty("structure").GetProperty("totalLines").GetInt32() > 0);
+        }
+        var emptyMembers = await relationships.GetContext(target, "ScopeProbe.Target", ["members"],
+            memberNameFilter: "no-such-member", memberKindFilter: "Method", memberSortBy: "name", maxResponseBytes: 16384);
+        AssertSuccessWithinBudget(emptyMembers, 16384, 4096);
+        using (var empty = JsonDocument.Parse(JsonBody(TextOf(emptyMembers))))
+        {
+            var section = empty.RootElement.GetProperty("sections")[0];
+            Assert.Equal("complete", section.GetProperty("status").GetString());
+            Assert.Empty(section.GetProperty("items").EnumerateArray());
+        }
+        Assert.Contains("INVALID_ARGUMENT", TextOf(await relationships.GetContext(target, "ScopeProbe.Target.Run", ["members"])), StringComparison.Ordinal);
 
         var generatedMemberExcluded = await relationships.GetContext(target, "ScopeProbe.OrderProbe", ["members"],
             maxResponseBytes: 16384, maxResponseTokens: 2048);
@@ -1516,26 +1555,26 @@ public sealed class SourceToolsContractTests
         return solutionPath;
     }
 
-    private static async Task<(List<string> Items, int Pages, string FirstCursor)> ReadClassMemberPagesAsync(StructureTools tools, string target, string typeName)
+    private static async Task<(List<string> Items, int Pages, string FirstCursor)> ReadClassMemberPagesAsync(RelationshipTools tools, string target, string typeName)
     {
         var items = new List<string>();
         string? cursor = null;
         string? firstCursor = null;
-        const int pageSize = 200;
+        const int pageSize = 100;
         var pages = 0;
         do
         {
             var bytes = cursor is null ? 65536 : 16384;
             var tokens = cursor is null ? 8192 : 2048;
-            var result = await tools.GetClassStructure(target, typeName, maxMembers: pageSize, resultCursor: cursor,
+            var result = await tools.GetContext(target, typeName, ["members"], maxResults: pageSize, resultCursor: cursor,
                 maxResponseBytes: bytes, maxResponseTokens: tokens);
             var payload = await ReconstructOuterPagesAsync(result, async continuation =>
-                await tools.GetClassStructure(target, typeName, maxMembers: pageSize, continuationToken: continuation,
+                await tools.GetContext(target, typeName, ["members"], maxResults: pageSize, continuationToken: continuation,
                     maxResponseBytes: bytes, maxResponseTokens: tokens));
             using var document = JsonDocument.Parse(payload);
-            var root = document.RootElement;
-            Assert.Equal(205, root.GetProperty("totalMemberCount").GetInt32());
-            items.AddRange(root.GetProperty("members").EnumerateArray().Select(member => member.GetProperty("name").GetString()!));
+            var root = document.RootElement.GetProperty("sections")[0];
+            Assert.Equal(205, root.GetProperty("totalCount").GetInt32());
+            items.AddRange(root.GetProperty("items").EnumerateArray().Select(member => member.GetProperty("name").GetString()!));
             cursor = root.TryGetProperty("resultCursor", out var next) && next.ValueKind == JsonValueKind.String ? next.GetString() : null;
             firstCursor ??= cursor;
             pages++;

@@ -12,6 +12,7 @@ internal static class Scenarios
             [nameof(ExploreSymbolBody)] = ExploreSymbolBody,
             [nameof(ExploreConsolidationBaseline)] = ExploreConsolidationBaseline,
             [nameof(ExploreContextUses)] = ExploreContextUses,
+            [nameof(ExploreContextMembers)] = ExploreContextMembers,
         };
 
     private static async Task ExploreFindSymbol(ExplorationContext context)
@@ -127,6 +128,42 @@ internal static class Scenarios
                 targetPath = context.RepositorySolution, symbolIdentifier = reference, direction,
                 depth = 1, topN = 5, scopeType = "production",
             }).ConfigureAwait(false);
+    }
+
+    private static async Task ExploreContextMembers(ExplorationContext context)
+    {
+        var discovery = await context.CallAsync("find_symbol", new
+        {
+            targetPath = context.RepositorySolution, pattern = "StableSymbolReferenceCodec",
+            kind = "class", scopeType = "production", maxResults = 10,
+        }).ConfigureAwait(false);
+        using var found = JsonDocument.Parse(discovery.Payload);
+        var reference = found.RootElement.GetProperty("results")[0].GetProperty("entries").EnumerateArray()
+            .Single(entry => entry.GetProperty("docCommentId").GetString() == "T:AiNetCodeNavigator.Core.Symbols.StableSymbolReferenceCodec")
+            .GetProperty("handoffId").GetString();
+        string? cursor = null;
+        string? memberReference = null;
+        string? owner = null;
+        do
+        {
+            var response = await context.CallAsync("get_context", new
+            {
+                targetPath = context.RepositorySolution, symbolIdentifier = reference, sections = new[] { "members" },
+                memberNameFilter = "Parse", memberKindFilter = "Method", memberSortBy = "name", memberScope = "production",
+                maxResults = 1, resultCursor = cursor,
+            }).ConfigureAwait(false);
+            using var page = JsonDocument.Parse(response.Payload);
+            var section = page.RootElement.GetProperty("sections")[0];
+            owner ??= section.GetProperty("structure").GetProperty("targetPath").GetString();
+            foreach (var member in section.GetProperty("items").EnumerateArray())
+                memberReference ??= member.GetProperty("handoffId").GetString();
+            cursor = section.TryGetProperty("resultCursor", out var next) && next.ValueKind == JsonValueKind.String ? next.GetString() : null;
+        } while (cursor is not null);
+        if (memberReference is null || owner is null) throw new InvalidOperationException("Expected a navigable filtered codec member.");
+        await context.CallAsync("get_symbol_body", new
+        {
+            targetPath = owner, symbolIdentifiers = new[] { memberReference }, maxBodyLines = 20,
+        }).ConfigureAwait(false);
     }
 
     private static async Task ExploreSymbolBody(ExplorationContext context)

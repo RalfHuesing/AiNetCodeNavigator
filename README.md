@@ -9,14 +9,14 @@ The server runs locally over stdio. Source navigation uses Roslyn; assembly navi
 | Task | Tools |
 | --- | --- |
 | Find declarations and read source or decompiled bodies | `find_symbol`, `get_symbol_body` |
-| Browse namespaces, file outlines, and type members | `get_namespace_tree`, `get_file_skeleton`, `get_class_structure` |
+| Browse namespaces, file outlines, and type members | `get_namespace_tree`, `get_file_skeleton`, `get_context` (`sections=[members]`) |
 | Trace callers, callees, references, and summarize discovered sites | `get_call_tree`, `find_references` (`includeSummary=true` for totals) |
 | Follow inheritance, implementations, and dependency edges | `get_type_hierarchy`, `find_implementations`, `dependency_graph` |
 | Inspect library APIs, search decompiled code, and find extension methods | `inspect_assembly`, `search_assembly`, `find_assembly_extensions` |
 | Resolve a type to its source project or framework/NuGet assembly | `resolve_type_origin` |
 | Read selected body, members, direct uses, and static test candidates | `get_context` (`usageScope` filters source uses) |
 
-The server exposes **16 read-only navigation tools**. The [tool reference](docs/tools/README.md) lists their supported targets, parameters, result limits, and examples.
+The server exposes **15 read-only navigation tools**. The [tool reference](docs/tools/README.md) lists their supported targets, parameters, result limits, and examples.
 
 Navigation results provide stable source (`src:<project-path>|<declaration-id>`) or assembly (`asm:<simple-name>|<declaration-id>`) references for follow-up calls in the existing handoff fields. Keep the returned owner target with assembly references. Byte and optional token budgets bound responses; polling and continuation tokens let clients retrieve long-running or paged results. See the [tool reference](docs/tools/README.md#shared-request-and-response-behavior) and [reference contract](docs/navigation/symbol-resolution.md).
 

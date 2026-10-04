@@ -24,7 +24,7 @@ The binding product references are these current-state pages and local Navigator
 - [Find Symbol](navigation/find-symbol.md): Name and pattern matching, kind filters, and source scope behavior for the Core symbol scanner.
 - [Get Symbol Body](navigation/get-symbol-body.md): AST declaration extraction, batching, line windows, and unavailable-source cases.
 - [Get File Skeleton](navigation/get-file-skeleton.md): Top-level declarations without method bodies, structured Core results, and Markdown rendering.
-- [Get Class Structure](navigation/get-class-structure.md): Declared members, visibility, records and interfaces, filters, and truncation.
+- [Member Structure](navigation/get-class-structure.md): Declared members, visibility, records and interfaces, filters, and truncation.
 - [Call Tree Core Engine](navigation/get-call-tree.md): Bounded Roslyn call graph traversal and ASCII/Mermaid rendering.
 - [Find References and Implementations Core Engines](navigation/find-references-and-implementations.md): Solution-wide reference locations, implementation and override discovery, and result limits.
 - [Reference summary](navigation/reference-summary.md): Discovered site counts, owner-qualified project/file identities, paging, and partial analysis.

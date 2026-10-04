@@ -21,12 +21,20 @@ public sealed class RelationshipToolsContractTests
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var tools = new RelationshipTools(runtime);
-        Func<string, string, string[], string?, bool?, bool?, int?, int?, int?, int, int?, string?, string?, string?, CancellationToken,
-            Task<ModelContextProtocol.Protocol.CallToolResult>> handler = tools.GetContext;
-        var sdkTool = McpServerTool.Create(handler, new McpServerToolCreateOptions { Name = "get_context" });
+        var sdkTool = McpServerTool.Create(typeof(RelationshipTools).GetMethod(nameof(RelationshipTools.GetContext))!, tools,
+            new McpServerToolCreateOptions { Name = "get_context" });
         var properties = sdkTool.ProtocolTool.InputSchema.GetProperty("properties");
         Assert.True(properties.TryGetProperty("usageScope", out _));
         Assert.False(properties.TryGetProperty("callerScope", out _));
+        foreach (var option in new[] { "memberNameFilter", "memberKindFilter", "memberSortBy", "memberScope" })
+            Assert.True(properties.TryGetProperty(option, out _));
+        Assert.Contains("$.memberNameFilter", TextOf(await tools.GetContext(@"C:\missing.slnx", "Probe.Target", ["body"], memberNameFilter: "")), StringComparison.Ordinal);
+        Assert.Contains("$.memberKindFilter", TextOf(await tools.GetContext(@"C:\missing.slnx", "Probe.Target", ["body"], memberKindFilter: "all")), StringComparison.Ordinal);
+        Assert.Contains("$.memberSortBy", TextOf(await tools.GetContext(@"C:\missing.slnx", "Probe.Target", ["body"], memberSortBy: "lines")), StringComparison.Ordinal);
+        Assert.Contains("$.memberScope", TextOf(await tools.GetContext(@"C:\missing.slnx", "Probe.Target", ["body"], memberScope: "all")), StringComparison.Ordinal);
+        Assert.Contains("$.memberScope", TextOf(await tools.GetContext(@"C:\missing.dll", "Probe.Target", ["members"], memberScope: "all")), StringComparison.Ordinal);
+        Assert.Contains("$.memberSortBy", TextOf(await tools.GetContext(@"C:\missing.slnx", "Probe.Target", ["members"], memberSortBy: "unknown")), StringComparison.Ordinal);
+
         Assert.Contains("uses", properties.GetProperty("sections").GetProperty("description").GetString());
         Assert.DoesNotContain("callers", properties.GetProperty("sections").GetProperty("description").GetString());
         using var legacy = JsonDocument.Parse("""{"targetPath":"C:\\missing.slnx","symbolIdentifier":"Probe.Target","sections":["uses"],"callerScope":"all"}""");

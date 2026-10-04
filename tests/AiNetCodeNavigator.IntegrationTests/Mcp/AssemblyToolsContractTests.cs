@@ -979,7 +979,7 @@ public sealed class AssemblyToolsContractTests
             """;
         var assemblyPath = AssemblyTestHelper.EmitAssembly(fixture, "StructureOrderProbe", source);
 
-        var limited = await structureTools.GetClassStructure(assemblyPath, "StructureOrderProbe.OrderProbe", maxMembers: 1);
+        var limited = await new RelationshipTools(runtime).GetContext(assemblyPath, "StructureOrderProbe.OrderProbe", ["members"], maxResults: 1);
         AssertSuccessWithinBudget(limited, 16 * 1024, 4096);
         Assert.Contains("Zulu", TextOf(limited), StringComparison.Ordinal);
         Assert.DoesNotContain("Alpha", TextOf(limited), StringComparison.Ordinal);
@@ -992,18 +992,18 @@ public sealed class AssemblyToolsContractTests
         string? memberCursor = null;
         do
         {
-            var page = await structureTools.GetClassStructure(assemblyPath, "StructureOrderProbe.OrderProbe", maxMembers: 1,
+            var page = await new RelationshipTools(runtime).GetContext(assemblyPath, "StructureOrderProbe.OrderProbe", ["members"], maxResults: 1,
                 resultCursor: memberCursor);
             AssertSuccessWithinBudget(page, 16 * 1024, 4096);
             using var pageDocument = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(page)));
-            var root = pageDocument.RootElement;
-            reconstructedNames.AddRange(root.GetProperty("members").EnumerateArray().Select(member => member.GetProperty("name").GetString()!));
+            var root = pageDocument.RootElement.GetProperty("sections")[0];
+            reconstructedNames.AddRange(root.GetProperty("items").EnumerateArray().Select(member => member.GetProperty("name").GetString()!));
             memberCursor = root.TryGetProperty("resultCursor", out var cursor) && cursor.ValueKind == System.Text.Json.JsonValueKind.String
                 ? cursor.GetString() : null;
         } while (memberCursor is not null);
         Assert.Equal(new[] { "Zulu", "Alpha" }, reconstructedNames);
 
-        var complete = await structureTools.GetClassStructure(assemblyPath, "StructureOrderProbe.OrderProbe", maxMembers: 50);
+        var complete = await new RelationshipTools(runtime).GetContext(assemblyPath, "StructureOrderProbe.OrderProbe", ["members"], maxResults: 50);
         AssertSuccessWithinBudget(complete, 16 * 1024, 4096);
         AssertDeclarationOrder(TextOf(complete));
 
@@ -1015,11 +1015,11 @@ public sealed class AssemblyToolsContractTests
         await File.WriteAllTextAsync(sourceProject,
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup></Project>");
         await File.WriteAllTextAsync(Path.Combine(sourceRoot, "OrderProbe.cs"), source);
-        var sourceStructure = await structureTools.GetClassStructure(sourceSolution, "StructureOrderProbe.OrderProbe", maxMembers: 50,
+        var sourceStructure = await new RelationshipTools(runtime).GetContext(sourceSolution, "StructureOrderProbe.OrderProbe", ["members"], maxResults: 50,
             maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(sourceStructure, 32768, 4096);
         Assert.Contains("snapshotId=source:", TextOf(sourceStructure), StringComparison.Ordinal);
-        Assert.Contains("analyzedScope=classStructure(symbol=StructureOrderProbe.OrderProbe, scope=all", TextOf(sourceStructure), StringComparison.Ordinal);
+        Assert.Contains("analyzedScope=get_context(symbol=StructureOrderProbe.OrderProbe", TextOf(sourceStructure), StringComparison.Ordinal);
         AssertDeclarationOrder(TextOf(sourceStructure));
         Assert.Equal(ReadMemberNames(TextOf(sourceStructure)), ReadMemberNames(TextOf(complete)));
         var sourceNamespaceTree = await structureTools.GetNamespaceTree(sourceSolution,
@@ -1064,11 +1064,12 @@ public sealed class AssemblyToolsContractTests
         var pageNumber = 0;
         do
         {
-            var response = await structureTools.GetClassStructure(assemblyPath, "StructurePathsProbe.Probe",
-                maxMembers: 1, resultCursor: resultCursor, maxResponseBytes: 32768, maxResponseTokens: 4096);
+            var response = await new RelationshipTools(runtime).GetContext(assemblyPath, "StructurePathsProbe.Probe", ["members"],
+                maxResults: 1, resultCursor: resultCursor, maxResponseBytes: 32768, maxResponseTokens: 4096);
             AssertSuccessWithinBudget(response, 32768, 4096);
             using var document = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(response)));
-            var root = document.RootElement;
+            var section = document.RootElement.GetProperty("sections")[0];
+            var root = section.GetProperty("structure");
 
             Assert.True(root.TryGetProperty("decompiledSourceRoot", out var sourceRootProperty),
                 "Each class-structure page must identify its physical decompiler generation root.");
@@ -1088,7 +1089,7 @@ public sealed class AssemblyToolsContractTests
                 Assert.True(File.Exists(Path.GetFullPath(Path.Combine(sourceRoot, filePath))), filePath);
             });
 
-            var members = root.GetProperty("members").EnumerateArray().ToArray();
+            var members = section.GetProperty("items").EnumerateArray().ToArray();
             Assert.NotEmpty(members);
             foreach (var member in members)
             {
@@ -1119,7 +1120,7 @@ public sealed class AssemblyToolsContractTests
             }
 
             pageNumber++;
-            resultCursor = root.TryGetProperty("resultCursor", out var cursor)
+            resultCursor = section.TryGetProperty("resultCursor", out var cursor)
                 && cursor.ValueKind == System.Text.Json.JsonValueKind.String
                     ? cursor.GetString()
                     : null;
@@ -1347,7 +1348,7 @@ public sealed class AssemblyToolsContractTests
     }
 
     [Fact]
-    public async Task AssemblyNavigationHandlersReturnOwnerResultsAcrossAllSixteenRoutes()
+    public async Task AssemblyNavigationHandlersReturnOwnerResultsAcrossAllFifteenRoutes()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
@@ -1406,7 +1407,7 @@ public sealed class AssemblyToolsContractTests
         Assert.Contains("handoffId: `", readSkeletonLine!, StringComparison.Ordinal);
         var readFromSkeleton = ReadAnyHandoff(readSkeletonLine!);
         AssertOwnerResult(await symbols.GetSymbolBody(assemblyPath, [readFromSkeleton], maxResponseBytes: 32768), "Read");
-        AssertOwnerResult(await structure.GetClassStructure(assemblyPath, typeHandle, maxResponseBytes: 32768), "Entry");
+        AssertOwnerResult(await new RelationshipTools(runtime).GetContext(assemblyPath, typeHandle, ["members"], maxResponseBytes: 32768), "Entry");
         var namespaceTree = await structure.GetNamespaceTree(assemblyPath, namespacePrefix: "AssemblyRouteProbe", maxResponseBytes: 32768);
         AssertOwnerResult(namespaceTree, "Probe");
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, namespaceTree);
@@ -1509,7 +1510,7 @@ public sealed class AssemblyToolsContractTests
         AssertError(await relationships.GetContext(assemblyPath, "AssemblyRouteProbe.Probe", ["body"], includeReferences: false,
             maxResponseBytes: 16384), "INVALID_ARGUMENT");
         AssertError(await symbols.GetSymbolBody(assemblyPath, ["h:zzzz"], maxResponseBytes: 16384), "INVALID_SYMBOL_REFERENCE");
-        AssertError(await structure.GetClassStructure(assemblyPath, "h:zzzz", maxResponseBytes: 16384), "INVALID_SYMBOL_REFERENCE");
+        AssertError(await new RelationshipTools(runtime).GetContext(assemblyPath, "h:zzzz", ["members"], maxResponseBytes: 16384), "INVALID_SYMBOL_REFERENCE");
         AssertError(await relationships.GetTypeHierarchy(assemblyPath, "h:zzzz", maxResponseBytes: 16384), "INVALID_SYMBOL_REFERENCE");
         AssertError(await relationships.FindImplementations(assemblyPath, "h:zzzz", maxResponseBytes: 16384), "INVALID_SYMBOL_REFERENCE");
         AssertError(await assemblies.SearchAssembly(assemblyPath, pattern: "(", isRegex: true, maxResponseBytes: 16384), "INVALID_ARGUMENT");
@@ -1520,7 +1521,7 @@ public sealed class AssemblyToolsContractTests
             (bytes, tokens) => symbols.FindSymbol(assemblyPath, pattern: "Entry", kind: "method", maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => symbols.GetSymbolBody(assemblyPath, [entryHandle], maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => structure.GetFileSkeleton(assemblyPath, [probeHandoff], maxResponseBytes: bytes, maxResponseTokens: tokens),
-            (bytes, tokens) => structure.GetClassStructure(assemblyPath, typeHandle, maxResponseBytes: bytes, maxResponseTokens: tokens),
+            (bytes, tokens) => new RelationshipTools(runtime).GetContext(assemblyPath, typeHandle, ["members"], maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => structure.GetNamespaceTree(assemblyPath, namespacePrefix: "AssemblyRouteProbe", maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => relationships.GetCallTree(assemblyPath, entryHandle, direction: "outgoing", maxResponseBytes: bytes, maxResponseTokens: tokens),
             (bytes, tokens) => relationships.FindReferences(assemblyPath, "M:AssemblyRouteProbe.Probe.Read", maxResponseBytes: bytes, maxResponseTokens: tokens),
@@ -2143,7 +2144,7 @@ public sealed class AssemblyToolsContractTests
         if (body.TrimStart().StartsWith("{", StringComparison.Ordinal))
         {
             using var document = System.Text.Json.JsonDocument.Parse(body);
-            var names = document.RootElement.GetProperty("members").EnumerateArray()
+            var names = document.RootElement.GetProperty("sections")[0].GetProperty("items").EnumerateArray()
                 .Select(member => member.GetProperty("name").GetString()).ToArray();
             Assert.True(Array.IndexOf(names, "Zulu") >= 0 && Array.IndexOf(names, "Alpha") > Array.IndexOf(names, "Zulu"), text);
             return;
@@ -2159,7 +2160,7 @@ public sealed class AssemblyToolsContractTests
         if (body.TrimStart().StartsWith("{", StringComparison.Ordinal))
         {
             using var document = System.Text.Json.JsonDocument.Parse(body);
-            return document.RootElement.GetProperty("members").EnumerateArray()
+            return document.RootElement.GetProperty("sections")[0].GetProperty("items").EnumerateArray()
                 .Select(member => member.GetProperty("name").GetString()!).ToArray();
         }
         return text.Split('\n')
@@ -2175,8 +2176,8 @@ public sealed class AssemblyToolsContractTests
         {
             using var document = System.Text.Json.JsonDocument.Parse(body);
             var name = memberName.Split(' ', StringSplitOptions.RemoveEmptyEntries).Last().Split('.')[^1];
-            var entries = document.RootElement.TryGetProperty("members", out var members)
-                ? members.EnumerateArray().ToArray()
+            var entries = document.RootElement.TryGetProperty("sections", out var contextSections)
+                ? contextSections.EnumerateArray().Where(section => section.GetProperty("name").GetString() == "members").SelectMany(section => section.GetProperty("items").EnumerateArray()).ToArray()
                 : document.RootElement.GetProperty("results").EnumerateArray()
                     .SelectMany(result => result.GetProperty("entries").EnumerateArray()).ToArray();
             var selected = entries.Where(entry => string.Equals(entry.GetProperty("name").GetString(), name, StringComparison.Ordinal))

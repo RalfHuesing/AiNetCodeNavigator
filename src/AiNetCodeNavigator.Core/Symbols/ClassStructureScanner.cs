@@ -54,6 +54,15 @@ public static class ClassStructureScanner
         var namedType = resolution.Symbol as INamedTypeSymbol ?? resolution.Symbol?.ContainingType as INamedTypeSymbol;
         if (namedType is null) return null;
 
+        return await ScanResolvedTypeAsync(request, namedType, ct).ConfigureAwait(false);
+    }
+
+    public static async Task<ClassStructurePayload> ScanResolvedTypeAsync(
+        ClassStructureScanRequest request, INamedTypeSymbol namedType, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(namedType);
+        ArgumentNullException.ThrowIfNull(request.Solution);
         var formatHandoff = request.CurrentIdentityRequest is { } identityRequest && identityRequest.IsForSolution(request.Solution)
             ? new Func<ISymbol, string?>(symbol => identityRequest.FormatHandoff(symbol, request.Solution))
             : await SourceReferenceFormattingContext.CreateFormatterAsync(request.Solution, ct).ConfigureAwait(false);

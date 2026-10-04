@@ -29,8 +29,7 @@ public sealed class McpServerIntegrationTests
 
             var navigationTools = new[]
             {
-                "find_symbol", "get_symbol_body", "get_file_skeleton", "get_class_structure",
-                "get_namespace_tree", "get_index_scope", "get_call_tree", "find_references", "get_type_hierarchy",
+                "find_symbol", "get_symbol_body", "get_file_skeleton",                 "get_namespace_tree", "get_index_scope", "get_call_tree", "find_references", "get_type_hierarchy",
                 "find_implementations", "dependency_graph", "resolve_type_origin", "get_context",
                 "inspect_assembly", "search_assembly", "find_assembly_extensions",
             };
@@ -475,11 +474,11 @@ public sealed class McpServerIntegrationTests
                 .Select(tool => tool.GetProperty("name").GetString()!)
                 .Order(StringComparer.Ordinal)
                 .ToArray();
-            Assert.Equal(16, tools.Length);
+            Assert.Equal(15, tools.Length);
             Assert.Equal(new[]
             {
                 "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol",
-                "get_call_tree", "get_class_structure", "get_context", "get_file_skeleton",
+                "get_call_tree", "get_context", "get_file_skeleton",
                 "get_index_scope", "get_namespace_tree", "get_symbol_body",
                 "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly",
             }, tools);
@@ -596,7 +595,7 @@ public sealed class McpServerIntegrationTests
                 ("find_symbol", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath }, "INVALID_ARGUMENT"),
                 ("get_symbol_body", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifiers"] = new[] { "h:unknown" } }, "INVALID_SYMBOL_REFERENCE"),
                 ("get_file_skeleton", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["filePaths"] = new[] { "Missing.cs" } }, "INVALID_ARGUMENT"),
-                ("get_class_structure", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown" }, "INVALID_SYMBOL_REFERENCE"),
+                ("get_context", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath, ["symbolIdentifier"] = "h:unknown", ["sections"] = new[] { "members" } }, "INVALID_SYMBOL_REFERENCE"),
                 ("get_namespace_tree", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["kind"] = "unsupported" }, "INVALID_ARGUMENT"),
                 ("get_index_scope", new(StringComparer.Ordinal) { ["targetPath"] = assemblyPath }, "INVALID_ARGUMENT"),
                 ("get_call_tree", new(StringComparer.Ordinal) { ["targetPath"] = solutionPath, ["symbolIdentifier"] = "h:unknown", ["direction"] = "sideways" }, "INVALID_ARGUMENT"),
@@ -674,8 +673,8 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                 .Select(tool => tool.GetProperty("name").GetString())
                 .Order(StringComparer.Ordinal)
                 .ToArray();
-            Assert.Equal(16, names.Length);
-            Assert.Equal(new[] { "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol", "get_call_tree", "get_class_structure", "get_context", "get_file_skeleton", "get_index_scope", "get_namespace_tree", "get_symbol_body", "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly" }, names);
+            Assert.Equal(15, names.Length);
+            Assert.Equal(new[] { "dependency_graph", "find_assembly_extensions", "find_implementations", "find_references", "find_symbol", "get_call_tree", "get_context", "get_file_skeleton", "get_index_scope", "get_namespace_tree", "get_symbol_body", "get_type_hierarchy", "inspect_assembly", "resolve_type_origin", "search_assembly" }, names);
             Assert.DoesNotContain("get_server_health", names);
             Assert.DoesNotContain("reload_config", names);
             Assert.DoesNotContain("get_file_tree", names);
@@ -869,13 +868,13 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
 
             await SendRequestAsync(process, 8, "tools/call", new
             {
-                name = "get_class_structure",
-                arguments = new { targetPath = solutionPath, symbolIdentifier = sourceHandle, maxMembers = 20 },
+                name = "get_context",
+                arguments = new { targetPath = solutionPath, symbolIdentifier = sourceHandle, maxResults = 20, sections = new[] { "members" } },
             }, timeout.Token);
             var structure = await ReadResponseAsync(process, 8, timeout.Token);
             Assert.False(structure.GetProperty("result").GetProperty("isError").GetBoolean());
             Assert.Contains("CounterConsumer", GetFirstText(structure), StringComparison.Ordinal);
-            Assert.Contains("[handoff: src:", GetFirstText(structure), StringComparison.Ordinal);
+            Assert.Contains("src:", GetFirstText(structure), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 80, "tools/call", new
             {
@@ -888,8 +887,8 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
 
             await SendRequestAsync(process, 81, "tools/call", new
             {
-                name = "get_class_structure",
-                arguments = new { targetPath = solutionPath, symbolIdentifier = scopedWidgetHandle, scopeType = "production", includeGenerated = false, maxMembers = 50 },
+                name = "get_context",
+                arguments = new { targetPath = solutionPath, symbolIdentifier = scopedWidgetHandle, memberScope = "production", includeGenerated = false, maxResults = 50, sections = new[] { "members" } },
             }, timeout.Token);
             var productionStructure = await ReadResponseAsync(process, 81, timeout.Token);
             var productionStructureText = GetFirstText(productionStructure);
@@ -900,8 +899,8 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
 
             await SendRequestAsync(process, 82, "tools/call", new
             {
-                name = "get_class_structure",
-                arguments = new { targetPath = solutionPath, symbolIdentifier = scopedWidgetHandle, scopeType = "tests", includeGenerated = false, maxMembers = 50 },
+                name = "get_context",
+                arguments = new { targetPath = solutionPath, symbolIdentifier = scopedWidgetHandle, memberScope = "tests", includeGenerated = false, maxResults = 50, sections = new[] { "members" } },
             }, timeout.Token);
             var testStructure = await ReadResponseAsync(process, 82, timeout.Token);
             var testStructureText = GetFirstText(testStructure);
@@ -912,8 +911,8 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
 
             await SendRequestAsync(process, 83, "tools/call", new
             {
-                name = "get_class_structure",
-                arguments = new { targetPath = solutionPath, symbolIdentifier = scopedWidgetHandle, scopeType = "production", includeGenerated = true, maxMembers = 50 },
+                name = "get_context",
+                arguments = new { targetPath = solutionPath, symbolIdentifier = scopedWidgetHandle, memberScope = "production", includeGenerated = true, maxResults = 50, sections = new[] { "members" } },
             }, timeout.Token);
             var generatedStructure = await ReadResponseAsync(process, 83, timeout.Token);
             var generatedStructureText = GetFirstText(generatedStructure);
@@ -1858,8 +1857,8 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 105, "tools/call", new
             {
-                name = "get_class_structure",
-                arguments = new { targetPath = ownedCPath, symbolIdentifier = "T:ClosureFixture.ClosureOnlyC", maxMembers = 20 },
+                name = "get_context",
+                arguments = new { targetPath = ownedCPath, symbolIdentifier = "T:ClosureFixture.ClosureOnlyC", maxResults = 20, sections = new[] { "members" } },
             }, timeout.Token);
             var rawTypeStructure = await ReadResponseAsync(process, 105, timeout.Token);
             Assert.False(rawTypeStructure.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(rawTypeStructure));
@@ -1945,8 +1944,8 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 102, "tools/call", new
             {
-                name = "get_class_structure",
-                arguments = new { targetPath = ownedCPath, symbolIdentifier = rawBodyHandoff, maxMembers = 20 },
+                name = "get_context",
+                arguments = new { targetPath = ownedCPath, symbolIdentifier = rawBodyHandoff, sections = new[] { "body" } },
             }, timeout.Token);
             var rawBodyFollowupStructure = await ReadResponseAsync(process, 102, timeout.Token);
             Assert.False(rawBodyFollowupStructure.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(rawBodyFollowupStructure));
@@ -2569,14 +2568,14 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 52, "tools/call", new
             {
-                name = "get_class_structure",
-                arguments = new { targetPath = assemblyPath, symbolIdentifier = firstHits[0].GetProperty("handoffId").GetString(), nameFilter = "Label" },
+                name = "get_context",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = firstHits[0].GetProperty("handoffId").GetString(), memberNameFilter = "Label", sections = new[] { "members" } },
             }, timeout.Token);
             var propertySearch = await ReadResponseAsync(process, 52, timeout.Token);
             var propertySearchText = GetFirstText(propertySearch);
             Assert.False(propertySearch.GetProperty("result").GetProperty("isError").GetBoolean(), propertySearchText);
             Assert.Contains("Label", propertySearchText, StringComparison.Ordinal);
-            var basePropertyHandle = ExtractHandoff(propertySearchText);
+            var basePropertyHandle = ParsePayload(propertySearchText).GetProperty("sections")[0].GetProperty("items")[0].GetProperty("handoffId").GetString();
             await SendRequestAsync(process, 53, "tools/call", new
             {
                 name = "find_implementations",
@@ -2863,14 +2862,14 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 58, "tools/call", new
             {
-                name = "get_class_structure",
-                arguments = new { targetPath = assemblyPath, symbolIdentifier = interfaceHandle, nameFilter = "ContractLabel" },
+                name = "get_context",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = interfaceHandle, memberNameFilter = "ContractLabel", sections = new[] { "members" } },
             }, timeout.Token);
             var contractPropertySearch = await ReadResponseAsync(process, 58, timeout.Token);
             var contractPropertySearchText = GetFirstText(contractPropertySearch);
             Assert.False(contractPropertySearch.GetProperty("result").GetProperty("isError").GetBoolean(), contractPropertySearchText);
             Assert.Contains("ContractLabel", contractPropertySearchText, StringComparison.Ordinal);
-            var contractPropertyHandle = ExtractHandoff(contractPropertySearchText);
+            var contractPropertyHandle = ParsePayload(contractPropertySearchText).GetProperty("sections")[0].GetProperty("items")[0].GetProperty("handoffId").GetString();
             await SendRequestAsync(process, 59, "tools/call", new
             {
                 name = "find_implementations",
@@ -2902,8 +2901,8 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 11, "tools/call", new
             {
-                name = "get_class_structure",
-                arguments = new { targetPath = assemblyPath, symbolIdentifier = betaHandle },
+                name = "get_context",
+                arguments = new { targetPath = assemblyPath, symbolIdentifier = betaHandle, sections = new[] { "members" } },
             }, timeout.Token);
             var betaStructure = await ReadResponseAsync(process, 11, timeout.Token);
             Assert.False(betaStructure.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(betaStructure));
@@ -2960,8 +2959,8 @@ if (Directory.Exists(fixtureRoot))
 
             await SendRequestAsync(process, 16, "tools/call", new
             {
-                name = "get_class_structure",
-                arguments = new { targetPath = hostAssemblyPath, symbolIdentifier = betaHandle },
+                name = "get_context",
+                arguments = new { targetPath = hostAssemblyPath, symbolIdentifier = betaHandle, sections = new[] { "members" } },
             }, timeout.Token);
             var foreignTargetStructure = await ReadResponseAsync(process, 16, timeout.Token);
             Assert.True(foreignTargetStructure.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(foreignTargetStructure));

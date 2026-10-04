@@ -48,6 +48,8 @@ A scenario exits with code 1 on exceptions, cancellation/timeout, invalid reques
 
 The runner waits for `operation=running` and `operation=retry`, respecting the reported retry interval (at least one second), and follows opaque outer `continuationToken` values. It preserves the original query and removes operation/domain cursors when requesting outer pages, as the handlers require. Domain `resultCursor` pages, body windows, omissions and semantic recovery actions are left for explicit scenario follow-ups. Budget errors remain visible failures; adjust scenario parameters and rerun when appropriate.
 
+`ExploreContextMembers` discovers the source codec type, exhausts one-item member pages with name/kind/sort/source-scope filters, and follows a returned member reference with its unchanged owner target to a body window.
+
 ## Execution boundary
 
 The runner creates the real `NavigatorHostRuntime`, loads targets through the production MSBuild/assembly infrastructure, discovers attributed production tool classes, generates their SDK schemas, runs the production argument validator and invokes the SDK binder and handler. It has no mock navigation results and uses the production output formatter and operation store.
