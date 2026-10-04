@@ -14,6 +14,48 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 [Trait("Category", "Integration")]
 public sealed class SourceDependencyGraphOutgoingContractTests
 {
+    [Fact]
+    public async Task DependencyGraph_SelectedLevelsUseOwningTypeTraversalAndReuseEvidenceFacts()
+    {
+        using var fixture = TestTempDirectory.Create("ainet-selected-dependency-levels-");
+        var (target, app) = CreateSolution(fixture, new Dictionary<string, string>
+        {
+            ["Root.cs"] = "namespace App; public class Root { public Library.First First; public Library.Second Second; public void Run() { } }",
+        });
+        var libraryFile = fixture.CreateFile("src/Library/Types.cs", "namespace Library; public class First { } public class Second { }");
+        var library = new ProjectSpec("Library", [(libraryFile, await File.ReadAllTextAsync(libraryFile))], VirtualProjectDirectory: "src/Library");
+        var scans = new ConcurrentQueue<string>();
+        var cache = new DependencyGraphCache(observer: new DependencyGraphCollectionObserver(DocumentCollected: document => scans.Enqueue(document.Name)));
+        await using var testHost = InMemorySourceTestHost.Create(target, [app with { ProjectReferences = ["Library"] }, library], cache);
+        var relationships = new RelationshipTools(testHost.Runtime);
+        foreach (var level in new[] { "type", "file", "namespace" })
+        {
+            var response = await relationships.DependencyGraph(target, symbolIdentifier: "M:App.Root.Run", direction: "outgoing",
+                level: level, maxResults: 1, maxResponseBytes: 65536, maxResponseTokens: 8192);
+            var payload = Payload(response);
+            Assert.Equal(level, payload.GetProperty("level").GetString());
+            Assert.Contains("owning type", payload.GetProperty("rootSemantics").GetString());
+            foreach (var unselected in new[] { "type", "file", "namespace", "project" }.Where(value => value != level))
+            {
+                Assert.False(payload.TryGetProperty(unselected + "Dependencies", out _));
+                Assert.False(payload.TryGetProperty("total" + char.ToUpperInvariant(unselected[0]) + unselected[1..] + "DependencyCount", out _));
+            }
+            var edge = Assert.Single(payload.GetProperty(level + "Dependencies").EnumerateArray());
+            var evidence = edge.GetProperty("evidence");
+            Assert.Equal("src/App/Root.cs", evidence.GetProperty("filePath").GetString());
+            Assert.Equal(1, evidence.GetProperty("line").GetInt32());
+            Assert.True(evidence.GetProperty("column").GetInt32() > 1);
+            Assert.Contains("App", evidence.GetProperty("fromProjectIdentity").GetString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Library", evidence.GetProperty("toProjectIdentity").GetString(), StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(level != "type", payload.GetProperty("isComplete").GetBoolean());
+        }
+        Assert.Single(scans);
+        AssertErrorWithinBudget(await relationships.DependencyGraph(target, symbolIdentifier: "T:App.Root", level: "project"),
+            "INVALID_ARGUMENT", 24576, 8192);
+        AssertErrorWithinBudget(await relationships.DependencyGraph(target, symbolIdentifier: "T:App.Root", depth: 0),
+            "INVALID_ARGUMENT", 24576, 8192);
+    }
+
     [Theory]
     [InlineData(1, "incoming")]
     [InlineData(2, "both")]
@@ -66,7 +108,7 @@ public sealed class SourceDependencyGraphOutgoingContractTests
             maxResponseBytes: 65536, maxResponseTokens: 8192);
         var projectedPayload = Payload(projected);
         AssertCoverage(projectedPayload, 8, 8);
-        foreach (var property in new[] { "typeDependencies", "projectDependencies", "namespaceDependencies", "fileDependencies", "totalTypeDependencyCount", "totalProjectDependencyCount", "totalNamespaceDependencyCount", "totalFileDependencyCount", "visitedTypeCount", "hiddenTypeDependencyCount" })
+        foreach (var property in new[] { "typeDependencies", "totalTypeDependencyCount", "visitedTypeCount", "hiddenTypeDependencyCount" })
             Assert.Equal(coldPayload.GetProperty(property).GetRawText(), projectedPayload.GetProperty(property).GetRawText());
 
         var changedRoot = await relationships.DependencyGraph(target, symbolIdentifier: "T:OutgoingProbe.Noise", direction: "outgoing", depth: 2,
@@ -92,7 +134,7 @@ public sealed class SourceDependencyGraphOutgoingContractTests
     }
 
     [Fact]
-    public async Task DependencyGraph_FileSeedsEveryNamedTypeAndEmptyFilePreservesProjectSummary()
+    public async Task DependencyGraph_FileSeedsEveryNamedTypeAndEmptyFileHasNoTypeDependencies()
     {
         using var fixture = TestTempDirectory.Create("ainet-outgoing-file-seeds-");
         var (target, app) = CreateSolution(fixture, new Dictionary<string, string>
@@ -128,7 +170,7 @@ public sealed class SourceDependencyGraphOutgoingContractTests
         AssertCoverage(emptyPayload, 5, 0);
         Assert.Equal(0, emptyPayload.GetProperty("visitedTypeCount").GetInt32());
         Assert.Empty(emptyPayload.GetProperty("typeDependencies").EnumerateArray());
-        Assert.Single(emptyPayload.GetProperty("projectDependencies").EnumerateArray());
+        Assert.False(emptyPayload.TryGetProperty("projectDependencies", out _));
         Assert.Empty(scans);
 
         var selected = await relationships.DependencyGraph(target, filePath: fixture.GetPath("src/App/Selected.cs"), direction: "outgoing",
@@ -142,7 +184,7 @@ public sealed class SourceDependencyGraphOutgoingContractTests
             AssertEdge(edges, name, "Dependency", 1);
         Assert.Equal(7, edges.Length);
         Assert.Equal("src/App/Partial.cs", AssertEdge(edges, "Outer", "Dependency", 1).GetProperty("fromFile").GetString());
-        Assert.Equal(emptyPayload.GetProperty("projectDependencies").GetRawText(), payload.GetProperty("projectDependencies").GetRawText());
+        Assert.False(payload.TryGetProperty("projectDependencies", out _));
 
         var broadEmpty = await relationships.DependencyGraph(target, filePath: fixture.GetPath("src/App/Empty.cs"), direction: "both",
             maxResponseBytes: 65536, maxResponseTokens: 8192);
@@ -150,7 +192,7 @@ public sealed class SourceDependencyGraphOutgoingContractTests
         AssertCoverage(broadEmptyPayload, 5, 5);
         Assert.Equal(0, broadEmptyPayload.GetProperty("visitedTypeCount").GetInt32());
         Assert.Empty(broadEmptyPayload.GetProperty("typeDependencies").EnumerateArray());
-        Assert.Equal(emptyPayload.GetProperty("projectDependencies").GetRawText(), broadEmptyPayload.GetProperty("projectDependencies").GetRawText());
+        Assert.False(broadEmptyPayload.TryGetProperty("projectDependencies", out _));
         Assert.Equal(5, scans.Count);
     }
 

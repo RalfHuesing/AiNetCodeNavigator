@@ -633,7 +633,12 @@ public static class DependencyGraphScanner
                     source.TypeName, target.TypeName,
                     source.Namespace, target.Namespace,
                     source.Project, target.Project,
-                    source.File, target.File));
+                    source.File, target.File,
+                    Evidence: new DependencyEdgeEvidence(PathNormalizer.ToRelative(solutionDir, tree.FilePath),
+                        typeSyntax.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
+                        typeSyntax.GetLocation().GetLineSpan().StartLinePosition.Character + 1,
+                        GetProjectIdentity(sourceOwner, ownerContextFingerprints?.GetValueOrDefault(sourceOwner.Id)),
+                        GetProjectIdentity(targetOwner, ownerContextFingerprints?.GetValueOrDefault(targetOwner.Id)))));
             }
         }
 
@@ -692,28 +697,30 @@ public static class DependencyGraphScanner
     {
         var selectedEdges = traversal.Edges;
 
-        var allNamespaceDeps = selectedEdges
+        var allNamespaceDeps = selectedEdges.Where(_ => options.Level is null or DependencyGraphLevel.Namespace)
             .Where(edge => !string.IsNullOrEmpty(edge.FromNamespace) && !string.IsNullOrEmpty(edge.ToNamespace) && edge.FromNamespace != edge.ToNamespace)
-            .GroupBy(edge => (edge.FromProject, edge.FromNamespace, edge.ToProject, edge.ToNamespace))
+            .GroupBy(edge => (edge.FromProject, edge.FromNamespace, edge.ToProject, edge.ToNamespace,
+                FromOwner: edge.Evidence?.FromProjectIdentity, ToOwner: edge.Evidence?.ToProjectIdentity))
             .Select(group => new NamespaceDependency(group.Key.FromNamespace, group.Key.ToNamespace,
                 group.Select(edge => edge.ToTypeName).Distinct(StringComparer.Ordinal).OrderBy(type => type, StringComparer.Ordinal).ToList(),
-                group.Key.FromProject, group.Key.ToProject))
+                group.Key.FromProject, group.Key.ToProject, group.First().Evidence))
             .OrderBy(edge => edge.FromProject, StringComparer.Ordinal).ThenBy(edge => edge.FromNamespace, StringComparer.Ordinal)
             .ThenBy(edge => edge.ToProject, StringComparer.Ordinal).ThenBy(edge => edge.ToNamespace, StringComparer.Ordinal)
             .ToList();
-        var allFileDeps = selectedEdges
-            .GroupBy(edge => (edge.FromProject, edge.FromFile, edge.ToProject, edge.ToFile))
+        var allFileDeps = selectedEdges.Where(_ => options.Level is null or DependencyGraphLevel.File)
+            .GroupBy(edge => (edge.FromProject, edge.FromFile, edge.ToProject, edge.ToFile,
+                FromOwner: edge.Evidence?.FromProjectIdentity, ToOwner: edge.Evidence?.ToProjectIdentity))
             .Select(group => new FileDependency(group.Key.FromFile, group.Key.ToFile,
                 group.Select(edge => edge.ToTypeName).Distinct(StringComparer.Ordinal).OrderBy(type => type, StringComparer.Ordinal).ToList(),
-                group.Key.FromProject, group.Key.ToProject))
+                group.Key.FromProject, group.Key.ToProject, group.First().Evidence))
             .OrderBy(edge => edge.FromProject, StringComparer.Ordinal).ThenBy(edge => edge.FromFile, StringComparer.Ordinal)
             .ThenBy(edge => edge.ToProject, StringComparer.Ordinal).ThenBy(edge => edge.ToFile, StringComparer.Ordinal)
             .ToList();
 
-        var pagedProjects = Page(collection.ProjectDependencies, options.Offset, pageSize);
+        var pagedProjects = options.Level is null ? Page(collection.ProjectDependencies, options.Offset, pageSize) : [];
         var pagedNamespaces = Page(allNamespaceDeps, options.Offset, pageSize);
         var pagedFiles = Page(allFileDeps, options.Offset, pageSize);
-        var pagedTypeEdges = Page(selectedEdges, options.Offset, pageSize);
+        var pagedTypeEdges = options.Level is null or DependencyGraphLevel.Type ? Page(selectedEdges, options.Offset, pageSize) : [];
         if (handoffFormatter is not null && symbolResolver is not null)
         {
             pagedTypeEdges = pagedTypeEdges.Select(edge => edge with
@@ -726,7 +733,7 @@ public static class DependencyGraphScanner
             ProjectDependencies: pagedProjects,
             NamespaceDependencies: pagedNamespaces,
             FileDependencies: pagedFiles,
-            TotalProjectDependencyCount: collection.ProjectDependencies.Length,
+            TotalProjectDependencyCount: options.Level is null ? collection.ProjectDependencies.Length : 0,
             TotalNamespaceDependencyCount: allNamespaceDeps.Count,
             TotalFileDependencyCount: allFileDeps.Count,
             Offset: options.Offset,
@@ -738,7 +745,7 @@ public static class DependencyGraphScanner
             DocumentLimitWasClamped: documentLimitWasClamped || collection.DocumentLimitWasClamped,
             Errors: collection.Errors,
             TypeDependencies: pagedTypeEdges,
-            TotalTypeDependencyCount: selectedEdges.Count,
+            TotalTypeDependencyCount: options.Level is null or DependencyGraphLevel.Type ? selectedEdges.Count : 0,
             DocumentOffset: collection.DocumentOffset,
             NextDocumentOffset: collection.NextDocumentOffset,
             Direction: isTargeted ? options.Direction : DependencyGraphDirection.Both,

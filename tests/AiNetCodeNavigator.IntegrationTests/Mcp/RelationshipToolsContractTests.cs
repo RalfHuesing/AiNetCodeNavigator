@@ -16,6 +16,23 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class RelationshipToolsContractTests
 {
     [Fact]
+    public async Task DependencySdkContractPublishesSelectedLevelAndNullableSourceOptions()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var tools = new RelationshipTools(runtime);
+        var sdk = McpServerTool.Create(typeof(RelationshipTools).GetMethod(nameof(RelationshipTools.DependencyGraph))!, tools,
+            new McpServerToolCreateOptions { Name = "dependency_graph" });
+        var properties = sdk.ProtocolTool.InputSchema.GetProperty("properties");
+        Assert.Equal("type", properties.GetProperty("level").GetProperty("default").GetString());
+        Assert.Contains("namespace", properties.GetProperty("level").GetProperty("description").GetString());
+        Assert.Equal(JsonValueKind.Null, properties.GetProperty("scopeType").GetProperty("default").ValueKind);
+        Assert.Equal(JsonValueKind.Null, properties.GetProperty("includeGenerated").GetProperty("default").ValueKind);
+        Assert.Contains("$.level", TextOf(await tools.DependencyGraph("C:/missing.slnx", filePath: "Root.cs", level: "project")));
+        Assert.Contains("$.depth", TextOf(await tools.DependencyGraph("C:/missing.slnx", filePath: "Root.cs", depth: 0)));
+    }
+
+    [Fact]
     public async Task TypeRelationsSdkContractRequiresExplicitModeAndSymbol()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();

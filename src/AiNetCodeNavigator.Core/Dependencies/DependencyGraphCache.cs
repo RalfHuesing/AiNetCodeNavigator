@@ -636,6 +636,12 @@ internal sealed class DependencyGraphCache : IAsyncDisposable
             yield return edge.ToFile;
             if (edge.FromHandoffId is { } fromHandoffId) yield return fromHandoffId;
             if (edge.ToHandoffId is { } toHandoffId) yield return toHandoffId;
+            if (edge.Evidence is { } evidence)
+            {
+                yield return evidence.FilePath;
+                yield return evidence.FromProjectIdentity;
+                yield return evidence.ToProjectIdentity;
+            }
         }
         foreach (var declaration in fact.TypeDeclarations)
         {
@@ -693,6 +699,12 @@ internal sealed class DependencyGraphCache : IAsyncDisposable
                 ToFile = ShareString(edge.ToFile, pool),
                 FromHandoffId = edge.FromHandoffId is null ? null : ShareString(edge.FromHandoffId, pool),
                 ToHandoffId = edge.ToHandoffId is null ? null : ShareString(edge.ToHandoffId, pool),
+                Evidence = edge.Evidence is null ? null : edge.Evidence with
+                {
+                    FilePath = ShareString(edge.Evidence.FilePath, pool),
+                    FromProjectIdentity = ShareString(edge.Evidence.FromProjectIdentity, pool),
+                    ToProjectIdentity = ShareString(edge.Evidence.ToProjectIdentity, pool),
+                },
             }).ToImmutableArray(),
             TypeDeclarations = fact.TypeDeclarations.Select(declaration => declaration with
             {

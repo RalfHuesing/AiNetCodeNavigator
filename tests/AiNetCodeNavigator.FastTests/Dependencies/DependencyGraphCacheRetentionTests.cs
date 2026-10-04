@@ -213,6 +213,12 @@ public sealed class DependencyGraphCacheRetentionTests
                 strings.Add(edge.ToProject);
                 strings.Add(edge.FromFile);
                 strings.Add(edge.ToFile);
+                if (edge.Evidence is { } evidence)
+                {
+                    strings.Add(evidence.FilePath);
+                    strings.Add(evidence.FromProjectIdentity);
+                    strings.Add(evidence.ToProjectIdentity);
+                }
             }
             foreach (var declaration in fact.TypeDeclarations)
             {

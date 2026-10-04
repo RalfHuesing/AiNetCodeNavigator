@@ -238,7 +238,7 @@ public sealed class LongRunningNavigationProgressContractTests
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
         await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
         var tools = new RelationshipTools(runtime);
-        Func<string, string?, string?, string, int, int, string, bool, int, int?, string?, string?, CancellationToken, Task<CallToolResult>> handler = tools.DependencyGraph;
+        Func<string, string?, string?, string, int, int, string?, bool?, int, int?, string?, string?, string, CancellationToken, Task<CallToolResult>> handler = tools.DependencyGraph;
         var tool = McpServerTool.Create(handler, new McpServerToolCreateOptions { Name = "dependency_graph" });
         var properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
         Assert.Equal(new[] { "string", "null" }, properties.GetProperty("operationToken").GetProperty("type")

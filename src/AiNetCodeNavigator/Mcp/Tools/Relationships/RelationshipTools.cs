@@ -228,15 +228,20 @@ public sealed partial class RelationshipTools(NavigatorHostRuntime runtime)
     public async Task<CallToolResult> DependencyGraph([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
         [System.ComponentModel.Description("Indexed source file path used as the dependency graph root; specify this or symbolIdentifier.")] string? filePath = null,
         [System.ComponentModel.Description("Type or member identifier, including a stable src:/asm: reference, used as the dependency graph root; specify this or filePath.")] string? symbolIdentifier = null, [System.ComponentModel.Description("Traversal direction: both (default), incoming, or outgoing.")] string direction = "both", [Range(1, 3), System.ComponentModel.Description("Maximum dependency traversal depth.")] int depth = 1,
-        [Range(1, 500), System.ComponentModel.Description("Maximum dependency entries to return.")] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string scopeType = "all", [System.ComponentModel.Description("Include dependencies from generated source files.")] bool includeGenerated = false,
+        [Range(1, 500), System.ComponentModel.Description("Maximum dependency entries to return.")] int maxResults = 50, [System.ComponentModel.Description("Source scope: all (default), production, or tests.")] string? scopeType = null, [System.ComponentModel.Description("Include dependencies from generated source files.")] bool? includeGenerated = null,
         [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 24576).") ] int maxResponseBytes = 24576, [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null,
-        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, CancellationToken cancellationToken = default)
+        [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null, [System.ComponentModel.Description("Opaque token returned for the next outer response page; repeat the same target and query to read the stored page.")] string? continuationToken = null, [System.ComponentModel.Description("Selected dependency projection: type (default), file, or namespace.")] string level = "type", CancellationToken cancellationToken = default)
     {
         if ((filePath is null) == (symbolIdentifier is null)) return Invalid("filePath", "Specify exactly one of filePath or symbolIdentifier.");
         if (!TryDependencyDirection(direction, out var parsedDirection)) return Invalid("direction", "Use incoming, outgoing, or both.");
-        if (!TryScope(scopeType, out var parsedScope)) return Invalid("scopeType", "Use all, production, or tests.");
+        if (level is not ("type" or "file" or "namespace")) return Invalid("level", "Choose type, file, or namespace; project projection is unavailable.");
+        if (depth is < 1 or > 3) return Invalid("depth", "Use depth from one to three.");
+        if (maxResults is < 1 or > 500) return Invalid("maxResults", "Use a page size from one to 500.");
+        var projectionLevel = level == "type" ? DependencyGraphLevel.Type : level == "file" ? DependencyGraphLevel.File : DependencyGraphLevel.Namespace;
+        var generated = includeGenerated ?? false;
+        if (!TryScope(scopeType ?? "all", out var parsedScope)) return Invalid("scopeType", "Use all, production, or tests.");
         return await NavigationToolSupport.RouteAsync(runtime, "dependency_graph", targetPath,
-            new { filePath, symbolIdentifier, direction, depth, maxResults, scopeType, includeGenerated }, operationToken,
+            new { filePath, symbolIdentifier, direction, depth, maxResults, scopeType, includeGenerated, level }, operationToken,
             continuationToken, maxResponseBytes, maxResponseTokens,
             async (target, ct) =>
             {
@@ -261,14 +266,14 @@ public sealed partial class RelationshipTools(NavigatorHostRuntime runtime)
                         }
                         var scan = await CollectAndProjectDependencyGraphAsync(access.Solution,
                             new DependencyGraphProjectionOptions(PageSize: maxResults, TargetTypeName: targetSymbol.ToDisplayString(),
-                                TargetTypeId: targetTypeId, Direction: parsedDirection, Depth: depth),
-                            parsedScope, includeGenerated, CreateAssemblyHandoffFormatter(access), ct).ConfigureAwait(false);
-                        var response = NavigationToolSupport.Success(scan, scan.IsTruncated,
+                                TargetTypeId: targetTypeId, Direction: parsedDirection, Depth: depth, Level: projectionLevel),
+                            parsedScope, generated, CreateAssemblyHandoffFormatter(access), ct).ConfigureAwait(false);
+                        var response = NavigationToolSupport.Success(new DependencyGraphView(projectionLevel, scan), scan.IsTruncated,
                             "Increase maxResults, depth, or document coverage and repeat the query.");
                         var identity = AnalysisSymbolIdentity.ForAssembly(access.Origin.CanonicalPath, access.Origin.ContentHash,
                             access.Generation, access.ReferenceSnapshotHash);
                         return NavigationToolSupport.WithAssemblyMetadata(response, identity,
-                            $"dependencyGraph(symbol={targetSymbol.ToDisplayString()}, direction={parsedDirection}, depth={depth}, maxResults={maxResults}, scope={parsedScope}, includeGenerated={includeGenerated})",
+                            $"dependencyGraph(level={level}, symbol={targetSymbol.ToDisplayString()}, direction={parsedDirection}, depth={depth}, maxResults={maxResults}, scope={parsedScope}, includeGenerated={generated})",
                             DependencyGraphOmissions(scan));
                     }
 
@@ -290,14 +295,14 @@ public sealed partial class RelationshipTools(NavigatorHostRuntime runtime)
                     var fileTypeIds = await DependencyGraphScanner.GetDocumentTypeIdsAsync(selectedDocument.Document, ct).ConfigureAwait(false);
                     var fileScan = await CollectAndProjectDependencyGraphAsync(scope.Solution,
                         new DependencyGraphProjectionOptions(PageSize: maxResults, TargetFilePath: filePath,
-                            TargetTypeIds: fileTypeIds, Direction: parsedDirection, Depth: depth),
-                        parsedScope, includeGenerated, CreateAssemblyHandoffFormatter(scope.Solution, scope.Context), ct).ConfigureAwait(false);
-                    var fileResponse = NavigationToolSupport.Success(fileScan, fileScan.IsTruncated,
+                            TargetTypeIds: fileTypeIds, Direction: parsedDirection, Depth: depth, Level: projectionLevel),
+                        parsedScope, generated, CreateAssemblyHandoffFormatter(scope.Solution, scope.Context), ct).ConfigureAwait(false);
+                    var fileResponse = NavigationToolSupport.Success(new DependencyGraphView(projectionLevel, fileScan), fileScan.IsTruncated,
                         "Increase maxResults, depth, or document coverage and repeat the query.");
                     var fileIdentity = AnalysisSymbolIdentity.ForAssembly(scope.Context.Origin.CanonicalPath,
                         scope.Context.Origin.ContentHash, scope.Context.Generation, scope.Context.ReferenceSnapshotHash);
                     return NavigationToolSupport.WithAssemblyMetadata(fileResponse, fileIdentity,
-                        $"dependencyGraph(file={selectedDocument.Document.FilePath}, direction={parsedDirection}, depth={depth}, maxResults={maxResults}, scope={parsedScope}, includeGenerated={includeGenerated})",
+                        $"dependencyGraph(level={level}, file={selectedDocument.Document.FilePath}, direction={parsedDirection}, depth={depth}, maxResults={maxResults}, scope={parsedScope}, includeGenerated={generated})",
                         DependencyGraphOmissions(fileScan));
                 }
 
@@ -339,9 +344,9 @@ public sealed partial class RelationshipTools(NavigatorHostRuntime runtime)
                 var scan = await CollectAndProjectSourceDependencyGraphAsync(runtime, target.CanonicalPath, solution,
                     new DependencyGraphProjectionOptions(TargetFilePath: filePath,
                         TargetTypeName: typeName, Direction: parsedDirection, Depth: depth,
-                        PageSize: maxResults, TargetTypeId: typeId, TargetTypeIds: fileTypeIds),
-                    parsedScope, includeGenerated, outgoingRoots, source.IdentityRequest, ct).ConfigureAwait(false);
-                var response = NavigationToolSupport.Success(scan, scan.IsTruncated, scan.ContinuationInputIncomplete
+                        PageSize: maxResults, TargetTypeId: typeId, TargetTypeIds: fileTypeIds, Level: projectionLevel),
+                    parsedScope, generated, outgoingRoots, source.IdentityRequest, ct).ConfigureAwait(false);
+                var response = NavigationToolSupport.Success(new DependencyGraphView(projectionLevel, scan), scan.IsTruncated, scan.ContinuationInputIncomplete
                     ? "Rediscover a unique owner-bound declaration with find_symbol and repeat the query."
                     : "Increase maxResults, depth, or document coverage and repeat the query.");
                 var omissions = new List<string>();
@@ -351,7 +356,7 @@ public sealed partial class RelationshipTools(NavigatorHostRuntime runtime)
                 if (scan.ContinuationInputIncomplete) omissions.Add("continuationInputIncomplete");
                 if (scan.Errors is { Count: > 0 }) omissions.Add("scannerErrors");
                 return source.WithMetadata(response,
-                    $"dependencyGraph(file={filePath?.Trim() ?? "*"}, symbol={symbolIdentifier?.Trim() ?? "*"}, direction={parsedDirection}, depth={depth}, maxResults={maxResults}, scope={parsedScope}, includeGenerated={includeGenerated})",
+                    $"dependencyGraph(level={level}, file={filePath?.Trim() ?? "*"}, symbol={symbolIdentifier?.Trim() ?? "*"}, direction={parsedDirection}, depth={depth}, maxResults={maxResults}, scope={parsedScope}, includeGenerated={generated})",
                     omissions.ToArray());
                 }, maxResponseBytes, maxResponseTokens, ct);
             }, null, cancellationToken);

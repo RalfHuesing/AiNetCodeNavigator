@@ -17,14 +17,21 @@ public sealed record NamespaceDependency(
     string ToNamespace,
     IReadOnlyList<string> ReferencedTypes,
     string? FromProject = null,
-    string? ToProject = null);
+    string? ToProject = null,
+    DependencyEdgeEvidence? Evidence = null);
 
 public sealed record FileDependency(
     string FromFile,
     string ToFile,
     IReadOnlyList<string> CrossingTypes,
     string? FromProject = null,
-    string? ToProject = null);
+    string? ToProject = null,
+    DependencyEdgeEvidence? Evidence = null);
+
+public sealed record DependencyEdgeEvidence(string FilePath, int Line, int Column,
+    string FromProjectIdentity, string ToProjectIdentity);
+
+public enum DependencyGraphLevel { Type, File, Namespace, Project }
 
 public sealed record DependencyGraphScanOptions(
     int Offset = 0,
@@ -58,7 +65,8 @@ internal sealed record DependencyGraphProjectionOptions(
     int Depth = 1,
     int MaxNodes = DependencyGraphScanner.MaximumNodes,
     string? TargetTypeId = null,
-    IReadOnlyCollection<string>? TargetTypeIds = null);
+    IReadOnlyCollection<string>? TargetTypeIds = null,
+    DependencyGraphLevel? Level = null);
 
 internal sealed record DependencyGraphCollection(
     ImmutableArray<DependencyTypeReference> TypeDependencies,
@@ -180,7 +188,8 @@ public sealed record DependencyTypeReference(
     string ToFile,
     int Depth = 1,
     string? FromHandoffId = null,
-    string? ToHandoffId = null);
+    string? ToHandoffId = null,
+    DependencyEdgeEvidence? Evidence = null);
 
 public sealed record DependencyGraphScanError(
     string Project,

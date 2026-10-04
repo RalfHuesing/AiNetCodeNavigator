@@ -15,6 +15,40 @@ namespace AiNetCodeNavigator.FastTests.Dependencies;
 public sealed class DependencyGraphScannerTests
 {
     [Fact]
+    public async Task Project_SelectedLevelKeepsOnlyItsTotalsLimitsAndRepresentativeEvidence()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(@"C:\VirtualRepo\SelectedDependencies.slnx",
+            new ProjectSpec("App", [("Caller.cs", "namespace App; public class Caller { public Contracts.First First; public Contracts.Second Second; }")],
+                ProjectReferences: ["Contracts"], VirtualProjectDirectory: "src/App"),
+            new ProjectSpec("Contracts", [("Types.cs", "namespace Contracts; public class First { } public class Second { }")],
+                VirtualProjectDirectory: "src/Contracts"));
+        var collection = await DependencyGraphScanner.CollectAsync(fixture.Solution, new DependencyGraphCollectionOptions());
+        foreach (var level in new[] { DependencyGraphLevel.Type, DependencyGraphLevel.File, DependencyGraphLevel.Namespace })
+        {
+            var graph = DependencyGraphScanner.Project(collection, new DependencyGraphProjectionOptions(
+                PageSize: 1, TargetTypeName: "App.Caller", Direction: DependencyGraphDirection.Outgoing, Level: level));
+            Assert.Empty(graph.ProjectDependencies);
+            Assert.Equal(0, graph.TotalProjectDependencyCount);
+            var evidence = level switch
+            {
+                DependencyGraphLevel.Type => Assert.Single(graph.TypeDependencies!).Evidence,
+                DependencyGraphLevel.File => Assert.Single(graph.FileDependencies).Evidence,
+                _ => Assert.Single(graph.NamespaceDependencies).Evidence,
+            };
+            Assert.NotNull(evidence);
+            Assert.Equal("src/App/Caller.cs", evidence.FilePath);
+            Assert.Equal(1, evidence.Line);
+            Assert.True(evidence.Column > 1);
+            Assert.Contains("App", evidence.FromProjectIdentity, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Contracts", evidence.ToProjectIdentity, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(level == DependencyGraphLevel.Type, graph.IsTruncated);
+            Assert.Equal(level == DependencyGraphLevel.Type ? 2 : 0, graph.TotalTypeDependencyCount);
+            Assert.Equal(level == DependencyGraphLevel.File ? 1 : 0, graph.TotalFileDependencyCount);
+            Assert.Equal(level == DependencyGraphLevel.Namespace ? 1 : 0, graph.TotalNamespaceDependencyCount);
+        }
+    }
+
+    [Fact]
     public async Task ScanSolutionAsync_FormatsHandoffsOnlyForTheVisibleTypePage()
     {
         using var fixture = TestWorkspaceBuilder.CreateSolution(

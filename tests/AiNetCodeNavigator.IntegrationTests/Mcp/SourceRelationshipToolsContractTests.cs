@@ -462,8 +462,11 @@ public sealed class SourceRelationshipToolsContractTests
         var fileDependencies = await relationships.DependencyGraph(target, filePath: "src/App/Relationships.cs",
             maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(fileDependencies, 65536, 4096);
-        Assert.Contains("Entry", TextOf(fileDependencies), StringComparison.Ordinal);
-        Assert.Contains("Derived", TextOf(fileDependencies), StringComparison.Ordinal);
+        var fileDependencyPages = await ReadOuterResponsePagesAsync(
+            (bytes, tokens, continuation) => relationships.DependencyGraph(target, filePath: "src/App/Relationships.cs",
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 65536, 4096);
+        Assert.Contains("Entry", fileDependencyPages.Text, StringComparison.Ordinal);
+        Assert.Contains("Derived", fileDependencyPages.Text, StringComparison.Ordinal);
         await AssertHandoffReachesBodyAsync(symbols, target, fileDependencies, "public static int Invoke",
             (bytes, tokens, continuation) => relationships.DependencyGraph(target, filePath: "src/App/Relationships.cs",
                 maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation));
