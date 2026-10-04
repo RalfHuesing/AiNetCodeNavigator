@@ -866,17 +866,17 @@ public sealed class SourceToolsContractTests
         Assert.Equal(["body"], invoked);
 
         invoked.Clear();
-        var callersAndTests = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["callers", "tests"],
-            callerScope: "production", maxResults: 10, maxResponseBytes: 16384, maxResponseTokens: 2048);
+        var callersAndTests = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["uses", "tests"],
+            usageScope: "production", maxResults: 10, maxResponseBytes: 16384, maxResponseTokens: 2048);
         AssertSuccessWithinBudget(callersAndTests, 16384, 2048);
         using (var bothDocument = JsonDocument.Parse(JsonBody(TextOf(callersAndTests))))
         {
             var sections = bothDocument.RootElement.GetProperty("sections").EnumerateArray().ToArray();
-            Assert.Equal(new[] { "callers", "tests" }, sections.Select(item => item.GetProperty("name").GetString()).ToArray());
+            Assert.Equal(new[] { "uses", "tests" }, sections.Select(item => item.GetProperty("name").GetString()).ToArray());
             Assert.Contains("TargetTests", sections[1].GetProperty("items").ToString(), StringComparison.Ordinal);
             Assert.Contains("OtherBehavior", sections[1].GetProperty("items").ToString(), StringComparison.Ordinal);
         }
-        Assert.Equal(["callers", "tests"], invoked);
+        Assert.Equal(["uses", "tests"], invoked);
 
         var generatedMemberExcluded = await relationships.GetContext(target, "ScopeProbe.OrderProbe", ["members"],
             maxResponseBytes: 16384, maxResponseTokens: 2048);
@@ -895,7 +895,7 @@ public sealed class SourceToolsContractTests
             includeGenerated: true, maxResponseBytes: 16384, maxResponseTokens: 2048);
         Assert.False(generatedTargetIncluded.IsError ?? false, TextOf(generatedTargetIncluded));
 
-        var callerFirst = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["callers"],
+        var callerFirst = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["uses"],
             maxResults: 1, maxResponseBytes: 16384, maxResponseTokens: 2048);
         AssertSuccessWithinBudget(callerFirst, 16384, 2048);
         using (var callerDocument = JsonDocument.Parse(JsonBody(TextOf(callerFirst))))
@@ -903,7 +903,7 @@ public sealed class SourceToolsContractTests
             var root = callerDocument.RootElement;
             Assert.Equal("partial", root.GetProperty("status").GetString());
             var section = Assert.Single(root.GetProperty("sections").EnumerateArray());
-            Assert.Equal("callers", section.GetProperty("name").GetString());
+            Assert.Equal("uses", section.GetProperty("name").GetString());
             Assert.Equal("partial", section.GetProperty("status").GetString());
             Assert.False(string.IsNullOrWhiteSpace(section.GetProperty("resultCursor").GetString()));
         }
@@ -938,14 +938,14 @@ public sealed class SourceToolsContractTests
         Assert.Contains("INVALID_ARGUMENT", TextOf(invalidAssemblyTests), StringComparison.Ordinal);
         var invalidMemberTarget = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["members"], maxResponseBytes: 16384);
         Assert.Contains("INVALID_ARGUMENT", TextOf(invalidMemberTarget), StringComparison.Ordinal);
-        var ineffective = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], callerScope: "production", maxResponseBytes: 16384);
+        var ineffective = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], usageScope: "production", maxResponseBytes: 16384);
         Assert.Contains("INVALID_ARGUMENT", TextOf(ineffective), StringComparison.Ordinal);
 
         relationships.BeforeContextSectionForTesting = section =>
         {
             if (section == "tests") throw new InvalidOperationException("forced section test failure");
         };
-        var partial = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["body", "tests", "callers"],
+        var partial = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["body", "tests", "uses"],
             maxResponseBytes: 16384, maxResponseTokens: 2048);
         Assert.True(partial.IsError == true, TextOf(partial));
         using var partialDocument = JsonDocument.Parse(JsonBody(TextOf(partial)));
@@ -957,7 +957,7 @@ public sealed class SourceToolsContractTests
         Assert.Equal("error", partialSections[1].GetProperty("status").GetString());
         Assert.Equal("CONTEXT_SECTION_FAILED", partialSections[1].GetProperty("error").GetProperty("code").GetString());
         Assert.False(partialSections[1].GetProperty("analysisComplete").GetBoolean());
-        Assert.Equal("callers", partialSections[2].GetProperty("name").GetString());
+        Assert.Equal("uses", partialSections[2].GetProperty("name").GetString());
         Assert.Equal("notAnalyzed", partialSections[2].GetProperty("status").GetString());
     }
 

@@ -179,8 +179,74 @@ public sealed class CallTreeTests
         var ambiguousSite = Assert.Single(graph.UnresolvedCallSites!);
         Assert.Equal(RelationshipEvidence.PossibleTarget, ambiguousSite.EvidenceKind);
         Assert.Equal(2, ambiguousSite.CandidateTargets.Count);
+        var stringOverload = compilation.GetTypeByMetadataName("Calls.Target")!.GetMembers("Run").OfType<IMethodSymbol>()
+            .Single(member => member.Parameters[0].Type.SpecialType == SpecialType.System_String);
+        var ambiguousReferences = await FindReferencesResolver.FindReferencesAsync(stringOverload, fixture.Solution, 50, 1);
+        var reference = Assert.Single(ambiguousReferences.References);
+        Assert.Equal(RelationshipEvidence.PossibleTarget, reference.EvidenceKind);
+        Assert.Equal(ambiguousSite.CandidateTargets, reference.CandidateTargets);
+
         Assert.Contains(ambiguousSite.CandidateTargets, target => target.Contains("Target.Run(string?", System.StringComparison.Ordinal));
         Assert.Contains(ambiguousSite.CandidateTargets, target => target.Contains("Target.Run(Uri?", System.StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RelationshipSites_DistinguishInvocationsFromVirtualMethodGroupsAndPropertyUses()
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution("""
+            namespace Calls;
+            public interface IWorker { void Work(); int Value { get; } }
+            public class Worker : IWorker { public virtual void Work() { } public virtual int Value => 1; }
+            public sealed class Caller
+            {
+                public void Execute(IWorker contract, Worker worker)
+                {
+                    contract.Work();
+                    worker.Work();
+                    System.Action contractGroup = contract.Work;
+                    System.Action virtualGroup = worker.Work;
+                    _ = contract.Value;
+                    _ = worker.Value;
+                    _ = new Worker();
+                }
+            }
+            """);
+        var project = fixture.Solution.Projects.Single();
+        var compilation = await project.GetCompilationAsync();
+        Assert.NotNull(compilation);
+        var method = compilation.GetTypeByMetadataName("Calls.Caller")!.GetMembers("Execute").OfType<IMethodSymbol>().Single();
+        var contractMethod = compilation.GetTypeByMetadataName("Calls.IWorker")!.GetMembers("Work").OfType<IMethodSymbol>().Single();
+        var references = await FindReferencesResolver.FindReferencesAsync(contractMethod, fixture.Solution, 50, 1);
+        Assert.Contains(references.References, site => site.Snippet.Contains("contract.Work();", System.StringComparison.Ordinal)
+            && site.EvidenceKind == RelationshipEvidence.StaticVirtualOrInterfaceTarget);
+        Assert.Contains(references.References, site => site.Snippet.Contains("contractGroup", System.StringComparison.Ordinal)
+            && site.EvidenceKind == RelationshipEvidence.MemberAccess);
+
+        var outgoing = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(fixture.Solution, method,
+            Direction: CallTreeDirection.Outgoing));
+        Assert.Equal(6, outgoing.NodeCount);
+        Assert.Equal(5, outgoing.EdgeCount);
+        Assert.Equal(7, outgoing.EdgeSiteCount);
+        Assert.Equal(0, outgoing.UnresolvedSiteCount);
+        Assert.Contains("Graph: 6 nodes, 5 edges, 7 edge sites, 0 candidate/unresolved sites.", CallGraphTextRenderer.RenderAscii(outgoing));
+        Assert.Contains("Graph: 6 nodes, 5 edges, 7 edge sites, 0 candidate/unresolved sites.", CallTreeMermaidRenderer.RenderMermaid(outgoing));
+        var text = await project.Documents.Single().GetTextAsync();
+        var sites = outgoing.Edges.SelectMany(edge => edge.CallSites).ToArray();
+        Assert.Contains(sites, site => text.Lines[site.Line - 1].ToString().Contains("virtualGroup", System.StringComparison.Ordinal)
+            && site.EvidenceKind == RelationshipEvidence.MemberAccess);
+        Assert.Equal(2, sites.Count(site => text.Lines[site.Line - 1].ToString().Contains(".Value", System.StringComparison.Ordinal)
+            && site.EvidenceKind == RelationshipEvidence.MemberAccess));
+        Assert.Equal(2, sites.Count(site => site.EvidenceKind == RelationshipEvidence.StaticVirtualOrInterfaceTarget));
+        Assert.Contains(sites, site => text.Lines[site.Line - 1].ToString().Contains("new Worker()", System.StringComparison.Ordinal)
+            && site.EvidenceKind == RelationshipEvidence.Call);
+        var incoming = await CallTreeBuilder.BuildGraphAsync(new CallTreeBuildRequest(fixture.Solution, contractMethod,
+            Direction: CallTreeDirection.Incoming));
+        Assert.Equal(2, incoming.NodeCount);
+        Assert.Equal(1, incoming.EdgeCount);
+        Assert.Equal(4, incoming.EdgeSiteCount);
+        Assert.Contains(incoming.Edges.SelectMany(edge => edge.CallSites), site =>
+            text.Lines[site.Line - 1].ToString().Contains("contractGroup", System.StringComparison.Ordinal)
+            && site.EvidenceKind == RelationshipEvidence.MemberAccess);
     }
 
     [Fact]

@@ -445,7 +445,7 @@ public sealed class IndexScopeContractTests
         var contextSchema = registered.Single(item => item.Tool.ProtocolTool.Name == "get_context")
             .Tool.ProtocolTool.InputSchema.GetProperty("properties");
         Assert.Contains("members", contextSchema.GetProperty("sections").GetProperty("description").GetString(), StringComparison.Ordinal);
-        Assert.Contains("callers", contextSchema.GetProperty("sections").GetProperty("description").GetString(), StringComparison.Ordinal);
+        Assert.Contains("uses", contextSchema.GetProperty("sections").GetProperty("description").GetString(), StringComparison.Ordinal);
     }
 
     private static string GetWireParameterName(ParameterInfo parameter)

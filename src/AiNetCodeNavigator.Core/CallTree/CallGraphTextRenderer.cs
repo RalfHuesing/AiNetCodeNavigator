@@ -15,7 +15,7 @@ public static class CallGraphTextRenderer
     public static string RenderAscii(CallGraphPayload graph)
     {
         ArgumentNullException.ThrowIfNull(graph);
-        if (graph.Nodes.Count == 0) return "No calls found.";
+        if (graph.Nodes.Count == 0) return "Graph: 0 nodes, 0 edges, 0 edge sites, 0 candidate/unresolved sites.";
 
         var nodes = graph.Nodes.ToDictionary(n => n.NodeId, StringComparer.Ordinal);
         if (!nodes.TryGetValue(graph.RootNodeId, out var root))
@@ -24,6 +24,8 @@ public static class CallGraphTextRenderer
         }
 
         var sb = new StringBuilder();
+        sb.AppendLine($"Graph: {graph.NodeCount} nodes, {graph.EdgeCount} edges, {graph.EdgeSiteCount} edge sites, {graph.UnresolvedSiteCount} candidate/unresolved sites.");
+        sb.AppendLine("Static binding evidence only; memberAccess includes non-call uses. Virtual/interface targets do not identify runtime implementations.");
         sb.AppendLine($"[{root.NodeId}] {FormatNode(root)}");
 
         for (int i = 0; i < graph.Edges.Count; i++)
@@ -38,14 +40,15 @@ public static class CallGraphTextRenderer
             var prefix = isLast ? "└── " : "├── ";
 
             var locations = edge.CallSites.Count == 0 ? string.Empty : " — " + string.Join(", ",
-                edge.CallSites.Select(site => $"{site.FilePath}:{site.Line}:{site.Column} [{site.EvidenceKind}]"));
+                edge.CallSites.Select(site => $"{site.FilePath}:{site.Line}:{site.Column} [{site.EvidenceKind}]"
+                    + (site.CandidateTargets is { Count: > 0 } ? $"; possible targets: {string.Join(", ", site.CandidateTargets)}" : string.Empty)));
 
             sb.AppendLine($"{prefix}[{from.NodeId}] {from.Name} -> [{to.NodeId}] {to.Name}{locations}");
         }
 
         if (graph.HiddenEdgeCount > 0)
         {
-            sb.AppendLine($"└── ... and {graph.HiddenEdgeCount} more calls");
+            sb.AppendLine($"└── ... and {graph.HiddenEdgeCount} more relationship edges");
         }
 
         if (graph.PendingNodeCount > 0)
@@ -55,7 +58,7 @@ public static class CallGraphTextRenderer
 
         if (graph.UnresolvedCallSites is { Count: > 0 })
         {
-            sb.AppendLine("Unresolved call sites:");
+            sb.AppendLine("Candidate/unresolved relationship sites:");
             foreach (var unresolved in graph.UnresolvedCallSites)
             {
                 var candidates = unresolved.CandidateTargets.Count == 0

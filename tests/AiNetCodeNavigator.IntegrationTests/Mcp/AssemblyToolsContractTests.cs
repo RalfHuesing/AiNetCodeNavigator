@@ -1144,12 +1144,12 @@ public sealed class AssemblyToolsContractTests
             """);
         relationships.BeforeContextSectionForTesting = section =>
         {
-            if (section == "callers") throw new InvalidOperationException("forced assembly caller failure");
+            if (section == "uses") throw new InvalidOperationException("forced assembly caller failure");
         };
 
         foreach (var includeReferences in new[] { false, true })
         {
-            var result = await relationships.GetContext(assemblyPath, "AssemblyContextErrorProbe.Probe.Read", ["body", "callers"],
+            var result = await relationships.GetContext(assemblyPath, "AssemblyContextErrorProbe.Probe.Read", ["body", "uses"],
                 includeReferences: includeReferences, maxResponseBytes: 32768, maxResponseTokens: 4096);
             Assert.True(result.IsError == true, TextOf(result));
             using var document = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(result)));
@@ -1157,7 +1157,7 @@ public sealed class AssemblyToolsContractTests
             Assert.Equal("error", root.GetProperty("status").GetString());
             Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("target").GetProperty("snapshotId").GetString()));
             var sections = root.GetProperty("sections").EnumerateArray().ToArray();
-            Assert.Equal(new[] { "body", "callers" }, sections.Select(section => section.GetProperty("name").GetString()));
+            Assert.Equal(new[] { "body", "uses" }, sections.Select(section => section.GetProperty("name").GetString()));
             Assert.Equal("partial", sections[0].GetProperty("status").GetString());
             Assert.Equal("error", sections[1].GetProperty("status").GetString());
             Assert.False(sections[1].GetProperty("analysisComplete").GetBoolean());
@@ -1191,18 +1191,18 @@ public sealed class AssemblyToolsContractTests
         };
         relationships.BeforeAssemblyContextOwnerOpenForTesting = openedOwners.Add;
 
-        var first = await relationships.GetContext(assemblyPath, "AssemblyClosureCursorProbe.Probe", ["members", "callers"],
+        var first = await relationships.GetContext(assemblyPath, "AssemblyClosureCursorProbe.Probe", ["members", "uses"],
             includeReferences: true, maxResults: 1, maxResponseBytes: 65536, maxResponseTokens: 8192);
         AssertSuccessWithinBudget(first, 65536, 8192);
         using var firstDocument = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(first)));
         var firstRoot = firstDocument.RootElement;
         Assert.Equal("partial", firstRoot.GetProperty("status").GetString());
         var firstSections = firstRoot.GetProperty("sections").EnumerateArray().ToArray();
-        Assert.Equal(new[] { "members", "callers" }, firstSections.Select(section => section.GetProperty("name").GetString()));
+        Assert.Equal(new[] { "members", "uses" }, firstSections.Select(section => section.GetProperty("name").GetString()));
         Assert.Equal("partial", firstSections[0].GetProperty("status").GetString());
         var cursor = firstSections[0].GetProperty("resultCursor").GetString();
         Assert.False(string.IsNullOrWhiteSpace(cursor));
-        Assert.Equal(new[] { "members", "callers" }, invoked);
+        Assert.Equal(new[] { "members", "uses" }, invoked);
         Assert.Equal(new[] { 1, 1 }, activeAccessCounts);
         Assert.Equal(0, runtime.AssemblyRegistry.GetActiveAccessCount(assemblyPath));
         Assert.Equal(1, openedOwners.Count(path => string.Equals(path, Path.GetFullPath(assemblyPath), StringComparison.OrdinalIgnoreCase)));
@@ -1210,7 +1210,7 @@ public sealed class AssemblyToolsContractTests
         invoked.Clear();
         openedOwners.Clear();
         activeAccessCounts.Clear();
-        var continuation = await relationships.GetContext(assemblyPath, "AssemblyClosureCursorProbe.Probe", ["members", "callers"],
+        var continuation = await relationships.GetContext(assemblyPath, "AssemblyClosureCursorProbe.Probe", ["members", "uses"],
             includeReferences: true, maxResults: 1, resultCursor: cursor, maxResponseBytes: 65536, maxResponseTokens: 8192);
         AssertSuccessWithinBudget(continuation, 65536, 8192);
         using var continuationDocument = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(continuation)));
@@ -1243,7 +1243,7 @@ public sealed class AssemblyToolsContractTests
             return Task.FromException(new InvalidOperationException("forced closure handoff callback failure"));
         });
         var result = await relationships.GetContext(assemblyPath,
-            ReadAnyHandoff(TextOf(discovered)), ["body", "callers"], includeReferences: true,
+            ReadAnyHandoff(TextOf(discovered)), ["body", "uses"], includeReferences: true,
             maxResponseBytes: 32768, maxResponseTokens: 4096);
 
         Assert.True(hookCalled, TextOf(result));
@@ -1328,7 +1328,7 @@ public sealed class AssemblyToolsContractTests
         AssertOwnerResult(otherOwnerStillResident, "Read");
 
         await AssemblyAnalysisSessionRegistry.Default.ExpireIdleSessionsAsync(DateTime.UtcNow.AddMinutes(11), assemblyPath);
-        var reopenedContext = await relationships.GetContext(assemblyPath, currentReference, ["body", "callers"],
+        var reopenedContext = await relationships.GetContext(assemblyPath, currentReference, ["body", "uses"],
             includeReferences: true, maxResponseBytes: 16384, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(reopenedContext, 16384, 4096);
         using var contextDocument = ParseJsonWithDiagnostics(BodyOf(TextOf(reopenedContext)),
@@ -1476,7 +1476,7 @@ public sealed class AssemblyToolsContractTests
         await FollowAssemblyHandoffAsync(symbols, assemblyPath, dependency);
         AssertOwnerResult(await relationships.ResolveTypeOrigin(assemblyPath, typeName: "AssemblyRouteProbe.Probe", maxResponseBytes: 32768), "AssemblyRouteProbe");
 
-        var selectedContext = await relationships.GetContext(assemblyPath, "AssemblyRouteProbe.Probe", ["body", "members", "callers"],
+        var selectedContext = await relationships.GetContext(assemblyPath, "AssemblyRouteProbe.Probe", ["body", "members", "uses"],
             maxResponseBytes: 65536, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(selectedContext, 65536, 4096);
         Assert.Contains("AssemblyRouteProbe.Probe", TextOf(selectedContext), StringComparison.Ordinal);
@@ -2083,18 +2083,18 @@ public sealed class AssemblyToolsContractTests
             "RESULT_CURSOR_ARGUMENT_MISMATCH", 65536, 4096);
         Assert.Contains("Forward", referencesText, StringComparison.Ordinal);
 
-        AssertErrorWithinBudget(await relationships.GetContext(root, leafHandle, ["body", "callers"],
+        AssertErrorWithinBudget(await relationships.GetContext(root, leafHandle, ["body", "uses"],
             includeReferences: true, maxResults: 20, maxBodyLines: 1000, maxResponseBytes: 65536, maxResponseTokens: 12000), "TARGET_MISMATCH", 65536, 12000);
         AssertErrorWithinBudget(await relationships.FindReferences(root, leafHandle, includeReferences: true, depth: 3,
             maxResponseBytes: 65536, maxResponseTokens: 4096, includeSummary: true), "TARGET_MISMATCH", 65536, 4096);
         var context = await ReadAssemblyOuterPagesAsync((operation, _, continuation, bytes, tokens) =>
-            relationships.GetContext(root, closureDeclarationId, ["body", "callers"], includeReferences: true,
+            relationships.GetContext(root, closureDeclarationId, ["body", "uses"], includeReferences: true,
                 maxResults: 20, maxBodyLines: 1000, maxResponseBytes: bytes, maxResponseTokens: tokens,
                 operationToken: operation, continuationToken: continuation),
             domainCursor: null, bytes: 65536, tokens: 12000);
         AssertOwnerPage(context.FirstPage);
         var contextText = context.Text;
-        Assert.Contains("callers", contextText, StringComparison.Ordinal);
+        Assert.Contains("uses", contextText, StringComparison.Ordinal);
         Assert.Contains("ClosureBridge", contextText, StringComparison.Ordinal);
         using var contextDocument = ParseJsonWithDiagnostics(BodyOf(contextText), "Root-anchored closure context");
         var bodySection = Assert.Single(contextDocument.RootElement.GetProperty("sections").EnumerateArray()

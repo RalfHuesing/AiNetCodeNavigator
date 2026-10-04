@@ -11,6 +11,7 @@ internal static class Scenarios
             [nameof(ExploreFindSymbol)] = ExploreFindSymbol,
             [nameof(ExploreSymbolBody)] = ExploreSymbolBody,
             [nameof(ExploreConsolidationBaseline)] = ExploreConsolidationBaseline,
+            [nameof(ExploreContextUses)] = ExploreContextUses,
         };
 
     private static async Task ExploreFindSymbol(ExplorationContext context)
@@ -54,7 +55,7 @@ internal static class Scenarios
         }).ConfigureAwait(false);
         var callers = await context.CallAsync("get_context", new
         {
-            targetPath = context.RepositorySolution, symbolIdentifier = reference, sections = new[] { "callers" }, maxResults = 5,
+            targetPath = context.RepositorySolution, symbolIdentifier = reference, sections = new[] { "uses" }, maxResults = 5,
         }).ConfigureAwait(false);
         using (var callerPage = JsonDocument.Parse(callers.Payload))
         {
@@ -62,7 +63,7 @@ internal static class Scenarios
                 await context.CallAsync("get_context", new
                 {
                     targetPath = context.RepositorySolution, symbolIdentifier = reference,
-                    sections = new[] { "callers" }, maxResults = 5, resultCursor = cursor.GetString(),
+                    sections = new[] { "uses" }, maxResults = 5, resultCursor = cursor.GetString(),
                 }).ConfigureAwait(false);
         }
         var assemblyTarget = typeof(Core.Symbols.StableSymbolReferenceCodec).Assembly.Location;
@@ -83,6 +84,49 @@ internal static class Scenarios
             targetPath = type.GetProperty("ownerTargetPath").GetString(),
             symbolIdentifiers = new[] { type.GetProperty("handoffId").GetString() }, startLine = 21, maxBodyLines = 20,
         }).ConfigureAwait(false);
+    }
+
+    private static async Task ExploreContextUses(ExplorationContext context)
+    {
+        var discovery = await context.CallAsync("find_symbol", new
+        {
+            targetPath = context.RepositorySolution, pattern = "TryParse", kind = "method",
+            scopeType = "production", maxResults = 20,
+        }).ConfigureAwait(false);
+        using var symbols = JsonDocument.Parse(discovery.Payload);
+        var reference = symbols.RootElement.GetProperty("results").EnumerateArray()
+            .SelectMany(result => result.GetProperty("entries").EnumerateArray())
+            .Single(entry => entry.GetProperty("docCommentId").GetString()!.StartsWith(
+                "M:AiNetCodeNavigator.Core.Symbols.StableSymbolReferenceCodec.TryParse(", StringComparison.Ordinal))
+            .GetProperty("handoffId").GetString();
+        var result = await context.CallAsync("get_context", new
+        {
+            targetPath = context.RepositorySolution, symbolIdentifier = reference,
+            sections = new[] { "body", "uses" }, usageScope = "all", maxBodyLines = 20, maxResults = 5,
+        }).ConfigureAwait(false);
+        using var page = JsonDocument.Parse(result.Payload);
+        var uses = page.RootElement.GetProperty("sections").EnumerateArray()
+            .Single(section => section.GetProperty("name").GetString() == "uses");
+        if (uses.TryGetProperty("resultCursor", out var cursor))
+            await context.CallAsync("get_context", new
+            {
+                targetPath = context.RepositorySolution, symbolIdentifier = reference,
+                sections = new[] { "body", "uses" }, usageScope = "all", maxBodyLines = 20,
+                maxResults = 5, resultCursor = cursor.GetString(),
+            }).ConfigureAwait(false);
+        var firstUse = uses.GetProperty("items").EnumerateArray()
+            .First(site => site.TryGetProperty("enclosingSymbolHandoffId", out var handoff) && handoff.ValueKind == JsonValueKind.String);
+        await context.CallAsync("get_symbol_body", new
+        {
+            targetPath = page.RootElement.GetProperty("target").GetProperty("ownerTargetPath").GetString(),
+            symbolIdentifiers = new[] { firstUse.GetProperty("enclosingSymbolHandoffId").GetString() }, maxBodyLines = 20,
+        }).ConfigureAwait(false);
+        foreach (var direction in new[] { "incoming", "outgoing" })
+            await context.CallAsync("get_call_tree", new
+            {
+                targetPath = context.RepositorySolution, symbolIdentifier = reference, direction,
+                depth = 1, topN = 5, scopeType = "production",
+            }).ConfigureAwait(false);
     }
 
     private static async Task ExploreSymbolBody(ExplorationContext context)

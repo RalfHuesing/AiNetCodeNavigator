@@ -113,8 +113,9 @@ public static class CallTreeBuilder
                     callerGroups[caller] = list;
                 }
 
-                list.Add(new CallSiteInfo(relPath, line, column,
-                    referenceNode is null ? RelationshipEvidence.Unresolved : RelationshipEvidence.Classify(referenceNode, semanticModel)));
+                var evidence = referenceNode is null ? new RelationshipSiteEvidence(RelationshipEvidence.Unresolved)
+                    : RelationshipEvidence.Describe(referenceNode, semanticModel);
+                list.Add(new CallSiteInfo(relPath, line, column, evidence.Kind, evidence.CandidateTargets));
             }
         }
 

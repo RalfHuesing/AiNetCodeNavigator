@@ -14,7 +14,7 @@ The server runs locally over stdio. Source navigation uses Roslyn; assembly navi
 | Follow inheritance, implementations, and dependency edges | `get_type_hierarchy`, `find_implementations`, `dependency_graph` |
 | Inspect library APIs, search decompiled code, and find extension methods | `inspect_assembly`, `search_assembly`, `find_assembly_extensions` |
 | Resolve a type to its source project or framework/NuGet assembly | `resolve_type_origin` |
-| Read selected declaration context and static test candidates | `get_context` |
+| Read selected body, members, direct uses, and static test candidates | `get_context` (`usageScope` filters source uses) |
 
 The server exposes **16 read-only navigation tools**. The [tool reference](docs/tools/README.md) lists their supported targets, parameters, result limits, and examples.
 

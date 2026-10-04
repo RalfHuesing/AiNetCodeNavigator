@@ -133,19 +133,19 @@ public sealed class StableReferenceResolutionContractTests
         AssertSuccessWithinBudget(discovered, 32768, 2048);
         var originalReference = ReadReference(TextOf(discovered));
 
-        var direct = await relationships.GetContext(leafPath, originalReference, ["body", "callers"], includeReferences: false,
+        var direct = await relationships.GetContext(leafPath, originalReference, ["body", "uses"], includeReferences: false,
             maxResponseBytes: 32768, maxResponseTokens: 2048);
         AssertSuccessWithinBudget(direct, 32768, 2048);
         var directReference = AssertContextReference(direct, leafPath);
         Assert.Equal(originalReference, directReference);
 
-        var closure = await relationships.GetContext(leafPath, originalReference, ["body", "callers"], includeReferences: true,
+        var closure = await relationships.GetContext(leafPath, originalReference, ["body", "uses"], includeReferences: true,
             maxResponseBytes: 32768, maxResponseTokens: 2048);
         AssertSuccessWithinBudget(closure, 32768, 2048);
         var projectedReference = AssertContextReference(closure, leafPath);
         Assert.Equal(originalReference, projectedReference);
 
-        var rawDocumentationId = await relationships.GetContext(rootPath, "M:R02ContextLeaf.Target.Read", ["body", "callers"],
+        var rawDocumentationId = await relationships.GetContext(rootPath, "M:R02ContextLeaf.Target.Read", ["body", "uses"],
             includeReferences: true, maxResponseBytes: 32768, maxResponseTokens: 2048);
         AssertSuccessWithinBudget(rawDocumentationId, 32768, 2048);
         var rawProjectedReference = AssertContextReference(rawDocumentationId, leafPath);

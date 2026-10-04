@@ -17,6 +17,8 @@ public static class CallTreeMermaidRenderer
         ArgumentNullException.ThrowIfNull(graph);
         var sb = new StringBuilder();
         sb.AppendLine("flowchart TD");
+        sb.AppendLine($"    %% Graph: {graph.NodeCount} nodes, {graph.EdgeCount} edges, {graph.EdgeSiteCount} edge sites, {graph.UnresolvedSiteCount} candidate/unresolved sites.");
+        sb.AppendLine("    %% Static binding evidence only; memberAccess includes non-call uses. Virtual/interface targets do not identify runtime implementations.");
 
         foreach (var node in graph.Nodes)
         {
@@ -30,7 +32,11 @@ public static class CallTreeMermaidRenderer
             var label = evidence.Length == 0 ? string.Empty : $"|{EscapeLabel(string.Join(", ", evidence))} ×{edge.CallSites.Count}|";
             sb.AppendLine($"    {edge.FromNodeId} -->{label} {edge.ToNodeId}");
             foreach (var site in edge.CallSites)
-                sb.AppendLine($"    %% {EscapeComment($"{site.FilePath}:{site.Line}:{site.Column} [{site.EvidenceKind}]")}");
+            {
+                var candidates = site.CandidateTargets is { Count: > 0 }
+                    ? $"; possible targets: {string.Join(", ", site.CandidateTargets)}" : string.Empty;
+                sb.AppendLine($"    %% {EscapeComment($"{site.FilePath}:{site.Line}:{site.Column} [{site.EvidenceKind}]{candidates}")}");
+            }
         }
 
         if (graph.UnresolvedCallSites is { Count: > 0 })
@@ -47,7 +53,7 @@ public static class CallTreeMermaidRenderer
 
         if (graph.HiddenEdgeCount > 0 && !string.IsNullOrEmpty(graph.RootNodeId))
         {
-            sb.AppendLine($"    overflow[\"... and {graph.HiddenEdgeCount} more\"]");
+            sb.AppendLine($"    overflow[\"... and {graph.HiddenEdgeCount} more relationship edges\"]");
             sb.AppendLine($"    {graph.RootNodeId} --> overflow");
         }
 

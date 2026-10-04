@@ -1,10 +1,14 @@
 #nullable enable
 
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace AiNetCodeNavigator.Core.Symbols;
+
+public sealed record RelationshipSiteEvidence(string Kind, IReadOnlyList<string>? CandidateTargets = null);
 
 /// <summary>Classifies the static evidence available for a source relationship.</summary>
 public static class RelationshipEvidence
@@ -16,10 +20,13 @@ public static class RelationshipEvidence
     public const string Unresolved = "unresolved";
 
     public static string Classify(SyntaxNode referenceNode, SemanticModel? semanticModel)
+        => Describe(referenceNode, semanticModel).Kind;
+
+    public static RelationshipSiteEvidence Describe(SyntaxNode referenceNode, SemanticModel? semanticModel)
     {
         if (semanticModel is null)
         {
-            return Unresolved;
+            return new(Unresolved);
         }
 
         var invocation = referenceNode.AncestorsAndSelf().OfType<InvocationExpressionSyntax>()
@@ -27,13 +34,7 @@ public static class RelationshipEvidence
         if (invocation is not null)
         {
             var info = semanticModel.GetSymbolInfo(invocation);
-            if (info.Symbol is null)
-            {
-                return info.CandidateSymbols.Length > 0 ? PossibleTarget : Unresolved;
-            }
-            return IsStaticallySelectedVirtualOrInterfaceMember(info.Symbol)
-                ? StaticVirtualOrInterfaceTarget
-                : Call;
+            return DescribeBinding(info, isInvocation: true);
         }
 
         var creation = referenceNode.AncestorsAndSelf().FirstOrDefault(node =>
@@ -45,7 +46,7 @@ public static class RelationshipEvidence
                 || creation is ObjectCreationExpressionSyntax objectCreation
                     && objectCreation.Type.Span.Contains(referenceNode.Span);
             if (!isConstructorReference) return ClassifyMemberOrUnresolved(referenceNode, semanticModel);
-            return info.Symbol is not null ? Call : info.CandidateSymbols.Length > 0 ? PossibleTarget : Unresolved;
+            return DescribeBinding(info, isInvocation: true);
         }
 
         return ClassifyMemberOrUnresolved(referenceNode, semanticModel);
@@ -63,22 +64,25 @@ public static class RelationshipEvidence
         };
     }
 
-    private static string ClassifyMemberOrUnresolved(SyntaxNode referenceNode, SemanticModel semanticModel)
+    private static RelationshipSiteEvidence ClassifyMemberOrUnresolved(SyntaxNode referenceNode, SemanticModel semanticModel)
     {
         var memberAccess = referenceNode.AncestorsAndSelf().OfType<MemberAccessExpressionSyntax>().FirstOrDefault();
         var symbolInfo = semanticModel.GetSymbolInfo(memberAccess ?? referenceNode);
-        return ClassifyMemberOrUnresolved(symbolInfo);
+        return DescribeBinding(symbolInfo, isInvocation: false);
     }
 
-    private static string ClassifyMemberOrUnresolved(SymbolInfo symbolInfo)
+    private static RelationshipSiteEvidence DescribeBinding(SymbolInfo symbolInfo, bool isInvocation)
     {
         if (symbolInfo.Symbol is null)
         {
-            return symbolInfo.CandidateSymbols.Length > 0 ? PossibleTarget : Unresolved;
+            return symbolInfo.CandidateSymbols.Length > 0
+                ? new(PossibleTarget, symbolInfo.CandidateSymbols.Select(symbol => symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat))
+                    .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray())
+                : new(Unresolved);
         }
-        return IsStaticallySelectedVirtualOrInterfaceMember(symbolInfo.Symbol)
-            ? StaticVirtualOrInterfaceTarget
-            : MemberAccess;
+        return new(isInvocation
+            ? IsStaticallySelectedVirtualOrInterfaceMember(symbolInfo.Symbol) ? StaticVirtualOrInterfaceTarget : Call
+            : MemberAccess);
     }
 
     private static bool IsCalleeReference(InvocationExpressionSyntax invocation, SyntaxNode referenceNode)

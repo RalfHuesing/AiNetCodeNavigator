@@ -16,6 +16,30 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class RelationshipToolsContractTests
 {
     [Fact]
+    public async Task ContextSdkContractPublishesUsesAndRejectsLegacyAndIneffectiveScope()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var tools = new RelationshipTools(runtime);
+        Func<string, string, string[], string?, bool?, bool?, int?, int?, int?, int, int?, string?, string?, string?, CancellationToken,
+            Task<ModelContextProtocol.Protocol.CallToolResult>> handler = tools.GetContext;
+        var sdkTool = McpServerTool.Create(handler, new McpServerToolCreateOptions { Name = "get_context" });
+        var properties = sdkTool.ProtocolTool.InputSchema.GetProperty("properties");
+        Assert.True(properties.TryGetProperty("usageScope", out _));
+        Assert.False(properties.TryGetProperty("callerScope", out _));
+        Assert.Contains("uses", properties.GetProperty("sections").GetProperty("description").GetString());
+        Assert.DoesNotContain("callers", properties.GetProperty("sections").GetProperty("description").GetString());
+        using var legacy = JsonDocument.Parse("""{"targetPath":"C:\\missing.slnx","symbolIdentifier":"Probe.Target","sections":["uses"],"callerScope":"all"}""");
+        var arguments = legacy.RootElement.EnumerateObject().ToDictionary(property => property.Name, property => property.Value.Clone(), StringComparer.Ordinal);
+        var invalidLegacyScope = await McpArgumentValidationFilter.ValidateArgumentsAsync(sdkTool, arguments);
+        Assert.NotNull(invalidLegacyScope);
+        Assert.Contains("$.callerScope", TextOf(invalidLegacyScope!), StringComparison.Ordinal);
+        Assert.Contains("$.sections", TextOf(await tools.GetContext(@"C:\missing.slnx", "Probe.Target", ["callers"])), StringComparison.Ordinal);
+        Assert.Contains("$.usageScope", TextOf(await tools.GetContext(@"C:\missing.slnx", "Probe.Target", ["body"], usageScope: "all")), StringComparison.Ordinal);
+        Assert.Contains("$.usageScope", TextOf(await tools.GetContext(@"C:\missing.dll", "Probe.Target", ["uses"], usageScope: "all")), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task FindReferences_SummarySdkContractRequiresSymbolAndRoutesSourceAndAssemblySymbols()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();

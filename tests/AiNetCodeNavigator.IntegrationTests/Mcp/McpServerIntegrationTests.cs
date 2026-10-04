@@ -52,7 +52,7 @@ public sealed class McpServerIntegrationTests
             AssertPropertyDescriptionContains(registered["inspect_assembly"], "includeDiagnostics", "false", "detailed");
             AssertPropertyDescriptionContains(registered["search_assembly"], "includeDiagnostics", "false", "detailed");
             AssertPropertyDescriptionContains(registered["find_assembly_extensions"], "includeDiagnostics", "false", "detailed");
-            AssertPropertyDescriptionContains(registered["get_context"], "sections", "body", "members", "callers", "tests");
+            AssertPropertyDescriptionContains(registered["get_context"], "sections", "body", "members", "uses", "tests");
             AssertPropertyDescriptionContains(registered["search_assembly"], "isRegex", "false", "literal", "true");
             var inspectProperties = registered["inspect_assembly"].GetProperty("inputSchema").GetProperty("properties");
             var searchProperties = registered["search_assembly"].GetProperty("inputSchema").GetProperty("properties");
@@ -769,7 +769,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             {
                 name = "get_context",
                 arguments = new { targetPath = solutionPath, symbolIdentifier = sourceHandle,
-                    sections = new[] { "body", "callers", "tests" }, callerScope = "production", maxResults = 5 },
+                    sections = new[] { "body", "uses", "tests" }, usageScope = "production", maxResults = 5 },
             }, timeout.Token);
             var featureContext = await ReadResponseAsync(process, 14, timeout.Token);
             Assert.False(featureContext.GetProperty("result").GetProperty("isError").GetBoolean());
@@ -1639,7 +1639,7 @@ if (Directory.Exists(fixtureRoot))
                 {
                     targetPath = aPath,
                     symbolIdentifier = methodHandoff,
-                    sections = new[] { "body", "callers" },
+                    sections = new[] { "body", "uses" },
                     includeReferences = true,
                     maxBodyLines = 20,
                 },
@@ -1647,12 +1647,12 @@ if (Directory.Exists(fixtureRoot))
             var closureContext = await ReadResponseAsync(process, 46, timeout.Token);
             var closureContextText = GetFirstText(closureContext);
             Assert.False(closureContext.GetProperty("result").GetProperty("isError").GetBoolean(), closureContextText);
-            Assert.Contains("callers", closureContextText, StringComparison.Ordinal);
+            Assert.Contains("uses", closureContextText, StringComparison.Ordinal);
             Assert.Contains("ClosureB.Run", closureContextText, StringComparison.Ordinal);
             Assert.Contains("ClosureOnlyC.LocalRun", closureContextText, StringComparison.Ordinal);
             var closureContextPayload = ParsePayload(closureContextText);
             var closureCallers = closureContextPayload.GetProperty("sections").EnumerateArray()
-                .Single(section => section.GetProperty("name").GetString() == "callers").GetProperty("items");
+                .Single(section => section.GetProperty("name").GetString() == "uses").GetProperty("items");
             var contextBCaller = closureCallers.EnumerateArray().Single(item =>
                 item.GetProperty("enclosingSymbolName").GetString() == "ClosureB.Run");
             Assert.Equal(Path.GetFullPath(bPath), contextBCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
@@ -1782,7 +1782,7 @@ if (Directory.Exists(fixtureRoot))
                 {
                     targetPath = aPath,
                     symbolIdentifier = methodHandoff,
-                    sections = new[] { "callers" },
+                    sections = new[] { "uses" },
                     includeReferences = true,
                 },
             }, timeout.Token);
@@ -2016,13 +2016,13 @@ if (Directory.Exists(fixtureRoot))
             await SendRequestAsync(process, 111, "tools/call", new
             {
                 name = "get_context",
-                arguments = new { targetPath = aPath, symbolIdentifier = "M:ClosureFixture.ClosureOnlyC.Read", includeReferences = true, sections = new[] { "body", "callers" } },
+                arguments = new { targetPath = aPath, symbolIdentifier = "M:ClosureFixture.ClosureOnlyC.Read", includeReferences = true, sections = new[] { "body", "uses" } },
             }, timeout.Token);
             var rawContext = await ReadResponseAsync(process, 111, timeout.Token);
             var rawContextText = GetFirstText(rawContext);
             Assert.False(rawContext.GetProperty("result").GetProperty("isError").GetBoolean(), rawContextText);
             Assert.Contains("body", rawContextText, StringComparison.Ordinal);
-            Assert.Contains("callers", rawContextText, StringComparison.Ordinal);
+            Assert.Contains("uses", rawContextText, StringComparison.Ordinal);
             Assert.Contains("ClosureB.Run", rawContextText, StringComparison.Ordinal);
             Assert.Contains(Path.GetFullPath(bPath), rawContextText, StringComparison.OrdinalIgnoreCase);
 
@@ -2291,7 +2291,7 @@ if (Directory.Exists(fixtureRoot))
             var text = GetFirstText(callTree);
             Assert.False(callTree.GetProperty("result").GetProperty("isError").GetBoolean(), text);
             Assert.Contains("completeness=truncated", text, StringComparison.Ordinal);
-            Assert.Contains("more calls", text, StringComparison.Ordinal);
+            Assert.Contains("more relationship edges", text, StringComparison.Ordinal);
             Assert.Contains("Some reachable owner symbols could not be mapped or expanded within the bounded reference closure", text, StringComparison.Ordinal);
             var visibleHandoffCount = text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Count(line => line.StartsWith("- [n", StringComparison.Ordinal) && line.Contains("`src:", StringComparison.Ordinal));
@@ -2324,7 +2324,7 @@ if (Directory.Exists(fixtureRoot))
             var edgeCappedText = GetFirstText(edgeCappedTree);
             Assert.False(edgeCappedTree.GetProperty("result").GetProperty("isError").GetBoolean(), edgeCappedText);
             Assert.Contains("completeness=truncated", edgeCappedText, StringComparison.Ordinal);
-            Assert.Contains("more calls", edgeCappedText, StringComparison.Ordinal);
+            Assert.Contains("more relationship edges", edgeCappedText, StringComparison.Ordinal);
             var edgeCappedHandoffs = edgeCappedText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Count(line => line.StartsWith("- [n", StringComparison.Ordinal) && line.Contains("`src:", StringComparison.Ordinal));
             Assert.Equal(132, edgeCappedHandoffs);
@@ -2916,7 +2916,7 @@ if (Directory.Exists(fixtureRoot))
                 {
                     targetPath = assemblyPath,
                     symbolIdentifier = betaHandle,
-                    sections = new[] { "body", "members", "callers" },
+                    sections = new[] { "body", "members", "uses" },
                     maxBodyLines = 1,
                 },
             }, timeout.Token);
@@ -2924,11 +2924,11 @@ if (Directory.Exists(fixtureRoot))
             var composedAssemblyContextText = GetFirstText(composedAssemblyContext);
             Assert.False(composedAssemblyContext.GetProperty("result").GetProperty("isError").GetBoolean(), composedAssemblyContextText);
             Assert.Contains("members", composedAssemblyContextText, StringComparison.Ordinal);
-            Assert.Contains("callers", composedAssemblyContextText, StringComparison.Ordinal);
+            Assert.Contains("uses", composedAssemblyContextText, StringComparison.Ordinal);
             Assert.Contains("BetaInvoker.Invoke", composedAssemblyContextText, StringComparison.Ordinal);
             var composedContextPayload = ParsePayload(composedAssemblyContextText);
             var betaCaller = composedContextPayload.GetProperty("sections").EnumerateArray()
-                .Single(section => section.GetProperty("name").GetString() == "callers")
+                .Single(section => section.GetProperty("name").GetString() == "uses")
                 .GetProperty("items").EnumerateArray().Single(item => item.GetProperty("enclosingSymbolName").GetString() == "BetaInvoker.Invoke");
             Assert.Equal(Path.GetFullPath(assemblyPath), betaCaller.GetProperty("ownerTargetPath").GetString(), StringComparer.OrdinalIgnoreCase);
             var betaCallerHandle = betaCaller.GetProperty("enclosingSymbolHandoffId").GetString();

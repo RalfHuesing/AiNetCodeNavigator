@@ -20,7 +20,8 @@ public sealed record ReferenceLocationEntry(
     [property: JsonIgnore] string ReachedFromSymbolId = "",
     string EvidenceKind = RelationshipEvidence.Unresolved,
     [property: JsonIgnore] string? ProjectPath = null,
-    [property: JsonIgnore] string? ProjectIdentity = null);
+    [property: JsonIgnore] string? ProjectIdentity = null,
+    IReadOnlyList<string>? CandidateTargets = null);
 
 public sealed record FindReferencesResult(
     string TargetSymbolName,

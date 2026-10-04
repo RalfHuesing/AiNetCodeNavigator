@@ -1,6 +1,6 @@
 # Static Test Candidates
 
-`TestRecommendationBuilder` produces static test candidates from one source `Solution` and a resolved source symbol. It reuses that snapshot for semantic discovery and source references. In `get_context`, the `tests` section searches the full source solution independently of the optional caller scope, which applies only to the `callers` section.
+`TestRecommendationBuilder` produces static test candidates from one source `Solution` and a resolved source symbol. It reuses that snapshot for semantic discovery and source references. In `get_context`, the `tests` section searches the full source solution independently of the optional usage scope, which applies only to the `uses` section.
 
 Candidates come from three bounded sources: direct references from recognized test methods to the selected declaration, direct references to discovered interface or abstract implementations, and fixture names derived from the selected type or those implementation types. A reference is accepted only when Roslyn reports a non-candidate location, its `ReferencedSymbol.Definition` matches the selected symbol or a discovered implementation, and the syntax at that location binds to that exact symbol. Constructor references are related to a type only when the selected/discovered symbol is that type; a constructor selected as the target remains a constructor match. Ambiguous candidates and error-typed receivers are excluded. The scanner does not follow helper calls. Test methods are recognized from supported xUnit, NUnit, and MSTest attributes.
 

@@ -671,14 +671,14 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "get_context", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [System.ComponentModel.Description("Read selected body, direct members, direct callers, or static test candidates for one source or assembly symbol.")]
+    [System.ComponentModel.Description("Read selected body, direct members, direct uses, or static test candidates for one source or assembly symbol.")]
     public Task<CallToolResult> GetContext(
         [Required, System.ComponentModel.Description("Absolute path to an existing source .sln/.slnx solution or managed .dll/.exe assembly.")] string targetPath,
         [Required, System.ComponentModel.Description("Type or member identifier, including a stable src:/asm: reference, for the selected context target.")] string symbolIdentifier,
-        [Required, System.ComponentModel.Description("Non-empty, duplicate-free selection from body, members, callers, and tests.")] string[] sections,
-        [System.ComponentModel.Description("Source caller scope: all (default), production, or tests. Applies only to callers.")] string? callerScope = null,
+        [Required, System.ComponentModel.Description("Non-empty, duplicate-free selection from body, members, uses, and tests.")] string[] sections,
+        [System.ComponentModel.Description("Source usage scope: all (default), production, or tests. Applies only to uses.")] string? usageScope = null,
         [System.ComponentModel.Description("Include generated source declarations; defaults to false.")] bool? includeGenerated = null,
-        [System.ComponentModel.Description("Include referenced assembly owners in the callers section; defaults to false.")] bool? includeReferences = null,
+        [System.ComponentModel.Description("Include referenced assembly owners in the uses section; defaults to false.")] bool? includeReferences = null,
         [Range(1, 100), System.ComponentModel.Description("Page size for each selected list section (1–100; default 10). Body window size is controlled separately.")] int? maxResults = null,
         [Range(1, 1000), System.ComponentModel.Description("Maximum declaration lines in a body window; defaults to 80.")] int? maxBodyLines = null,
         [Range(1, 1000000), System.ComponentModel.Description("One-based body window start line; omit for the first window.")] int? startLine = null,
@@ -689,19 +689,19 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         [System.ComponentModel.Description("Opaque cursor for exactly one selected section. Read all outer response pages before continuing it.")] string? resultCursor = null,
         CancellationToken cancellationToken = default)
     {
-        var validation = ValidateContextArguments(targetPath, symbolIdentifier, sections, callerScope, includeGenerated,
+        var validation = ValidateContextArguments(targetPath, symbolIdentifier, sections, usageScope, includeGenerated,
             includeReferences, maxResults, maxBodyLines, startLine, resultCursor, maxResponseBytes, maxResponseTokens);
         if (validation is not null) return Task.FromResult(validation);
 
         var selected = sections.Select(value => value.Trim().ToLowerInvariant()).ToArray();
-        var scope = TryScope(callerScope ?? "all", out var parsedScope) ? parsedScope : SymbolScopeType.All;
+        var scope = TryScope(usageScope ?? "all", out var parsedScope) ? parsedScope : SymbolScopeType.All;
         var generated = includeGenerated ?? false;
         var references = includeReferences ?? false;
         var effectivePageSize = maxResults ?? 10;
         var bodyLines = maxBodyLines ?? 80;
         var bodyStart = startLine ?? 1;
-        var args = new { symbolIdentifier, sections, callerScope, includeGenerated, includeReferences, maxResults, maxBodyLines, startLine };
-        var requestBinding = System.Text.Json.JsonSerializer.Serialize(new { callerScope, includeGenerated, includeReferences, maxResults, maxBodyLines, startLine });
+        var args = new { symbolIdentifier, sections, usageScope, includeGenerated, includeReferences, maxResults, maxBodyLines, startLine };
+        var requestBinding = System.Text.Json.JsonSerializer.Serialize(new { usageScope, includeGenerated, includeReferences, maxResults, maxBodyLines, startLine });
 
         return NavigationToolSupport.RouteAsync(runtime, "get_context", targetPath, args, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens,
@@ -727,7 +727,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
     }
 
     private CallToolResult? ValidateContextArguments(string? targetPath, string? symbolIdentifier, string[]? sections,
-        string? callerScope, bool? includeGenerated, bool? includeReferences, int? maxResults, int? maxBodyLines,
+        string? usageScope, bool? includeGenerated, bool? includeReferences, int? maxResults, int? maxBodyLines,
         int? startLine, string? resultCursor, int maxResponseBytes, int? maxResponseTokens)
     {
         if (string.IsNullOrWhiteSpace(symbolIdentifier))
@@ -735,20 +735,20 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 "Provide a declaration name, documentation ID, source position, or stable src:/asm: reference.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         if (sections is null || sections.Length == 0 || sections.Any(string.IsNullOrWhiteSpace))
             return McpToolResults.InvalidArgument("sections must contain at least one supported section.", "$.sections",
-                "Choose one or more of body, members, callers, and tests.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                "Choose one or more of body, members, uses, and tests.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         var normalized = sections.Select(value => value.Trim().ToLowerInvariant()).ToArray();
         if (normalized.Distinct(StringComparer.Ordinal).Count() != normalized.Length)
             return McpToolResults.InvalidArgument("sections cannot contain duplicates.", "$.sections",
                 "List each requested section once.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-        if (normalized.Any(value => value is not ("body" or "members" or "callers" or "tests"))
+        if (normalized.Any(value => value is not ("body" or "members" or "uses" or "tests"))
             || sections.Where((value, index) => !string.Equals(value, normalized[index], StringComparison.Ordinal)).Any())
             return McpToolResults.InvalidArgument("sections contains an unsupported section.", "$.sections",
-                "Choose from body, members, callers, and tests.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                "Choose from body, members, uses, and tests.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         if (maxResults is < 1 or > 100) return McpToolResults.InvalidArgument("maxResults must be from 1 to 100.", "$.maxResults",
             "Use a positive list page size no greater than 100.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-        if (maxResults is not null && !normalized.Intersect(["members", "callers", "tests"], StringComparer.Ordinal).Any())
+        if (maxResults is not null && !normalized.Intersect(["members", "uses", "tests"], StringComparer.Ordinal).Any())
             return McpToolResults.InvalidArgument("maxResults applies only to list sections.", "$.maxResults",
-                "Select members, callers, or tests, or omit maxResults.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+                "Select members, uses, or tests, or omit maxResults.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         if (maxBodyLines is < 1 or > 1000) return McpToolResults.InvalidArgument("maxBodyLines must be from 1 to 1000.", "$.maxBodyLines",
             "Use a positive body window size.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         if (startLine is < 1) return McpToolResults.InvalidArgument("startLine must be positive.", "$.startLine",
@@ -757,25 +757,25 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
             ? AnalysisTargetType.Assembly : AnalysisTargetType.Project;
         if (type == AnalysisTargetType.Project)
         {
-            if (includeReferences is not null) return McpToolResults.InvalidArgument("includeReferences applies only to assembly callers.", "$.includeReferences",
+            if (includeReferences is not null) return McpToolResults.InvalidArgument("includeReferences applies only to assembly uses.", "$.includeReferences",
                 "Omit this argument for source targets.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-            if (callerScope is not null && !normalized.Contains("callers"))
-                return McpToolResults.InvalidArgument("callerScope requires the callers section.", "$.callerScope",
-                    "Select callers or omit callerScope.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-            if (callerScope is not null && !TryScope(callerScope, out _))
-                return McpToolResults.InvalidArgument("callerScope is unsupported.", "$.callerScope", "Use all, production, or tests.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+            if (usageScope is not null && !normalized.Contains("uses"))
+                return McpToolResults.InvalidArgument("usageScope requires the uses section.", "$.usageScope",
+                    "Select uses or omit usageScope.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+            if (usageScope is not null && !TryScope(usageScope, out _))
+                return McpToolResults.InvalidArgument("usageScope is unsupported.", "$.usageScope", "Use all, production, or tests.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         }
         else
         {
             if (normalized.Contains("tests")) return McpToolResults.InvalidArgument("The tests section supports source solutions only.", "$.sections",
                 "Use a source solution target for static test candidates.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-            if (callerScope is not null) return McpToolResults.InvalidArgument("callerScope applies only to source callers.", "$.callerScope",
+            if (usageScope is not null) return McpToolResults.InvalidArgument("usageScope applies only to source uses.", "$.usageScope",
                 "Omit this argument for assembly targets.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
             if (includeGenerated is not null) return McpToolResults.InvalidArgument("includeGenerated applies only to source targets.", "$.includeGenerated",
                 "Omit this argument for assembly targets.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
-            if (includeReferences is not null && !normalized.Contains("callers"))
-                return McpToolResults.InvalidArgument("includeReferences requires the callers section.", "$.includeReferences",
-                    "Select callers or omit includeReferences.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+            if (includeReferences is not null && !normalized.Contains("uses"))
+                return McpToolResults.InvalidArgument("includeReferences requires the uses section.", "$.includeReferences",
+                    "Select uses or omit includeReferences.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         }
         if (!normalized.Contains("body") && (maxBodyLines is not null || startLine is not null))
             return McpToolResults.InvalidArgument("Body window arguments require the body section.", maxBodyLines is not null ? "$.maxBodyLines" : "$.startLine",
@@ -788,7 +788,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     private async Task<CallToolResult> BuildSourceContextAsync(AnalysisTarget target, Solution solution,
         NavigationToolSupport.SourceAnalysisContext source, string identifier, string[] selected, string[] active, string requestBinding,
-        SymbolScopeType callerScope, bool includeGenerated, int pageSize, int bodyLines, int startLine,
+        SymbolScopeType usageScope, bool includeGenerated, int pageSize, int bodyLines, int startLine,
         string? internalCursor, string? continuationSection, int bytes, int? tokens, CancellationToken ct)
     {
         var resolved = await SourceSymbolResolver.ResolveAsync(solution, identifier, source.Identity, source.IdentityRequest, ct).ConfigureAwait(false);
@@ -877,23 +877,23 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     }).OrderBy(member => member.FilePath, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(member => member.Line).ThenBy(member => member.SpanStart).ToArray();
                 var page = PageContextList(all, target.CanonicalPath, source.Identity.ContentHash, selected, section,
-                    pageSize, internalCursor, identifier, callerScope, null, includeGenerated, null, null, requestBinding, bytes, tokens);
+                    pageSize, internalCursor, identifier, usageScope, null, includeGenerated, null, null, requestBinding, bytes, tokens);
                 if (page.Error is not null) return page.Error;
                 sections.Add(new ContextSection(section, page.NextCursor is null ? "complete" : "partial", "direct declared members", [], all.Length, page.Items!, page.NextCursor,
                     null, null, page.NextCursor is null ? null : "Continue this section with its resultCursor.",
                     AnalysisComplete: true, ResultContinuationAvailable: page.NextCursor is not null));
             }
-                else if (section == "callers")
+                else if (section == "uses")
                 {
                 var refs = await FindReferencesResolver.FindReferencesAsync(symbol, solution, int.MaxValue, 1, ct,
-                    scope: callerScope, includeGenerated: includeGenerated,
+                    scope: usageScope, includeGenerated: includeGenerated,
                     handoffFormatter: symbolValue => source.FormatHandoff(symbolValue, solution)).ConfigureAwait(false);
                 var page = PageContextList(refs.References, target.CanonicalPath, source.Identity.ContentHash, selected, section,
-                    pageSize, internalCursor, identifier, callerScope, null, includeGenerated, null, null, requestBinding, bytes, tokens);
+                    pageSize, internalCursor, identifier, usageScope, null, includeGenerated, null, null, requestBinding, bytes, tokens);
                 if (page.Error is not null) return page.Error;
-                if (!refs.IsComplete) omissions.Add("callerAnalysisLimit");
+                if (!refs.IsComplete) omissions.Add("usageAnalysisLimit");
                 sections.Add(new ContextSection(section, !refs.IsComplete ? "partial" : page.NextCursor is null ? "complete" : "partial", "direct incoming source references",
-                    refs.IsComplete ? [] : ["callerAnalysisLimit"], refs.TotalCount, page.Items!, page.NextCursor, null, null,
+                    refs.IsComplete ? [] : ["usageAnalysisLimit"], refs.TotalCount, page.Items!, page.NextCursor, null, null,
                     page.NextCursor is null ? null : "Continue this section with its resultCursor.",
                     AnalysisComplete: refs.IsComplete, ResultContinuationAvailable: page.NextCursor is not null));
             }
@@ -903,7 +903,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     includeGenerated, SymbolScopeType.All).ConfigureAwait(false);
                 var fixtures = tests.TestFixtures;
                 var page = PageContextList(fixtures, target.CanonicalPath, source.Identity.ContentHash, selected, section,
-                    pageSize, internalCursor, identifier, callerScope, null, includeGenerated, null, null, requestBinding, bytes, tokens);
+                    pageSize, internalCursor, identifier, usageScope, null, includeGenerated, null, null, requestBinding, bytes, tokens);
                 if (page.Error is not null) return page.Error;
                 var limited = tests.ImplementationExpansionLimitReached || tests.CandidateExpansionLimitReached || tests.ReferenceInspectionLimitReached;
                 var reasons = new List<string>();
@@ -946,7 +946,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
             response.IsError = true;
             return response;
         }
-        return source.WithMetadata(response, $"get_context(symbol={identifier.Trim()}, sections={string.Join('|', selected)}, callerScope={callerScope}, includeGenerated={includeGenerated}, maxResults={pageSize}, bodyStart={startLine}, bodyLines={bodyLines})",
+        return source.WithMetadata(response, $"get_context(symbol={identifier.Trim()}, sections={string.Join('|', selected)}, usageScope={usageScope}, includeGenerated={includeGenerated}, maxResults={pageSize}, bodyStart={startLine}, bodyLines={bodyLines})",
             omissions.ToArray(), sections.Any(item => item is ContextSection { ResultCursor: not null }));
     }
 
@@ -961,7 +961,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
         string[] active, string requestBinding, bool includeGenerated, bool includeReferences, int pageSize, int bodyLines, int startLine,
         string? internalCursor, string? continuationSection, int bytes, int? tokens, CancellationToken ct)
     {
-        if (includeReferences && selected.Contains("callers", StringComparer.Ordinal))
+        if (includeReferences && selected.Contains("uses", StringComparer.Ordinal))
             return await BuildAssemblyContextWithReferencesAsync(target, identifier, selected, active, requestBinding, pageSize,
                 bodyLines, startLine, internalCursor, continuationSection, bytes, tokens, ct).ConfigureAwait(false);
         var normalizedIdentifier = InputNormalizer.NormalizeSymbolIdentifier(identifier);
@@ -1039,9 +1039,9 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                 var incompleteClosure = includeReferences && scope.Context.References.Any(reference => !reference.Resolved);
                 var incompleteOwner = scope.Context.Status != AssemblySessionStatus.Complete;
                 var reasons = refs.IsComplete && !incompleteClosure && !incompleteOwner ? Array.Empty<string>()
-                    : new[] { incompleteClosure ? "referenceClosureIncomplete" : incompleteOwner ? "assemblyOwnerIncomplete" : "callerAnalysisLimit" };
+                    : new[] { incompleteClosure ? "referenceClosureIncomplete" : incompleteOwner ? "assemblyOwnerIncomplete" : "usageAnalysisLimit" };
                 sections.Add(new ContextSection(section, reasons.Length > 0 || page.NextCursor is not null ? "partial" : "complete",
-                    includeReferences ? "direct callers in selected assembly reference scope" : "direct callers in selected assembly owner",
+                    includeReferences ? "direct uses in selected assembly reference scope" : "direct uses in selected assembly owner",
                     reasons, refs.TotalCount, page.Items!, page.NextCursor, null, null,
                     page.NextCursor is null ? null : "Continue this section with its resultCursor.",
                     AnalysisComplete: refs.IsComplete && !incompleteClosure && !incompleteOwner,
@@ -1137,7 +1137,7 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
                     page.NextCursor is null ? null : "Continue this section with its resultCursor.",
                     AnalysisComplete: true, ResultContinuationAvailable: page.NextCursor is not null));
             }
-            else if (section == "callers")
+            else if (section == "uses")
             {
                 var locations = new List<ReferenceLocationEntry>();
                 var total = 0;
@@ -1200,11 +1200,11 @@ public sealed class RelationshipTools(NavigatorHostRuntime runtime)
 
     private (object[]? Items, string? NextCursor, CallToolResult? Error) PageContextList<T>(IReadOnlyList<T> items,
         string target, string snapshot, string[] selected, string section, int pageSize, string? internalCursor,
-        string identifier, SymbolScopeType callerScope, bool? includeReferences, bool includeGenerated,
+        string identifier, SymbolScopeType usageScope, bool? includeReferences, bool includeGenerated,
         int? bodyLines, int? startLine, string requestBinding, int bytes, int? tokens)
     {
         var binding = BoundResultCursor.CreateBinding(target, snapshot, "get_context." + section,
-            identifier.Trim(), string.Join("\0", selected), callerScope.ToString(), includeReferences?.ToString(),
+            identifier.Trim(), string.Join("\0", selected), usageScope.ToString(), includeReferences?.ToString(),
             includeGenerated.ToString(), pageSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
             bodyLines?.ToString(System.Globalization.CultureInfo.InvariantCulture), startLine?.ToString(System.Globalization.CultureInfo.InvariantCulture), requestBinding);
         var cursor = UnwrapContextCursor(internalCursor, section, out var cursorError);

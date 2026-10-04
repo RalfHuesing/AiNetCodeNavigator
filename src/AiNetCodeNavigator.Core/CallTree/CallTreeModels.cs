@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Serialization;
 using AiNetCodeNavigator.Core.Assemblies;
 using Microsoft.CodeAnalysis;
@@ -19,7 +20,8 @@ public sealed record CallSiteInfo(
     string FilePath,
     int Line,
     int Column = 1,
-    string EvidenceKind = AiNetCodeNavigator.Core.Symbols.RelationshipEvidence.Call);
+    string EvidenceKind = AiNetCodeNavigator.Core.Symbols.RelationshipEvidence.Call,
+    IReadOnlyList<string>? CandidateTargets = null);
 
 public sealed record UnresolvedCallSiteInfo(
     string CallerNodeId,
@@ -58,7 +60,13 @@ public sealed record CallGraphPayload(
     bool Truncated = false,
     int HiddenEdgeCount = 0,
     int PendingNodeCount = 0,
-    IReadOnlyList<UnresolvedCallSiteInfo>? UnresolvedCallSites = null);
+    IReadOnlyList<UnresolvedCallSiteInfo>? UnresolvedCallSites = null)
+{
+    public int NodeCount => Nodes.Count;
+    public int EdgeCount => Edges.Count;
+    public int EdgeSiteCount => Edges.Sum(edge => edge.CallSites.Count);
+    public int UnresolvedSiteCount => UnresolvedCallSites?.Count ?? 0;
+}
 
 public sealed record CallTreeBuildRequest(
     Solution Solution,
