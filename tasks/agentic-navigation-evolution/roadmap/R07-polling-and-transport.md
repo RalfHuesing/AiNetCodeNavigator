@@ -27,8 +27,8 @@ The orchestrator records this point's implementation evidence here under the [sh
 
 | Field | Recorded evidence |
 | --- | --- |
-| Working state | Complete; focused gates and independent full/delta audit closed; F05 deferred evidence |
-| Implementation commit(s) | `a3efc4cba3b5af0c33f3bc6d24941d207f3f44a6` |
+| Working state | Complete again after R08-D02 fixture deadline correction, actual targeted PASS and independent delta audit |
+| Implementation commit(s) | `a3efc4cba3b5af0c33f3bc6d24941d207f3f44a6`; fixture correction `a750be14222dc8c76521c109b0943de45f06fc40` |
 | Executed verification | Official builds, 114 affected Fast cases via passing selection/correction, 15 affected Integration cases via passing selection/correction, 2 selected Extended cases; exact commands below |
 | Measurements / artifacts | [Tracked operation/SDK evidence](../evidence/R07.md), raw R07 gate/component directories below; F05 connected-client/expanded EOF deferred |
 | Blocker / next action | No confirmed defect; begin R08 final routine gate and handoff; F01–F05 remain explicit deferred evidence |
@@ -95,3 +95,11 @@ Root reviews each item: R07.1 implemented behavior with independently executable
 Root source/diff review confirms the existing refresh, cache subscription and lifetime owners remain authoritative; source initial loading now uses the existing Task boundary. Required immutable request progress is centralized in one narrow host adapter with typed Core events and no MCP/Core dependency inversion. Required exact-identity dedup state, monotonic timestamp/phase state and nullable fixed total cannot be removed without losing specified behavior. No general progress, scheduler, generator or provenance layer was added.
 
 RelationshipTools remains approximately 1500 nonempty lines, principally route resolution/recovery and final formatting. Cohesive retained facts, frontier traversal and operation progress are now separately owned. Existing large handler contract classes still combine scenario fixtures. New outgoing/cache/progress contract classes are independently filterable. Blanket route/registration rewrites, arbitrary line-count splitting, global fixture/parser/test-framework changes and E2E rewrites remain outside this task; see [findings structural scope](../findings.md#structural-scope).
+
+### R08-D02 — reopened SDK fixture lower-bound proof
+
+The final R08 routine selection exposes a concrete fixture wait defect after R07's narrow PASS: recorded response 3 at 2133 ms and request 4 at 3132 ms yield only 999 ms, despite Task.Delay(1000). Existing >=1000 assertion correctly fails at LongRunningTransportComponentTests:71. Actual server waits are 1003/1017 ms, same token/query, phase analyzing→formatting and one execution; no server/framing defect is established. Raw artifact `temp/agentic-navigation-evolution/R07/20261004T111603924Z-3d2ef024aa454b24b25a4e6f569ed5a8/`, completed=false, is never PASS.
+
+Root reopens R07.2 and the index point; R08 completion depends on closure. Assigned sole-file Sol/medium worker diagnoses an absolute monotonic receive-plus-retry deadline, awaiting remaining milliseconds again after an early timer wake. Both poll and final retrieval must use that deadline; exact >=1000 assertions, one-second server wait and five-second frame bound remain unchanged. Edits wait until the ongoing complete gate freezes. No timeout increase, acceptance weakening, category change or blanket parallelism change is authorized.
+
+R08-D02 closed: fixture-only absolute monotonic wait correction is committed in `a750be14222dc8c76521c109b0943de45f06fc40`. Official build PASS0/zero warnings/errors 5.51 s and the five-case affected Integration selection (exact command/results in [R08](R08-final-verification.md#executed-cause-proof-and-affected-correction-gates)) PASS0/zero skipped 1.1780 min, including this bounded SDK fixture. Raw completed=true/executionCount=1 run `temp/agentic-navigation-evolution/R07/20261004T112543495Z-115ed35b81cb4c3e92294a745e860803/` measures receive→poll waits 1013/1013/1000 ms and one-second server polls 1002/1016 ms. Independent read-only Sol/medium delta verifies both deadline paths, unchanged cancellation/time bounds/token/query/replay/strict wait assertions and closes D02. Root explicitly rechecks R07.2 and index after these actual results; no functional R07 state changed. F05 remains deferred, never PASS. R08 continues its corrected final routine gate.
