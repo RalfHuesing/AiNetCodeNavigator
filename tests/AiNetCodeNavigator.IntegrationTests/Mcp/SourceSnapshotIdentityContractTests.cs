@@ -22,6 +22,34 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class SourceSnapshotIdentityContractTests
 {
     [Fact]
+    public async Task SourceContextPairsCurrentSolutionWithCapturedMetadataEvidence()
+    {
+        using var fixture = TestTempDirectory.Create("source-context-metadata-evidence-");
+        var path = AssemblyTestHelper.EmitAssembly(fixture, "ContextContracts", "namespace External; public interface IContract { void Run(); }");
+        var targetPath = fixture.CreateFile("Context.slnx", "<Solution />");
+        await using var host = InMemorySourceTestHost.Create(targetPath,
+            [new AiNetCodeNavigator.TestKit.Builders.ProjectSpec("App", [("App.cs", "public class App { }")],
+                AdditionalReferences: [Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(path)])]);
+        var target = new AiNetCodeNavigator.Core.Workspace.AnalysisTarget(
+            AiNetCodeNavigator.Core.Workspace.AnalysisTargetType.Project, targetPath, new(targetPath));
+        var called = false;
+        var response = await NavigationToolSupport.WithSourceSolutionAsync(host.Runtime, target,
+            async (solution, context, ct) =>
+            {
+                called = true;
+                Assert.Same(solution, context.ValidatedSnapshot.Solution);
+                var resolved = await AiNetCodeNavigator.Core.Symbols.SourceMetadataContractResolver.ResolveAsync(
+                    context.ValidatedSnapshot, "M:External.IContract.Run", path, ct);
+                Assert.True(resolved.IsSuccess, resolved.Error?.Message);
+                Assert.Equal(path, resolved.Selected!.OwnerPath);
+                Assert.Single(resolved.Selected.Occurrences);
+                return NavigationToolSupport.Success(new { checkedOwner = path });
+            }, 16384, 4096, default);
+        Assert.True(called);
+        AssertSuccessWithinBudget(response, 16384, 4096);
+    }
+
+    [Fact]
     public async Task ReplacedMetadataImageWithPreservedTimestampRefreshesBindingAndKeepsSourceReferenceUsable()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();

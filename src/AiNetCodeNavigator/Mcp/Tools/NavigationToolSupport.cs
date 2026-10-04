@@ -289,14 +289,16 @@ internal static class NavigationToolSupport
         runtime.ProjectRegistry.RecordValidatedSourceSnapshot(lease, identityResult.Value!.SnapshotTicket);
         NavigationOperationProgress.Current?.Advance(NavigationAnalysisPhase.Analyzing);
         return await operation(sourceSolution,
-            new SourceAnalysisContext(identityResult.Value!, snapshot.ConfiguredTargetFrameworks), cancellationToken).ConfigureAwait(false);
+            new SourceAnalysisContext(identityResult.Value!, new SourceIdentityValidatedSnapshot(sourceSolution, identityInputs),
+                snapshot.ConfiguredTargetFrameworks), cancellationToken).ConfigureAwait(false);
     }
 
-    internal sealed class SourceAnalysisContext(SourceIdentityRequest identityRequest,
+    internal sealed class SourceAnalysisContext(SourceIdentityRequest identityRequest, SourceIdentityValidatedSnapshot validatedSnapshot,
         IReadOnlyDictionary<string, AiNetCodeNavigator.Core.Workspace.ConfiguredTargetFrameworks>? configuredTargetFrameworks = null)
     {
         internal SourceIdentityRequest IdentityRequest { get; } = identityRequest;
         internal AnalysisSymbolIdentity Identity => IdentityRequest.Identity;
+        internal SourceIdentityValidatedSnapshot ValidatedSnapshot { get; } = validatedSnapshot;
         internal IReadOnlyDictionary<string, AiNetCodeNavigator.Core.Workspace.ConfiguredTargetFrameworks>? ConfiguredTargetFrameworks { get; } = configuredTargetFrameworks;
 
         internal CallToolResult WithMetadata(CallToolResult response, string analyzedScope, string[]? omissionReasons = null,
