@@ -4,36 +4,44 @@ Use this small runner to inspect actual local MCP tool output while implementing
 
 ```powershell
 pwsh -File ./scripts/explore.ps1 -List
-pwsh -File ./scripts/explore.ps1 -Scenario ExploreFindSymbol
-pwsh -File ./scripts/explore.ps1 -Scenario ExploreSymbolBody
-pwsh -File ./scripts/explore.ps1 -Scenario ExploreConsolidationBaseline
+pwsh -File ./scripts/explore.ps1 -Scenario ExploreAllTools
 ```
 
-The script builds and runs the standalone `tools/AiNetCodeNavigator.Exploration` executable. `ExploreFindSymbol` discovers the production `NavigatorHostRuntime` class in this repository. `ExploreSymbolBody` discovers that same class, selects its exact returned declaration identity, then passes its unchanged `handoffId` to `get_symbol_body`. If discovery has no unique usable match, it records a note and skips the follow-up; an empty successful result is not a technical failure.
+The script builds and runs the standalone `tools/AiNetCodeNavigator.Exploration` executable. `ExploreAllTools` is the permanent baseline scenario exercising all 12 MCP navigation tools (`find_symbol`, `get_symbol_body`, `browse_target`, `get_file_skeleton`, `get_context`, `get_call_tree`, `get_type_relations`, `find_references`, `dependency_graph`, `resolve_type_origin`, `inspect_assembly`, `search_assembly`).
 
-## Adding a scenario
+## Adding a Scenario
 
-`ExploreConsolidationBaseline` discovers `StableSymbolReferenceCodec`, follows its source reference through two body windows, reads depth-one outgoing production dependencies, and reads two five-item direct-use context pages. It inspects the exact public type in the runner's own Core assembly and follows the returned owner/reference through two decompiled body windows. Body windows and context pages are deliberately sampled; inspect reported continuations before claiming complete content. The dependency and assembly requests provide compact fixed samples for comparing delivered output after contract changes.
+Scenarios reside in the `AiNetCodeNavigator.Exploration.Scenarios` namespace under `tools/AiNetCodeNavigator.Exploration/Scenarios/`. Multiple scenario `.cs` files are supported.
 
-Add a method to `tools/AiNetCodeNavigator.Exploration/Scenarios.cs` and register it in `Scenarios.All`:
+Create a new `.cs` file with a descriptive name (e.g., `Scenarios/ExploreMyFeature.cs`) and implement `IExplorationScenario`:
 
 ```csharp
-private static async Task ExploreMyTool(ExplorationContext context)
+namespace AiNetCodeNavigator.Exploration.Scenarios;
+
+internal sealed class ExploreMyTool : IExplorationScenario
 {
-    await context.CallAsync("find_symbol", new
+    public async Task RunAsync(ExplorationContext context)
     {
-        targetPath = context.RepositorySolution,
-        pattern = "MyDeclaration",
-        maxResults = 10,
-    }).ConfigureAwait(false);
+        await context.CallAsync("find_symbol", new
+        {
+            targetPath = context.RepositorySolution,
+            pattern = "MyDeclaration",
+            maxResults = 10,
+        }).ConfigureAwait(false);
+    }
 }
 ```
 
+`ScenarioRegistry` discovers all `IExplorationScenario` implementations automatically via reflection—no central registration edits or project file modifications required.
+
+> [!IMPORTANT]
+> **Exploration Debt Rule**: Scenarios created for agent exploration are strictly temporary. Once an exploration is finished, delete the scenario `.cs` file so no exploration debt accumulates in the codebase. Only the permanent baseline scenario `ExploreAllTools` remains.
+
 Use the current tool schemas and existing documentation for parameter names. `CallAsync` accepts any registered navigation tool name and a serializable argument object. It returns `Text` (all visible responses), `Payload` (the completed outer-page body), and `Response` (the final raw `CallToolResult`). Scenarios may use those returned values for follow-ups. Supply the original owner target and returned references unchanged.
 
-## Output and failures
+## Output and Failures
 
-Each run writes below `temp/exploration/<scenario>/<UTC-run>/`. Each call has its own numbered tool directory containing:
+Each run writes below `temp/exploration/<scenario>/<UTC-run>/` (created automatically if not present). Each call has its own numbered tool directory containing:
 
 - `request.json`: the original MCP tool name and arguments.
 - `response.json`: the latest raw `CallToolResult`.
@@ -48,32 +56,10 @@ A scenario exits with code 1 on exceptions, cancellation/timeout, invalid reques
 
 The runner waits for `operation=running` and `operation=retry`, respecting the reported retry interval (at least one second), and follows opaque outer `continuationToken` values. It preserves the original query and removes operation/domain cursors when requesting outer pages, as the handlers require. Domain `resultCursor` pages, body windows, omissions and semantic recovery actions are left for explicit scenario follow-ups. Budget errors remain visible failures; adjust scenario parameters and rerun when appropriate.
 
-`ExploreContextMembers` discovers the source codec type, exhausts one-item member pages with name/kind/sort/source-scope filters, and follows a returned member reference with its unchanged owner target to a body window.
-
-`ExploreBrowseTarget` reads the loaded source scope, passes its returned canonical Core project path to a selected namespace prefix, then follows a returned type reference to its source body.
-
-`ExploreTypeRelations` exhausts one-item source pages for both relationship modes, follows returned references with the unchanged solution owner, and inspects both modes plus body handoffs against the runner's own assembly. Its two declared interface implementations provide real source/assembly mappings.
-
-`ExploreExtensionDiscovery` filters two real declared string extensions by pattern, namespace, signature and receiver; exhausts one-item Source/Assembly pages; and follows every unchanged owner/reference to its body.
-
-## Execution boundary
+## Execution Boundary
 
 The runner creates the real `NavigatorHostRuntime`, loads targets through the production MSBuild/assembly infrastructure, discovers attributed production tool classes, generates their SDK schemas, runs the production argument validator and invokes the SDK binder and handler. It has no mock navigation results and uses the production output formatter and operation store.
 
 This is a transport-free call simulation. It does not exercise JSON-RPC transport, host configuration, traffic capture or the host request-filter wrapper's final error-budget check. SDK `McpServerTool.InvokeAsync` requires a live server request context; the runner accesses its generated `AIFunction` binder at one isolated reflection boundary, matching the existing transport-free contract tests. An incompatible SDK change fails explicitly instead of substituting a different binder.
 
-`CallAsync` optionally accepts `expectedErrorCode` for an intentional recovery probe. It preserves the error artifacts and returns only when the response is an error carrying that code; an unexpected success/error still fails. `ExploreMetadataRelations` uses the existing TestKit emitted DLL fixtures and real MSBuild source targets to show competing same-identity owners, explicit returned-owner retry, exhaustive one-item hierarchy/implementation pages, separate source/DLL body follow-ups and BCL IDisposable.Dispose mappings. The temporary analyzed fixtures are cleaned up after the scenario; saved requests/responses remain as snapshot evidence. Interface declaration text is separate from executable-body availability.
-
-`ExploreFocusedAssemblyOutput` repeats the baseline codec assembly overview and outgoing type-dependency query with unchanged options, requests explicit inspection member detail, exhausts focused one-item context member pages and follows unchanged owner/references to member/type body windows. Compare complete delivered UTF-8 `response.txt` files, including the runner-added final newline, rather than payload-only or individual-attempt output. `ExploreFocusedDependencyOutput` invokes that same dependency query alone when a change affects only its output projection, preserving the inspected assembly artifacts.
-
-`ExploreTestHelpers` (W6) creates a small real source solution, compares depth 0/1/2, exhausts one-fixture pages and follows returned test/helper declaration references with `get_symbol_body`. It checks direct, one/two-helper, cycle, name-heuristic and non-call-path cases through production handlers, without running fixture tests.
-
-`ExploreSourceRuntime` records the loaded runner/Core/host paths and SHA-256 hashes, an initial discovery in a fresh runtime, and three sequential body follow-ups per exact discovered Source reference. `measurements.json` separates each elapsed call and median; timings include handler/SDK work, required operation polls, outer delivery and artifact writing. `ExploreSourceRuntimeProfile` limits this diagnostic flow to one body call per type. These scenarios do not assert performance thresholds.
-
-`ExploreAssemblyRuntime` uses the runner-loaded Core DLL for declared `System.String` extension discovery, compares reference-closure and root-only requests with detailed diagnostics, and records timings. An empty closure stops the repeated warm series; no warm median or Core body capability is claimed. It then separately discovers the known runner DLL extensions and follows their unchanged owner/reference to a body. A fresh runtime may reuse the existing persistent decompilation disk cache; a later run is not a repeat of a first-time decompilation. Inspect omissions and the distinction between the Core query and this separate functional follow-up.
-
-`ExploreFinalSource` discovers both codec input-preparation overloads and selects the exact returned documentation identity before reading its first twenty lines. It exhausts one-site reference pages with an invariant summary, follows source skeleton/origin locations, and samples selected type/file/namespace dependencies plus incoming loaded project references.
-
-`ExploreFinalAssembly` follows a literal declaration search to its unchanged owner/reference, skeleton, body/uses context and incoming/outgoing static relationships. It samples assembly namespaces, resolves the actually referenced Core owner and discovers/follows its type reference. A small emitted assembly with a deliberately deleted dependency preserves available search declarations while exposing partial analysis and recovery. Temporary fixture files are cleaned up after the scenario; artifacts remain snapshot evidence. `ExploreTypeRelations` explicitly exhausts both source and assembly relationship modes rather than treating the first domain page as complete.
-
-`ExploreTypeOriginRecovery` isolates the runner's genuinely referenced Core type-origin lookup, recording build hashes and searched-reference coverage/recovery without repeating the other final assembly flows.
+`CallAsync` optionally accepts `expectedErrorCode` for an intentional recovery probe. It preserves the error artifacts and returns only when the response is an error carrying that code; an unexpected success/error still fails.

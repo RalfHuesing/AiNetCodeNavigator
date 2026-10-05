@@ -1,5 +1,6 @@
 using System.Globalization;
 using AiNetCodeNavigator.Exploration;
+using AiNetCodeNavigator.Exploration.Scenarios;
 using AiNetCodeNavigator.Mcp;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -7,18 +8,20 @@ using Microsoft.Extensions.Logging;
 
 if (args.Length == 1 && args[0] == "--list")
 {
-    foreach (var name in Scenarios.All.Keys) Console.WriteLine(name);
+    foreach (var name in ScenarioRegistry.All.Keys) Console.WriteLine(name);
     return 0;
 }
 
-if (args.Length != 3 || !Scenarios.All.TryGetValue(args[1], out var scenario))
+if (args.Length != 3 || !ScenarioRegistry.All.TryGetValue(args[1], out var scenario))
 {
     Console.Error.WriteLine("Usage: exploration <repository-root> <scenario> <timeout-seconds>, or --list.");
     return 2;
 }
 
 var repositoryRoot = Path.GetFullPath(args[0]);
-var outputDirectory = Path.Combine(repositoryRoot, "temp", "exploration", args[1],
+var explorationRoot = Path.Combine(repositoryRoot, "temp", "exploration");
+Directory.CreateDirectory(explorationRoot);
+var outputDirectory = Path.Combine(explorationRoot, args[1],
     DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss-fffffff", CultureInfo.InvariantCulture));
 Directory.CreateDirectory(outputDirectory);
 Console.WriteLine($"Artifacts: {outputDirectory}");

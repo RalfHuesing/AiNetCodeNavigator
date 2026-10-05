@@ -15,6 +15,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $project = Join-Path $repoRoot 'tools/AiNetCodeNavigator.Exploration/AiNetCodeNavigator.Exploration.csproj'
+$explorationDir = Join-Path $repoRoot 'temp/exploration'
+if (-not (Test-Path $explorationDir)) {
+    New-Item -ItemType Directory -Path $explorationDir -Force | Out-Null
+}
 if ($List) {
     & dotnet run --project $project -- --list
 } elseif ($Scenario) {
