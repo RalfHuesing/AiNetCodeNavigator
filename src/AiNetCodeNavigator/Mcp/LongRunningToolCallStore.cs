@@ -138,7 +138,9 @@ internal sealed class LongRunningToolCallStore : IAsyncDisposable
                 if (_running.Count >= _maxRunning)
                 {
                     return McpToolResults.Recoverable("TOO_MANY_OPERATIONS", "The server is at its active operation limit.",
-                        "Retry after an active operation completes.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
+                        "Wait at least 1000 milliseconds, then retry the original request without operationToken.",
+                        maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens,
+                        retryAfterMilliseconds: 1000);
                 }
 
                 entry = new OperationEntry(token, request, _lifetime.Token, DateTimeOffset.UtcNow, _runningIdleTtl,

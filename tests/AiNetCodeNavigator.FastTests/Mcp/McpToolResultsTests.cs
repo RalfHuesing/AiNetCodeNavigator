@@ -37,6 +37,25 @@ public sealed class McpToolResultsTests
     }
 
     [Fact]
+    public void Recoverable_RequiredRetryDelaySurvivesOptionalContextWithinBudgets()
+    {
+        const string action = "Wait at least 1000 milliseconds, then retry the original request without operationToken.";
+        var result = McpToolResults.Recoverable("TOO_MANY_OPERATIONS", "The server is at its active operation limit.", action,
+            context: new string('x', 2000), maxResponseBytes: 512, maxResponseTokens: 128, retryAfterMilliseconds: 1000);
+        Assert.True(result.IsError);
+        Assert.Contains("retryAfterMilliseconds: 1000", TextOf(result), StringComparison.Ordinal);
+        Assert.Contains("nextAction: " + action, TextOf(result), StringComparison.Ordinal);
+        Assert.True(Encoding.UTF8.GetByteCount(TextOf(result)) <= 512);
+        Assert.True(McpResponseFormatter.CountTokens(TextOf(result)) <= 128);
+        var required = McpToolResults.Recoverable("TOO_MANY_OPERATIONS", "The server is at its active operation limit.", action,
+            maxResponseBytes: 512, maxResponseTokens: 128, retryAfterMilliseconds: 1000);
+        var requiredTokens = McpResponseFormatter.CountTokens(TextOf(required));
+        Assert.Throws<ArgumentOutOfRangeException>(() => McpToolResults.Recoverable(
+            "TOO_MANY_OPERATIONS", "The server is at its active operation limit.", action,
+            maxResponseBytes: 512, maxResponseTokens: requiredTokens - 1, retryAfterMilliseconds: 1000));
+    }
+
+    [Fact]
     public void InvalidArgument_IsErrorWithFieldPathAndCorrection()
     {
         var result = McpToolResults.InvalidArgument(

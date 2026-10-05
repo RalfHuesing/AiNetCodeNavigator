@@ -65,6 +65,7 @@ Preserve the same tool, target and query for polling/paging, including options a
 
 ## Recovery and evidence
 
+- `TOO_MANY_OPERATIONS`: wait at least the returned `retryAfterMilliseconds` (1000), then retry the original request without an operation token. Rejected work has no token to poll; admitted operations still use normal polling.
 - Ambiguity: select by signature, project, file and owner; follow the selected reference. Never choose the first name match.
 - `INVALID_SYMBOL_REFERENCE`: repeat discovery on the current target and use a returned reference. `TARGET_MISMATCH`: use the original result's owner and same reference as instructed. `SYMBOL_NOT_FOUND`: rediscover the renamed, moved or changed declaration. `AMBIGUOUS_SYMBOL`: load a uniquely identifying owner/context; do not guess. `UNSUPPORTED_IDENTIFIER`: correct owner metadata or use available raw-location navigation. `WORKSPACE_DIAGNOSTIC`: correct the reported workspace load/configuration issue and retry. A runtime restart or source edit alone does not invalidate an unchanged declaration reference. Expired pages/cursors or replaced-binary evidence: restart that analysis query. Follow reported recovery; never guess a replacement name.
 - Mixed body batches and section failures retain useful partial results. Inspect each item/section's status, availability and recovery; never report partial success as complete.

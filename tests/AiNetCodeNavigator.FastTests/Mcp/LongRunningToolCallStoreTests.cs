@@ -363,19 +363,64 @@ public sealed class LongRunningToolCallStoreTests
     [Fact]
     public async Task FourthRunningOperationIsAllowedAndFifthIsRejected()
     {
-        await using var store = new LongRunningToolCallStore(TimeSpan.FromMilliseconds(10));
-        var release = new TaskCompletionSource<CallToolResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-        for (var i = 0; i < 4; i++)
+        var tokens = Enumerable.Range(0, 5).Select(_ => McpResponseContinuationStore.CreateOpaqueToken()).ToArray();
+        var candidates = new Queue<string>(tokens.Append(tokens[4]));
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromMilliseconds(10), operationTokenFactory: () => candidates.Dequeue());
+        var releases = Enumerable.Range(0, 5).Select(_ => new TaskCompletionSource<CallToolResult>(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
+        var started = Enumerable.Range(0, 5).Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
+        var starts = new int[5];
+        var requests = Enumerable.Range(0, 5).Select(index => Request("long_tool", "target", $"query={index}", async cancellationToken =>
         {
-            var pending = await store.RunAsync(Request("long_tool", "target", $"query={i}", _ => release.Task));
-            Assert.Contains("operation=running", TextOf(pending), StringComparison.Ordinal);
+            Interlocked.Increment(ref starts[index]);
+            started[index].TrySetResult();
+            return await releases[index].Task.WaitAsync(cancellationToken);
+        }) with { MaxResponseBytes = 512, MaxResponseTokens = 256 }).ToArray();
+        try
+        {
+            for (var i = 0; i < 4; i++)
+            {
+                var pending = await store.RunAsync(requests[i]);
+                Assert.Equal(tokens[i], TokenOf(pending, "operationToken"));
+                await started[i].Task.WaitAsync(TimeSpan.FromSeconds(1));
+            }
+            var fifth = await store.RunAsync(requests[4]);
+            Assert.True(fifth.IsError);
+            Assert.Contains("TOO_MANY_OPERATIONS", TextOf(fifth), StringComparison.Ordinal);
+            Assert.Equal(1000, IntField(fifth, "retryAfterMilliseconds"));
+            Assert.Contains("Wait at least 1000 milliseconds", TextOf(fifth), StringComparison.Ordinal);
+            Assert.Contains("retry the original request", TextOf(fifth), StringComparison.Ordinal);
+            Assert.Null(TryTokenOf(fifth, "operationToken"));
+            Assert.True(Encoding.UTF8.GetByteCount(TextOf(fifth)) <= 512);
+            Assert.True(McpResponseFormatter.CountTokens(TextOf(fifth)) <= 256);
+            Assert.Equal(new[] { 1, 1, 1, 1, 0 }, starts);
+            Assert.Equal(4, OperationCount(store));
+            Assert.Equal(4, RunningCount(store));
+
+            releases[0].SetResult(new CallToolResult { Content = [new TextContentBlock { Text = "done-0" }] });
+            var completed = await store.RunAsync(requests[0] with { OperationToken = tokens[0] });
+            Assert.Contains("done-0", TextOf(completed), StringComparison.Ordinal);
+            Assert.Equal(3, RunningCount(store));
+            var retry = await store.RunAsync(requests[4]);
+            Assert.Equal(tokens[4], TokenOf(retry, "operationToken"));
+            await started[4].Task.WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.Empty(candidates); // The rejected preflight reservation was released and reused.
+            Assert.Equal(new[] { 1, 1, 1, 1, 1 }, starts);
+            Assert.Equal(5, OperationCount(store));
+            Assert.Equal(4, RunningCount(store));
+            for (var i = 1; i < 5; i++)
+            {
+                releases[i].SetResult(new CallToolResult { Content = [new TextContentBlock { Text = $"done-{i}" }] });
+                var final = await store.RunAsync(requests[i] with { OperationToken = tokens[i] });
+                Assert.Contains($"done-{i}", TextOf(final), StringComparison.Ordinal);
+            }
+            Assert.Equal(0, RunningCount(store));
+            Assert.Equal(5, OperationCount(store)); // Only the five completed admitted results are retained.
+            Assert.Equal(new[] { 1, 1, 1, 1, 1 }, starts);
         }
-
-        var fifth = await store.RunAsync(Request("long_tool", "target", "query=5", _ => release.Task));
-
-        Assert.True(fifth.IsError);
-        Assert.Contains("TOO_MANY_OPERATIONS", TextOf(fifth), StringComparison.Ordinal);
-        release.SetResult(new CallToolResult { Content = [new TextContentBlock { Text = "done" }] });
+        finally
+        {
+            foreach (var release in releases) release.TrySetResult(new CallToolResult());
+        }
     }
 
     [Fact]

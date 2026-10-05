@@ -146,11 +146,13 @@ internal static class McpToolResults
         int? requestedBytes = null,
         int? minimumResponseBytes = null,
         int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
-        int? maxResponseTokens = null)
+        int? maxResponseTokens = null,
+        int? retryAfterMilliseconds = null)
     {
         ValidateError(code, message);
         var lines = new List<string> { $"[ERROR]: {code}: {message}" };
         AddOptionalLine(lines, "fieldPath", fieldPath);
+        if (retryAfterMilliseconds is { } retryAfter) lines.Add($"retryAfterMilliseconds: {retryAfter}");
         if (requestedBytes is { } requested) lines.Add($"requestedBytes: {requested}");
         if (minimumResponseBytes is { } minimum)
         {
@@ -175,8 +177,10 @@ internal static class McpToolResults
         string? context = null,
         string? fieldPath = null,
         int maxResponseBytes = McpResponseBudgetLimits.DefaultBytes,
-        int? maxResponseTokens = null) =>
-        Error(code, message, context, nextAction, fieldPath, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        int? maxResponseTokens = null,
+        int? retryAfterMilliseconds = null) =>
+        Error(code, message, context, nextAction, fieldPath, maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens,
+            retryAfterMilliseconds: retryAfterMilliseconds);
 
     internal static CallToolResult InvalidArgument(
         string message,
