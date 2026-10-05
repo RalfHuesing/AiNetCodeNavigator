@@ -533,8 +533,13 @@ public sealed partial class RelationshipTools(NavigatorHostRuntime runtime)
                     var result = await ResolveTypeOriginScanner.ResolveAsync(new ResolveTypeOriginRequest(target.CanonicalPath, input), ct).ConfigureAwait(false);
                     if (!result.IsSuccess) return NavigationToolSupport.Failure(result.Error!.Value, maxResponseBytes, maxResponseTokens,
                         symbolIdentifier is null ? "$.typeName" : "$.symbolIdentifier");
-                    if (assemblyIdentity is null) return NavigationToolSupport.Success(result.Value!);
-                    return NavigationToolSupport.WithAssemblyMetadata(NavigationToolSupport.Success(result.Value!), assemblyIdentity,
+                    var payload = result.Value!;
+                    var response = NavigationToolSupport.Success(payload, payload.Analysis?.AnalysisCompleteness == "partial",
+                        payload.Analysis?.OmissionReasons.Contains("incompleteReferenceSearch") == true
+                            ? "Uniqueness describes loaded candidates only. Restore unavailable references and retry; reference depth/node bounds may still omit candidates. The returned proven owner remains usable."
+                            : "Candidate limits omit matches; narrow the type name and retry.");
+                    if (assemblyIdentity is null) return response;
+                    return NavigationToolSupport.WithAssemblyMetadata(response, assemblyIdentity,
                         $"resolveTypeOrigin(input={input.Trim()})");
                 }
                 if (ValidateSourceReferenceInput(symbolIdentifier ?? typeName!, maxResponseBytes, maxResponseTokens,

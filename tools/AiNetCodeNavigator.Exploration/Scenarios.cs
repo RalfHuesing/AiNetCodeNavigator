@@ -26,7 +26,118 @@ internal static class Scenarios
             [nameof(ExploreSourceRuntime)] = ExploreSourceRuntime,
             ["ExploreSourceRuntimeProfile"] = context => ExploreSourceRuntime(context, 1),
             [nameof(ExploreAssemblyRuntime)] = ExploreAssemblyRuntime,
+            [nameof(ExploreFinalSource)] = ExploreFinalSource,
+            [nameof(ExploreFinalAssembly)] = ExploreFinalAssembly,
+            [nameof(ExploreTypeOriginRecovery)] = ExploreTypeOriginRecovery,
         };
+
+    private static async Task ExploreTypeOriginRecovery(ExplorationContext context)
+    {
+        await RecordBuildAsync(context).ConfigureAwait(false);
+        await context.CallAsync("resolve_type_origin", new
+        {
+            targetPath = typeof(Scenarios).Assembly.Location,
+            typeName = "AiNetCodeNavigator.Core.Symbols.StableSymbolReferenceCodec",
+        }).ConfigureAwait(false);
+    }
+
+    private static async Task ExploreFinalSource(ExplorationContext context)
+    {
+        await RecordBuildAsync(context).ConfigureAwait(false);
+        var target = context.RepositorySolution;
+        var found = await context.CallAsync("find_symbol", new
+        {
+            targetPath = target, pattern = "TryPrepareReferenceInput", kind = "method",
+            scopeType = "production", maxResults = 10,
+        }).ConfigureAwait(false);
+        using var discovery = JsonDocument.Parse(found.Payload);
+        var overloads = discovery.RootElement.GetProperty("results")[0].GetProperty("entries").EnumerateArray()
+            .Where(entry => entry.GetProperty("docCommentId").GetString()!.StartsWith(
+                "M:AiNetCodeNavigator.Core.Symbols.StableSymbolReferenceCodec.TryPrepareReferenceInput(", StringComparison.Ordinal)).ToArray();
+        if (overloads.Length != 2) throw new InvalidOperationException("Expected both codec overloads.");
+        var selected = overloads.Single(entry => entry.GetProperty("docCommentId").GetString() ==
+            "M:AiNetCodeNavigator.Core.Symbols.StableSymbolReferenceCodec.TryPrepareReferenceInput(System.String,System.String,System.String@,System.Nullable{AiNetCodeNavigator.Core.Models.ResultError}@)");
+        var reference = selected.GetProperty("handoffId").GetString();
+        var body = await context.CallAsync("get_symbol_body", new { targetPath = target, symbolIdentifiers = new[] { reference }, startLine = 1, maxBodyLines = 20 }).ConfigureAwait(false);
+        if (!body.Payload.Contains("Next body window: startLine=21, maxBodyLines=20", StringComparison.Ordinal)) throw new InvalidOperationException("Expected a real twenty-line body window.");
+        await context.CallAsync("get_symbol_body", new { targetPath = target, symbolIdentifiers = new[] { reference }, startLine = 21, maxBodyLines = 20 }).ConfigureAwait(false);
+        await context.CallAsync("get_file_skeleton", new { targetPath = target, filePaths = new[] { reference } }).ConfigureAwait(false);
+        string? cursor = null;
+        string? summary = null;
+        var count = 0;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        do
+        {
+            var response = await context.CallAsync("find_references", new
+            {
+                targetPath = target, symbolIdentifier = reference, depth = 1, includeSummary = true,
+                scopeType = "all", maxResults = 1, resultCursor = cursor,
+            }).ConfigureAwait(false);
+            using var page = JsonDocument.Parse(response.Payload);
+            var root = page.RootElement;
+            var current = root.GetProperty("summary").GetRawText();
+            summary ??= current;
+            if (summary != current) throw new InvalidOperationException("Reference summary changed across domain pages.");
+            count += root.GetProperty("references").GetArrayLength();
+            cursor = root.TryGetProperty("resultCursor", out var next) ? next.GetString() : null;
+            if (cursor is not null && !seen.Add(cursor)) throw new InvalidOperationException("Repeated reference cursor.");
+            if (cursor is null && count != root.GetProperty("totalCount").GetInt32()) throw new InvalidOperationException("Missing reference sites.");
+        } while (cursor is not null);
+        var origin = await context.CallAsync("resolve_type_origin", new { targetPath = target, symbolIdentifier = reference }).ConfigureAwait(false);
+        using var source = JsonDocument.Parse(origin.Payload);
+        await context.CallAsync("get_file_skeleton", new
+        {
+            targetPath = source.RootElement.GetProperty("targetPath").GetString(),
+            filePaths = new[] { source.RootElement.GetProperty("sourceLocations")[0].GetProperty("filePath").GetString() },
+        }).ConfigureAwait(false);
+        foreach (var level in new[] { "type", "file", "namespace", "project" })
+            await context.CallAsync("dependency_graph", new { targetPath = target, symbolIdentifier = reference, level, direction = level == "project" ? "incoming" : "outgoing", depth = 1, maxResults = 20 }).ConfigureAwait(false);
+    }
+
+    private static async Task ExploreFinalAssembly(ExplorationContext context)
+    {
+        await RecordBuildAsync(context).ConfigureAwait(false);
+        var target = typeof(Scenarios).Assembly.Location;
+        var search = await context.CallAsync("search_assembly", new
+        {
+            targetPath = target, pattern = "ExplorationMark", declarationOnly = true, kind = "method", maxResults = 5,
+        }).ConfigureAwait(false);
+        using var found = JsonDocument.Parse(search.Payload);
+        var hit = found.RootElement.GetProperty("results").EnumerateArray().Single(item => item.GetProperty("handoffId").ValueKind == JsonValueKind.String);
+        var owner = hit.GetProperty("ownerTargetPath").GetString();
+        var reference = hit.GetProperty("handoffId").GetString();
+        await context.CallAsync("get_symbol_body", new { targetPath = owner, symbolIdentifiers = new[] { reference }, maxBodyLines = 20 }).ConfigureAwait(false);
+        await context.CallAsync("get_file_skeleton", new { targetPath = owner, filePaths = new[] { reference } }).ConfigureAwait(false);
+        await context.CallAsync("find_references", new { targetPath = owner, symbolIdentifier = reference, depth = 1, includeSummary = true, maxResults = 5 }).ConfigureAwait(false);
+        await context.CallAsync("get_context", new { targetPath = owner, symbolIdentifier = reference, sections = new[] { "body", "uses" }, maxBodyLines = 20, maxResults = 5 }).ConfigureAwait(false);
+        foreach (var direction in new[] { "incoming", "outgoing" })
+            await context.CallAsync("get_call_tree", new { targetPath = owner, symbolIdentifier = reference, direction, depth = 1, topN = 5, includeBcl = true }).ConfigureAwait(false);
+        await context.CallAsync("browse_target", new { targetPath = target, view = "namespaces", namespacePrefix = "AiNetCodeNavigator.Exploration", depth = 1, includeTypes = true, maxResults = 20 }).ConfigureAwait(false);
+        var origin = await context.CallAsync("resolve_type_origin", new { targetPath = target, typeName = "AiNetCodeNavigator.Core.Symbols.StableSymbolReferenceCodec" }).ConfigureAwait(false);
+        using var metadata = JsonDocument.Parse(origin.Payload);
+        var assemblyPath = metadata.RootElement.GetProperty("assemblyPath").GetString();
+        if (metadata.RootElement.GetProperty("isAmbiguous").GetBoolean() || string.IsNullOrWhiteSpace(assemblyPath)) throw new InvalidOperationException("Expected one proven referenced Core owner.");
+        var declaration = await context.CallAsync("find_symbol", new { targetPath = assemblyPath, pattern = "StableSymbolReferenceCodec", kind = "class", maxResults = 5 }).ConfigureAwait(false);
+        using var symbols = JsonDocument.Parse(declaration.Payload);
+        var type = symbols.RootElement.GetProperty("results")[0].GetProperty("entries").EnumerateArray()
+            .Single(item => item.GetProperty("docCommentId").GetString() == "T:AiNetCodeNavigator.Core.Symbols.StableSymbolReferenceCodec");
+        await context.CallAsync("get_symbol_body", new { targetPath = type.GetProperty("ownerTargetPath").GetString(), symbolIdentifiers = new[] { type.GetProperty("handoffId").GetString() }, maxBodyLines = 20 }).ConfigureAwait(false);
+        foreach (var level in new[] { "type", "file", "namespace" })
+            await context.CallAsync("dependency_graph", new
+            {
+                targetPath = type.GetProperty("ownerTargetPath").GetString(), symbolIdentifier = type.GetProperty("handoffId").GetString(),
+                level, direction = "outgoing", depth = 1, maxResults = 20,
+            }).ConfigureAwait(false);
+        // Deliberately missing dependency: available declarations must remain visible with truthful omissions/recovery.
+        using var fixture = TestTempDirectory.Create("explore-missing-reference-");
+        var dependency = AssemblyTestHelper.EmitAssembly(fixture, "W7MissingDependency", "public class MissingBase { }");
+        var partialTarget = AssemblyTestHelper.EmitAssembly(fixture, "W7PartialOwner", "public class MissingRoot : MissingBase { public int Own() => 7; }", dependency);
+        File.Delete(dependency);
+        await context.CallAsync("search_assembly", new
+        {
+            targetPath = partialTarget, pattern = "Own", kind = "method", declarationOnly = true, includeDiagnostics = true, maxResults = 5,
+        }).ConfigureAwait(false);
+    }
 
     private static async Task ExploreTestHelpers(ExplorationContext context)
     {
@@ -326,17 +437,24 @@ internal static class Scenarios
         var assemblyTarget = typeof(Scenarios).Assembly.Location;
         foreach (var relation in new[] { "hierarchy", "implementations" })
         {
-            var response = await context.CallAsync("get_type_relations", new
+            string? cursor = null;
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            do
             {
-                targetPath = assemblyTarget, symbolIdentifier = identifier, relation, maxResults = 1,
-            }).ConfigureAwait(false);
-            using var page = JsonDocument.Parse(response.Payload);
-            var items = page.RootElement.GetProperty(relation == "hierarchy" ? "subtypes" : "implementations");
-            if (items.GetArrayLength() > 0)
-                await context.CallAsync("get_symbol_body", new
+                var response = await context.CallAsync("get_type_relations", new
                 {
-                    targetPath = assemblyTarget, symbolIdentifiers = new[] { items[0].GetProperty("handoffId").GetString() }, maxBodyLines = 10,
+                    targetPath = assemblyTarget, symbolIdentifier = identifier, relation, maxResults = 1, resultCursor = cursor,
                 }).ConfigureAwait(false);
+                using var page = JsonDocument.Parse(response.Payload);
+                var items = page.RootElement.GetProperty(relation == "hierarchy" ? "subtypes" : "implementations");
+                if (items.GetArrayLength() > 0)
+                    await context.CallAsync("get_symbol_body", new
+                    {
+                        targetPath = assemblyTarget, symbolIdentifiers = new[] { items[0].GetProperty("handoffId").GetString() }, maxBodyLines = 10,
+                    }).ConfigureAwait(false);
+                cursor = page.RootElement.TryGetProperty("resultCursor", out var next) ? next.GetString() : null;
+                if (cursor is not null && !seen.Add(cursor)) throw new InvalidOperationException("Repeated assembly relation cursor.");
+            } while (cursor is not null);
         }
     }
 
@@ -629,5 +747,5 @@ internal sealed class ExplorationRelationSecond : IExplorationRelationProbe
 internal static class ExplorationStringExtensions
 {
     internal static int ExplorationMark(this string value) => value.Length;
-    internal static int ExplorationSize(this string value) => value.Length + 1;
+    internal static int ExplorationSize(this string value) => value.ExplorationMark() + 1;
 }

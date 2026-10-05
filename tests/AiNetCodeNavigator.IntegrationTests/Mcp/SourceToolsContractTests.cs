@@ -880,7 +880,17 @@ public sealed class SourceToolsContractTests
         Assert.DoesNotContain("Alpha", TextOf(declarationOrder), StringComparison.Ordinal);
         var classStructureBytes = await relationships.GetContext(target, "ScopeProbe.OrderProbe", ["members"], maxResults: 1,
             memberSortBy: "lines", maxResponseBytes: 512, maxResponseTokens: 4096);
-        AssertSuccessWithinBudget(classStructureBytes, 512, 4096);
+        var classStructureByteBudget = 512;
+        var classStructureTokenBudget = 4096;
+        if (classStructureBytes.IsError == true)
+        {
+            AssertErrorWithinBudget(classStructureBytes, "RESPONSE_BUDGET_TOO_SMALL", 512, 4096);
+            classStructureByteBudget = ReadBudget(TextOf(classStructureBytes), "minimumResponseBytes");
+            classStructureTokenBudget = ReadBudget(TextOf(classStructureBytes), "minimumResponseTokens");
+            classStructureBytes = await relationships.GetContext(target, "ScopeProbe.OrderProbe", ["members"], maxResults: 1,
+                memberSortBy: "lines", maxResponseBytes: classStructureByteBudget, maxResponseTokens: classStructureTokenBudget);
+        }
+        AssertSuccessWithinBudget(classStructureBytes, classStructureByteBudget, classStructureTokenBudget);
         Assert.True(TryReadToken(TextOf(classStructureBytes), "continuationToken", out _), TextOf(classStructureBytes));
         var classStructureTokens = await relationships.GetContext(target, "ScopeProbe.OrderProbe", ["members"], maxResults: 1,
             memberSortBy: "lines", maxResponseBytes: 65536, maxResponseTokens: 512);

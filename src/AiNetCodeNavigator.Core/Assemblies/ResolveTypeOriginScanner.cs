@@ -68,15 +68,17 @@ public static class ResolveTypeOriginScanner
         var unprovenReferencePath = pathMatches.Any(match =>
             !SymbolEqualityComparer.Default.Equals(match.Type.ContainingAssembly, context.Assembly)
             && match.Paths.Length != 1);
+        var omissions = ReferenceSearchOmissions(context.References, request.IncludeReferences).ToList();
+        if (matches.Count > MaxCandidates) omissions.Add("maxCandidates");
+        var analysis = new NavigationAnalysisMetadata(NavigationAnalysisMetadata.CreateSnapshotId("assembly", identity.ContentHash),
+            $"resolveTypeOrigin(typeName={request.TypeName.Trim()}, includeReferences={request.IncludeReferences}, maxCandidates={MaxCandidates}, candidateUniverse={(request.IncludeReferences ? "loadedRootAndReferences" : "rootOnly")})",
+            omissions, omissions.Count == 0 ? "complete" : "partial");
         if (unique.Count > 1 || unprovenReferencePath)
         {
             return Result<ResolveTypeOriginPayload>.Success(new ResolveTypeOriginPayload(
                 request.TypeName.Trim(), "ambiguous", null, null, null, null, true,
                 paths.Take(MaxCandidates).ToArray(), context.Diagnostics,
-                new NavigationAnalysisMetadata(NavigationAnalysisMetadata.CreateSnapshotId("assembly", identity.ContentHash),
-                    $"resolveTypeOrigin(typeName={request.TypeName.Trim()}, includeReferences={request.IncludeReferences}, maxCandidates={MaxCandidates})",
-                    matches.Count > MaxCandidates ? ["maxCandidates"] : [],
-                    matches.Count > MaxCandidates ? "partial" : "complete")));
+                analysis));
         }
 
         var resolvedType = unique[0];
@@ -94,10 +96,17 @@ public static class ResolveTypeOriginScanner
             false,
             paths,
             context.Diagnostics,
-            new NavigationAnalysisMetadata(NavigationAnalysisMetadata.CreateSnapshotId("assembly", identity.ContentHash),
-                $"resolveTypeOrigin(typeName={request.TypeName.Trim()}, includeReferences={request.IncludeReferences}, maxCandidates={MaxCandidates})",
-                matches.Count > MaxCandidates ? ["maxCandidates"] : [],
-                matches.Count > MaxCandidates ? "partial" : "complete")));
+            analysis));
+    }
+
+    internal static IReadOnlyList<string> ReferenceSearchOmissions(IReadOnlyList<AssemblyReferenceDto> references, bool includeReferences)
+    {
+        if (!includeReferences) return Array.Empty<string>();
+        var omissions = new List<string>();
+        // Resolved=false also covers candidates not admitted at the node boundary after normalization.
+        if (references.Any(reference => !reference.Resolved || reference.ResolvedPath is null)) omissions.Add("incompleteReferenceSearch");
+        if (references.Any(reference => reference.ResolutionState == "depth_limit")) omissions.Add("referenceDepthLimit");
+        return omissions;
     }
 
     private static void AddMatches(IAssemblySymbol assembly, string name, ICollection<ITypeSymbol> matches)

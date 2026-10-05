@@ -354,6 +354,42 @@ public sealed class AssemblyNavigationScannerTests
     }
 
     [Fact]
+    public async Task TypeOrigin_IncompleteReferenceSearchRetainsProvenOwnerAndRootOnlyCompleteness()
+    {
+        using var temp = TestTempDirectory.Create("assembly-origin-missing-");
+        var dependency = AssemblyTestHelper.EmitAssembly(temp, "OriginMissingDependency", "public class MissingBase { }");
+        var path = AssemblyTestHelper.EmitAssembly(temp, "OriginPartial", "public class KnownRoot : MissingBase { }", dependency);
+        File.Delete(dependency);
+        var searched = await ResolveTypeOriginScanner.ResolveAsync(new ResolveTypeOriginRequest(path, "KnownRoot"));
+        var rootOnly = await ResolveTypeOriginScanner.ResolveAsync(new ResolveTypeOriginRequest(path, "KnownRoot", IncludeReferences: false));
+        Assert.True(searched.IsSuccess);
+        Assert.Equal(path, searched.Value!.AssemblyPath);
+        Assert.False(searched.Value.IsAmbiguous);
+        Assert.Equal("partial", searched.Value.Analysis!.AnalysisCompleteness);
+        Assert.Contains("incompleteReferenceSearch", searched.Value.Analysis.OmissionReasons);
+        Assert.True(rootOnly.IsSuccess);
+        Assert.Equal(path, rootOnly.Value!.AssemblyPath);
+        Assert.Equal("complete", rootOnly.Value.Analysis!.AnalysisCompleteness);
+        Assert.Empty(rootOnly.Value.Analysis.OmissionReasons);
+    }
+
+    [Fact]
+    public void TypeOrigin_ReferenceCoverageUsesTypedFactsRatherThanDecompilerStatus()
+    {
+        var resolved = new AssemblyReferenceDto("Present", "1.0.0.0", "neutral", true, "present.dll");
+        Assert.Empty(ResolveTypeOriginScanner.ReferenceSearchOmissions([resolved, resolved with { ResolutionState = "cycle" }], true));
+        foreach (var state in new[] { "missing", "version_mismatch", "invalid", "resolved" })
+        {
+            // The normalized node-bound candidate retains a resolved state but has no admitted path.
+            var unavailable = resolved with { Resolved = false, ResolvedPath = null, ResolutionState = state };
+            Assert.Contains("incompleteReferenceSearch", ResolveTypeOriginScanner.ReferenceSearchOmissions([resolved, unavailable], true));
+            Assert.Empty(ResolveTypeOriginScanner.ReferenceSearchOmissions([unavailable], false));
+        }
+        Assert.Contains("referenceDepthLimit", ResolveTypeOriginScanner.ReferenceSearchOmissions(
+            [resolved with { Resolved = false, ResolvedPath = null, ResolutionState = "depth_limit" }], true));
+    }
+
+    [Fact]
     public async Task TypeOrigin_ResolvesNestedTypeUsingCSharpQualifiedName()
     {
         using var temp = TestTempDirectory.Create("assembly-origin-nested-");

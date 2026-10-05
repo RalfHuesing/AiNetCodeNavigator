@@ -22,6 +22,28 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class AssemblyToolsContractTests
 {
     [Fact]
+    public async Task TypeOriginPartialReferenceSearchKeepsProvenOwnerAndExplicitRecovery()
+    {
+        using var temp = TestTempDirectory.Create("assembly-origin-public-missing-");
+        var dependency = AssemblyTestHelper.EmitAssembly(temp, "PublicOriginMissingDependency", "public class MissingBase { }");
+        var path = AssemblyTestHelper.EmitAssembly(temp, "PublicOriginPartial", "public class KnownRoot : MissingBase { }", dependency);
+        File.Delete(dependency);
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var tools = new RelationshipTools(runtime);
+        var result = await tools.ResolveTypeOrigin(path, typeName: "KnownRoot", maxResponseBytes: 32768, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(result, 32768, 4096);
+        var text = TextOf(result);
+        Assert.Contains("analysisCompleteness=partial", text, StringComparison.Ordinal);
+        Assert.Contains("loaded candidates only", text, StringComparison.Ordinal);
+        using var payload = System.Text.Json.JsonDocument.Parse(BodyOf(text));
+        Assert.Equal(path, payload.RootElement.GetProperty("assemblyPath").GetString());
+        Assert.False(payload.RootElement.GetProperty("isAmbiguous").GetBoolean());
+        Assert.Contains(payload.RootElement.GetProperty("analysis").GetProperty("omissionReasons").EnumerateArray(),
+            reason => reason.GetString() == "incompleteReferenceSearch");
+    }
+
+    [Fact]
     public async Task InspectAssemblyCompactDefaultRequiresExplicitMembersAndBindsSelection()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
