@@ -28,6 +28,127 @@ public sealed class SourceToolsContractTests
     public SourceToolsContractTests(Xunit.ITestOutputHelper output) => _output = output;
 
     [Fact]
+    public async Task GetContextHelperDepthProjectsStaticPathsAndBindsOptionPresence()
+    {
+        using var fixture = TestTempDirectory.Create("context-helper-");
+        var target = fixture.CreateFile("Helpers.slnx", "<Solution />");
+        const string source = """
+            namespace Xunit { public sealed class FactAttribute : System.Attribute { } }
+            namespace W6 {
+            public static class Endpoint { public static void Run() { } }
+            public static class Helpers {
+                public static void One() => Endpoint.Run();
+                public static void Two() => One();
+                public static void Cycle() { Two(); Cycle(); }
+            }
+            public class Direct { [Xunit.Fact] public void Check() => Endpoint.Run(); }
+            public class Indirect { [Xunit.Fact] public void Check() => Helpers.One(); }
+            public class Deep { [Xunit.Fact] public void Check() => Helpers.Two(); }
+            public class NonPath { [Xunit.Fact] public void Check() { System.Action a = Helpers.One; } }
+            public class EndpointTests { [Xunit.Fact] public void NameOnly() { } }
+            }
+            """;
+        var file = fixture.CreateFile("W6.Tests/Tests.cs", source);
+        fixture.CreateFile("W6.Tests/W6.Tests.csproj", "<Project />");
+        await using var host = InMemorySourceTestHost.Create(target,
+            [new ProjectSpec("W6.Tests", [(file, source)], VirtualProjectDirectory: "W6.Tests")]);
+        var tools = new RelationshipTools(host.Runtime);
+        var schema = ModelContextProtocol.Server.McpServerTool.Create(typeof(RelationshipTools).GetMethod(nameof(RelationshipTools.GetContext))!, tools,
+            new ModelContextProtocol.Server.McpServerToolCreateOptions { Name = "get_context" }).ProtocolTool.InputSchema;
+        Assert.True(schema.GetProperty("properties").TryGetProperty("testHelperDepth", out _));
+        Assert.DoesNotContain(schema.GetProperty("required").EnumerateArray(), value => value.GetString() == "testHelperDepth");
+        foreach (var depth in new[] { -1, 3 })
+            Assert.Contains("$.testHelperDepth", TextOf(await tools.GetContext(target, "W6.Endpoint.Run", ["tests"], testHelperDepth: depth)));
+        foreach (var depth in new[] { 0, 1 })
+            Assert.Contains("$.testHelperDepth", TextOf(await tools.GetContext(target, "W6.Endpoint.Run", ["body"], testHelperDepth: depth)));
+        Assert.Contains("$.testHelperDepth", TextOf(await tools.GetContext(typeof(SourceToolsContractTests).Assembly.Location,
+            "W6.Endpoint.Run", ["tests"], testHelperDepth: 0)));
+        for (var depth = 0; depth <= 2; depth++)
+        {
+            var result = await tools.GetContext(target, "W6.Endpoint.Run", ["uses", "tests"], usageScope: "production",
+                testHelperDepth: depth, maxResponseBytes: 65536);
+            AssertSuccessWithinBudget(result, 65536, 16384);
+            using var json = JsonDocument.Parse(JsonBody(TextOf(result)));
+            var section = json.RootElement.GetProperty("sections")[1];
+            Assert.Equal(depth, section.GetProperty("analysis").GetProperty("testHelperDepth").GetInt32());
+            var items = section.GetProperty("items").EnumerateArray().ToArray();
+            Assert.Contains(items, item => item.GetProperty("className").GetString() == "Direct");
+            Assert.Equal(depth >= 1, items.Any(item => item.GetProperty("className").GetString() == "Indirect"));
+            Assert.Equal(depth >= 2, items.Any(item => item.GetProperty("className").GetString() == "Deep"));
+            Assert.DoesNotContain(items, item => item.GetProperty("className").GetString() == "NonPath");
+            var direct = items.Single(item => item.GetProperty("className").GetString() == "Direct");
+            Assert.Equal(Path.Combine(fixture.DirectoryPath, "W6.Tests", "W6.Tests.csproj").Replace('\\', '/'), direct.GetProperty("projectPath").GetString()!.Replace('\\', '/'));
+            Assert.Equal("W6.Direct", direct.GetProperty("qualifiedName").GetString());
+            if (depth == 0) continue;
+            var method = items.Single(item => item.GetProperty("className").GetString() == (depth == 1 ? "Indirect" : "Deep")).GetProperty("methods")[0];
+            Assert.False(string.IsNullOrWhiteSpace(method.GetProperty("qualifiedName").GetString()));
+            Assert.Equal("W6.Tests/Tests.cs", method.GetProperty("filePath").GetString()!.Replace('\\', '/'));
+            Assert.True(method.GetProperty("line").GetInt32() > 0);
+            var path = method.GetProperty("evidence").EnumerateArray().Single(e => e.TryGetProperty("helperPath", out _)).GetProperty("helperPath");
+            Assert.Equal(depth + 1, path.GetArrayLength());
+            foreach (var step in path.EnumerateArray())
+            {
+                Assert.Equal("call", step.GetProperty("relationshipKind").GetString());
+                foreach (var field in new[] { "callerHandoffId", "targetHandoffId" })
+                {
+                    var reference = step.GetProperty(field).GetString()!;
+                    Assert.StartsWith("src:", reference);
+                    var body = await new SymbolTools(host.Runtime).GetSymbolBody(target, [reference], maxBodyLines: 20);
+                    Assert.False(body.IsError ?? false, TextOf(body));
+                }
+            }
+        }
+        var first = await tools.GetContext(target, "W6.Endpoint.Run", ["tests"], maxResults: 1);
+        using var firstJson = JsonDocument.Parse(JsonBody(TextOf(first)));
+        Assert.Equal(1, firstJson.RootElement.GetProperty("sections")[0].GetProperty("analysis").GetProperty("testHelperDepth").GetInt32());
+        var cursor = firstJson.RootElement.GetProperty("sections")[0].GetProperty("resultCursor").GetString();
+        foreach (var depth in new[] { 0, 1, 2 })
+            Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(await tools.GetContext(target, "W6.Endpoint.Run", ["tests"], maxResults: 1, testHelperDepth: depth, resultCursor: cursor)));
+        Assert.False((await tools.GetContext(target, "W6.Endpoint.Run", ["tests"], maxResults: 1, resultCursor: cursor)).IsError ?? false);
+        var outer = await tools.GetContext(target, "W6.Endpoint.Run", ["tests"], testHelperDepth: 2, maxResponseBytes: 1024);
+        var outerText = TextOf(outer);
+        Assert.True(TryReadToken(outerText, "continuationToken", out var outerCursor));
+        Assert.Contains("CONTINUATION_ARGUMENT_MISMATCH", TextOf(await tools.GetContext(target, "W6.Endpoint.Run", ["tests"],
+            testHelperDepth: 1, continuationToken: outerCursor, maxResponseBytes: 1024)));
+        var reconstructed = await ReconstructOuterPagesAsync(outer, continuation => tools.GetContext(target, "W6.Endpoint.Run", ["tests"],
+            testHelperDepth: 2, continuationToken: continuation, maxResponseBytes: 1024));
+        Assert.Contains("indirect-helper-use", reconstructed);
+    }
+
+    [Fact]
+    public async Task GetContextHelperCapRemainsPartialOnFinalDomainPage()
+    {
+        using var fixture = TestTempDirectory.Create("context-helper-cap-");
+        var target = fixture.CreateFile("Cap.slnx", "<Solution />");
+        const string source = "namespace Xunit { public class FactAttribute : System.Attribute {} } namespace W6 { public static class Endpoint { public static void Run() {} } public static class H { public static void A()=>Endpoint.Run(); public static void B()=>Endpoint.Run(); } public class First { [Xunit.Fact] public void Check()=>H.A(); } public class Second { [Xunit.Fact] public void Check()=>H.B(); } public class Direct { [Xunit.Fact] public void Check()=>Endpoint.Run(); } }";
+        var file = fixture.CreateFile("W6.Tests/Tests.cs", source);
+        fixture.CreateFile("W6.Tests/W6.Tests.csproj", "<Project />");
+        await using var host = InMemorySourceTestHost.Create(target,
+            [new ProjectSpec("W6.Tests", [(file, source)], VirtualProjectDirectory: "W6.Tests")]);
+        var tools = new RelationshipTools(host.Runtime) { TestHelperExpansionLimitForTesting = 1 };
+        string? cursor = null;
+        var pages = 0;
+        do
+        {
+            var page = await tools.GetContext(target, "W6.Endpoint.Run", ["tests"], maxResults: 1, resultCursor: cursor);
+            Assert.False(page.IsError ?? false, TextOf(page));
+            using var json = JsonDocument.Parse(JsonBody(TextOf(page)));
+            var section = json.RootElement.GetProperty("sections")[0];
+            Assert.Equal("partial", section.GetProperty("status").GetString());
+            Assert.False(section.GetProperty("analysisComplete").GetBoolean());
+            Assert.Contains("helperExpansionLimit", json.RootElement.GetProperty("omissions").ToString());
+            var analysis = section.GetProperty("analysis");
+            Assert.True(analysis.GetProperty("helperExpansionLimitReached").GetBoolean());
+            Assert.Equal(1, analysis.GetProperty("expandedHelperCount").GetInt32());
+            foreach (var flag in new[] { "implementationExpansionLimitReached", "candidateExpansionLimitReached", "referenceInspectionLimitReached" })
+                Assert.False(analysis.GetProperty(flag).GetBoolean());
+            cursor = section.TryGetProperty("resultCursor", out var next) ? next.GetString() : null;
+            Assert.True(++pages < 4);
+        } while (cursor is not null);
+        Assert.Equal(2, pages);
+    }
+
+    [Fact]
     public async Task FindSymbolFiltersSelectExactProjectsAndDeclaredExtensionsBeforePaging()
     {
         using var fixture = TestTempDirectory.Create("discovery-filter-");

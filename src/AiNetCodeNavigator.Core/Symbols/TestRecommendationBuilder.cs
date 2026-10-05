@@ -51,9 +51,10 @@ public static class TestRecommendationBuilder
         CancellationToken ct = default,
         bool includeGenerated = false,
         SymbolScopeType scope = SymbolScopeType.All,
-        int testHelperDepth = 1) =>
+        int testHelperDepth = 1,
+        int maxExpandedHelpers = MaxExpandedHelpers) =>
         BuildCoreAsync(targetSymbol, solution, symbol => identityRequest.FormatHandoff(symbol, solution), ct, includeGenerated, scope,
-            testHelperDepth, MaxExpandedHelpers, MaxReferenceLocations);
+            testHelperDepth, maxExpandedHelpers, MaxReferenceLocations);
 
     // Request-local test seam: production always uses the public fixed bounds.
     internal static async Task<TestContextPayload> BuildWithLimitsAsync(ISymbol targetSymbol, Solution solution,

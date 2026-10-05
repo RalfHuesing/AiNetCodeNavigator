@@ -14,6 +14,7 @@ internal static class Scenarios
             [nameof(ExploreConsolidationBaseline)] = ExploreConsolidationBaseline,
             [nameof(ExploreContextUses)] = ExploreContextUses,
             [nameof(ExploreContextMembers)] = ExploreContextMembers,
+            [nameof(ExploreTestHelpers)] = ExploreTestHelpers,
             [nameof(ExploreBrowseTarget)] = ExploreBrowseTarget,
             [nameof(ExploreTypeRelations)] = ExploreTypeRelations,
             [nameof(ExploreExtensionDiscovery)] = ExploreExtensionDiscovery,
@@ -21,6 +22,85 @@ internal static class Scenarios
             [nameof(ExploreFocusedAssemblyOutput)] = ExploreFocusedAssemblyOutput,
             [nameof(ExploreFocusedDependencyOutput)] = ExploreFocusedDependencyOutput,
         };
+
+    private static async Task ExploreTestHelpers(ExplorationContext context)
+    {
+        using var fixture = TestTempDirectory.Create("explore-test-helpers-");
+        fixture.CreateFile("W6.Tests/W6.Tests.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        fixture.CreateFile("W6.Tests/Tests.cs", """
+            namespace Xunit { public sealed class FactAttribute : System.Attribute { } }
+            namespace W6 {
+            public static class Endpoint { public static void Run() { } }
+            public static class Helpers {
+                public static void One() => Endpoint.Run();
+                public static void Two() => One();
+                public static void Cycle() { Two(); Cycle(); }
+            }
+            public class Direct { [Xunit.Fact] public void Check() => Endpoint.Run(); }
+            public class Indirect { [Xunit.Fact] public void Check() => Helpers.One(); }
+            public class Deep { [Xunit.Fact] public void Check() => Helpers.Two(); }
+            public class Cyclic { [Xunit.Fact] public void Check() => Helpers.Cycle(); }
+            public class NonPath { [Xunit.Fact] public void Check() { System.Action a = Helpers.One; } }
+            public class EndpointTests { [Xunit.Fact] public void NameOnly() { } }
+            }
+            """);
+        var target = fixture.CreateFile("W6.slnx", "<Solution><Project Path=\"W6.Tests/W6.Tests.csproj\" /></Solution>");
+        var followed = new HashSet<string>(StringComparer.Ordinal);
+        string? selectedReference = null;
+        for (var depth = 0; depth <= 2; depth++)
+        {
+            string? cursor = null;
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var names = new List<string>();
+            do
+            {
+                var response = await context.CallAsync("get_context", new
+                {
+                    targetPath = target, symbolIdentifier = "W6.Endpoint.Run", sections = new[] { "tests" },
+                    testHelperDepth = depth, maxResults = 1, resultCursor = cursor,
+                }).ConfigureAwait(false);
+                using var page = JsonDocument.Parse(response.Payload);
+                var root = page.RootElement;
+                var reference = root.GetProperty("target").GetProperty("handoffId").GetString();
+                selectedReference ??= reference;
+                if (reference != selectedReference) throw new InvalidOperationException("Helper depth changed the endpoint reference.");
+                var section = root.GetProperty("sections")[0];
+                if (section.GetProperty("analysis").GetProperty("testHelperDepth").GetInt32() != depth)
+                    throw new InvalidOperationException("Incorrect delivered helper depth.");
+                foreach (var item in section.GetProperty("items").EnumerateArray())
+                {
+                    names.Add(item.GetProperty("className").GetString()!);
+                    if (string.IsNullOrWhiteSpace(item.GetProperty("projectPath").GetString()))
+                        throw new InvalidOperationException("Missing fixture project owner.");
+                    foreach (var method in item.GetProperty("methods").EnumerateArray())
+                    {
+                        var refs = new List<string?> { method.GetProperty("handoffId").GetString() };
+                        if (method.TryGetProperty("evidence", out var evidence))
+                            foreach (var reason in evidence.EnumerateArray())
+                                if (reason.TryGetProperty("helperPath", out var path))
+                                {
+                                    if (path.GetArrayLength() > depth + 1) throw new InvalidOperationException("Path exceeds requested helper depth.");
+                                    foreach (var step in path.EnumerateArray())
+                                    {
+                                        if (step.GetProperty("relationshipKind").GetString() != "call")
+                                            throw new InvalidOperationException("Fixture requires exact static invocation links.");
+                                        refs.Add(step.GetProperty("callerHandoffId").GetString());
+                                        refs.Add(step.GetProperty("targetHandoffId").GetString());
+                                    }
+                                }
+                        foreach (var declaration in refs.Where(value => value is not null).Cast<string>())
+                            if (followed.Add(declaration))
+                                await context.CallAsync("get_symbol_body", new { targetPath = target, symbolIdentifiers = new[] { declaration }, maxBodyLines = 20 }).ConfigureAwait(false);
+                    }
+                }
+                cursor = section.TryGetProperty("resultCursor", out var next) ? next.GetString() : null;
+                if (cursor is not null && !seen.Add(cursor)) throw new InvalidOperationException("Repeated tests cursor.");
+            } while (cursor is not null);
+            var expected = depth switch { 0 => new[] { "Direct", "EndpointTests" }, 1 => new[] { "Direct", "Indirect", "EndpointTests" }, _ => new[] { "Direct", "Deep", "Indirect", "EndpointTests" } };
+            if (!names.Order(StringComparer.Ordinal).SequenceEqual(expected.Order(StringComparer.Ordinal)))
+                throw new InvalidOperationException($"Incorrect W6 candidates at depth {depth}: {string.Join(',', names)}");
+        }
+    }
 
     private static async Task ExploreFocusedAssemblyOutput(ExplorationContext context)
     {

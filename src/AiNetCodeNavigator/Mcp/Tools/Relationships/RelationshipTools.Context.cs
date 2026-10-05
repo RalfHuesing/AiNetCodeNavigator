@@ -15,6 +15,7 @@ namespace AiNetCodeNavigator.Mcp.Tools.Relationships;
 // Selected context sections share the validated declaration, owner, snapshot and lease.
 public sealed partial class RelationshipTools
 {
+    internal int? TestHelperExpansionLimitForTesting { get; set; }
     internal Action<string>? BeforeContextSectionForTesting { get; set; }
     internal Action<string>? BeforeAssemblyContextOwnerOpenForTesting { get; set; }
 
@@ -31,6 +32,7 @@ public sealed partial class RelationshipTools
         [System.ComponentModel.Description("Source member scope: all (default), production, or tests; requires members.")] string? memberScope = null,
         [System.ComponentModel.Description("Include generated source declarations; defaults to false.")] bool? includeGenerated = null,
         [System.ComponentModel.Description("Include referenced assembly owners in the uses section; defaults to false.")] bool? includeReferences = null,
+        [Range(0, 2), System.ComponentModel.Description("Intermediate source helper depth for static test candidates (0-2; default 1); requires tests.")] int? testHelperDepth = null,
         [Range(1, 100), System.ComponentModel.Description("Page size for each selected list section (1–100; default 10). Body window size is controlled separately.")] int? maxResults = null,
         [Range(1, 1000), System.ComponentModel.Description("Maximum declaration lines in a body window; defaults to 80.")] int? maxBodyLines = null,
         [Range(1, 1000000), System.ComponentModel.Description("One-based body window start line; omit for the first window.")] int? startLine = null,
@@ -42,7 +44,7 @@ public sealed partial class RelationshipTools
         CancellationToken cancellationToken = default)
     {
         var validation = ValidateContextArguments(targetPath, symbolIdentifier, sections, usageScope, memberNameFilter, memberKindFilter, memberSortBy, memberScope, includeGenerated,
-            includeReferences, maxResults, maxBodyLines, startLine, resultCursor, maxResponseBytes, maxResponseTokens);
+            includeReferences, testHelperDepth, maxResults, maxBodyLines, startLine, resultCursor, maxResponseBytes, maxResponseTokens);
         if (validation is not null) return Task.FromResult(validation);
 
         var selected = sections.Select(value => value.Trim().ToLowerInvariant()).ToArray();
@@ -52,8 +54,8 @@ public sealed partial class RelationshipTools
         var effectivePageSize = maxResults ?? 10;
         var bodyLines = maxBodyLines ?? 80;
         var bodyStart = startLine ?? 1;
-        var args = new { symbolIdentifier, sections, usageScope, memberNameFilter, memberKindFilter, memberSortBy, memberScope, includeGenerated, includeReferences, maxResults, maxBodyLines, startLine };
-        var requestBinding = System.Text.Json.JsonSerializer.Serialize(new { usageScope, memberNameFilter, memberKindFilter, memberSortBy, memberScope, includeGenerated, includeReferences, maxResults, maxBodyLines, startLine });
+        var args = new { symbolIdentifier, sections, usageScope, memberNameFilter, memberKindFilter, memberSortBy, memberScope, includeGenerated, includeReferences, testHelperDepth, maxResults, maxBodyLines, startLine };
+        var requestBinding = System.Text.Json.JsonSerializer.Serialize(new { usageScope, memberNameFilter, memberKindFilter, memberSortBy, memberScope, includeGenerated, includeReferences, testHelperDepth, maxResults, maxBodyLines, startLine });
 
         return NavigationToolSupport.RouteAsync(runtime, "get_context", targetPath, args, operationToken, continuationToken,
             maxResponseBytes, maxResponseTokens,
@@ -69,7 +71,7 @@ public sealed partial class RelationshipTools
                         return sourceRouteError;
                     return await NavigationToolSupport.WithSourceSolutionAsync(runtime, target,
                         async (solution, source, token) => await BuildSourceContextAsync(target, solution, source, symbolIdentifier,
-                            selected, activeSections, requestBinding, memberNameFilter, memberKindFilter, memberSortBy ?? "lines", memberScope ?? "all", scope, generated, effectivePageSize, bodyLines, bodyStart, coreCursor,
+                            selected, activeSections, requestBinding, memberNameFilter, memberKindFilter, memberSortBy ?? "lines", memberScope ?? "all", scope, generated, testHelperDepth ?? 1, effectivePageSize, bodyLines, bodyStart, coreCursor,
                             continuation.Section, maxResponseBytes, maxResponseTokens, token).ConfigureAwait(false),
                         maxResponseBytes, maxResponseTokens, ct).ConfigureAwait(false);
                 }
@@ -79,7 +81,7 @@ public sealed partial class RelationshipTools
     }
 
     private CallToolResult? ValidateContextArguments(string? targetPath, string? symbolIdentifier, string[]? sections,
-        string? usageScope, string? memberNameFilter, string? memberKindFilter, string? memberSortBy, string? memberScope, bool? includeGenerated, bool? includeReferences, int? maxResults, int? maxBodyLines,
+        string? usageScope, string? memberNameFilter, string? memberKindFilter, string? memberSortBy, string? memberScope, bool? includeGenerated, bool? includeReferences, int? testHelperDepth, int? maxResults, int? maxBodyLines,
         int? startLine, string? resultCursor, int maxResponseBytes, int? maxResponseTokens)
     {
         if (string.IsNullOrWhiteSpace(symbolIdentifier))
@@ -100,6 +102,12 @@ public sealed partial class RelationshipTools
             if (option.Value is not null && !normalized.Contains("members"))
                 return McpToolResults.InvalidArgument($"{option.Name} requires the members section.", "$." + option.Name,
                     "Select members or omit this argument.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        if (testHelperDepth is < 0 or > 2)
+            return McpToolResults.InvalidArgument("testHelperDepth must be from 0 to 2.", "$.testHelperDepth",
+                "Use zero, one, or two intermediate source helpers.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
+        if (testHelperDepth is not null && !normalized.Contains("tests"))
+            return McpToolResults.InvalidArgument("testHelperDepth requires the tests section.", "$.testHelperDepth",
+                "Select tests or omit this argument.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         if (memberSortBy is not null && memberSortBy is not ("lines" or "kind" or "name"))
             return McpToolResults.InvalidArgument("memberSortBy is unsupported.", "$.memberSortBy", "Use lines, kind, or name.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
         if (memberScope is not null && !TryScope(memberScope, out _))
@@ -127,6 +135,8 @@ public sealed partial class RelationshipTools
         }
         else
         {
+            if (testHelperDepth is not null) return McpToolResults.InvalidArgument("testHelperDepth applies only to source tests.", "$.testHelperDepth",
+                "Use a source solution target or omit this argument.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
             if (memberScope is not null) return McpToolResults.InvalidArgument("memberScope applies only to source members.", "$.memberScope",
                 "Omit this argument for assembly targets.", maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
             if (normalized.Contains("tests")) return McpToolResults.InvalidArgument("The tests section supports source solutions only.", "$.sections",
@@ -151,7 +161,7 @@ public sealed partial class RelationshipTools
     private async Task<CallToolResult> BuildSourceContextAsync(AnalysisTarget target, Solution solution,
         NavigationToolSupport.SourceAnalysisContext source, string identifier, string[] selected, string[] active, string requestBinding,
         string? memberNameFilter, string? memberKindFilter, string memberSortBy, string memberScope,
-        SymbolScopeType usageScope, bool includeGenerated, int pageSize, int bodyLines, int startLine,
+        SymbolScopeType usageScope, bool includeGenerated, int testHelperDepth, int pageSize, int bodyLines, int startLine,
         string? internalCursor, string? continuationSection, int bytes, int? tokens, CancellationToken ct)
     {
         var resolved = await SourceSymbolResolver.ResolveAsync(solution, identifier, source.Identity, source.IdentityRequest, ct).ConfigureAwait(false);
@@ -237,23 +247,26 @@ public sealed partial class RelationshipTools
                 else
                 {
                 var tests = await TestRecommendationBuilder.BuildAsync(symbol, solution, source.IdentityRequest, ct,
-                    includeGenerated, SymbolScopeType.All, testHelperDepth: 0).ConfigureAwait(false);
+                    includeGenerated, SymbolScopeType.All, testHelperDepth,
+                    maxExpandedHelpers: TestHelperExpansionLimitForTesting ?? TestRecommendationBuilder.MaxExpandedHelpers).ConfigureAwait(false);
                 var fixtures = tests.TestFixtures;
                 var page = PageContextList(fixtures, target.CanonicalPath, source.Identity.ContentHash, selected, section,
                     pageSize, internalCursor, identifier, usageScope, null, includeGenerated, null, null, requestBinding, bytes, tokens);
                 if (page.Error is not null) return page.Error;
-                var limited = tests.ImplementationExpansionLimitReached || tests.CandidateExpansionLimitReached || tests.ReferenceInspectionLimitReached;
+                var limited = tests.ImplementationExpansionLimitReached || tests.CandidateExpansionLimitReached || tests.ReferenceInspectionLimitReached || tests.HelperExpansionLimitReached;
                 var reasons = new List<string>();
                 if (tests.ImplementationExpansionLimitReached) reasons.Add("implementationExpansionLimit");
                 if (tests.CandidateExpansionLimitReached) reasons.Add("candidateExpansionLimit");
                 if (tests.ReferenceInspectionLimitReached) reasons.Add("referenceInspectionLimit");
+                if (tests.HelperExpansionLimitReached) reasons.Add("helperExpansionLimit");
                 sections.Add(new ContextSection(section, limited || page.NextCursor is not null ? "partial" : "complete", "recognized source test projects and files",
                     reasons, tests.TotalTestFixtures, page.Items!, page.NextCursor, null, null,
                     limited ? "Select a narrower symbol to inspect beyond the bounded test-candidate analysis." :
                         page.NextCursor is null ? null : "Continue this section with its resultCursor.",
                     AnalysisComplete: !limited, ResultContinuationAvailable: page.NextCursor is not null,
                     Analysis: new { tests.EvidenceMode, tests.ExpandedImplementationCount, tests.ImplementationExpansionLimitReached,
-                        tests.CandidateExpansionLimitReached, tests.ReferenceInspectionLimitReached }));
+                        tests.CandidateExpansionLimitReached, tests.ReferenceInspectionLimitReached,
+                        tests.TestHelperDepth, tests.ExpandedHelperCount, tests.HelperExpansionLimitReached }));
                 omissions.AddRange(reasons);
                 }
             }
@@ -283,7 +296,7 @@ public sealed partial class RelationshipTools
             response.IsError = true;
             return response;
         }
-        return source.WithMetadata(response, $"get_context(symbol={identifier.Trim()}, sections={string.Join('|', selected)}, usageScope={usageScope}, includeGenerated={includeGenerated}, maxResults={pageSize}, bodyStart={startLine}, bodyLines={bodyLines})",
+        return source.WithMetadata(response, $"get_context(symbol={identifier.Trim()}, sections={string.Join('|', selected)}, usageScope={usageScope}, includeGenerated={includeGenerated}, testHelperDepth={testHelperDepth}, maxResults={pageSize}, bodyStart={startLine}, bodyLines={bodyLines})",
             omissions.ToArray(), sections.Any(item => item is ContextSection { ResultCursor: not null }));
     }
 
