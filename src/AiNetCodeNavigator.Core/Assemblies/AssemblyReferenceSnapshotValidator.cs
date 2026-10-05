@@ -68,8 +68,14 @@ internal static class AssemblyReferenceSnapshotValidator
                         || !reachable.Contains(Path.GetFullPath(reference.SourceAssemblyPath))) continue;
                     var source = Path.GetFullPath(reference.SourceAssemblyPath);
                     var resolvedPath = reference.ResolvedPath is null ? string.Empty : Path.GetFullPath(reference.ResolvedPath);
+                    // These labels describe how this root traversed an already proven immutable binding.
+                    var bindingState = reference.Resolved && reference.ResolvedPath is not null
+                        && !string.IsNullOrWhiteSpace(reference.ContentHash)
+                        && reference.ResolutionState is "resolved" or "deduplicated" or "cycle"
+                            ? "resolved"
+                            : reference.ResolutionState;
                     edges.Add(string.Join("|", source, reference.Name, reference.Version, reference.Culture,
-                        reference.PublicKeyToken, reference.ResolutionState, resolvedPath, reference.ContentHash ?? string.Empty));
+                        reference.PublicKeyToken, bindingState, resolvedPath, reference.ContentHash ?? string.Empty));
                     hasBoundary |= reference.ResolutionState is "depth_limit" or "invalid";
                     if (reference.ResolvedPath is not null && reachable.Add(resolvedPath)) changed = true;
                 }

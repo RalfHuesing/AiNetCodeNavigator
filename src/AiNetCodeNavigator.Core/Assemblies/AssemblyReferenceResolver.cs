@@ -80,12 +80,6 @@ internal sealed class AssemblyReferenceResolver
             var candidate = CreateCandidate(node, reference, resolution, graph, diagnostics);
             if (!graph.TryAdd(candidate)) continue;
             if (candidate.ResolutionState is not "resolved" || candidate.ResolvedPath is null) continue;
-            if (trustedPaths.Contains(candidate.ResolvedPath, StringComparer.OrdinalIgnoreCase))
-            {
-                graph.AddPath(candidate.ResolvedPath);
-                continue;
-            }
-
             VisitChild(candidate, node, trustedPaths, graph, diagnostics);
         }
     }
