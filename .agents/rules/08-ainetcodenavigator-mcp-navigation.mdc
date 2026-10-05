@@ -6,7 +6,7 @@ alwaysApply: true
 
 # AiNetCodeNavigator MCP navigation
 
-- Use AiNetCodeNavigator as the primary tool for C# declarations and static relationships when available. Discover exposed tools as needed; use their current schemas for supported arguments, defaults and limits.
+- Use AiNetCodeNavigator as the primary tool for C# declarations and static relationships when available. Discover exposed tools as needed; client prefixes and registered server names may vary. Identify tools by their exposed names and descriptions; use their current schemas for supported arguments, defaults and limits.
 - Select the owning target: an absolute existing `.sln` / `.slnx` for source or managed `.dll` / `.exe` for assemblies. Ask only when ownership remains unresolved.
 - Read a bounded file range directly when the physical path and line are known. Use focused text searches for literals, configuration, non-C# or unindexed content, unsupported questions, or unavailable/persistently failing navigation. Treat text matches as leads, not semantic proof; state material fallback limitations.
 - Request only the context needed for the current question. Reuse discoveries, batch related requests, and start with narrow filters, small pages and shallow traversal. Expand only when needed.
@@ -17,3 +17,21 @@ alwaysApply: true
 - Base conclusions on the reported snapshot. Do not combine body windows from different snapshots or use stored results as verification of later edits. Rediscover renamed, moved or signature-changed declarations.
 - Distinguish static relationships from runtime behavior. Reflection, DI/runtime dispatch and external consumers need separate evidence. Static test candidates do not prove execution or coverage; assembly bodies are decompiled text.
 - Use external tools for edits, builds and tests; navigation is read-only. Inspect relevant consumers and runtime wiring before changing shared behavior or public contracts.
+
+## Tool selection
+
+Choose the tool that directly answers the question; skip inventories when the declaration or file is already known.
+
+| Need | Tool |
+|---|---|
+| Discover indexed source scope or browse namespaces | `browse_target` (select scope or namespaces) |
+| Find declarations or extension methods | `find_symbol` |
+| Read a file's declaration outline | `get_file_skeleton` |
+| Read declaration implementations | `get_symbol_body` |
+| Inspect type members or selected body, uses and static test candidates | `get_context` (request only the needed sections) |
+| Trace callers or callees | `get_call_tree` |
+| Find symbol usages | `find_references` |
+| Follow inheritance, implementations or overrides | `get_type_relations` |
+| Trace type, file, namespace or project dependencies | `dependency_graph` |
+| Identify a type's source project or assembly owner | `resolve_type_origin` |
+| Inspect a compiled API or search decompiled code | `inspect_assembly` / `search_assembly` |
