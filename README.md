@@ -1,4 +1,4 @@
-# AiNetCodeNavigator — MCP server for C# code navigation
+# AiNetCodeNavigator — MCP server for C# code navigation and .NET assembly inspection
 
 AiNetCodeNavigator gives AI coding agents read-only navigation tools for **C# source code and compiled .NET assemblies** through the **Model Context Protocol (MCP)**. Find symbols, read method bodies, trace callers and references, inspect type hierarchies, and explore decompiled libraries without editing the analyzed code.
 
@@ -52,15 +52,15 @@ Replace the example path with your installation path. The client starts the serv
 
 ### 3. Navigate a solution or assembly
 
-For example, ask your agent to find `OrderService.Save`, read its implementation, and identify its callers. The corresponding MCP tool requests are:
+For example, in a checkout of this repository, ask your agent to find `PathNormalizer.NormalizeSeparators`, read its implementation, and identify its callers. Replace `C:\work\AiNetCodeNavigator` with your checkout path. The corresponding MCP tool requests are:
 
 ```json
-{"name":"find_symbol","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","pattern":"StableSymbolReference"}}
-{"name":"get_symbol_body","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","symbolIdentifiers":["src:src/AiNetCodeNavigator.Core/AiNetCodeNavigator.Core.csproj|T:AiNetCodeNavigator.Core.Symbols.StableSymbolReference"]}}
-{"name":"get_call_tree","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","symbolIdentifier":"src:src/AiNetCodeNavigator.Core/AiNetCodeNavigator.Core.csproj|T:AiNetCodeNavigator.Core.Symbols.StableSymbolReference","direction":"incoming"}}
+{"name":"find_symbol","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","pattern":"NormalizeSeparators","kind":"method","namespaceFilter":"AiNetCodeNavigator.Core.Common"}}
+{"name":"get_symbol_body","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","symbolIdentifiers":["src:src/AiNetCodeNavigator.Core/AiNetCodeNavigator.Core.csproj|M:AiNetCodeNavigator.Core.Common.PathNormalizer.NormalizeSeparators(System.String)~System.String"]}}
+{"name":"get_call_tree","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","symbolIdentifier":"src:src/AiNetCodeNavigator.Core/AiNetCodeNavigator.Core.csproj|M:AiNetCodeNavigator.Core.Common.PathNormalizer.NormalizeSeparators(System.String)~System.String","direction":"incoming"}}
 ```
 
-Pass the exact reference returned by `find_symbol`. For a compiled library, start with compact `inspect_assembly` and its absolute DLL path; request `includeMembers=true` for member detail or use the returned type reference with `get_context.members`. Pass returned references together with their owner target to structure or body tools. An unchanged source declaration reference remains usable after body or unrelated edits and a server restart; rediscover after a rename, signature change or project move. The sample reference identifies `StableSymbolReference` in the Core project when the repository solution is selected. See [symbol resolution](docs/navigation/symbol-resolution.md) for the wire and recovery contract.
+Pass the exact reference returned by `find_symbol`. For a compiled library, start with compact `inspect_assembly` and its absolute DLL path; request `includeMembers=true` for member detail or use the returned type reference with `get_context.members`. Pass returned references together with their owner target to structure or body tools. An unchanged source declaration reference remains usable after body or unrelated edits and a server restart; rediscover after a rename, signature change or project move. The sample reference identifies the `PathNormalizer.NormalizeSeparators(string?)` method in the Core project when the repository solution is selected. See [symbol resolution](docs/navigation/symbol-resolution.md) for the wire and recovery contract.
 
 ## Scope and limitations
 
