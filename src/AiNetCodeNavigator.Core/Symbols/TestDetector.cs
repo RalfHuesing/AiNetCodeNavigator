@@ -6,7 +6,6 @@ using System.IO;
 using System.Linq;
 using AiNetCodeNavigator.Core.Common;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace AiNetCodeNavigator.Core.Symbols;
 
@@ -29,11 +28,6 @@ public static class TestDetector
     private static readonly string[] TestPathPrefixes =
     [
         "tests/", "test/"
-    ];
-
-    private static readonly string[] TestKeywords =
-    [
-        "xunit", "nunit", "testplatform", "unittesting", "mstest"
     ];
 
     private static readonly string[] DefaultTestProjectNameSuffixes =
@@ -65,7 +59,7 @@ public static class TestDetector
     {
         foreach (var reference in project.MetadataReferences)
         {
-            if (IsTestReference(reference.Display))
+            if (TestFrameworkClassifier.IsFrameworkReference(reference))
             {
                 return true;
             }
@@ -188,14 +182,6 @@ public static class TestDetector
         }
 
         return "unit";
-    }
-
-    private static bool IsTestReference(string? referenceDisplay)
-    {
-        if (string.IsNullOrWhiteSpace(referenceDisplay)) return false;
-
-        var name = Path.GetFileNameWithoutExtension(referenceDisplay);
-        return TestKeywords.Any(keyword => name.Contains(keyword, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool HasTestProjectNameSuffix(string projectName, IReadOnlyList<string> suffixes)

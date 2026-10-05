@@ -2,6 +2,7 @@
 
 using System;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Microsoft.CodeAnalysis;
 
 namespace AiNetCodeNavigator.Core.Symbols;
@@ -9,6 +10,8 @@ namespace AiNetCodeNavigator.Core.Symbols;
 /// <summary>Recognizes framework test methods and classifies their static activity separately.</summary>
 internal static class TestFrameworkClassifier
 {
+    private static readonly ConditionalWeakTable<PortableExecutableReference, FrameworkReferenceClassification> ReferenceClassifications = new();
+
     private const string XunitFactAttribute = "Xunit.FactAttribute";
     private const string XunitTheoryAttribute = "Xunit.TheoryAttribute";
     private const string XunitV3FactInterface = "Xunit.v3.IFactAttribute";
@@ -22,6 +25,38 @@ internal static class TestFrameworkClassifier
     private const string MsTestDataMethodAttribute = "Microsoft.VisualStudio.TestTools.UnitTesting.DataTestMethodAttribute";
     private const string MsTestClassAttribute = "Microsoft.VisualStudio.TestTools.UnitTesting.TestClassAttribute";
     private const string MsTestIgnoreAttribute = "Microsoft.VisualStudio.TestTools.UnitTesting.IgnoreAttribute";
+
+    /// <summary>Uses the reference's metadata image, independently of its file or assembly name.</summary>
+    public static bool IsFrameworkReference(MetadataReference reference) =>
+        reference is PortableExecutableReference executableReference
+        && ReferenceClassifications.GetValue(executableReference, static owner =>
+            new FrameworkReferenceClassification(DefinesFrameworkTestTypes(owner))).IsFramework;
+
+    private static bool DefinesFrameworkTestTypes(PortableExecutableReference reference)
+    {
+        if (reference.GetMetadata() is not AssemblyMetadata assembly) return false;
+        foreach (var module in assembly.GetModules())
+        {
+            var reader = module.GetMetadataReader();
+            foreach (var handle in reader.TypeDefinitions)
+            {
+                var definition = reader.GetTypeDefinition(handle);
+                // Skip nested definitions: their namespace/name pair is not their full metadata name.
+                if (!definition.GetDeclaringType().IsNil) continue;
+                var name = reader.GetString(definition.Name);
+                if (name is not ("FactAttribute" or "TheoryAttribute" or "IFactAttribute"
+                    or "TestAttribute" or "TestCaseAttribute" or "TestCaseSourceAttribute"
+                    or "TestMethodAttribute" or "DataTestMethodAttribute")) continue;
+                var metadataName = reader.GetString(definition.Namespace) + "." + name;
+                if (metadataName is XunitFactAttribute or XunitTheoryAttribute or XunitV3FactInterface
+                    or NUnitTestAttribute or NUnitTestCaseAttribute or NUnitTestCaseSourceAttribute
+                    or MsTestMethodAttribute or MsTestDataMethodAttribute) return true;
+            }
+        }
+        return false;
+    }
+
+    private sealed record FrameworkReferenceClassification(bool IsFramework);
 
     public static TestMethodClassification? Classify(IMethodSymbol method)
     {

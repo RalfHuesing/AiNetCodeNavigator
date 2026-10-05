@@ -75,6 +75,60 @@ public sealed class TestDetectorTests
         Assert.False(TestDetector.IsTestProject(handle.Solution.Projects.Single()));
     }
 
+    [Theory]
+    [InlineData("Product.XunitBridge", "Product.XunitBridge.dll")]
+    [InlineData("Product.NunitAdapter", "Product.NunitAdapter.dll")]
+    [InlineData("Product.UnitTesting", "Product.UnitTesting.dll")]
+    [InlineData("Microsoft.TestPlatform.Utilities", "Microsoft.TestPlatform.Utilities.dll")]
+    [InlineData("xunit.assert", "xunit.assert.dll")]
+    [InlineData("OrdinaryLibrary", "xunit.core.dll")]
+    public void IsTestProject_RejectsReferenceNameKeywordsWithoutFrameworkTypes(string assemblyName, string display)
+    {
+        var library = CSharpCompilation.Create(assemblyName,
+            [CSharpSyntaxTree.ParseText("namespace Product; public class Utility { }")],
+            TestWorkspaceBuilder.CoreReferences, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        using var image = new MemoryStream();
+        Assert.True(library.Emit(image).Success);
+        var reference = MetadataReference.CreateFromImage(image.ToArray(), filePath: display);
+        using var handle = TestWorkspaceBuilder.CreateSolution(new ProjectSpec("Product", [("Service.cs", "public class Service { }")],
+            AdditionalReferences: [reference]));
+
+        Assert.False(TestDetector.IsTestProject(handle.Solution.Projects.Single()));
+    }
+
+    [Theory]
+    [InlineData("Xunit", "FactAttribute", false)]
+    [InlineData("NUnit.Framework", "TestAttribute", false)]
+    [InlineData("Microsoft.VisualStudio.TestTools.UnitTesting", "TestMethodAttribute", false)]
+    [InlineData("Xunit.v3", "IFactAttribute", true)]
+    public void IsTestProject_RecognizesFrameworkMetadataRegardlessOfReferenceFileName(
+        string frameworkNamespace, string typeName, bool isInterface)
+    {
+        var declaration = isInterface ? $"interface {typeName}" : $"class {typeName} : System.Attribute";
+        var library = CSharpCompilation.Create("Vendor.Contracts",
+            [CSharpSyntaxTree.ParseText($$"""namespace {{frameworkNamespace}}; public {{declaration}} { }""")],
+            TestWorkspaceBuilder.CoreReferences, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        using var image = new MemoryStream();
+        Assert.True(library.Emit(image).Success);
+        var reference = MetadataReference.CreateFromImage(image.ToArray(), filePath: "Vendor.Contracts.dll");
+        using var handle = TestWorkspaceBuilder.CreateSolution(new ProjectSpec("Behavior", [("Behavior.cs", "public class Behavior { }")],
+            AdditionalReferences: [reference]));
+
+        Assert.True(TestDetector.IsTestProject(handle.Solution.Projects.Single()));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void IsTestProject_DistinguishesActualXunitFrameworkFromAssertions(bool framework)
+    {
+        var reference = MetadataReference.CreateFromFile((framework ? typeof(FactAttribute) : typeof(Assert)).Assembly.Location);
+        using var handle = TestWorkspaceBuilder.CreateSolution(new ProjectSpec("Product", [("Service.cs", "public class Service { }")],
+            AdditionalReferences: [reference]));
+
+        Assert.Equal(framework, TestDetector.IsTestProject(handle.Solution.Projects.Single()));
+    }
+
     [Fact]
     public async Task IsTestClass_DoesNotTreatOrdinaryTypeNameEndingInTestAsTestClass()
     {
