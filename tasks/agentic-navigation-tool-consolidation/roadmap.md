@@ -15,7 +15,7 @@ Execute the first open child point, in order. A parent closes only after its imp
 - [x] **M2 — [Consolidated navigation entry points](roadmap/02-entry-points.md)**: concept P2; intermediate catalog of thirteen tools.
 - [x] **M3 — [Discovery and metadata ownership](roadmap/03-discovery-and-metadata.md)**: concept P3; final catalog of twelve tools.
 - [x] **M4 — [Focused dependencies and assembly output](roadmap/04-focused-output.md)**: concept P4.
-- [ ] **M5 — [Helper-based test navigation](roadmap/05-test-navigation.md)**: concept P5.
+- [x] **M5 — [Helper-based test navigation](roadmap/05-test-navigation.md)**: concept P5.
 - [ ] **M6 — [Runtime findings and capacity recovery](roadmap/06-runtime.md)**: concept P6; implement demonstrated corrections without speculative infrastructure.
 - [ ] **M7 — [Final agent-flow verification and release readiness](roadmap/07-final-verification.md)**: concept P7 and sections 8.2–8.4.
 
