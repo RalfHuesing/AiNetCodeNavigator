@@ -30,8 +30,7 @@ internal static class SolutionStructureFingerprint
                 AddMSBuildConfigurationFiles(inputs, projectDirectory);
                 if (!string.IsNullOrEmpty(projectDirectory) && Directory.Exists(projectDirectory))
                 {
-                    foreach (var sourcePath in Directory.EnumerateFiles(projectDirectory, "*.cs", SearchOption.AllDirectories)
-                        .Where(filePath => !IsGeneratedOrBuildPath(projectDirectory, filePath)))
+                    foreach (var sourcePath in EnumerateSourceFiles(projectDirectory))
                     {
                         inputs[Path.GetFullPath(sourcePath)] = "source";
                     }
@@ -128,8 +127,7 @@ internal static class SolutionStructureFingerprint
         }
 
         inputs[canonicalRoot] = "directory";
-        foreach (var sourcePath in Directory.EnumerateFiles(canonicalRoot, "*.cs", SearchOption.AllDirectories)
-            .Where(filePath => !IsGeneratedOrBuildPath(canonicalRoot, filePath)))
+        foreach (var sourcePath in EnumerateSourceFiles(canonicalRoot))
         {
             inputs[Path.GetFullPath(sourcePath)] = "source";
         }
@@ -171,12 +169,27 @@ internal static class SolutionStructureFingerprint
         }
     }
 
-    private static bool IsGeneratedOrBuildPath(string root, string path)
+    private static IEnumerable<string> EnumerateSourceFiles(string root)
     {
-        var relative = Path.GetRelativePath(root, path);
-        return relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            .Any(segment => segment.Equals("bin", StringComparison.OrdinalIgnoreCase)
-                || segment.Equals("obj", StringComparison.OrdinalIgnoreCase)
-                || segment.Equals(".git", StringComparison.OrdinalIgnoreCase));
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.TryPop(out var directory))
+        {
+            foreach (var sourcePath in Directory.EnumerateFiles(directory, "*.cs", SearchOption.TopDirectoryOnly))
+            {
+                yield return sourcePath;
+            }
+
+            foreach (var child in Directory.EnumerateDirectories(directory))
+            {
+                var name = Path.GetFileName(child);
+                if (!name.Equals("bin", StringComparison.OrdinalIgnoreCase)
+                    && !name.Equals("obj", StringComparison.OrdinalIgnoreCase)
+                    && !name.Equals(".git", StringComparison.OrdinalIgnoreCase))
+                {
+                    pending.Push(child);
+                }
+            }
+        }
     }
 }

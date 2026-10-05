@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Diagnostics;
+using System.Security.Cryptography;
 using AiNetCodeNavigator.TestKit;
 
 namespace AiNetCodeNavigator.Exploration;
@@ -21,6 +23,9 @@ internal static class Scenarios
             [nameof(ExploreMetadataRelations)] = ExploreMetadataRelations,
             [nameof(ExploreFocusedAssemblyOutput)] = ExploreFocusedAssemblyOutput,
             [nameof(ExploreFocusedDependencyOutput)] = ExploreFocusedDependencyOutput,
+            [nameof(ExploreSourceRuntime)] = ExploreSourceRuntime,
+            ["ExploreSourceRuntimeProfile"] = context => ExploreSourceRuntime(context, 1),
+            [nameof(ExploreAssemblyRuntime)] = ExploreAssemblyRuntime,
         };
 
     private static async Task ExploreTestHelpers(ExplorationContext context)
@@ -100,6 +105,113 @@ internal static class Scenarios
             if (!names.Order(StringComparer.Ordinal).SequenceEqual(expected.Order(StringComparer.Ordinal)))
                 throw new InvalidOperationException($"Incorrect W6 candidates at depth {depth}: {string.Join(',', names)}");
         }
+    }
+
+    private static Task ExploreSourceRuntime(ExplorationContext context) => ExploreSourceRuntime(context, 3);
+
+    private static async Task ExploreSourceRuntime(ExplorationContext context, int bodyRuns)
+    {
+        var samples = new List<object>();
+        var times = new Dictionary<string, List<double>>(StringComparer.Ordinal);
+        await RecordBuildAsync(context).ConfigureAwait(false);
+        foreach (var (name, kind) in new[] { ("StableSymbolReference", "record class"), ("StableSymbolReferenceCodec", "class") })
+        {
+            var discovery = await TimedAsync("discovery-" + name, "find_symbol", new
+            {
+                targetPath = context.RepositorySolution, pattern = name, kind, scopeType = "production", maxResults = 10,
+                maxResponseBytes = 32768, maxResponseTokens = 8192,
+            }).ConfigureAwait(false);
+            using var result = JsonDocument.Parse(discovery.Payload);
+            var item = result.RootElement.GetProperty("results").EnumerateArray()
+                .SelectMany(batch => batch.GetProperty("entries").EnumerateArray())
+                .Single(entry => entry.GetProperty("docCommentId").GetString() == "T:AiNetCodeNavigator.Core.Symbols." + name);
+            var reference = item.GetProperty("handoffId").GetString();
+            for (var run = 1; run <= bodyRuns; run++)
+                await TimedAsync("body-" + name, "get_symbol_body", new
+                {
+                    targetPath = context.RepositorySolution, symbolIdentifiers = new[] { reference }, startLine = 1, maxBodyLines = 20,
+                    maxResponseBytes = 32768, maxResponseTokens = 8192,
+                }).ConfigureAwait(false);
+        }
+
+        async Task<ExplorationResult> TimedAsync(string label, string tool, object arguments)
+        {
+            var watch = Stopwatch.StartNew();
+            var response = await context.CallAsync(tool, arguments).ConfigureAwait(false);
+            watch.Stop();
+            if (!times.TryGetValue(label, out var values)) times[label] = values = [];
+            values.Add(watch.Elapsed.TotalMilliseconds);
+            samples.Add(new { label, run = values.Count, milliseconds = watch.Elapsed.TotalMilliseconds,
+                query = arguments, elapsedIncludes = "SDK/handler, required polls/outer pages, and saved artifact writing" });
+            await File.WriteAllTextAsync(Path.Combine(context.OutputDirectory, "measurements.json"),
+                JsonSerializer.Serialize(new { samples, medians = times.ToDictionary(pair => pair.Key, pair => pair.Value.Order().ElementAt(pair.Value.Count / 2)) },
+                    new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
+            return response;
+        }
+    }
+
+    private static async Task ExploreAssemblyRuntime(ExplorationContext context)
+    {
+        await RecordBuildAsync(context).ConfigureAwait(false);
+        var target = typeof(Core.Symbols.StableSymbolReferenceCodec).Assembly.Location;
+        var samples = new List<object>();
+        var times = new List<double>();
+        string? selectedOwner = null;
+        string? selectedReference = null;
+        foreach (var (references, label) in new[] { (true, "cold-closure"), (false, "warm-root-only"), (true, "warm-closure"), (true, "warm-closure"), (true, "warm-closure") })
+        {
+            if (label == "warm-closure" && selectedReference is null) break;
+            var query = new { targetPath = target, extensionOnly = true, receiverType = "System.String", includeReferences = references,
+                maxResults = 5, includeDiagnostics = true, maxResponseBytes = 32768, maxResponseTokens = 8192 };
+            var watch = Stopwatch.StartNew();
+            var response = await context.CallAsync("find_symbol", query).ConfigureAwait(false);
+            watch.Stop();
+            if (label == "warm-closure") times.Add(watch.Elapsed.TotalMilliseconds);
+            using var page = JsonDocument.Parse(response.Payload);
+            var entries = page.RootElement.GetProperty("results")[0].GetProperty("entries").EnumerateArray().ToArray();
+            if (references && entries.Length > 0)
+            {
+                var entry = entries.First(hit => hit.TryGetProperty("handoffId", out _));
+                selectedOwner ??= entry.GetProperty("ownerTargetPath").GetString();
+                selectedReference ??= entry.GetProperty("handoffId").GetString();
+            }
+            samples.Add(new { label, run = label == "warm-closure" ? times.Count : 1, milliseconds = watch.Elapsed.TotalMilliseconds, query,
+                totalMatches = page.RootElement.GetProperty("results")[0].GetProperty("totalMatches").GetInt32(),
+                elapsedIncludes = "SDK/handler, required polls/outer pages, and saved artifact writing" });
+            await File.WriteAllTextAsync(Path.Combine(context.OutputDirectory, "measurements.json"),
+                JsonSerializer.Serialize(new { samples, warmMedianMilliseconds = times.Count == 0 ? (double?)null : times.Order().ElementAt(times.Count / 2),
+                    runtimePolicy = "Fresh runtime; existing persistent decompilation disk cache retained" },
+                    new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
+        }
+        if (selectedReference is null)
+        {
+            // Separate known declaration/owner follow-up; this does not turn the empty Core closure into capability evidence.
+            var known = await context.CallAsync("find_symbol", new
+            {
+                targetPath = typeof(Scenarios).Assembly.Location, pattern = "*Exploration*", extensionOnly = true,
+                receiverType = "System.String", includeReferences = false, maxResults = 5,
+                maxResponseBytes = 32768, maxResponseTokens = 8192,
+            }).ConfigureAwait(false);
+            using var knownPage = JsonDocument.Parse(known.Payload);
+            var entry = knownPage.RootElement.GetProperty("results")[0].GetProperty("entries").EnumerateArray()
+                .First(hit => hit.GetProperty("name").GetString() == "ExplorationMark");
+            selectedOwner = entry.GetProperty("ownerTargetPath").GetString();
+            selectedReference = entry.GetProperty("handoffId").GetString();
+        }
+        await context.CallAsync("get_symbol_body", new
+        {
+            targetPath = selectedOwner, symbolIdentifiers = new[] { selectedReference }, startLine = 1, maxBodyLines = 20,
+            maxResponseBytes = 32768, maxResponseTokens = 8192,
+        }).ConfigureAwait(false);
+    }
+
+    private static async Task RecordBuildAsync(ExplorationContext context)
+    {
+        var assemblies = new[] { typeof(Scenarios).Assembly, typeof(Core.Symbols.StableSymbolReferenceCodec).Assembly, typeof(Mcp.NavigatorHostRuntime).Assembly };
+        await File.WriteAllTextAsync(Path.Combine(context.OutputDirectory, "build.json"),
+            JsonSerializer.Serialize(assemblies.Select(assembly => new { assembly.FullName, path = assembly.Location,
+                sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(assembly.Location))) }),
+                new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
     }
 
     private static async Task ExploreFocusedAssemblyOutput(ExplorationContext context)
