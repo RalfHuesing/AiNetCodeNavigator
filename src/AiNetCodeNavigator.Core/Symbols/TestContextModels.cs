@@ -14,6 +14,7 @@ public sealed record TestMethodMatch(
     public string? QualifiedName { get; init; }
     public string? FilePath { get; init; }
     public int Column { get; init; }
+    public TestActivityStatus ActivityStatus { get; init; }
 }
 
 /// <summary>One proven static source use in a test-to-helper-to-endpoint path.</summary>

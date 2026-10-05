@@ -42,17 +42,6 @@ public static class TestDetector
         "FastTests", "ComponentTests", "TestKit", "Specs", "Spec"
     ];
 
-    private static readonly HashSet<string> TestAttributeNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Fact", "FactAttribute",
-        "Theory", "TheoryAttribute",
-        "Test", "TestAttribute",
-        "TestMethod", "TestMethodAttribute",
-        "DataTestMethod", "DataTestMethodAttribute",
-        "TestCase", "TestCaseAttribute",
-        "TestCaseSource", "TestCaseSourceAttribute"
-    };
-
     private static readonly string[] ClassNameAffixes =
     [
         "Tests", "Test", "Specs", "Spec", "IntegrationTests", "UnitTests", "ComponentTests", "FastTests"
@@ -158,17 +147,11 @@ public static class TestDetector
 
     public static bool IsTestMethod(IMethodSymbol methodSymbol)
     {
-        foreach (var attribute in methodSymbol.GetAttributes())
-        {
-            var attrName = attribute.AttributeClass?.Name;
-            if (attrName != null && TestAttributeNames.Contains(attrName))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        return ClassifyTestMethod(methodSymbol) is not null;
     }
+
+    public static TestMethodClassification? ClassifyTestMethod(IMethodSymbol methodSymbol) =>
+        TestFrameworkClassifier.Classify(methodSymbol);
 
     public static bool IsTestSymbol(ISymbol symbol)
     {

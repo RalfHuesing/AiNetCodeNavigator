@@ -15,6 +15,22 @@ namespace AiNetCodeNavigator.FastTests.Symbols;
 public sealed class TestDetectorTests
 {
     [Theory]
+    [InlineData("Xunit", "Fact")]
+    [InlineData("NUnit.Framework", "Test")]
+    [InlineData("Microsoft.VisualStudio.TestTools.UnitTesting", "TestMethod")]
+    public async Task IsTestMethod_RejectsSourceFrameworkLookalikes(string frameworkNamespace, string attributeName)
+    {
+        using var handle = TestWorkspaceBuilder.CreateSolution($$"""
+            namespace {{frameworkNamespace}} { public sealed class {{attributeName}}Attribute : System.Attribute { } }
+            public class Behavior { [{{frameworkNamespace}}.{{attributeName}}] public void Check() { } }
+            """);
+        var compilation = await handle.Solution.Projects.Single().GetCompilationAsync();
+        var method = compilation!.GetTypeByMetadataName("Behavior")!.GetMembers("Check").OfType<IMethodSymbol>().Single();
+
+        Assert.False(TestDetector.IsTestMethod(method));
+    }
+
+    [Theory]
     [InlineData("GreeterTests.cs", true)]
     [InlineData("GreeterTest.cs", true)]
     [InlineData("GreeterSpec.cs", true)]
@@ -96,23 +112,23 @@ public sealed class TestDetectorTests
             "Sample.XunitSuite",
             [("OrderServiceTests.cs", """
                 using System;
-                namespace Xunit { public sealed class FactAttribute : Attribute { } }
+
                 namespace Sample.XunitSuite { public class OrderServiceTests { [Xunit.Fact] public void PlacesOrder() { } } }
-                """)]);
+                """)], AdditionalReferences: [TestFrameworkReferences.Reference]);
         var nunit = new ProjectSpec(
             "Sample.NunitSuite",
             [("OrderServiceSpecs.cs", """
                 using System;
-                namespace NUnit.Framework { public sealed class TestCaseAttribute : Attribute { } }
+
                 namespace Sample.NunitSuite { public class OrderServiceSpecs { [NUnit.Framework.TestCase] public void PlacesOrder() { } } }
-                """)]);
+                """)], AdditionalReferences: [TestFrameworkReferences.Reference]);
         var mstest = new ProjectSpec(
             "Sample.MstestSuite",
             [("TestOrderService.cs", """
                 using System;
-                namespace Microsoft.VisualStudio.TestTools.UnitTesting { public sealed class TestMethodAttribute : Attribute { } }
-                namespace Sample.MstestSuite { public class TestOrderService { [Microsoft.VisualStudio.TestTools.UnitTesting.TestMethod] public void PlacesOrder() { } } }
-                """)]);
+
+                namespace Sample.MstestSuite { [Microsoft.VisualStudio.TestTools.UnitTesting.TestClass] public class TestOrderService { [Microsoft.VisualStudio.TestTools.UnitTesting.TestMethod] public void PlacesOrder() { } } }
+                """)], AdditionalReferences: [TestFrameworkReferences.Reference]);
 
         using var handle = TestWorkspaceBuilder.CreateSolution(
             @"C:\VirtualRepo\FrameworkResolution.slnx", production, xunit, nunit, mstest);
@@ -144,12 +160,12 @@ public sealed class TestDetectorTests
             [("OrderService.cs", "namespace Sample.Core; public class OrderService { }")]);
         var xunit = new ProjectSpec(
             "Sample.XunitSuite",
-            [("OrderServiceTests.cs", "using System; namespace Xunit { public sealed class FactAttribute : Attribute { } } namespace Sample.XunitSuite { public class OrderServiceTests { [Xunit.Fact] public void PlacesOrder() { } } }")],
-            VirtualProjectDirectory: "tests/xunit");
+            [("OrderServiceTests.cs", "using System;  namespace Sample.XunitSuite { public class OrderServiceTests { [Xunit.Fact] public void PlacesOrder() { } } }")],
+            VirtualProjectDirectory: "tests/xunit", AdditionalReferences: [TestFrameworkReferences.Reference]);
         var nunit = new ProjectSpec(
             "Sample.NunitSuite",
-            [("OrderServiceTests.cs", "using System; namespace NUnit.Framework { public sealed class TestCaseAttribute : Attribute { } } namespace Sample.NunitSuite { public class OrderServiceTests { [NUnit.Framework.TestCase] public void CancelsOrder() { } } }")],
-            VirtualProjectDirectory: "tests/nunit");
+            [("OrderServiceTests.cs", "using System;  namespace Sample.NunitSuite { public class OrderServiceTests { [NUnit.Framework.TestCase] public void CancelsOrder() { } } }")],
+            VirtualProjectDirectory: "tests/nunit", AdditionalReferences: [TestFrameworkReferences.Reference]);
         using var handle = TestWorkspaceBuilder.CreateSolution(
             @"C:\VirtualRepo\DuplicateTestFixtures.slnx", production, xunit, nunit);
         var compilation = await handle.Solution.Projects.Single(project => project.Name == "Sample.Core").GetCompilationAsync();
@@ -222,7 +238,7 @@ public sealed class TestDetectorTests
         var testProj = new ProjectSpec(
             Name: "Sample.Tests",
             Documents: [("OrderServiceTests.cs", testSource)],
-            ProjectReferences: ["Sample.Core"]);
+            ProjectReferences: ["Sample.Core"], AdditionalReferences: [TestFrameworkReferences.Reference]);
 
         using var handle = TestWorkspaceBuilder.CreateSolution(@"C:\Virtual\Solution.slnx", prodProj, testProj);
         var compilation = await handle.Solution.Projects.Single(p => p.Name == "Sample.Core").GetCompilationAsync();
@@ -250,7 +266,7 @@ public sealed class TestDetectorTests
             "Sample.Tests",
             [("OrderBehavior.cs", """
                 using System;
-                namespace Xunit { public sealed class FactAttribute : Attribute { } }
+
                 namespace Sample.Tests
                 {
                     public sealed class OrderBehavior
@@ -274,7 +290,7 @@ public sealed class TestDetectorTests
                     }
                 }
                 """)],
-            ProjectReferences: ["Sample.Core"]);
+            ProjectReferences: ["Sample.Core"], AdditionalReferences: [TestFrameworkReferences.Reference]);
         using var handle = TestWorkspaceBuilder.CreateSolution(production, tests);
         var compilation = await handle.Solution.Projects.Single(project => project.Name == "Sample.Core").GetCompilationAsync();
         Assert.NotNull(compilation);
@@ -304,8 +320,8 @@ public sealed class TestDetectorTests
         var production = new ProjectSpec("Sample.Core", [
             ("IOrderService.cs", "namespace Sample.Core { public interface IOrderService { void PlaceOrder(); } } namespace Sample.Other { public interface IOrderService { void PlaceOrder(); } }")]);
         var tests = new ProjectSpec("Sample.Tests", [
-            ("AmbiguousBehavior.cs", "using System; using Sample.Core; using Sample.Other; namespace Xunit { public sealed class FactAttribute : Attribute { } } public sealed class AmbiguousBehavior { [Xunit.Fact] public void CallsAmbiguousService(IOrderService service) => service.PlaceOrder(); }")],
-            ProjectReferences: ["Sample.Core"]);
+            ("AmbiguousBehavior.cs", "using System; using Sample.Core; using Sample.Other;  public sealed class AmbiguousBehavior { [Xunit.Fact] public void CallsAmbiguousService(IOrderService service) => service.PlaceOrder(); }")],
+            ProjectReferences: ["Sample.Core"], AdditionalReferences: [TestFrameworkReferences.Reference]);
         using var handle = TestWorkspaceBuilder.CreateSolution(production, tests);
         var compilation = await handle.Solution.Projects.Single(project => project.Name == "Sample.Core").GetCompilationAsync();
         Assert.NotNull(compilation);
@@ -331,8 +347,8 @@ public sealed class TestDetectorTests
         var production = new ProjectSpec("Sample.Core", [
             ("Widget.cs", "using System; namespace Sample.Core { public interface IWidget { string Value { get; } event Action? Changed; void Run(); } public sealed class Widget : IWidget { public string Value => string.Empty; public event Action? Changed; public void Run() { } } }")]);
         var tests = new ProjectSpec("Sample.Tests", [
-            ("FeatureScenarios.cs", "using System; using Sample.Core; namespace Xunit { public sealed class FactAttribute : Attribute { } } namespace Sample.Tests { public sealed class FeatureScenarios { [Xunit.Fact] public void UsesMembers() { var widget = new Widget(); widget.Run(); _ = new Widget().Value.ToString(); widget.Changed += static () => { }; } } }")],
-            ProjectReferences: ["Sample.Core"]);
+            ("FeatureScenarios.cs", "using System; using Sample.Core;  namespace Sample.Tests { public sealed class FeatureScenarios { [Xunit.Fact] public void UsesMembers() { var widget = new Widget(); widget.Run(); _ = new Widget().Value.ToString(); widget.Changed += static () => { }; } } }")],
+            ProjectReferences: ["Sample.Core"], AdditionalReferences: [TestFrameworkReferences.Reference]);
         using var handle = TestWorkspaceBuilder.CreateSolution(production, tests);
         var compilation = await handle.Solution.Projects.Single(project => project.Name == "Sample.Core").GetCompilationAsync();
         Assert.NotNull(compilation);
@@ -376,7 +392,7 @@ public sealed class TestDetectorTests
             "Sample.Tests",
             [("OrderBehavior.cs", """
                 using System;
-                namespace Xunit { public sealed class FactAttribute : Attribute { } }
+
                 namespace Sample.Tests
                 {
                     public sealed class ImplementationBehavior
@@ -387,7 +403,7 @@ public sealed class TestDetectorTests
                     public sealed class DefaultOrderServiceSpec { }
                 }
                 """)],
-            ProjectReferences: ["Sample.Core"]);
+            ProjectReferences: ["Sample.Core"], AdditionalReferences: [TestFrameworkReferences.Reference]);
         using var handle = TestWorkspaceBuilder.CreateSolution(production, tests);
         var compilation = await handle.Solution.Projects.Single(project => project.Name == "Sample.Core").GetCompilationAsync();
         Assert.NotNull(compilation);
@@ -411,8 +427,8 @@ public sealed class TestDetectorTests
     {
         var projectA = new ProjectSpec("Sample.CoreA", [("Service.cs", "namespace Sample.A; public sealed class Service { public void Run() { } }")]);
         var projectB = new ProjectSpec("Sample.CoreB", [("Service.cs", "namespace Sample.B; public sealed class Service { public void Run() { } }")]);
-        var testsA = new ProjectSpec("Sample.TestsA", [("UseA.cs", "using System; namespace Xunit { public sealed class FactAttribute : Attribute { } } public sealed class UseA { [Xunit.Fact] public void ExercisesA() => new Sample.A.Service().Run(); }")], ProjectReferences: ["Sample.CoreA"]);
-        var testsB = new ProjectSpec("Sample.TestsB", [("UseB.cs", "using System; namespace Xunit { public sealed class FactAttribute : Attribute { } } public sealed class UseB { [Xunit.Fact] public void ExercisesB() => new Sample.B.Service().Run(); }")], ProjectReferences: ["Sample.CoreB"]);
+        var testsA = new ProjectSpec("Sample.TestsA", [("UseA.cs", "using System;  public sealed class UseA { [Xunit.Fact] public void ExercisesA() => new Sample.A.Service().Run(); }")], ProjectReferences: ["Sample.CoreA"], AdditionalReferences: [TestFrameworkReferences.Reference]);
+        var testsB = new ProjectSpec("Sample.TestsB", [("UseB.cs", "using System;  public sealed class UseB { [Xunit.Fact] public void ExercisesB() => new Sample.B.Service().Run(); }")], ProjectReferences: ["Sample.CoreB"], AdditionalReferences: [TestFrameworkReferences.Reference]);
         using var handle = TestWorkspaceBuilder.CreateSolution(projectA, projectB, testsA, testsB);
         var compilation = await handle.Solution.Projects.Single(project => project.Name == "Sample.CoreA").GetCompilationAsync();
         Assert.NotNull(compilation);
@@ -455,7 +471,7 @@ public sealed class TestDetectorTests
             .Select(index => $"public sealed class DirectTest{index:D3} {{ [Xunit.Fact] public void CallsTarget() => new Sample.Core.Target().Run(); }}"));
         using var handle = TestWorkspaceBuilder.CreateSolution(
             new ProjectSpec("Sample.Core", [("Target.cs", "namespace Sample.Core; public sealed class Target { public void Run() { } }")]),
-            new ProjectSpec("Sample.Tests", [("DirectTests.cs", $"using System; namespace Xunit {{ public sealed class FactAttribute : Attribute {{ }} }} namespace Sample.Tests {{ {testTypes} }}")], ProjectReferences: ["Sample.Core"]));
+            new ProjectSpec("Sample.Tests", [("DirectTests.cs", $"using System;  namespace Sample.Tests {{ {testTypes} }}")], ProjectReferences: ["Sample.Core"], AdditionalReferences: [TestFrameworkReferences.Reference]));
         var compilation = await handle.Solution.Projects.Single(project => project.Name == "Sample.Core").GetCompilationAsync();
         Assert.NotNull(compilation);
         var target = compilation.GetTypeByMetadataName("Sample.Core.Target")?.GetMembers("Run").OfType<IMethodSymbol>().Single();
@@ -484,9 +500,9 @@ public sealed class TestDetectorTests
             new ProjectSpec("Sample.Core", [("Target.cs", "namespace Sample.Core; public sealed class Target { public void Run() { } }")]),
             new ProjectSpec("Sample.Tests",
                 [
-                    ("ATargetChecks.cs", $"using System; namespace Xunit {{ public sealed class FactAttribute : Attribute {{ }} }} public sealed class TargetChecks {{ {testMethods} }}")
+                    ("ATargetChecks.cs", $"using System;  public sealed class TargetChecks {{ {testMethods} }}")
                 ],
-                ProjectReferences: ["Sample.Core"]));
+                ProjectReferences: ["Sample.Core"], AdditionalReferences: [TestFrameworkReferences.Reference]));
         var compilation = await handle.Solution.Projects.Single(project => project.Name == "Sample.Core").GetCompilationAsync();
         Assert.NotNull(compilation);
         var target = compilation.GetTypeByMetadataName("Sample.Core.Target")?.GetMembers("Run").OfType<IMethodSymbol>().Single();
@@ -520,7 +536,7 @@ public sealed class TestDetectorTests
     {
         using var handle = TestWorkspaceBuilder.CreateSolution(Path.Combine(Path.GetTempPath(), "HelperDepth", "Sample.slnx"), new ProjectSpec("Sample.Tests", [("Behavior.cs", """
             using System;
-            namespace Xunit { public sealed class FactAttribute : Attribute { } }
+
             namespace Sample {
                 public static class Target { public static void Run() { } }
                 public static class Helpers {
@@ -541,7 +557,7 @@ public sealed class TestDetectorTests
                 }
                 public class TargetTests { [Xunit.Fact] public void NameOnly() { } }
             }
-            """)]));
+            """)], AdditionalReferences: [TestFrameworkReferences.Reference]));
         var compilation = await handle.Solution.Projects.Single().GetCompilationAsync();
         var target = compilation!.GetTypeByMetadataName("Sample.Target")!.GetMembers("Run").Single();
         var result = await TestRecommendationBuilder.BuildAsync(target, handle.Solution, testHelperDepth: depth);
@@ -582,7 +598,7 @@ public sealed class TestDetectorTests
     {
         using var handle = TestWorkspaceBuilder.CreateSolution(new ProjectSpec("Sample.Tests", [("Behavior.cs", """
             using System;
-            namespace Xunit { public sealed class FactAttribute : Attribute { } }
+
             namespace Sample {
                 public static class Target { public static int Value; }
                 public class Helper {
@@ -595,7 +611,7 @@ public sealed class TestDetectorTests
                     [Xunit.Fact] public void NonCall(Helper helper) { Action value = helper.Use; }
                 }
             }
-            """)]));
+            """)], AdditionalReferences: [TestFrameworkReferences.Reference]));
         var compilation = await handle.Solution.Projects.Single().GetCompilationAsync();
         var target = compilation!.GetTypeByMetadataName("Sample.Target")!.GetMembers("Value").Single();
         var result = await TestRecommendationBuilder.BuildAsync(target, handle.Solution);
@@ -614,7 +630,7 @@ public sealed class TestDetectorTests
     {
         using var handle = TestWorkspaceBuilder.CreateSolution(new ProjectSpec("Sample.Tests", [("Behavior.cs", """
             using System;
-            namespace Xunit { public sealed class FactAttribute : Attribute { } }
+
             namespace Sample {
                 public interface ITarget { void Run(); }
                 public class Target : ITarget { public void Run() { } }
@@ -630,7 +646,7 @@ public sealed class TestDetectorTests
                     [Xunit.Fact] public void ViaC() => Helpers.C();
                 }
             }
-            """)]));
+            """)], AdditionalReferences: [TestFrameworkReferences.Reference]));
         var compilation = await handle.Solution.Projects.Single().GetCompilationAsync();
         var target = compilation!.GetTypeByMetadataName("Sample.ITarget")!.GetMembers("Run").Single();
         var capped = await TestRecommendationBuilder.BuildWithLimitsAsync(target, handle.Solution, 1, 2, 4096);
@@ -661,13 +677,13 @@ public sealed class TestDetectorTests
     public async Task TestRecommendationBuilder_EqualHelperNamesRetainSourceProjectOwners()
     {
         const string helper = "public static class Helpers { public static void Use() => Target.Run(); }";
-        const string test = "using System; namespace Xunit { public sealed class FactAttribute : Attribute { } } public class Behavior { [Xunit.Fact] public void ViaHelper() => Helpers.Use(); }";
+        const string test = "using System;  public class Behavior { [Xunit.Fact] public void ViaHelper() => Helpers.Use(); }";
         using var handle = TestWorkspaceBuilder.CreateSolution(Path.Combine(Path.GetTempPath(), "HelperOwners", "Sample.slnx"),
             new ProjectSpec("Core", [("Target.cs", "public static class Target { public static void Run() { } }")]),
             new ProjectSpec("First", [("Helper.cs", helper)], ProjectReferences: ["Core"]),
             new ProjectSpec("Second", [("Helper.cs", helper)], ProjectReferences: ["Core"]),
-            new ProjectSpec("First.Tests", [("Behavior.cs", test)], ProjectReferences: ["First"]),
-            new ProjectSpec("Second.Tests", [("Behavior.cs", test)], ProjectReferences: ["Second"]));
+            new ProjectSpec("First.Tests", [("Behavior.cs", test)], ProjectReferences: ["First"], AdditionalReferences: [TestFrameworkReferences.Reference]),
+            new ProjectSpec("Second.Tests", [("Behavior.cs", test)], ProjectReferences: ["Second"], AdditionalReferences: [TestFrameworkReferences.Reference]));
         var compilation = await handle.Solution.Projects.Single(project => project.Name == "Core").GetCompilationAsync();
         var target = compilation!.GetTypeByMetadataName("Target")!.GetMembers("Run").Single();
         var result = await TestRecommendationBuilder.BuildAsync(target, handle.Solution);
@@ -683,13 +699,13 @@ public sealed class TestDetectorTests
     public async Task TestRecommendationBuilder_SortsEqualEvidenceFixturesBySourceLineBeforeName()
     {
         const string source = """
-            namespace Xunit { public class FactAttribute : System.Attribute { } }
+
             public static class Endpoint { public static void Run() { } }
             public class ZEarlier { [Xunit.Fact] public void Check() => Endpoint.Run(); }
             public class ALater { [Xunit.Fact] public void Check() => Endpoint.Run(); }
             """;
         using var handle = TestWorkspaceBuilder.CreateSolution(Path.Combine(Path.GetTempPath(), "FixtureOrdering.sln"),
-            new ProjectSpec("Ordering.Tests", [("Tests.cs", source)]));
+            new ProjectSpec("Ordering.Tests", [("Tests.cs", source)], AdditionalReferences: [TestFrameworkReferences.Reference]));
         var compilation = await handle.Solution.Projects.Single().GetCompilationAsync();
         var target = compilation!.GetTypeByMetadataName("Endpoint")!.GetMembers("Run").Single();
         var result = await TestRecommendationBuilder.BuildAsync(target, handle.Solution, testHelperDepth: 0);
@@ -702,11 +718,11 @@ public sealed class TestDetectorTests
     [Fact]
     public async Task TestRecommendationBuilder_SortsPartialFixtureMethodsByOwnFileLineColumnBeforeName()
     {
-        const string header = "namespace Xunit { public class FactAttribute : System.Attribute { } } public static class Endpoint { public static void Run() {} } public partial class Behavior {";
+        const string header = " public static class Endpoint { public static void Run() {} } public partial class Behavior {";
         var first = header + new string('\n', 19) + "[Xunit.Fact] public void ZEarlier() => Endpoint.Run(); [Xunit.Fact] public void ALater() => Endpoint.Run(); }";
         const string second = "public partial class Behavior {\n\n[Xunit.Fact] public void BFile() => Endpoint.Run(); }";
         using var handle = TestWorkspaceBuilder.CreateSolution(Path.Combine(Path.GetTempPath(), "MethodOrdering.sln"),
-            new ProjectSpec("Ordering.Tests", [("A.cs", first), ("B.cs", second)]));
+            new ProjectSpec("Ordering.Tests", [("A.cs", first), ("B.cs", second)], AdditionalReferences: [TestFrameworkReferences.Reference]));
         var compilation = await handle.Solution.Projects.Single().GetCompilationAsync();
         var target = compilation!.GetTypeByMetadataName("Endpoint")!.GetMembers("Run").Single();
         var result = await TestRecommendationBuilder.BuildAsync(target, handle.Solution, testHelperDepth: 0);

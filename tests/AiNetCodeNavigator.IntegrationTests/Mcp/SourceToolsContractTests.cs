@@ -28,12 +28,47 @@ public sealed class SourceToolsContractTests
     public SourceToolsContractTests(Xunit.ITestOutputHelper output) => _output = output;
 
     [Fact]
+    public async Task GetContextTestsReportsActivityWithoutDroppingExcludedTests()
+    {
+        using var fixture = TestTempDirectory.Create("context-test-activity-");
+        var target = fixture.CreateFile("Activity.slnx", "<Solution />");
+        const string source = """
+            public class CustomFactAttribute : Xunit.FactAttribute { }
+            public static class Endpoint { public static void Run() { } }
+            public class Behavior {
+                [CustomFact] public void Active() => Endpoint.Run();
+                [CustomFact(Skip = "reason")] public void Excluded() => Endpoint.Run();
+                [CustomFact(SkipUnless = "Condition")] public void Conditional() => Endpoint.Run();
+                public void Helper() => Endpoint.Run();
+            }
+            """;
+        var file = fixture.CreateFile("Activity.Tests/Behavior.cs", source);
+        fixture.CreateFile("Activity.Tests/Activity.Tests.csproj", "<Project />");
+        await using var host = InMemorySourceTestHost.Create(target,
+            [new ProjectSpec("Activity.Tests", [(file, source)], AdditionalReferences: [TestFrameworkReferences.Reference],
+                VirtualProjectDirectory: "Activity.Tests")]);
+        var tools = new RelationshipTools(host.Runtime);
+
+        var payload = await ReconstructOuterPagesAsync(await tools.GetContext(target, "Endpoint.Run", ["tests"]),
+            async continuation => await tools.GetContext(target, "Endpoint.Run", ["tests"], continuationToken: continuation));
+
+        using var document = JsonDocument.Parse(payload);
+        var section = document.RootElement.GetProperty("sections")[0];
+        Assert.Equal("complete", section.GetProperty("status").GetString());
+        var item = Assert.Single(section.GetProperty("items").EnumerateArray());
+        Assert.Equal("xUnit", item.GetProperty("framework").GetString());
+        var methods = item.GetProperty("methods").EnumerateArray().ToArray();
+        Assert.Equal(new[] { "Active", "Excluded", "Conditional" }, methods.Select(method => method.GetProperty("methodName").GetString()));
+        Assert.Equal(new[] { "active", "excluded", "conditional" }, methods.Select(method => method.GetProperty("activityStatus").GetString()));
+    }
+
+    [Fact]
     public async Task GetContextHelperDepthProjectsStaticPathsAndBindsOptionPresence()
     {
         using var fixture = TestTempDirectory.Create("context-helper-");
         var target = fixture.CreateFile("Helpers.slnx", "<Solution />");
         const string source = """
-            namespace Xunit { public sealed class FactAttribute : System.Attribute { } }
+
             namespace W6 {
             public static class Endpoint { public static void Run() { } }
             public static class Helpers {
@@ -51,7 +86,7 @@ public sealed class SourceToolsContractTests
         var file = fixture.CreateFile("W6.Tests/Tests.cs", source);
         fixture.CreateFile("W6.Tests/W6.Tests.csproj", "<Project />");
         await using var host = InMemorySourceTestHost.Create(target,
-            [new ProjectSpec("W6.Tests", [(file, source)], VirtualProjectDirectory: "W6.Tests")]);
+            [new ProjectSpec("W6.Tests", [(file, source)], VirtualProjectDirectory: "W6.Tests", AdditionalReferences: [TestFrameworkReferences.Reference])]);
         var tools = new RelationshipTools(host.Runtime);
         var schema = ModelContextProtocol.Server.McpServerTool.Create(typeof(RelationshipTools).GetMethod(nameof(RelationshipTools.GetContext))!, tools,
             new ModelContextProtocol.Server.McpServerToolCreateOptions { Name = "get_context" }).ProtocolTool.InputSchema;
@@ -120,11 +155,11 @@ public sealed class SourceToolsContractTests
     {
         using var fixture = TestTempDirectory.Create("context-helper-cap-");
         var target = fixture.CreateFile("Cap.slnx", "<Solution />");
-        const string source = "namespace Xunit { public class FactAttribute : System.Attribute {} } namespace W6 { public static class Endpoint { public static void Run() {} } public static class H { public static void A()=>Endpoint.Run(); public static void B()=>Endpoint.Run(); } public class First { [Xunit.Fact] public void Check()=>H.A(); } public class Second { [Xunit.Fact] public void Check()=>H.B(); } public class Direct { [Xunit.Fact] public void Check()=>Endpoint.Run(); } }";
+        const string source = " namespace W6 { public static class Endpoint { public static void Run() {} } public static class H { public static void A()=>Endpoint.Run(); public static void B()=>Endpoint.Run(); } public class First { [Xunit.Fact] public void Check()=>H.A(); } public class Second { [Xunit.Fact] public void Check()=>H.B(); } public class Direct { [Xunit.Fact] public void Check()=>Endpoint.Run(); } }";
         var file = fixture.CreateFile("W6.Tests/Tests.cs", source);
         fixture.CreateFile("W6.Tests/W6.Tests.csproj", "<Project />");
         await using var host = InMemorySourceTestHost.Create(target,
-            [new ProjectSpec("W6.Tests", [(file, source)], VirtualProjectDirectory: "W6.Tests")]);
+            [new ProjectSpec("W6.Tests", [(file, source)], VirtualProjectDirectory: "W6.Tests", AdditionalReferences: [TestFrameworkReferences.Reference])]);
         var tools = new RelationshipTools(host.Runtime) { TestHelperExpansionLimitForTesting = 1 };
         string? cursor = null;
         var pages = 0;
@@ -1630,7 +1665,7 @@ public sealed class SourceToolsContractTests
         var recovery = "namespace ScopeProbe.Recovery.Deep { public sealed class NestedType { } }";
         var testSource = """
             using System;
-            namespace Xunit { public sealed class FactAttribute : Attribute { } }
+
             namespace ScopeProbe.Tests
             {
                 public sealed class TargetTests
@@ -1660,7 +1695,7 @@ public sealed class SourceToolsContractTests
                 [(appFile, source), (generatedFile, generated), (recoveryFile, recovery)],
                 VirtualProjectDirectory: "src/App"),
             new ProjectSpec("ScopeProbe.Tests", [(testsFile, testSource)], ProjectReferences: ["ScopeProbe.App"],
-                VirtualProjectDirectory: "tests/ScopeProbe.Tests"),
+                VirtualProjectDirectory: "tests/ScopeProbe.Tests", AdditionalReferences: [TestFrameworkReferences.Reference]),
         ]);
         return (solutionPath, appFile, host);
     }
@@ -1678,7 +1713,7 @@ public sealed class SourceToolsContractTests
         var targetSource = "namespace ScopeProbe; public sealed class Target { public void Run() { } public void LargeBody() { } }";
         var methods = string.Join(Environment.NewLine, Enumerable.Range(0, testCount)
             .Select(index => $"public sealed class DirectTest{index:D3} {{ [Xunit.Fact] public void UsesTarget() => new ScopeProbe.Target().Run(); }}"));
-        var testSource = $"using System; namespace Xunit {{ public sealed class FactAttribute : Attribute {{ }} }} namespace ScopeProbe.Tests {{ {methods} }}";
+        var testSource = $"using System;  namespace ScopeProbe.Tests {{ {methods} }}";
 
         File.WriteAllText(solutionPath, "<Solution><Project Path=\"src/App/ScopeProbe.App.csproj\" /><Project Path=\"tests/ScopeProbe.Tests/ScopeProbe.Tests.csproj\" /></Solution>");
         File.WriteAllText(Path.Combine(appDirectory, "ScopeProbe.App.csproj"), "<Project />");
@@ -1690,7 +1725,7 @@ public sealed class SourceToolsContractTests
         [
             new ProjectSpec("ScopeProbe.App", [(targetFilePath, targetSource)], VirtualProjectDirectory: "src/App"),
             new ProjectSpec("ScopeProbe.Tests", [(testFilePath, testSource)], ProjectReferences: ["ScopeProbe.App"],
-                VirtualProjectDirectory: "tests/ScopeProbe.Tests"),
+                VirtualProjectDirectory: "tests/ScopeProbe.Tests", AdditionalReferences: [TestFrameworkReferences.Reference]),
         ];
         return (solutionPath, projects);
     }
@@ -1738,11 +1773,12 @@ public sealed class SourceToolsContractTests
             """);
         await File.WriteAllTextAsync(Path.Combine(appDirectory, "Generated.g.cs"),
             "namespace ScopeProbe.GeneratedOnly { public class GeneratedProbe { } } namespace ScopeProbe { public partial class OrderProbe { public void GeneratedMember() { } } }");
+        var xunitAssemblyPath = System.Security.SecurityElement.Escape(typeof(FactAttribute).Assembly.Location);
         await File.WriteAllTextAsync(Path.Combine(testsDirectory, "ScopeProbe.Tests.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup><ItemGroup><ProjectReference Include=\"../../src/App/ScopeProbe.App.csproj\" /></ItemGroup></Project>");
+            $"<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup><ItemGroup><ProjectReference Include=\"../../src/App/ScopeProbe.App.csproj\" /><Reference Include=\"xunit.v3.core\"><HintPath>{xunitAssemblyPath}</HintPath></Reference></ItemGroup></Project>");
         await File.WriteAllTextAsync(Path.Combine(testsDirectory, "TargetTests.cs"), """
             using System;
-            namespace Xunit { public sealed class FactAttribute : Attribute { } }
+
             namespace ScopeProbe.Tests
             {
                 public sealed class TargetTests
