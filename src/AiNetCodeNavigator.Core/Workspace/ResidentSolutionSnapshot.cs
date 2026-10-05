@@ -26,4 +26,8 @@ public sealed record ResidentSolutionLoadError(
     string ErrorCode,
     string? TargetPath,
     string Message,
-    bool Retryable);
+    bool Retryable)
+{
+    /// <summary>Complete exception text, including inner exceptions and stack traces.</summary>
+    public string? DiagnosticDetails { get; init; }
+}

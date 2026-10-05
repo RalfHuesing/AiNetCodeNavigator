@@ -19,9 +19,11 @@ public sealed class NavigatorHostRuntime : IAsyncDisposable, IDisposable
         TimeSpan? operationResponseWindow = null,
         ProjectRegistry? projectRegistry = null,
         DependencyGraphCache? dependencyGraphCache = null,
-        TimeSpan? operationPollResponseWindow = null)
+        TimeSpan? operationPollResponseWindow = null,
+        Serilog.ILogger? workspaceLogger = null)
     {
         ArgumentNullException.ThrowIfNull(lifetime);
+        WorkspaceLogger = workspaceLogger ?? Serilog.Log.ForContext<NavigatorHostRuntime>();
         ProjectRegistry = projectRegistry ?? new ProjectRegistry(ProjectRegistryOptions.ForMSBuild());
         DependencyGraphCache = dependencyGraphCache ?? new DependencyGraphCache(runtimeLifetime: lifetime.ApplicationStopping);
         ProjectRegistry.SourceOwnerRetiring = DependencyGraphCache.RetireTargetAsync;
@@ -32,6 +34,7 @@ public sealed class NavigatorHostRuntime : IAsyncDisposable, IDisposable
     }
 
     internal ProjectRegistry ProjectRegistry { get; }
+    internal Serilog.ILogger WorkspaceLogger { get; }
     internal DependencyGraphCache DependencyGraphCache { get; }
     internal AssemblyAnalysisSessionRegistry AssemblyRegistry { get; }
     internal AnalysisSymbolIdentityService AnalysisIdentities { get; }

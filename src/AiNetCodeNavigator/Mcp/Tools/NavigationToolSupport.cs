@@ -246,17 +246,18 @@ internal static class NavigationToolSupport
         }
 
         NavigationOperationProgress.Current?.Advance(NavigationAnalysisPhase.Refreshing);
-        var snapshot = await lease.ResidentSolution.GetCurrentSnapshotAsync(cancellationToken).ConfigureAwait(false);
+        var snapshot = !lease.ResidentSolution.IsLoaded && lease.ResidentSolution.LoadFailure is { } initialFailure
+            ? new ResidentSolutionSnapshot(null, initialFailure)
+            : await lease.ResidentSolution.GetCurrentSnapshotAsync(cancellationToken).ConfigureAwait(false);
         if (!snapshot.Succeeded)
         {
             var error = snapshot.Error;
-            if (error?.Retryable == true)
+            lease.MarkLoadFailedResponseEmitted();
+            if (error is not null)
             {
-                return McpToolResults.Loading(
-                    error.Message,
-                    "Wait briefly, then repeat the same targetPath and query.",
-                    maxResponseBytes,
-                    maxResponseTokens);
+                runtime.WorkspaceLogger.Error("Source workspace loading failed for {TargetPath}. ErrorCode={ErrorCode}\n{DiagnosticDetails}",
+                    target.CanonicalPath, error.ErrorCode, error.DiagnosticDetails ?? error.Message);
+                return McpToolResults.WorkspaceFailure(error, target.CanonicalPath);
             }
 
             return McpToolResults.Recoverable(

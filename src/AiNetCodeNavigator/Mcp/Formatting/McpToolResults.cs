@@ -192,6 +192,19 @@ internal static class McpToolResults
         Recoverable("INVALID_ARGUMENT", message, nextAction, context: context, fieldPath: fieldPath,
             maxResponseBytes: maxResponseBytes, maxResponseTokens: maxResponseTokens);
 
+    // The operation store applies caller budgets to this complete error, advertising exact retry minima.
+    // Formatting it here with caller budgets would discard the original diagnostic before storage.
+    internal static CallToolResult WorkspaceFailure(Core.Workspace.ResidentSolutionLoadError error, string targetPath)
+    {
+        var action = "Correct workspace loading errors and repeat the query. Full diagnostic details are also written to the server log.";
+        var text = $"{ErrorStatusPrefix}[ERROR]: {error.ErrorCode}: {error.Message}\ntargetPath: {targetPath}\nnextAction: {action}\n{error.DiagnosticDetails}";
+        if (Encoding.UTF8.GetByteCount(text) > McpResponseBudgetLimits.MaximumBytes)
+        {
+            text = $"{ErrorStatusPrefix}[ERROR]: {error.ErrorCode}: Workspace loading failed. The complete diagnostic exceeds the maximum response size.\nnextAction: Read the complete diagnostic in the server log, correct workspace loading errors and repeat the query.";
+        }
+        return Create(text, isError: true);
+    }
+
     internal static CallToolResult Loading(
         string message = "The server is still loading the workspace.",
         string nextAction = "Wait briefly and repeat the same call.",

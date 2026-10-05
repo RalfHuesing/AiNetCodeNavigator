@@ -506,7 +506,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
         NavigationErrorCodes.WorkspaceDiagnostic,
         solutionPath,
         exception.Message,
-        Retryable: false);
+        Retryable: false) { DiagnosticDetails = exception.ToString() };
 
     private ResidentSolutionLoadError CreateResidentError(Exception exception) =>
         exception is MetadataReferenceImageCapture.MetadataImageUnsupportedException
@@ -525,7 +525,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
         ProjectErrorCodes.ProjectLoadFailed,
         solutionPath,
         $"Unable to load solution '{solutionPath ?? "unknown path"}': {exception.Message}",
-        Retryable: true);
+        Retryable: true) { DiagnosticDetails = exception.ToString() };
 
     private void SetLoadFailure(Exception exception)
     {
