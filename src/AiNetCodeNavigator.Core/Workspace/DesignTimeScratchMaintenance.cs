@@ -3,13 +3,13 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using Serilog;
 
 namespace AiNetCodeNavigator.Core.Workspace;
 
-/// <summary>Reclaims abandoned analysis output without touching active process directories.</summary>
+/// <summary>Reclaims abandoned, marked analysis output without touching active process directories.</summary>
 internal static class DesignTimeScratchMaintenance
 {
     internal static string Root => Path.Combine(Path.GetTempPath(), "AiNetCodeNavigator", "msbuild-analysis");
@@ -22,45 +22,30 @@ internal static class DesignTimeScratchMaintenance
     {
         try
         {
+            // A hypothetical child lets the same central check validate the root and all its ancestors.
+            DesignTimeScratchSafety.EnsureSafePath(root, OwnerFilePath(root, 1));
             if (!Directory.Exists(root)) return;
             foreach (var directory in Directory.GetDirectories(root))
             {
                 if (cancellationToken.IsCancellationRequested) return;
+                var name = Path.GetFileName(directory);
+                if (!int.TryParse(name, NumberStyles.None, CultureInfo.InvariantCulture, out var processId)
+                    || processId <= 0 || isProcessAlive(processId)) continue;
                 try
                 {
-                    if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) continue;
-                    var name = Path.GetFileName(directory);
-                    if (name.StartsWith("orphan-", StringComparison.Ordinal)
-                        && Guid.TryParseExact(name[7..], "N", out _))
-                    {
-                        DeleteQuarantine(directory, cancellationToken);
-                        continue;
-                    }
-                    if (!int.TryParse(name, NumberStyles.None, CultureInfo.InvariantCulture, out var processId)
-                        || processId <= 0 || isProcessAlive(processId)) continue;
-                    // Legacy output has GUID-named workspace directories but no owner lock.
-                    // Preserve unexpected content rather than assuming every numeric directory is ours.
-                    if (Directory.EnumerateFileSystemEntries(directory).Any(entry =>
-                            !Guid.TryParseExact(Path.GetFileName(entry), "N", out _))) continue;
-                    var quarantine = Path.Combine(root, $"orphan-{Guid.NewGuid():N}");
-                    var ownerFile = OwnerFilePath(root, processId);
-                    using (var ownership = new FileStream(ownerFile,
-                               FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Delete))
+                    if (!DesignTimeScratchSafety.IsOwnedDirectory(root, directory)) continue;
+                    bool removed;
+                    using (var ownership = DesignTimeScratchSafety.AcquireProcessOwnership(root, processId, FileShare.Delete))
                     {
                         if (isProcessAlive(processId)) continue;
-                        // Claim the exact directory before deleting, so PID reuse cannot redirect deletion to new output.
-                        Directory.Move(directory, quarantine);
+                        // Hold ownership through deletion so an instance with a reused PID cannot create new output.
+                        removed = DesignTimeScratchSafety.TryDeleteOwnedDirectory(root, directory, cancellationToken);
                     }
-                    DeleteQuarantine(quarantine, cancellationToken);
-                    File.Delete(ownerFile);
+                    if (removed) DesignTimeScratchSafety.DeleteProcessOwnershipFile(root, processId);
                 }
-                catch (IOException exception)
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
                 {
-                    Log.Warning(exception, "Could not reclaim design-time scratch directory {ScratchDirectory}; a later startup will retry.", directory);
-                }
-                catch (UnauthorizedAccessException exception)
-                {
-                    Log.Warning(exception, "Could not reclaim design-time scratch directory {ScratchDirectory}; a later startup will retry.", directory);
+                    Log.Warning(exception, "Could not reclaim owned design-time scratch directory {ScratchDirectory}.", directory);
                 }
             }
             foreach (var ownerFile in Directory.GetFiles(root, ".owner-*.lock"))
@@ -73,40 +58,22 @@ internal static class DesignTimeScratchMaintenance
                     || isProcessAlive(processId)) continue;
                 try
                 {
-                    using var ownership = new FileStream(ownerFile, FileMode.Open, FileAccess.ReadWrite, FileShare.Delete);
-                    if (!isProcessAlive(processId)) File.Delete(ownerFile);
+                    using (var ownership = DesignTimeScratchSafety.AcquireProcessOwnership(root, processId, FileShare.Delete))
+                    {
+                        if (isProcessAlive(processId)) continue;
+                    }
+                    DesignTimeScratchSafety.DeleteProcessOwnershipFile(root, processId);
                 }
-                catch (IOException exception)
-                {
-                    Log.Warning(exception, "Could not reclaim design-time scratch ownership file {OwnerFile}.", ownerFile);
-                }
-                catch (UnauthorizedAccessException exception)
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
                 {
                     Log.Warning(exception, "Could not reclaim design-time scratch ownership file {OwnerFile}.", ownerFile);
                 }
             }
         }
-        catch (IOException exception)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            Log.Warning(exception, "Could not enumerate design-time scratch directories in {ScratchRoot}.", root);
+            Log.Warning(exception, "Could not safely enumerate design-time scratch directories in {ScratchRoot}.", root);
         }
-        catch (UnauthorizedAccessException exception)
-        {
-            Log.Warning(exception, "Could not enumerate design-time scratch directories in {ScratchRoot}.", root);
-        }
-    }
-
-    private static void DeleteQuarantine(string path, CancellationToken cancellationToken)
-    {
-        foreach (var entry in Directory.EnumerateFileSystemEntries(path))
-        {
-            if (cancellationToken.IsCancellationRequested) return;
-            if ((File.GetAttributes(entry) & FileAttributes.Directory) != 0)
-                Directory.Delete(entry, recursive: true);
-            else
-                File.Delete(entry);
-        }
-        if (!cancellationToken.IsCancellationRequested) Directory.Delete(path);
     }
 
     private static bool IsProcessAlive(int processId)

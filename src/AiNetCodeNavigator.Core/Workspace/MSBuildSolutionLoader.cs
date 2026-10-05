@@ -32,9 +32,10 @@ public static class MSBuildSolutionLoader
         var processRoot = Path.Combine(DesignTimeScratchMaintenance.Root, Environment.ProcessId.ToString());
         lock (ScratchLock)
         {
-            Directory.CreateDirectory(processRoot);
-            processScratchOwnership ??= new FileStream(DesignTimeScratchMaintenance.OwnerFilePath(DesignTimeScratchMaintenance.Root, Environment.ProcessId),
-                FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read);
+            if (!DesignTimeScratchSafety.TryInitializeDirectory(DesignTimeScratchMaintenance.Root, processRoot))
+                Log.Warning("Existing process scratch directory {ScratchDirectory} is unmarked and will not be reclaimed automatically.", processRoot);
+            processScratchOwnership ??= DesignTimeScratchSafety.AcquireProcessOwnership(
+                DesignTimeScratchMaintenance.Root, Environment.ProcessId, FileShare.Read);
         }
         var scratchRoot = Path.Combine(processRoot, Guid.NewGuid().ToString("N"));
         var customTargets = EnsureDesignTimeTargets(scratchRoot);
@@ -57,18 +58,14 @@ public static class MSBuildSolutionLoader
         var scratchRoot = Path.Combine(Path.GetTempPath(), "AiNetCodeNavigator", "msbuild-analysis", Environment.ProcessId.ToString());
         lock (ScratchLock)
         {
+            TryDeleteDirectory(scratchRoot);
             processScratchOwnership?.Dispose();
             processScratchOwnership = null;
-            TryDeleteDirectory(scratchRoot);
             try
             {
-                File.Delete(DesignTimeScratchMaintenance.OwnerFilePath(DesignTimeScratchMaintenance.Root, Environment.ProcessId));
+                DesignTimeScratchSafety.DeleteProcessOwnershipFile(DesignTimeScratchMaintenance.Root, Environment.ProcessId);
             }
-            catch (IOException exception)
-            {
-                Log.Warning(exception, "Could not remove the design-time scratch ownership file.");
-            }
-            catch (UnauthorizedAccessException exception)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
             {
                 Log.Warning(exception, "Could not remove the design-time scratch ownership file.");
             }
@@ -77,23 +74,13 @@ public static class MSBuildSolutionLoader
 
     private static void TryDeleteDirectory(string path)
     {
-        try
-        {
-            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
-        }
-        catch (IOException exception)
-        {
-            Log.Warning(exception, "Could not remove design-time scratch directory {ScratchDirectory}; shutdown or a later startup will retry.", path);
-        }
-        catch (UnauthorizedAccessException exception)
-        {
-            Log.Warning(exception, "Could not remove design-time scratch directory {ScratchDirectory}; shutdown or a later startup will retry.", path);
-        }
+        DesignTimeScratchSafety.TryDeleteOwnedDirectory(DesignTimeScratchMaintenance.Root, path);
     }
 
     private static string EnsureDesignTimeTargets(string scratchRoot)
     {
-        Directory.CreateDirectory(scratchRoot);
+        if (!DesignTimeScratchSafety.TryInitializeDirectory(DesignTimeScratchMaintenance.Root, scratchRoot))
+            throw new IOException($"Cannot initialize ownership of scratch directory '{scratchRoot}'.");
         var targetsPath = Path.Combine(scratchRoot, "Navigator.DesignTime.targets");
         var escapedRoot = scratchRoot.Replace("&", "&amp;", StringComparison.Ordinal).Replace("<", "&lt;", StringComparison.Ordinal);
         // Hash the project and build dimensions rather than mirroring the source directory tree.
@@ -233,7 +220,6 @@ public static class MSBuildSolutionLoader
         catch
         {
             DisposeWorkspace(workspace);
-            TryDeleteDirectory(scratchRoot);
             throw;
         }
     }
