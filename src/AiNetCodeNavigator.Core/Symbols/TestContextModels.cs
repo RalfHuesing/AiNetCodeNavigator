@@ -9,7 +9,20 @@ public sealed record TestMethodMatch(
     string MethodName,
     int Line,
     string? HandoffId = null,
-    IReadOnlyList<TestCandidateEvidence>? Evidence = null);
+    IReadOnlyList<TestCandidateEvidence>? Evidence = null)
+{
+    public string? QualifiedName { get; init; }
+    public string? FilePath { get; init; }
+    public int Column { get; init; }
+}
+
+/// <summary>One proven static source use in a test-to-helper-to-endpoint path.</summary>
+public sealed record TestHelperPathStep(
+    string Caller, string Target, string RelationshipKind, string ProjectPath,
+    string FilePath, int Line, int Column, string? CallerHandoffId, string? TargetHandoffId)
+{
+    public string? DispatchLimitation { get; init; }
+}
 
 /// <summary>A source-located static reason why a test fixture or method was returned as a candidate.</summary>
 public sealed record TestCandidateEvidence(
@@ -19,7 +32,10 @@ public sealed record TestCandidateEvidence(
     int Line,
     int Column,
     string? ProjectIdentity = null,
-    string? HandoffId = null);
+    string? HandoffId = null)
+{
+    public IReadOnlyList<TestHelperPathStep>? HelperPath { get; init; }
+}
 
 /// <summary>
 /// A statically inferred test fixture candidate. The match is heuristic evidence, not proof of execution or coverage.
@@ -36,6 +52,8 @@ public sealed record TestFixtureMatch(
     string? ProjectIdentity = null)
 {
     internal ProjectId? SourceProjectId { get; init; }
+    public string? ProjectPath { get; init; }
+    public string? QualifiedName { get; init; }
 }
 
 /// <summary>
@@ -57,4 +75,7 @@ public sealed record TestContextPayload(
     public bool ImplementationExpansionLimitReached { get; init; }
     public bool CandidateExpansionLimitReached { get; init; }
     public bool ReferenceInspectionLimitReached { get; init; }
+    public int TestHelperDepth { get; init; }
+    public int ExpandedHelperCount { get; init; }
+    public bool HelperExpansionLimitReached { get; init; }
 }

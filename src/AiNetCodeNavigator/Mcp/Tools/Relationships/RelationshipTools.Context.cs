@@ -237,7 +237,7 @@ public sealed partial class RelationshipTools
                 else
                 {
                 var tests = await TestRecommendationBuilder.BuildAsync(symbol, solution, source.IdentityRequest, ct,
-                    includeGenerated, SymbolScopeType.All).ConfigureAwait(false);
+                    includeGenerated, SymbolScopeType.All, testHelperDepth: 0).ConfigureAwait(false);
                 var fixtures = tests.TestFixtures;
                 var page = PageContextList(fixtures, target.CanonicalPath, source.Identity.ContentHash, selected, section,
                     pageSize, internalCursor, identifier, usageScope, null, includeGenerated, null, null, requestBinding, bytes, tokens);

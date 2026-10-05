@@ -22,6 +22,7 @@ public static class TestRecommendationBuilder
     public const int MaxImplementationExpansion = 64;
     public const int MaxCandidateFixtures = 256;
     public const int MaxReferenceLocations = 4096;
+    public const int MaxExpandedHelpers = 200;
 
     private static readonly string[] TestAffixes =
     [
@@ -33,12 +34,14 @@ public static class TestRecommendationBuilder
         Solution solution,
         CancellationToken ct = default,
         bool includeGenerated = false,
-        SymbolScopeType scope = SymbolScopeType.All)
+        SymbolScopeType scope = SymbolScopeType.All,
+        int testHelperDepth = 1)
     {
         ArgumentNullException.ThrowIfNull(targetSymbol);
         ArgumentNullException.ThrowIfNull(solution);
         var formatter = await SourceReferenceFormattingContext.CreateFormatterAsync(solution, ct).ConfigureAwait(false);
-        return await BuildCoreAsync(targetSymbol, solution, formatter, ct, includeGenerated, scope).ConfigureAwait(false);
+        return await BuildCoreAsync(targetSymbol, solution, formatter, ct, includeGenerated, scope, testHelperDepth,
+            MaxExpandedHelpers, MaxReferenceLocations).ConfigureAwait(false);
     }
 
     internal static Task<TestContextPayload> BuildAsync(
@@ -47,8 +50,19 @@ public static class TestRecommendationBuilder
         SourceIdentityRequest identityRequest,
         CancellationToken ct = default,
         bool includeGenerated = false,
-        SymbolScopeType scope = SymbolScopeType.All) =>
-        BuildCoreAsync(targetSymbol, solution, symbol => identityRequest.FormatHandoff(symbol, solution), ct, includeGenerated, scope);
+        SymbolScopeType scope = SymbolScopeType.All,
+        int testHelperDepth = 1) =>
+        BuildCoreAsync(targetSymbol, solution, symbol => identityRequest.FormatHandoff(symbol, solution), ct, includeGenerated, scope,
+            testHelperDepth, MaxExpandedHelpers, MaxReferenceLocations);
+
+    // Request-local test seam: production always uses the public fixed bounds.
+    internal static async Task<TestContextPayload> BuildWithLimitsAsync(ISymbol targetSymbol, Solution solution,
+        int testHelperDepth, int maxExpandedHelpers, int maxReferenceLocations, CancellationToken ct = default)
+    {
+        var formatter = await SourceReferenceFormattingContext.CreateFormatterAsync(solution, ct).ConfigureAwait(false);
+        return await BuildCoreAsync(targetSymbol, solution, formatter, ct, false, SymbolScopeType.All,
+            testHelperDepth, maxExpandedHelpers, maxReferenceLocations).ConfigureAwait(false);
+    }
 
     private static async Task<TestContextPayload> BuildCoreAsync(
         ISymbol targetSymbol,
@@ -56,10 +70,17 @@ public static class TestRecommendationBuilder
         Func<ISymbol, string?> handoffFormatter,
         CancellationToken ct,
         bool includeGenerated,
-        SymbolScopeType scope)
+        SymbolScopeType scope,
+        int testHelperDepth,
+        int maxExpandedHelpers,
+        int maxReferenceLocations)
     {
         ArgumentNullException.ThrowIfNull(targetSymbol);
         ArgumentNullException.ThrowIfNull(solution);
+        ArgumentOutOfRangeException.ThrowIfNegative(testHelperDepth);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(testHelperDepth, 2);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxExpandedHelpers, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxReferenceLocations, 1);
 
         var solutionDir = Path.GetDirectoryName(solution.FilePath) ?? string.Empty;
         var candidateBuilders = new Dictionary<ISymbol, CandidateBuilder>(SymbolEqualityComparer.Default);
@@ -80,67 +101,143 @@ public static class TestRecommendationBuilder
 
         var referenceCount = 0;
         var referenceLimitReached = false;
+        var helperLimitReached = false;
+        var expandedHelperCount = 0;
+        var referenceCache = new Dictionary<(ProjectId? Owner, string Symbol), IReadOnlyList<BoundUse>>();
+        var inspectedLocations = new Dictionary<(DocumentId, int, int, string), BoundUse?>();
+        var frontier = new List<HelperCandidate>();
         foreach (var referencedSymbol in referenceSymbols)
         {
-            if (candidateLimitReached) break;
-            ct.ThrowIfCancellationRequested();
-            var references = await SymbolFinder.FindReferencesAsync(referencedSymbol, solution, ct).ConfigureAwait(false);
+            if (candidateLimitReached || referenceLimitReached) break;
+            foreach (var use in await InspectReferencesAsync(referencedSymbol, endpoints: true).ConfigureAwait(false))
+            {
+                var evidenceType = ReferenceRepresentsSymbol(use.Definition, targetSymbol)
+                    ? "direct-target-use" : "implementation-use";
+                var evidence = CreateEvidence(evidenceType, use.Definition, use.Location, use.Document, solutionDir, handoffFormatter);
+                if (TestDetector.IsTestMethod(use.Caller)) AddTestEvidence(use, evidence);
+                else if (testHelperDepth > 0 && IsSourceHelper(use.Caller)
+                    && !referenceSymbols.Any(endpoint => SameSymbol(use.Caller, endpoint)))
+                    frontier.Add(new HelperCandidate(use.Caller, use.Document.Project.Id, evidence, [CreatePathStep(use)]));
+                if (candidateLimitReached) break;
+            }
+        }
+
+        var expandedHelpers = new HashSet<(ProjectId Owner, string Symbol)>();
+        for (var depth = 1; depth <= testHelperDepth && frontier.Count > 0 && !candidateLimitReached && !referenceLimitReached; depth++)
+        {
+            var next = new List<HelperCandidate>();
+            foreach (var helper in frontier.OrderBy(item => PathSortKey(item.Path), StringComparer.Ordinal))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (expandedHelpers.Contains((helper.Owner, SymbolSortKey(helper.Symbol, solution)))) continue;
+                if (expandedHelperCount >= maxExpandedHelpers)
+                {
+                    helperLimitReached = true;
+                    break;
+                }
+                expandedHelpers.Add((helper.Owner, SymbolSortKey(helper.Symbol, solution)));
+                expandedHelperCount++;
+                foreach (var use in await InspectReferencesAsync(helper.Symbol, endpoints: false, helper.Owner).ConfigureAwait(false))
+                {
+                    // Exact source binding alone includes method groups. Only a proven call can link to a helper.
+                    if (use.RelationshipKind is not (RelationshipEvidence.Call or RelationshipEvidence.StaticVirtualOrInterfaceTarget)) continue;
+                    var path = new[] { CreatePathStep(use) }.Concat(helper.Path).ToArray();
+                    if (TestDetector.IsTestMethod(use.Caller))
+                        AddTestEvidence(use, helper.Endpoint with { EvidenceType = "indirect-helper-use", HelperPath = path });
+                    else if (depth < testHelperDepth && IsSourceHelper(use.Caller)
+                        && !referenceSymbols.Any(endpoint => SameSymbol(use.Caller, endpoint))
+                        && !expandedHelpers.Contains((use.Document.Project.Id, SymbolSortKey(use.Caller, solution))))
+                        next.Add(new HelperCandidate(use.Caller, use.Document.Project.Id, helper.Endpoint, path));
+                    if (candidateLimitReached) break;
+                }
+                if (candidateLimitReached || referenceLimitReached) break;
+            }
+            if (helperLimitReached) break;
+            frontier = next;
+        }
+
+        async Task<IReadOnlyList<BoundUse>> InspectReferencesAsync(ISymbol selectedSymbol, bool endpoints, ProjectId? owner = null)
+        {
+            var selectedKey = (owner, SymbolSortKey(selectedSymbol, solution));
+            if (referenceCache.TryGetValue(selectedKey, out var cached)) return cached;
+            var uses = new List<BoundUse>();
+            var references = await SymbolFinder.FindReferencesAsync(selectedSymbol, solution, ct).ConfigureAwait(false);
             foreach (var reference in references.OrderBy(item => SymbolSortKey(item.Definition, solution), StringComparer.Ordinal))
             {
-                var evidenceType = ReferenceRepresentsSymbol(reference.Definition, targetSymbol)
-                    ? "direct-target-use"
-                    : expandedImplementations.Symbols.Any(symbol => ReferenceRepresentsSymbol(reference.Definition, symbol))
-                        ? "implementation-use"
-                        : null;
-                if (evidenceType is null) continue;
-                foreach (var location in reference.Locations
-                             .OrderBy(item => item.Document?.Project.FilePath, StringComparer.Ordinal)
-                             .ThenBy(item => item.Document?.FilePath, StringComparer.Ordinal)
-                             .ThenBy(item => item.Location.SourceSpan.Start))
+                if (!ReferenceRepresentsSymbol(reference.Definition, selectedSymbol)
+                    && !(endpoints && expandedImplementations.Symbols.Any(symbol => ReferenceRepresentsSymbol(reference.Definition, symbol)))) continue;
+                foreach (var location in reference.Locations.OrderBy(item => item.Document?.Project.FilePath, StringComparer.Ordinal)
+                             .ThenBy(item => item.Document?.FilePath, StringComparer.Ordinal).ThenBy(item => item.Location.SourceSpan.Start))
                 {
                     ct.ThrowIfCancellationRequested();
-                    if (location.IsCandidateLocation) continue;
-                    if (referenceCount >= MaxReferenceLocations)
+                    if (location.IsCandidateLocation || location.Document is not { } document) continue;
+                    var key = (document.Id, location.Location.SourceSpan.Start, location.Location.SourceSpan.Length,
+                        SymbolSortKey(reference.Definition, solution));
+                    if (inspectedLocations.TryGetValue(key, out var reused))
+                    {
+                        if (reused is not null) uses.Add(reused);
+                        continue;
+                    }
+                    if (referenceCount >= maxReferenceLocations)
                     {
                         referenceLimitReached = true;
                         break;
                     }
                     referenceCount++;
-                    if (location.Document is not { } document) continue;
+                    inspectedLocations.Add(key, null);
                     if (!includeGenerated && await GeneratedDocumentDetector.IsGeneratedDocumentAsync(document, ct).ConfigureAwait(false)) continue;
-                    var semanticModel = await document.GetSemanticModelAsync(ct).ConfigureAwait(false);
-                    var syntaxRoot = await document.GetSyntaxRootAsync(ct).ConfigureAwait(false);
-                    if (semanticModel is null || syntaxRoot is null) continue;
-                    var referenceNode = syntaxRoot.FindNode(location.Location.SourceSpan, getInnermostNodeForTie: true);
-                    if (!await IsExactReferenceBindingAsync(semanticModel, referenceNode, reference.Definition,
-                            referencedSymbol, solution, ct).ConfigureAwait(false)) continue;
-                    if (semanticModel?.GetEnclosingSymbol(location.Location.SourceSpan.Start) is not IMethodSymbol testMethod ||
-                        !TestDetector.IsTestMethod(testMethod)) continue;
-
-                    var testClass = testMethod.ContainingType;
-                    if (testClass is null || (!TestDetector.IsTestClass(testClass) && !TestDetector.IsTestProject(document.Project))) continue;
-                    var isTestDocument = TestDetector.IsTestProject(document.Project) || TestDetector.IsTestFile(document.FilePath);
-                    if ((scope == SymbolScopeType.Tests && !isTestDocument) || (scope == SymbolScopeType.Production && isTestDocument)) continue;
-                    if (!candidateBuilders.ContainsKey(testClass)) AddFixtureCandidate(testClass, evidence: null);
-
-                    if (!methodsWithEvidence.TryGetValue(testMethod, out var methodEvidence))
-                    {
-                        methodEvidence = [];
-                        methodsWithEvidence.Add(testMethod, methodEvidence);
-                    }
-                    var evidence = CreateEvidence(
-                        evidenceType,
-                        reference.Definition,
-                        location.Location,
-                        document,
-                        solutionDir,
-                        handoffFormatter);
-                    if (!methodEvidence.Contains(evidence)) methodEvidence.Add(evidence);
-                    if (candidateLimitReached) break;
+                    var model = await document.GetSemanticModelAsync(ct).ConfigureAwait(false);
+                    var root = await document.GetSyntaxRootAsync(ct).ConfigureAwait(false);
+                    if (model is null || root is null) continue;
+                    var node = root.FindNode(location.Location.SourceSpan, getInnermostNodeForTie: true);
+                    if (!await IsExactReferenceBindingAsync(model, node, reference.Definition, selectedSymbol, solution, ct).ConfigureAwait(false)) continue;
+                    if (model.GetEnclosingSymbol(location.Location.SourceSpan.Start) is not IMethodSymbol caller) continue;
+                    var use = new BoundUse(caller, reference.Definition, location.Location, document, RelationshipEvidence.Classify(node, model));
+                    inspectedLocations[key] = use;
+                    uses.Add(use);
                 }
-                if (referenceLimitReached || candidateLimitReached) break;
+                if (referenceLimitReached) break;
             }
-            if (referenceLimitReached || candidateLimitReached) break;
+            referenceCache.Add(selectedKey, uses);
+            return uses;
+        }
+
+        void AddTestEvidence(BoundUse use, TestCandidateEvidence evidence)
+        {
+            var testMethod = use.Caller;
+            var testClass = testMethod.ContainingType;
+            if (testClass is null || (!TestDetector.IsTestClass(testClass) && !TestDetector.IsTestProject(use.Document.Project))) return;
+            var isTestDocument = TestDetector.IsTestProject(use.Document.Project) || TestDetector.IsTestFile(use.Document.FilePath);
+            if ((scope == SymbolScopeType.Tests && !isTestDocument) || (scope == SymbolScopeType.Production && isTestDocument)) return;
+            if (!candidateBuilders.ContainsKey(testClass)) AddFixtureCandidate(testClass, evidence: null);
+            if (!methodsWithEvidence.TryGetValue(testMethod, out var methodEvidence))
+            {
+                methodEvidence = [];
+                methodsWithEvidence.Add(testMethod, methodEvidence);
+            }
+            if (evidence.HelperPath is not null)
+            {
+                var previous = methodEvidence.FirstOrDefault(item => item.HelperPath is not null);
+                if (previous is not null && (previous.HelperPath!.Count < evidence.HelperPath.Count
+                    || previous.HelperPath.Count == evidence.HelperPath.Count
+                    && StringComparer.Ordinal.Compare(PathSortKey(previous.HelperPath), PathSortKey(evidence.HelperPath)) <= 0)) return;
+                methodEvidence.RemoveAll(item => item.HelperPath is not null);
+            }
+            if (!methodEvidence.Contains(evidence)) methodEvidence.Add(evidence);
+        }
+
+        TestHelperPathStep CreatePathStep(BoundUse use)
+        {
+            var span = use.Location.GetLineSpan();
+            return new TestHelperPathStep(use.Caller.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
+                use.Definition.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat), use.RelationshipKind,
+                use.Document.Project.FilePath ?? string.Empty, PathNormalizer.ToRelative(solutionDir, span.Path),
+                span.StartLinePosition.Line + 1, span.StartLinePosition.Character + 1,
+                handoffFormatter(use.Caller), handoffFormatter(use.Definition))
+            {
+                DispatchLimitation = use.RelationshipKind == RelationshipEvidence.StaticVirtualOrInterfaceTarget
+                    ? "Statically selected declaration; runtime dispatch is not proven." : null
+            };
         }
 
         foreach (var pair in methodsWithEvidence)
@@ -153,7 +250,8 @@ public static class TestRecommendationBuilder
             .Select(builder => builder.Build(solution, solutionDir, handoffFormatter))
             .Where(static fixture => fixture is not null)
             .Select(static fixture => fixture!)
-            .OrderBy(fixture => fixture.ProjectIdentity, StringComparer.Ordinal)
+            .OrderBy(fixture => fixture.Methods.SelectMany(method => method.Evidence ?? []).Select(EvidenceRank).DefaultIfEmpty(2).Min())
+            .ThenBy(fixture => fixture.ProjectIdentity, StringComparer.Ordinal)
             .ThenBy(fixture => PathNormalizer.NormalizeSeparators(fixture.FilePath), StringComparer.OrdinalIgnoreCase)
             .ThenBy(fixture => fixture.ClassName, StringComparer.Ordinal)
             .ToList();
@@ -167,7 +265,10 @@ public static class TestRecommendationBuilder
             ExpandedImplementationCount = expandedImplementations.Symbols.Count,
             ImplementationExpansionLimitReached = implementationLimitReached,
             CandidateExpansionLimitReached = candidateLimitReached,
-            ReferenceInspectionLimitReached = referenceLimitReached
+            ReferenceInspectionLimitReached = referenceLimitReached,
+            TestHelperDepth = testHelperDepth,
+            ExpandedHelperCount = expandedHelperCount,
+            HelperExpansionLimitReached = helperLimitReached
         };
 
         async Task AddNameCandidatesAsync(ISymbol relatedSymbol, string evidenceType)
@@ -224,6 +325,18 @@ public static class TestRecommendationBuilder
             if (candidateBuilders.Count > MaxCandidateFixtures) candidateLimitReached = true;
         }
     }
+
+    private sealed record BoundUse(IMethodSymbol Caller, ISymbol Definition, Location Location, Document Document, string RelationshipKind);
+    private sealed record HelperCandidate(IMethodSymbol Symbol, ProjectId Owner, TestCandidateEvidence Endpoint, IReadOnlyList<TestHelperPathStep> Path);
+
+    private static bool IsSourceHelper(IMethodSymbol method) => method.DeclaringSyntaxReferences.Length > 0
+        && method.MethodKind is MethodKind.Ordinary or MethodKind.Constructor or MethodKind.LocalFunction;
+
+    private static string PathSortKey(IReadOnlyList<TestHelperPathStep> path) => string.Join("|", path.Select(step =>
+        $"{step.ProjectPath}|{step.FilePath}|{step.Line:D8}|{step.Column:D8}|{step.Caller}|{step.Target}"));
+
+    private static int EvidenceRank(TestCandidateEvidence evidence) => evidence.HelperPath is not null ? 1
+        : evidence.EvidenceType.EndsWith("name-heuristic", StringComparison.Ordinal) ? 2 : 0;
 
     private static async Task<(IReadOnlyList<ISymbol> Symbols, bool LimitReached)> FindBoundedImplementationsAsync(
         ISymbol targetSymbol, Solution solution, CancellationToken ct)
@@ -418,11 +531,16 @@ public static class TestRecommendationBuilder
                 var methodHandoff = handoffFormatter(method);
                 _methodEvidence.TryGetValue(method, out var evidence);
                 methods.Add(new TestMethodMatch(method.Name, methodLine, methodHandoff,
-                    evidence?.OrderBy(item => item.EvidenceType, StringComparer.Ordinal)
+                    evidence?.OrderBy(EvidenceRank).ThenBy(item => item.EvidenceType, StringComparer.Ordinal)
                         .ThenBy(item => item.FilePath, StringComparer.OrdinalIgnoreCase)
-                        .ThenBy(item => item.Line).ThenBy(item => item.Column).ToArray() ?? Array.Empty<TestCandidateEvidence>()));
+                        .ThenBy(item => item.Line).ThenBy(item => item.Column).ToArray() ?? Array.Empty<TestCandidateEvidence>())
+                {
+                    QualifiedName = method.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
+                    FilePath = methodLocation is null ? null : PathNormalizer.ToRelative(solutionDir, methodLocation.GetLineSpan().Path),
+                    Column = methodLocation?.GetLineSpan().StartLinePosition.Character + 1 ?? 0
+                });
             }
-            methods = methods.OrderBy(method => method.Line).ThenBy(method => method.MethodName, StringComparer.Ordinal).ToList();
+            methods = methods.OrderBy(method => (method.Evidence ?? []).Select(EvidenceRank).DefaultIfEmpty(2).Min()).ThenBy(method => method.Line).ThenBy(method => method.MethodName, StringComparer.Ordinal).ToList();
             var framework = DetectFramework(symbol);
             var classHandoff = handoffFormatter(symbol);
             var evidenceItems = _fixtureEvidence
@@ -443,7 +561,9 @@ public static class TestRecommendationBuilder
                 evidenceItems,
                 ProjectIdentity(document.Project))
             {
-                SourceProjectId = document.Project.Id
+                SourceProjectId = document.Project.Id,
+                ProjectPath = document.Project.FilePath,
+                QualifiedName = symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)
             };
         }
     }

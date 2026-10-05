@@ -280,7 +280,7 @@ public sealed class TestDetectorTests
         Assert.NotNull(compilation);
         var target = compilation.GetTypeByMetadataName("Sample.Core.IOrderService")?.GetMembers("PlaceOrder").OfType<IMethodSymbol>().Single();
         Assert.NotNull(target);
-        var recommendation = await TestRecommendationBuilder.BuildAsync(target, handle.Solution);
+        var recommendation = await TestRecommendationBuilder.BuildAsync(target, handle.Solution, testHelperDepth: 0);
 
         var fixture = Assert.Single(recommendation.TestFixtures);
         Assert.Equal("OrderBehavior", fixture.ClassName);
@@ -290,6 +290,12 @@ public sealed class TestDetectorTests
         Assert.All(testMethod.Evidence, evidence => Assert.Equal("direct-target-use", evidence.EvidenceType));
         Assert.Equal(2, testMethod.Evidence.Select(evidence => evidence.Column).Distinct().Count());
         Assert.All(testMethod.Evidence, evidence => Assert.Equal("OrderBehavior.cs", evidence.FilePath));
+        var withHelpers = await TestRecommendationBuilder.BuildAsync(target, handle.Solution);
+        var helperFixture = withHelpers.TestFixtures.Single(item => item.ClassName == "HelperPath");
+        var helperEvidence = Assert.Single(Assert.Single(helperFixture.Methods).Evidence!);
+        Assert.Equal("indirect-helper-use", helperEvidence.EvidenceType);
+        Assert.Equal(2, helperEvidence.HelperPath!.Count);
+        Assert.Equal(2, withHelpers.TestFixtures.Single(item => item.ClassName == "OrderBehavior").Methods.Single().Evidence!.Count);
     }
 
     [Fact]
@@ -506,4 +512,171 @@ public sealed class TestDetectorTests
         Assert.True(recommendation.ReferenceInspectionLimitReached);
         Assert.False(recommendation.CandidateExpansionLimitReached);
     }
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(1, 3)]
+    [InlineData(2, 4)]
+    public async Task TestRecommendationBuilder_HelperDepthPreservesShortestPathsAndRejectsNonCalls(int depth, int expectedMethods)
+    {
+        using var handle = TestWorkspaceBuilder.CreateSolution(Path.Combine(Path.GetTempPath(), "HelperDepth", "Sample.slnx"), new ProjectSpec("Sample.Tests", [("Behavior.cs", """
+            using System;
+            namespace Xunit { public sealed class FactAttribute : Attribute { } }
+            namespace Sample {
+                public static class Target { public static void Run() { } }
+                public static class Helpers {
+                    public static void One() { Target.Run(); Two(); }
+                    public static void Two() => One();
+                    public static void FinalNonCall() { Action value = Target.Run; }
+                    public static void Ambiguous(string value) => Target.Run();
+                    public static void Ambiguous(Uri value) => Target.Run();
+                }
+                public class Behavior {
+                    [Xunit.Fact] public void ZDirect() { Target.Run(); Helpers.One(); }
+                    [Xunit.Fact] public void OneHelper() => Helpers.One();
+                    [Xunit.Fact] public void TwoHelpers() => Helpers.Two();
+                    [Xunit.Fact] public void LastUseCanBeMethodGroup() => Helpers.FinalNonCall();
+                    [Xunit.Fact] public void MethodGroupOnly() { Action value = Helpers.One; }
+                    [Xunit.Fact] public void UnknownDelegate(Action value) => value();
+                    [Xunit.Fact] public void CandidateBinding() => Helpers.Ambiguous(null);
+                }
+                public class TargetTests { [Xunit.Fact] public void NameOnly() { } }
+            }
+            """)]));
+        var compilation = await handle.Solution.Projects.Single().GetCompilationAsync();
+        var target = compilation!.GetTypeByMetadataName("Sample.Target")!.GetMembers("Run").Single();
+        var result = await TestRecommendationBuilder.BuildAsync(target, handle.Solution, testHelperDepth: depth);
+        var behavior = result.TestFixtures.Single(fixture => fixture.ClassName == "Behavior");
+        Assert.Equal(expectedMethods, behavior.Methods.Count);
+        Assert.Equal("ZDirect", behavior.Methods[0].MethodName);
+        Assert.Equal("direct-target-use", behavior.Methods[0].Evidence![0].EvidenceType);
+        Assert.DoesNotContain(behavior.Methods, method => method.MethodName == "MethodGroupOnly" || method.MethodName == "UnknownDelegate" || method.MethodName == "CandidateBinding");
+        Assert.Equal("TargetTests", result.TestFixtures.Last().ClassName);
+        Assert.Equal(handle.Solution.Projects.Single().FilePath, behavior.ProjectPath);
+        Assert.Equal("Sample.Behavior", behavior.QualifiedName);
+        Assert.All(behavior.Methods, method => {
+            Assert.Contains("Sample.Behavior.", method.QualifiedName!, StringComparison.Ordinal);
+            Assert.NotNull(method.HandoffId);
+            Assert.NotNull(method.FilePath);
+        });
+        if (depth > 0)
+        {
+            var path = Assert.Single(behavior.Methods.Single(method => method.MethodName == "OneHelper").Evidence!).HelperPath!;
+            Assert.Equal(2, path.Count);
+            Assert.All(path, step => Assert.NotNull(step.CallerHandoffId));
+            var nonCall = Assert.Single(behavior.Methods.Single(method => method.MethodName == "LastUseCanBeMethodGroup").Evidence!).HelperPath!;
+            Assert.Equal(RelationshipEvidence.MemberAccess, nonCall.Last().RelationshipKind);
+        }
+        if (depth == 2)
+        {
+            var path = Assert.Single(behavior.Methods.Single(method => method.MethodName == "TwoHelpers").Evidence!).HelperPath!;
+            Assert.Equal(3, path.Count);
+            var shortest = behavior.Methods[0].Evidence!.Single(item => item.HelperPath is not null).HelperPath!;
+            Assert.Equal(2, shortest.Count);
+        }
+        Assert.False(result.HelperExpansionLimitReached);
+        Assert.False(result.ReferenceInspectionLimitReached);
+    }
+
+    [Fact]
+    public async Task TestRecommendationBuilder_HelperCallsKeepStaticDispatchAndConstructorEvidence()
+    {
+        using var handle = TestWorkspaceBuilder.CreateSolution(new ProjectSpec("Sample.Tests", [("Behavior.cs", """
+            using System;
+            namespace Xunit { public sealed class FactAttribute : Attribute { } }
+            namespace Sample {
+                public static class Target { public static int Value; }
+                public class Helper {
+                    public Helper() { _ = Target.Value; }
+                    public virtual void Use() { _ = Target.Value; }
+                }
+                public class Behavior {
+                    [Xunit.Fact] public void StaticTarget(Helper helper) => helper.Use();
+                    [Xunit.Fact] public void Constructor() => _ = new Helper();
+                    [Xunit.Fact] public void NonCall(Helper helper) { Action value = helper.Use; }
+                }
+            }
+            """)]));
+        var compilation = await handle.Solution.Projects.Single().GetCompilationAsync();
+        var target = compilation!.GetTypeByMetadataName("Sample.Target")!.GetMembers("Value").Single();
+        var result = await TestRecommendationBuilder.BuildAsync(target, handle.Solution);
+        var methods = Assert.Single(result.TestFixtures).Methods;
+        Assert.Equal(2, methods.Count);
+        var virtualPath = Assert.Single(methods.Single(method => method.MethodName == "StaticTarget").Evidence!).HelperPath!;
+        Assert.Equal(RelationshipEvidence.StaticVirtualOrInterfaceTarget, virtualPath[0].RelationshipKind);
+        Assert.NotNull(virtualPath[0].DispatchLimitation);
+        Assert.Equal(RelationshipEvidence.MemberAccess, virtualPath[1].RelationshipKind);
+        var constructorPath = Assert.Single(methods.Single(method => method.MethodName == "Constructor").Evidence!).HelperPath!;
+        Assert.Equal(RelationshipEvidence.Call, constructorPath[0].RelationshipKind);
+    }
+
+    [Fact]
+    public async Task TestRecommendationBuilder_HelperLimitsAreSharedAcrossContractAndImplementationSeeds()
+    {
+        using var handle = TestWorkspaceBuilder.CreateSolution(new ProjectSpec("Sample.Tests", [("Behavior.cs", """
+            using System;
+            namespace Xunit { public sealed class FactAttribute : Attribute { } }
+            namespace Sample {
+                public interface ITarget { void Run(); }
+                public class Target : ITarget { public void Run() { } }
+                public static class Helpers {
+                    public static void A(ITarget target) => target.Run();
+                    public static void B() => new Target().Run();
+                    public static void C() => new Target().Run();
+                }
+                public class Behavior {
+                    [Xunit.Fact] public void Direct(ITarget target) => target.Run();
+                    [Xunit.Fact] public void ViaA(ITarget target) => Helpers.A(target);
+                    [Xunit.Fact] public void ViaB() => Helpers.B();
+                    [Xunit.Fact] public void ViaC() => Helpers.C();
+                }
+            }
+            """)]));
+        var compilation = await handle.Solution.Projects.Single().GetCompilationAsync();
+        var target = compilation!.GetTypeByMetadataName("Sample.ITarget")!.GetMembers("Run").Single();
+        var capped = await TestRecommendationBuilder.BuildWithLimitsAsync(target, handle.Solution, 1, 2, 4096);
+        Assert.Equal(2, capped.ExpandedHelperCount);
+        Assert.True(capped.HelperExpansionLimitReached);
+        Assert.False(capped.ReferenceInspectionLimitReached);
+        Assert.Contains(Assert.Single(capped.TestFixtures).Methods, method => method.MethodName == "Direct");
+        var referenceCapped = await TestRecommendationBuilder.BuildWithLimitsAsync(target, handle.Solution, 1, 200, 2);
+        Assert.True(referenceCapped.ReferenceInspectionLimitReached);
+        Assert.Contains(Assert.Single(referenceCapped.TestFixtures).Methods, method => method.MethodName == "Direct");
+        var full = await TestRecommendationBuilder.BuildAsync(target, handle.Solution);
+        Assert.Equal(4, Assert.Single(full.TestFixtures).Methods.Count);
+        Assert.False(full.HelperExpansionLimitReached);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(3)]
+    public async Task TestRecommendationBuilder_RejectsInvalidHelperDepth(int depth)
+    {
+        using var handle = TestWorkspaceBuilder.CreateSolution(new ProjectSpec("Sample.Core", [("Target.cs", "public class Target { }")]));
+        var compilation = await handle.Solution.Projects.Single().GetCompilationAsync();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => TestRecommendationBuilder.BuildAsync(
+            compilation!.GetTypeByMetadataName("Target")!, handle.Solution, testHelperDepth: depth));
+    }
+
+    [Fact]
+    public async Task TestRecommendationBuilder_EqualHelperNamesRetainSourceProjectOwners()
+    {
+        const string helper = "public static class Helpers { public static void Use() => Target.Run(); }";
+        const string test = "using System; namespace Xunit { public sealed class FactAttribute : Attribute { } } public class Behavior { [Xunit.Fact] public void ViaHelper() => Helpers.Use(); }";
+        using var handle = TestWorkspaceBuilder.CreateSolution(Path.Combine(Path.GetTempPath(), "HelperOwners", "Sample.slnx"),
+            new ProjectSpec("Core", [("Target.cs", "public static class Target { public static void Run() { } }")]),
+            new ProjectSpec("First", [("Helper.cs", helper)], ProjectReferences: ["Core"]),
+            new ProjectSpec("Second", [("Helper.cs", helper)], ProjectReferences: ["Core"]),
+            new ProjectSpec("First.Tests", [("Behavior.cs", test)], ProjectReferences: ["First"]),
+            new ProjectSpec("Second.Tests", [("Behavior.cs", test)], ProjectReferences: ["Second"]));
+        var compilation = await handle.Solution.Projects.Single(project => project.Name == "Core").GetCompilationAsync();
+        var target = compilation!.GetTypeByMetadataName("Target")!.GetMembers("Run").Single();
+        var result = await TestRecommendationBuilder.BuildAsync(target, handle.Solution);
+        Assert.Equal(2, result.TestFixtures.Count);
+        Assert.Equal(2, result.ExpandedHelperCount);
+        var paths = result.TestFixtures.Select(fixture => Assert.Single(Assert.Single(fixture.Methods).Evidence!).HelperPath!).ToArray();
+        Assert.Equal(2, paths.Select(path => path[1].ProjectPath).Distinct().Count());
+        Assert.Equal(2, paths.Select(path => path[1].CallerHandoffId).Distinct().Count());
+        Assert.All(paths, path => Assert.Equal(RelationshipEvidence.Call, path[0].RelationshipKind));
+    }
+
 }
