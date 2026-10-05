@@ -254,6 +254,7 @@ public static class TestRecommendationBuilder
             .OrderBy(fixture => fixture.Methods.SelectMany(method => method.Evidence ?? []).Select(EvidenceRank).DefaultIfEmpty(2).Min())
             .ThenBy(fixture => fixture.ProjectIdentity, StringComparer.Ordinal)
             .ThenBy(fixture => PathNormalizer.NormalizeSeparators(fixture.FilePath), StringComparer.OrdinalIgnoreCase)
+            .ThenBy(fixture => fixture.Line)
             .ThenBy(fixture => fixture.ClassName, StringComparer.Ordinal)
             .ToList();
         return new TestContextPayload(
@@ -541,7 +542,11 @@ public static class TestRecommendationBuilder
                     Column = methodLocation?.GetLineSpan().StartLinePosition.Character + 1 ?? 0
                 });
             }
-            methods = methods.OrderBy(method => (method.Evidence ?? []).Select(EvidenceRank).DefaultIfEmpty(2).Min()).ThenBy(method => method.Line).ThenBy(method => method.MethodName, StringComparer.Ordinal).ToList();
+            methods = methods.OrderBy(method => (method.Evidence ?? []).Select(EvidenceRank).DefaultIfEmpty(2).Min())
+                .ThenBy(method => PathNormalizer.NormalizeSeparators(method.FilePath ?? string.Empty), StringComparer.OrdinalIgnoreCase)
+                .ThenBy(method => method.Line)
+                .ThenBy(method => method.Column)
+                .ThenBy(method => method.MethodName, StringComparer.Ordinal).ToList();
             var framework = DetectFramework(symbol);
             var classHandoff = handoffFormatter(symbol);
             var evidenceItems = _fixtureEvidence

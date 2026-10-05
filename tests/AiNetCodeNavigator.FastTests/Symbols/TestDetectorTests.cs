@@ -679,4 +679,44 @@ public sealed class TestDetectorTests
         Assert.All(paths, path => Assert.Equal(RelationshipEvidence.Call, path[0].RelationshipKind));
     }
 
+    [Fact]
+    public async Task TestRecommendationBuilder_SortsEqualEvidenceFixturesBySourceLineBeforeName()
+    {
+        const string source = """
+            namespace Xunit { public class FactAttribute : System.Attribute { } }
+            public static class Endpoint { public static void Run() { } }
+            public class ZEarlier { [Xunit.Fact] public void Check() => Endpoint.Run(); }
+            public class ALater { [Xunit.Fact] public void Check() => Endpoint.Run(); }
+            """;
+        using var handle = TestWorkspaceBuilder.CreateSolution(Path.Combine(Path.GetTempPath(), "FixtureOrdering.sln"),
+            new ProjectSpec("Ordering.Tests", [("Tests.cs", source)]));
+        var compilation = await handle.Solution.Projects.Single().GetCompilationAsync();
+        var target = compilation!.GetTypeByMetadataName("Endpoint")!.GetMembers("Run").Single();
+        var result = await TestRecommendationBuilder.BuildAsync(target, handle.Solution, testHelperDepth: 0);
+        Assert.Equal(new[] { "ZEarlier", "ALater" }, result.TestFixtures.Select(fixture => fixture.ClassName));
+        Assert.All(result.TestFixtures, fixture => Assert.Equal("direct-target-use", Assert.Single(Assert.Single(fixture.Methods).Evidence!).EvidenceType));
+        Assert.Equal(2, result.TestFixtures.Select(fixture => fixture.HandoffId).Distinct().Count());
+        Assert.All(result.TestFixtures, fixture => Assert.StartsWith("src:", fixture.HandoffId));
+    }
+
+    [Fact]
+    public async Task TestRecommendationBuilder_SortsPartialFixtureMethodsByOwnFileLineColumnBeforeName()
+    {
+        const string header = "namespace Xunit { public class FactAttribute : System.Attribute { } } public static class Endpoint { public static void Run() {} } public partial class Behavior {";
+        var first = header + new string('\n', 19) + "[Xunit.Fact] public void ZEarlier() => Endpoint.Run(); [Xunit.Fact] public void ALater() => Endpoint.Run(); }";
+        const string second = "public partial class Behavior {\n\n[Xunit.Fact] public void BFile() => Endpoint.Run(); }";
+        using var handle = TestWorkspaceBuilder.CreateSolution(Path.Combine(Path.GetTempPath(), "MethodOrdering.sln"),
+            new ProjectSpec("Ordering.Tests", [("A.cs", first), ("B.cs", second)]));
+        var compilation = await handle.Solution.Projects.Single().GetCompilationAsync();
+        var target = compilation!.GetTypeByMetadataName("Endpoint")!.GetMembers("Run").Single();
+        var result = await TestRecommendationBuilder.BuildAsync(target, handle.Solution, testHelperDepth: 0);
+        var methods = Assert.Single(result.TestFixtures).Methods;
+        Assert.Equal(new[] { "ZEarlier", "ALater", "BFile" }, methods.Select(method => method.MethodName));
+        Assert.Equal(new[] { "Ordering.Tests/A.cs", "Ordering.Tests/A.cs", "Ordering.Tests/B.cs" }, methods.Select(method => method.FilePath));
+        Assert.Equal(new[] { 20, 20, 3 }, methods.Select(method => method.Line));
+        Assert.True(methods[0].Column < methods[1].Column);
+        Assert.All(methods, method => Assert.Equal("direct-target-use", Assert.Single(method.Evidence!).EvidenceType));
+        Assert.Equal(3, methods.Select(method => method.HandoffId).Distinct().Count());
+        Assert.All(methods, method => Assert.StartsWith("src:", method.HandoffId));
+    }
 }
