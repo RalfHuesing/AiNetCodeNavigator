@@ -1262,6 +1262,8 @@ public sealed class SourceToolsContractTests
         var names = new List<string>();
         string? cursor = null;
         string? firstCursor = null;
+        string? firstContinuationItems = null;
+        string? firstContinuationCursor = null;
         var pages = 0;
         do
         {
@@ -1284,6 +1286,11 @@ public sealed class SourceToolsContractTests
             Assert.Contains("narrower symbol", section.GetProperty("nextAction").GetString(), StringComparison.Ordinal);
             names.AddRange(section.GetProperty("items").EnumerateArray().Select(item =>
                 $"{item.GetProperty("projectIdentity").GetString()}|{item.GetProperty("className").GetString()}|{item.GetProperty("filePath").GetString()}"));
+            if (pages == 1)
+            {
+                firstContinuationItems = section.GetProperty("items").ToString();
+                firstContinuationCursor = section.GetProperty("resultCursor").GetString();
+            }
             cursor = section.TryGetProperty("resultCursor", out var cursorValue)
                 && cursorValue.ValueKind == JsonValueKind.String ? cursorValue.GetString() : null;
             firstCursor ??= cursor;
@@ -1298,23 +1305,18 @@ public sealed class SourceToolsContractTests
         Assert.Equal(expected, names);
         Assert.Equal(expected.Length, names.Distinct(StringComparer.Ordinal).Count());
         Assert.NotNull(firstCursor);
+        Assert.NotNull(firstContinuationItems);
+        Assert.NotNull(firstContinuationCursor);
 
-        var replayA = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], maxResults: 100,
+        var replay = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], maxResults: 100,
             resultCursor: firstCursor, maxResponseBytes: 65536, maxResponseTokens: 8192);
-        var replayB = await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], maxResults: 100,
-            resultCursor: firstCursor, maxResponseBytes: 65536, maxResponseTokens: 8192);
-        var replayAText = await ReconstructOuterPagesAsync(replayA, async continuation =>
+        var replayText = await ReconstructOuterPagesAsync(replay, async continuation =>
             await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], maxResults: 100,
                 continuationToken: continuation, maxResponseBytes: 65536, maxResponseTokens: 8192));
-        var replayBText = await ReconstructOuterPagesAsync(replayB, async continuation =>
-            await relationships.GetContext(target, "ScopeProbe.Target.Run", ["tests"], maxResults: 100,
-                continuationToken: continuation, maxResponseBytes: 65536, maxResponseTokens: 8192));
-        using var replayADocument = JsonDocument.Parse(JsonBody(replayAText));
-        using var replayBDocument = JsonDocument.Parse(JsonBody(replayBText));
-        var replayASection = replayADocument.RootElement.GetProperty("sections")[0];
-        var replayBSection = replayBDocument.RootElement.GetProperty("sections")[0];
-        Assert.Equal(replayASection.GetProperty("items").ToString(), replayBSection.GetProperty("items").ToString());
-        Assert.Equal(replayASection.GetProperty("resultCursor").GetString(), replayBSection.GetProperty("resultCursor").GetString());
+        using var replayDocument = JsonDocument.Parse(JsonBody(replayText));
+        var replaySection = replayDocument.RootElement.GetProperty("sections")[0];
+        Assert.Equal(firstContinuationItems, replaySection.GetProperty("items").ToString());
+        Assert.Equal(firstContinuationCursor, replaySection.GetProperty("resultCursor").GetString());
         Assert.Contains("RESULT_CURSOR_ARGUMENT_MISMATCH", TextOf(await relationships.GetContext(target,
             "ScopeProbe.Target.Run", ["tests"], maxResults: 50, resultCursor: firstCursor,
             maxResponseBytes: 65536, maxResponseTokens: 8192)), StringComparison.Ordinal);
