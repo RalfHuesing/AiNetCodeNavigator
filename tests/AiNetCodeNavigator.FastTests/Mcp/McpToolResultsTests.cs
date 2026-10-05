@@ -17,7 +17,7 @@ public sealed class McpToolResultsTests
             structuredContent: structured.RootElement.Clone());
 
         Assert.False(result.IsError ?? false);
-        Assert.Equal("Status: operation=ok, completeness=complete\nThree symbols found.", TextOf(result));
+        Assert.Equal("Three symbols found.", TextOf(result));
         Assert.Equal(3, result.StructuredContent?.GetProperty("count").GetInt32());
     }
 
@@ -113,7 +113,7 @@ public sealed class McpToolResultsTests
     }
 
     [Fact]
-    public void Success_RespectsUtf8ByteBudgetIncludingStatusBlock()
+    public void Success_RespectsUtf8ByteBudgetAndAddsRecoveryHintWhenTruncated()
     {
         var text = string.Join("\n", Enumerable.Repeat("Grüße 🌍", 100));
 
@@ -122,15 +122,14 @@ public sealed class McpToolResultsTests
 
         Assert.False(result.IsError ?? false);
         Assert.True(Encoding.UTF8.GetByteCount(visibleText) <= 512);
-        Assert.Contains(McpToolResults.TruncatedSuccessStatusPrefix.TrimEnd(), visibleText, StringComparison.Ordinal);
+        Assert.StartsWith("truncated\n", visibleText, StringComparison.Ordinal);
         Assert.Contains("Truncated; continue at UTF-16 offset", visibleText, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Success_AtUtf8BudgetBoundarySucceedsAndOneByteOverReturnsBudgetError()
     {
-        var prefixBytes = Encoding.UTF8.GetByteCount(McpToolResults.SuccessStatusPrefix);
-        var exactText = new string('a', 512 - prefixBytes);
+        var exactText = new string('a', 512);
         var overText = exactText + "a";
 
         var exact = McpToolResults.Success(exactText, maxResponseBytes: 512);
@@ -146,7 +145,7 @@ public sealed class McpToolResultsTests
     [Fact]
     public void Success_BudgetRecoveryUsesSuccessProjectionAtPublicMaximum()
     {
-        var text = new string('x', 65_492);
+        var text = new string('x', 65_536);
 
         var result = McpToolResults.Success(text, maxResponseBytes: 65_535);
         var response = TextOf(result);
@@ -162,13 +161,13 @@ public sealed class McpToolResultsTests
     public void Success_BudgetRecoveryReportsExactByteAndTokenMinima()
     {
         var text = new string('w', 700);
-        var exactProjection = McpToolResults.SuccessStatusPrefix + text;
+        var exactProjection = text;
         var tokenMinimum = McpResponseFormatter.CountTokens(exactProjection);
 
         var byteLimited = McpToolResults.Success(text, maxResponseBytes: 512);
         var tokenLimited = McpToolResults.Success(text, maxResponseBytes: 4096, maxResponseTokens: tokenMinimum - 1);
 
-        Assert.Contains("minimumResponseBytes: 744", TextOf(byteLimited), StringComparison.Ordinal);
+        Assert.Contains($"minimumResponseBytes: {Encoding.UTF8.GetByteCount(text)}", TextOf(byteLimited), StringComparison.Ordinal);
         Assert.Contains($"minimumResponseTokens: {tokenMinimum}", TextOf(tokenLimited), StringComparison.Ordinal);
         Assert.Contains($"minimumResponseBytes: {Encoding.UTF8.GetByteCount(exactProjection)}", TextOf(tokenLimited), StringComparison.Ordinal);
         Assert.True(McpResponseFormatter.CountTokens(TextOf(tokenLimited)) <= tokenMinimum - 1);
@@ -182,16 +181,21 @@ public sealed class McpToolResultsTests
         var truncatedResponse = TextOf(truncatedError);
 
         Assert.True(truncatedError.IsError);
-        Assert.Contains("minimumResponseBytes: 616", truncatedResponse, StringComparison.Ordinal);
-        Assert.Contains("minimumResponseTokens: 97", truncatedResponse, StringComparison.Ordinal);
-        var truncatedRetry = McpToolResults.Success(truncatedText, maxResponseBytes: 616, maxResponseTokens: 97);
+        var truncatedMinimumBytes = ReadMinimum(truncatedResponse, "minimumResponseBytes");
+        var truncatedMinimumTokens = ReadMinimum(truncatedResponse, "minimumResponseTokens");
+        var truncatedRetry = McpToolResults.Success(truncatedText, maxResponseBytes: truncatedMinimumBytes,
+            maxResponseTokens: truncatedMinimumTokens);
         Assert.False(truncatedRetry.IsError ?? false);
         Assert.StartsWith(McpToolResults.TruncatedSuccessStatusPrefix, TextOf(truncatedRetry), StringComparison.Ordinal);
-        Assert.True(Encoding.UTF8.GetByteCount(TextOf(truncatedRetry)) <= 616);
-        Assert.True(McpResponseFormatter.CountTokens(TextOf(truncatedRetry)) <= 97);
+        Assert.Equal(truncatedMinimumBytes, Encoding.UTF8.GetByteCount(TextOf(truncatedRetry)));
+        Assert.True(McpResponseFormatter.CountTokens(TextOf(truncatedRetry)) <= truncatedMinimumTokens);
+        var insufficientRetry = McpToolResults.Success(truncatedText,
+            maxResponseBytes: truncatedMinimumBytes - 1, maxResponseTokens: truncatedMinimumTokens);
+        Assert.True(insufficientRetry.IsError);
+        Assert.Contains($"minimumResponseBytes: {truncatedMinimumBytes}", TextOf(insufficientRetry), StringComparison.Ordinal);
 
-        var shortText = new string('x', 500) + "\ny";
-        var completeProjection = McpToolResults.SuccessStatusPrefix + shortText;
+        var shortText = new string('x', 600) + "\ny";
+        var completeProjection = shortText;
         var completeBytes = Encoding.UTF8.GetByteCount(completeProjection);
         var completeTokens = McpResponseFormatter.CountTokens(completeProjection);
         var shortError = McpToolResults.Success(shortText, maxResponseBytes: 512);
@@ -202,8 +206,8 @@ public sealed class McpToolResultsTests
         Assert.Contains($"minimumResponseTokens: {completeTokens}", shortErrorText, StringComparison.Ordinal);
         var completeRetry = McpToolResults.Success(shortText, maxResponseBytes: completeBytes, maxResponseTokens: completeTokens);
         Assert.False(completeRetry.IsError ?? false);
-        Assert.StartsWith(McpToolResults.SuccessStatusPrefix, TextOf(completeRetry), StringComparison.Ordinal);
-        Assert.DoesNotContain("completeness=truncated", TextOf(completeRetry), StringComparison.Ordinal);
+        Assert.Equal(shortText, TextOf(completeRetry));
+        Assert.DoesNotContain("truncated\n", TextOf(completeRetry), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -332,15 +336,15 @@ public sealed class McpToolResultsTests
         var visibleText = TextOf(result);
 
         Assert.False(result.IsError ?? false);
-        Assert.Contains(McpToolResults.TruncatedSuccessStatusPrefix.TrimEnd(), visibleText, StringComparison.Ordinal);
-        Assert.DoesNotContain(McpToolResults.SuccessStatusPrefix, visibleText, StringComparison.Ordinal);
+        Assert.StartsWith("truncated\n", visibleText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Status: operation=ok", visibleText, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Success_RejectsStructuredContentWhenTextWasTruncated()
     {
         using var structured = JsonDocument.Parse("{\"complete\":true}");
-        var text = string.Join("\n", Enumerable.Repeat("item", 100));
+        var text = string.Join("\n", Enumerable.Repeat("item", 300));
 
         Assert.Throws<InvalidOperationException>(() => McpToolResults.Success(
             text,
@@ -350,4 +354,11 @@ public sealed class McpToolResultsTests
 
     private static string TextOf(CallToolResult result) =>
         Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
+
+    private static int ReadMinimum(string text, string name)
+    {
+        var prefix = name + ": ";
+        var line = Assert.Single(text.Split('\n').Where(line => line.StartsWith(prefix, StringComparison.Ordinal)));
+        return int.Parse(line[prefix.Length..], System.Globalization.CultureInfo.InvariantCulture);
+    }
 }

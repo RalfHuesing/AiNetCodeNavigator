@@ -261,10 +261,6 @@ public sealed class SourceToolsContractTests
         var payloadOffset = visibleText.IndexOf(projectedJson, StringComparison.Ordinal);
         Assert.True(payloadOffset >= 0, "The visible response should contain the JSON payload after its shared header.");
         var baselineHeader = visibleText[..payloadOffset];
-        if (!baselineHeader.Contains("resultContinuation=", StringComparison.Ordinal))
-            baselineHeader += "resultContinuation=none\n";
-        if (!baselineHeader.Contains("omissions=", StringComparison.Ordinal))
-            baselineHeader += "omissions=none\n";
         var baselineText = baselineHeader + baselineJson;
         var baselineTokens = TokenCount(baselineText);
         var projectedTokens = TokenCount(visibleText);
@@ -584,13 +580,13 @@ public sealed class SourceToolsContractTests
             maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(mixed, 32768, 4096);
         var mixedText = TextOf(mixed);
-        Assert.Contains("Resolution status: resolved", mixedText, StringComparison.Ordinal);
+        Assert.Contains("## " + sourceReference, mixedText, StringComparison.Ordinal);
         Assert.Contains("Resolution status: failed", mixedText, StringComparison.Ordinal);
-        Assert.Contains("completeness=truncated", mixedText, StringComparison.Ordinal);
+        Assert.DoesNotContain("completeness=", mixedText, StringComparison.Ordinal);
         Assert.Contains("Next body window: startLine=2", mixedText, StringComparison.Ordinal);
         foreach (var reference in invalidReferences)
         {
-            Assert.Contains($"Symbol: {reference}", mixedText, StringComparison.Ordinal);
+            Assert.Contains("## " + reference, mixedText, StringComparison.Ordinal);
         }
 
         var allFailed = await symbols.GetSymbolBody(target, invalidReferences, maxResponseBytes: 32768, maxResponseTokens: 4096);
@@ -599,7 +595,7 @@ public sealed class SourceToolsContractTests
         var allFailedText = TextOf(allFailed);
         foreach (var reference in invalidReferences)
         {
-            Assert.Contains($"Symbol: {reference}", allFailedText, StringComparison.Ordinal);
+            Assert.Contains("## " + reference, allFailedText, StringComparison.Ordinal);
         }
         Assert.Equal(invalidReferences.Length, allFailedText.Split("Resolution status: failed", StringSplitOptions.None).Length - 1);
     }
@@ -621,7 +617,7 @@ public sealed class SourceToolsContractTests
         var sourceOnly = await structure.GetFileSkeleton(target, [sourceReference], maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(sourceOnly, 32768, 4096);
         Assert.Contains("snapshotId=source:", TextOf(sourceOnly), StringComparison.Ordinal);
-        Assert.Equal($"fileSkeleton(paths={sourceReference})", ReadHeader(TextOf(sourceOnly), "analyzedScope"));
+        Assert.DoesNotContain("analyzedScope=", TextOf(sourceOnly), StringComparison.Ordinal);
         Assert.Contains("### Target", TextOf(sourceOnly), StringComparison.Ordinal);
         Assert.Contains("Run", TextOf(sourceOnly), StringComparison.Ordinal);
 
@@ -637,8 +633,7 @@ public sealed class SourceToolsContractTests
         AssertSuccessWithinBudget(mixed, 32768, 4096);
         var mixedText = TextOf(mixed);
         Assert.Contains("snapshotId=source:", mixedText, StringComparison.Ordinal);
-        Assert.Equal($"fileSkeleton(paths={string.Join('|', new[] { sourceReference }.Concat(invalidReferences))})",
-            ReadHeader(mixedText, "analyzedScope"));
+        Assert.DoesNotContain("analyzedScope=", mixedText, StringComparison.Ordinal);
         Assert.Contains("### Target", mixedText, StringComparison.Ordinal);
         Assert.Contains("Run", mixedText, StringComparison.Ordinal);
         foreach (var reference in invalidReferences)
@@ -704,9 +699,9 @@ public sealed class SourceToolsContractTests
                 "A one-location result should use its top-level primary location without repeating it in locations.");
         }
         Assert.Contains("snapshotId=source:", TextOf(found), StringComparison.Ordinal);
-        Assert.Contains("analyzedScope=findSymbol(pattern=Run", TextOf(found), StringComparison.Ordinal);
-        Assert.Contains("analysisCompleteness=complete", TextOf(found), StringComparison.Ordinal);
-        Assert.DoesNotContain("resultContinuation=none", TextOf(found), StringComparison.Ordinal);
+        Assert.DoesNotContain("analyzedScope=", TextOf(found), StringComparison.Ordinal);
+        Assert.DoesNotContain("analysisCompleteness=", TextOf(found), StringComparison.Ordinal);
+        Assert.DoesNotContain("resultContinuation=", TextOf(found), StringComparison.Ordinal);
         Assert.DoesNotContain("omissions=none", TextOf(found), StringComparison.Ordinal);
         var methodHandoff = ReadHandoff(TextOf(found), "method Run in");
         var generatedExcluded = await symbols.FindSymbol(target, pattern: "GeneratedProbe", maxResponseBytes: 16384, maxResponseTokens: 1024);
@@ -726,16 +721,18 @@ public sealed class SourceToolsContractTests
 
         var body = await symbols.GetSymbolBody(target, [methodHandoff], maxBodyLines: 2, maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(body, 16384, 1024);
-        Assert.Contains("Lines: 1-2 of", TextOf(body), StringComparison.Ordinal);
-        Assert.Contains("Resolution status: resolved", TextOf(body), StringComparison.Ordinal);
+        Assert.Contains("Lines: 1-2/", TextOf(body), StringComparison.Ordinal);
+        Assert.Contains("public void Run()", TextOf(body), StringComparison.Ordinal);
         Assert.DoesNotContain($"Symbol: {methodHandoff}", TextOf(body), StringComparison.Ordinal);
-        Assert.Contains($"Handoff: {methodHandoff}", TextOf(body), StringComparison.Ordinal);
+        Assert.DoesNotContain("Handoff:", TextOf(body), StringComparison.Ordinal);
+        Assert.DoesNotContain("Owner targetPath:", TextOf(body), StringComparison.Ordinal);
         Assert.Contains("Next body window: startLine=3", TextOf(body), StringComparison.Ordinal);
         var rawSelectorBody = await symbols.GetSymbolBody(target, [runDocCommentId], maxBodyLines: 2,
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(rawSelectorBody, 16384, 1024);
-        Assert.Contains($"Symbol: {runDocCommentId}", TextOf(rawSelectorBody), StringComparison.Ordinal);
+        Assert.DoesNotContain($"Symbol: {runDocCommentId}", TextOf(rawSelectorBody), StringComparison.Ordinal);
         Assert.Contains($"Handoff: {methodHandoff}", TextOf(rawSelectorBody), StringComparison.Ordinal);
+        Assert.DoesNotContain("Owner targetPath:", TextOf(rawSelectorBody), StringComparison.Ordinal);
         var bodyRanges = new List<(int Start, int End, int Total)> { ReadBodyRange(TextOf(body)) };
         var nextStartLine = 3;
         while (bodyRanges[^1].End < bodyRanges[^1].Total)
@@ -744,7 +741,7 @@ public sealed class SourceToolsContractTests
                 maxResponseBytes: 16384, maxResponseTokens: 1024);
             AssertSuccessWithinBudget(bodyWindow, 16384, 1024);
             var windowText = TextOf(bodyWindow);
-            Assert.Contains("Resolution status: resolved", windowText, StringComparison.Ordinal);
+            Assert.Contains("Lines: ", windowText, StringComparison.Ordinal);
             var range = ReadBodyRange(windowText);
             Assert.Equal(nextStartLine, range.Start);
             Assert.Equal(bodyRanges[^1].End + 1, range.Start);
@@ -770,7 +767,7 @@ public sealed class SourceToolsContractTests
         var unavailableBody = await symbols.GetSymbolBody(target, [unavailableHandoff], maxResponseBytes: 16384,
             maxResponseTokens: 1024);
         AssertSuccessWithinBudget(unavailableBody, 16384, 1024);
-        Assert.Contains("availability: unavailable", TextOf(unavailableBody), StringComparison.Ordinal);
+        Assert.Contains("Availability: unavailable", TextOf(unavailableBody), StringComparison.Ordinal);
         Assert.Contains("Hint: Interfaces do not provide an executable body for this symbol.", TextOf(unavailableBody), StringComparison.Ordinal);
 
         var longBodySymbol = await symbols.FindSymbol(target, pattern: "LargeBody", kind: "method",
@@ -789,7 +786,8 @@ public sealed class SourceToolsContractTests
         var mixedBody = await symbols.GetSymbolBody(target, [methodHandoff, "h:zzzz"], maxBodyLines: 1,
             maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(mixedBody, 16384, 1024);
-        Assert.Contains("completeness=truncated", TextOf(mixedBody), StringComparison.Ordinal);
+        Assert.DoesNotContain("completeness=", TextOf(mixedBody), StringComparison.Ordinal);
+        Assert.Contains("Next body window: startLine=", TextOf(mixedBody), StringComparison.Ordinal);
         Assert.Contains("INVALID_SYMBOL_REFERENCE", TextOf(mixedBody), StringComparison.Ordinal);
         Assert.Contains("Resolution status: failed (INVALID_SYMBOL_REFERENCE)", TextOf(mixedBody), StringComparison.Ordinal);
         AssertActionableRediscovery(TextOf(mixedBody));
@@ -797,8 +795,8 @@ public sealed class SourceToolsContractTests
         Assert.Contains("Run", TextOf(mixedBody), StringComparison.Ordinal);
         var allInvalidBody = await symbols.GetSymbolBody(target, ["h:zzzz", "h:aaaa"], maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertErrorWithinBudget(allInvalidBody, "INVALID_SYMBOL_REFERENCE", 16384, 1024);
-        Assert.Contains("Symbol: h:zzzz", TextOf(allInvalidBody), StringComparison.Ordinal);
-        Assert.Contains("Symbol: h:aaaa", TextOf(allInvalidBody), StringComparison.Ordinal);
+        Assert.Contains("## h:zzzz", TextOf(allInvalidBody), StringComparison.Ordinal);
+        Assert.Contains("## h:aaaa", TextOf(allInvalidBody), StringComparison.Ordinal);
 
         var skeleton = await structure.GetFileSkeleton(target, [appFile], maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(skeleton, 16384, 1024);
@@ -931,7 +929,8 @@ public sealed class SourceToolsContractTests
             namespacePrefix: "ScopeProbe", depth: 1, maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(selectedProjectDepthRecovery, 16384, 1024);
         var selectedProjectRecoveryText = TextOf(selectedProjectDepthRecovery);
-        Assert.Contains("completeness=truncated", selectedProjectRecoveryText, StringComparison.Ordinal);
+        Assert.DoesNotContain("completeness=", selectedProjectRecoveryText, StringComparison.Ordinal);
+        Assert.Contains("nextAction:", selectedProjectRecoveryText, StringComparison.Ordinal);
         Assert.Contains("increase depth to 2 for the selected namespacePrefix 'ScopeProbe'", selectedProjectRecoveryText, StringComparison.Ordinal);
         Assert.DoesNotContain("select a project", selectedProjectRecoveryText, StringComparison.OrdinalIgnoreCase);
         var pagedNamespaceItems = new List<string>();
@@ -1852,8 +1851,8 @@ public sealed class SourceToolsContractTests
     private static (int Start, int End, int Total) ReadBodyRange(string text)
     {
         var line = text.Split('\n').First(value => value.StartsWith("Lines: ", StringComparison.Ordinal));
-        var parts = line[7..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var range = parts[0].Split('-');
-        return (int.Parse(range[0]), int.Parse(range[1]), int.Parse(parts[2].TrimEnd(',')));
+        var range = line[7..].Split('/');
+        var displayedLines = range[0].Split('-');
+        return (int.Parse(displayedLines[0]), int.Parse(displayedLines[1]), int.Parse(range[1]));
     }
 }

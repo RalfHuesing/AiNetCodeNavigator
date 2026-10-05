@@ -44,12 +44,17 @@ public sealed class AssemblyCallTreeOwnerContractTests
             $"The focused three-owner graph should fit one response and expose domain completeness directly: {graphText}");
         Assert.Contains("CallTreeBridge", graphText, StringComparison.Ordinal);
         Assert.Contains("CallTreeRoot", graphText, StringComparison.Ordinal);
-        Assert.Contains("analysisCompleteness=complete", graphText, StringComparison.Ordinal);
+        Assert.DoesNotContain("analysisCompleteness=", graphText, StringComparison.Ordinal);
+        Assert.Contains("snapshotId=assembly:", graphText, StringComparison.Ordinal);
         Assert.DoesNotContain("omissions=none", graphText, StringComparison.Ordinal);
 
         var leafReference = ReadOwnerReference(graphText, leafPath, "M:CallTreeLeaf.Leaf.Run~System.Int32");
         var bridgeReference = ReadOwnerReference(graphText, bridgePath, "M:CallTreeBridge.Bridge.Run~System.Int32");
-        var rootReference = ReadOwnerReference(graphText, rootPath, "M:CallTreeRoot.Root.Run~System.Int32");
+        var rootLine = Assert.Single(graphText.Split('\n').Where(line =>
+            line.Contains("CallTreeRoot.Root.Run", StringComparison.Ordinal)
+            && line.Contains("`asm:", StringComparison.Ordinal)));
+        Assert.Contains("targetPath: " + rootPath, rootLine, StringComparison.OrdinalIgnoreCase);
+        var rootReference = Assert.Single(ReadStableReferences(rootLine));
         Assert.Equal(3, new[] { leafReference, bridgeReference, rootReference }.Distinct(StringComparer.Ordinal).Count());
 
         await AssertReferenceOpensOwnedBodyAsync(symbols, leafPath, leafReference, "7");
@@ -83,7 +88,7 @@ public sealed class AssemblyCallTreeOwnerContractTests
         var body = await PollAsync(operation => symbols.GetSymbolBody(ownerPath, [reference],
             maxResponseBytes: 16384, maxResponseTokens: 2048, operationToken: operation));
         var text = TextOf(body);
-        Assert.Contains("Resolution status: resolved (availability: available)", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Availability: available", text, StringComparison.Ordinal);
         foreach (var fragment in expectedBodyFragments)
             Assert.Contains(fragment, text, StringComparison.Ordinal);
     }

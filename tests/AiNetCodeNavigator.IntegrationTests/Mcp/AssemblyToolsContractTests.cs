@@ -34,13 +34,13 @@ public sealed class AssemblyToolsContractTests
         var result = await tools.ResolveTypeOrigin(path, typeName: "KnownRoot", maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(result, 32768, 4096);
         var text = TextOf(result);
-        Assert.Contains("analysisCompleteness=partial", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("analysisCompleteness=", text, StringComparison.Ordinal);
+        Assert.Contains("omissions=incompleteReferenceSearch", text, StringComparison.Ordinal);
         Assert.Contains("loaded candidates only", text, StringComparison.Ordinal);
         using var payload = System.Text.Json.JsonDocument.Parse(BodyOf(text));
         Assert.Equal(path, payload.RootElement.GetProperty("assemblyPath").GetString());
         Assert.False(payload.RootElement.GetProperty("isAmbiguous").GetBoolean());
-        Assert.Contains(payload.RootElement.GetProperty("analysis").GetProperty("omissionReasons").EnumerateArray(),
-            reason => reason.GetString() == "incompleteReferenceSearch");
+        Assert.False(payload.RootElement.TryGetProperty("analysis", out _));
     }
 
     [Fact]
@@ -836,13 +836,13 @@ public sealed class AssemblyToolsContractTests
             maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(mixed, 32768, 4096);
         var mixedText = TextOf(mixed);
-        Assert.Contains("Resolution status: resolved", mixedText, StringComparison.Ordinal);
+        Assert.Contains("## " + assemblyReference, mixedText, StringComparison.Ordinal);
         Assert.Contains("Resolution status: failed", mixedText, StringComparison.Ordinal);
-        Assert.Contains("completeness=truncated", mixedText, StringComparison.Ordinal);
+        Assert.DoesNotContain("completeness=", mixedText, StringComparison.Ordinal);
         Assert.Contains("Next body window: startLine=2", mixedText, StringComparison.Ordinal);
         foreach (var reference in invalidReferences)
         {
-            Assert.Contains($"Symbol: {reference}", mixedText, StringComparison.Ordinal);
+            Assert.Contains("## " + reference, mixedText, StringComparison.Ordinal);
         }
 
         var allFailed = await symbols.GetSymbolBody(assemblyPath, invalidReferences, maxResponseBytes: 32768, maxResponseTokens: 4096);
@@ -851,7 +851,7 @@ public sealed class AssemblyToolsContractTests
         var allFailedText = TextOf(allFailed);
         foreach (var reference in invalidReferences)
         {
-            Assert.Contains($"Symbol: {reference}", allFailedText, StringComparison.Ordinal);
+            Assert.Contains("## " + reference, allFailedText, StringComparison.Ordinal);
         }
         Assert.Equal(invalidReferences.Length, allFailedText.Split("Resolution status: failed", StringSplitOptions.None).Length - 1);
     }
@@ -882,7 +882,8 @@ public sealed class AssemblyToolsContractTests
 
         AssertSuccessWithinBudget(result, 32768, 4096);
         var text = TextOf(result);
-        Assert.Contains("completeness=complete", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("completeness=", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("omissions=", text, StringComparison.Ordinal);
         Assert.Contains("### Alpha", text, StringComparison.Ordinal);
         Assert.Contains("### Beta", text, StringComparison.Ordinal);
     }
@@ -913,7 +914,7 @@ public sealed class AssemblyToolsContractTests
         var assemblyOnly = await structure.GetFileSkeleton(assemblyPath, [assemblyReference], maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(assemblyOnly, 32768, 4096);
         Assert.Contains("snapshotId=assembly:", TextOf(assemblyOnly), StringComparison.Ordinal);
-        Assert.Equal($"fileSkeleton(paths={assemblyReference})", ReadHeader(TextOf(assemblyOnly), "analyzedScope"));
+        Assert.DoesNotContain("analyzedScope=", TextOf(assemblyOnly), StringComparison.Ordinal);
         Assert.Contains("### Target", TextOf(assemblyOnly), StringComparison.Ordinal);
         Assert.Contains("Read", TextOf(assemblyOnly), StringComparison.Ordinal);
 
@@ -927,8 +928,7 @@ public sealed class AssemblyToolsContractTests
         AssertSuccessWithinBudget(mixed, 32768, 4096);
         var mixedText = TextOf(mixed);
         Assert.Contains("snapshotId=assembly:", mixedText, StringComparison.Ordinal);
-        Assert.Equal($"fileSkeleton(paths={string.Join('|', new[] { assemblyReference }.Concat(invalidReferences))})",
-            ReadHeader(mixedText, "analyzedScope"));
+        Assert.DoesNotContain("analyzedScope=", mixedText, StringComparison.Ordinal);
         Assert.Contains("### Target", mixedText, StringComparison.Ordinal);
         Assert.Contains("Read", mixedText, StringComparison.Ordinal);
         foreach (var reference in invalidReferences)
@@ -1076,7 +1076,8 @@ public sealed class AssemblyToolsContractTests
             maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(sourceStructure, 32768, 4096);
         Assert.Contains("snapshotId=source:", TextOf(sourceStructure), StringComparison.Ordinal);
-        Assert.Contains("analyzedScope=get_context(symbol=StructureOrderProbe.OrderProbe", TextOf(sourceStructure), StringComparison.Ordinal);
+        Assert.DoesNotContain("analyzedScope=", TextOf(sourceStructure), StringComparison.Ordinal);
+        Assert.Contains("OrderProbe", TextOf(sourceStructure), StringComparison.Ordinal);
         AssertDeclarationOrder(TextOf(sourceStructure));
         Assert.Equal(ReadMemberNames(TextOf(sourceStructure)), ReadMemberNames(TextOf(complete)));
         var sourceNamespaceTree = await structureTools.BrowseTarget(sourceSolution, "namespaces",
@@ -1323,7 +1324,7 @@ public sealed class AssemblyToolsContractTests
 
         AssertSuccessWithinBudget(result, 16384, 2048);
         var text = TextOf(result);
-        Assert.Contains("completeness=truncated", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("completeness=", text, StringComparison.Ordinal);
         Assert.Contains("nextAction:", text, StringComparison.Ordinal);
         Assert.Contains("namespacePrefix", text, StringComparison.Ordinal);
         Assert.Contains("increase depth", text, StringComparison.OrdinalIgnoreCase);
@@ -1354,7 +1355,8 @@ public sealed class AssemblyToolsContractTests
         var secondWindow = await symbols.GetSymbolBody(assemblyPath, [originalReference], startLine: 2, maxBodyLines: 1,
             maxResponseBytes: 16384, maxResponseTokens: 2048);
         AssertSuccessWithinBudget(secondWindow, 16384, 2048);
-        Assert.Contains("Resolution status: resolved", TextOf(secondWindow), StringComparison.Ordinal);
+        Assert.Contains("Lines: 2-2/", TextOf(secondWindow), StringComparison.Ordinal);
+        Assert.Contains("{", TextOf(secondWindow), StringComparison.Ordinal);
 
         var wrongOwner = await symbols.GetSymbolBody(otherAssemblyPath, [originalReference], maxResponseBytes: 16384);
         AssertErrorWithinBudget(wrongOwner, "TARGET_MISMATCH", 16384, 4096);
@@ -1380,7 +1382,6 @@ public sealed class AssemblyToolsContractTests
 
         var reopened = await symbols.GetSymbolBody(assemblyPath, [currentReference], maxResponseBytes: 16384, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(reopened, 16384, 4096);
-        Assert.Contains("Resolution status: resolved", TextOf(reopened), StringComparison.Ordinal);
         Assert.Contains("return 2;", TextOf(reopened), StringComparison.Ordinal);
         var otherOwnerStillResident = await symbols.GetSymbolBody(otherAssemblyPath, [otherReference], maxResponseBytes: 16384);
         AssertOwnerResult(otherOwnerStillResident, "Read");
@@ -1703,9 +1704,9 @@ public sealed class AssemblyToolsContractTests
         }
         var inspectCursor = ReadDomainCursor(TextOf(inspectFirst));
         var snapshotId = ReadHeader(TextOf(inspectFirst), "snapshotId");
-        Assert.StartsWith("types(namespace=*", ReadHeader(TextOf(inspectFirst), "analyzedScope"), StringComparison.Ordinal);
-        Assert.Contains("analysisCompleteness=complete", TextOf(inspectFirst), StringComparison.Ordinal);
-        Assert.Contains("resultContinuation=available", TextOf(inspectFirst), StringComparison.Ordinal);
+        Assert.DoesNotContain("analyzedScope=", TextOf(inspectFirst), StringComparison.Ordinal);
+        Assert.DoesNotContain("analysisCompleteness=", TextOf(inspectFirst), StringComparison.Ordinal);
+        Assert.DoesNotContain("resultContinuation=", TextOf(inspectFirst), StringComparison.Ordinal);
         Assert.DoesNotContain("omissions=none", TextOf(inspectFirst), StringComparison.Ordinal);
         var inspectNext = await assemblies.InspectAssembly(assemblyPath, includeMembers: true, maxResults: 1,
             includeReferences: false, resultCursor: inspectCursor, maxResponseBytes: 65536, maxResponseTokens: 16000);
@@ -1798,7 +1799,7 @@ public sealed class AssemblyToolsContractTests
         var filesLimitedText = TextOf(filesLimited);
         AssertOwnerPage(filesLimitedText);
         Assert.Contains("maxFiles", filesLimitedText, StringComparison.Ordinal);
-        Assert.Contains("analysisCompleteness=partial", filesLimitedText, StringComparison.Ordinal);
+        Assert.DoesNotContain("analysisCompleteness=", filesLimitedText, StringComparison.Ordinal);
         Assert.Contains("omissions=maxFiles", filesLimitedText, StringComparison.Ordinal);
         Assert.DoesNotContain("\"continuationToken\":\"v1.", filesLimitedText, StringComparison.Ordinal);
         Assert.DoesNotContain("Needle7", filesLimitedText, StringComparison.Ordinal);
@@ -1826,7 +1827,8 @@ public sealed class AssemblyToolsContractTests
             includeReferences: false, continuationToken: outerToken, maxResponseBytes: 1024, maxResponseTokens: 300);
 
         Assert.False(next.IsError ?? false, TextOf(next));
-        Assert.Contains("Status: operation=ok, completeness=truncated", TextOf(next), StringComparison.Ordinal);
+        Assert.Contains("snapshotId=assembly:", TextOf(next), StringComparison.Ordinal);
+        Assert.DoesNotContain("Status: operation=ok", TextOf(next), StringComparison.Ordinal);
         Assert.DoesNotContain("Assembly file not found", TextOf(next), StringComparison.Ordinal);
     }
 
@@ -1850,11 +1852,12 @@ public sealed class AssemblyToolsContractTests
         AssertSuccessWithinBudget(search, 16_384, 16_384);
         var searchText = TextOf(search);
         Assert.True(TokenCount(searchText) <= 256, $"Search response uses {TokenCount(searchText)} cl100k_base tokens:\n{searchText}");
-        Assert.Contains("analysisCompleteness=partial", searchText, StringComparison.Ordinal);
+        Assert.DoesNotContain("analysisCompleteness=", searchText, StringComparison.Ordinal);
+        Assert.Contains("omissions=incompleteRelationships", searchText, StringComparison.Ordinal);
         Assert.Contains("incompleteRelationships", searchText, StringComparison.Ordinal);
         Assert.Contains("unresolvedReference: ", searchText, StringComparison.Ordinal);
         Assert.DoesNotContain("continuationToken=", searchText, StringComparison.Ordinal);
-        Assert.DoesNotContain("resultContinuation=available", searchText, StringComparison.Ordinal);
+        Assert.DoesNotContain("resultContinuation=", searchText, StringComparison.Ordinal);
         using (var document = System.Text.Json.JsonDocument.Parse(BodyOf(searchText)))
             Assert.Empty(document.RootElement.GetProperty("results").EnumerateArray());
 
@@ -1862,11 +1865,12 @@ public sealed class AssemblyToolsContractTests
         AssertSuccessWithinBudget(extensions, 16_384, 16_384);
         var extensionText = TextOf(extensions);
         Assert.InRange(TokenCount(extensionText), 0, 256);
-        Assert.Contains("analysisCompleteness=partial", extensionText, StringComparison.Ordinal);
+        Assert.DoesNotContain("analysisCompleteness=", extensionText, StringComparison.Ordinal);
+        Assert.Contains("omissions=incompleteRelationships", extensionText, StringComparison.Ordinal);
         Assert.Contains("incompleteRelationships", extensionText, StringComparison.Ordinal);
         Assert.Contains("unresolvedReference: ", extensionText, StringComparison.Ordinal);
         Assert.DoesNotContain("continuationToken=", extensionText, StringComparison.Ordinal);
-        Assert.DoesNotContain("resultContinuation=available", extensionText, StringComparison.Ordinal);
+        Assert.DoesNotContain("resultContinuation=", extensionText, StringComparison.Ordinal);
         using (var document = System.Text.Json.JsonDocument.Parse(BodyOf(extensionText)))
             Assert.Empty(document.RootElement.GetProperty("results")[0].GetProperty("entries").EnumerateArray());
         }
@@ -1901,7 +1905,8 @@ public sealed class AssemblyToolsContractTests
         Assert.Equal(compactSearchJson.RootElement.GetProperty("results").GetRawText(), detailedSearchJson.RootElement.GetProperty("results").GetRawText());
         Assert.Equal(compactSearchJson.RootElement.GetProperty("totalCount").GetInt32(), detailedSearchJson.RootElement.GetProperty("totalCount").GetInt32());
         Assert.Equal("Read", Assert.Single(compactSearchJson.RootElement.GetProperty("results").EnumerateArray()).GetProperty("symbol").GetString());
-        Assert.Contains("incompleteRelationships", compactSearchJson.RootElement.GetProperty("analysis").GetProperty("omissionReasons").GetRawText(), StringComparison.Ordinal);
+        Assert.Contains("omissions=incompleteRelationships", TextOf(compactSearch), StringComparison.Ordinal);
+        Assert.False(compactSearchJson.RootElement.TryGetProperty("analysis", out _));
         Assert.DoesNotContain(Path.GetFileName(dependency), TextOf(compactSearch), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("MissingOwner", TextOf(detailedSearch), StringComparison.OrdinalIgnoreCase);
 
@@ -1917,7 +1922,7 @@ public sealed class AssemblyToolsContractTests
         Assert.Equal("Twice", ownExtension.GetProperty("name").GetString());
         Assert.StartsWith("asm:", ownExtension.GetProperty("handoffId").GetString(), StringComparison.Ordinal);
         Assert.Equal(target, ownExtension.GetProperty("ownerTargetPath").GetString(), ignoreCase: true);
-        Assert.Contains("incompleteRelationships", TextOf(compactExtensions), StringComparison.Ordinal);
+        Assert.Contains("omissions=incompleteRelationships", TextOf(compactExtensions), StringComparison.Ordinal);
         Assert.DoesNotContain(Path.GetFileName(dependency), TextOf(compactExtensions), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("MissingOwner", TextOf(detailedExtensions), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Restore missing assembly references", TextOf(compactExtensions), StringComparison.Ordinal);
@@ -1926,7 +1931,8 @@ public sealed class AssemblyToolsContractTests
         var relationships = new RelationshipTools(runtime);
         var defaultReferences = await relationships.FindReferences(target, "M:UsableOwner.Root.Read", maxResponseBytes: 65536);
         Assert.False(defaultReferences.IsError ?? false, TextOf(defaultReferences));
-        Assert.Contains("analysisCompleteness=partial", TextOf(defaultReferences), StringComparison.Ordinal);
+        Assert.DoesNotContain("analysisCompleteness=", TextOf(defaultReferences), StringComparison.Ordinal);
+        Assert.Contains("omissions=assemblyOwnerIncomplete", TextOf(defaultReferences), StringComparison.Ordinal);
         Assert.Contains("assemblyOwnerIncomplete", TextOf(defaultReferences), StringComparison.Ordinal);
         string? cursor = null;
         string? summary = null;
@@ -1936,7 +1942,7 @@ public sealed class AssemblyToolsContractTests
             var references = await relationships.FindReferences(target, "M:UsableOwner.Root.Read", maxResults: 1,
                 includeSummary: true, resultCursor: cursor, maxResponseBytes: 65536);
             Assert.False(references.IsError ?? false, TextOf(references));
-            Assert.Contains("analysisCompleteness=partial", TextOf(references), StringComparison.Ordinal);
+            Assert.DoesNotContain("analysisCompleteness=", TextOf(references), StringComparison.Ordinal);
             using var document = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(references)));
             var root = document.RootElement;
             var pageSummary = root.GetProperty("summary");
@@ -2010,7 +2016,7 @@ public sealed class AssemblyToolsContractTests
             domainCursor: null, bytes: 32768, tokens: 4096);
         var leafBodyText = leafBodyPages.Text;
         Assert.Contains("Read", leafBodyText, StringComparison.Ordinal);
-        Assert.Contains("Resolution status: resolved (availability: available)", leafBodyText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Availability: available", leafBodyText, StringComparison.Ordinal);
         Assert.Contains(longLiteral, leafBodyText, StringComparison.Ordinal);
         Assert.Contains(".Length", leafBodyText, StringComparison.Ordinal);
         Assert.Contains("return", leafBodyText, StringComparison.OrdinalIgnoreCase);
@@ -2079,9 +2085,10 @@ public sealed class AssemblyToolsContractTests
         var firstMetadata = string.Join(Environment.NewLine, incoming.FirstPage.Split('\n').Where(line =>
             line.StartsWith("Status:", StringComparison.Ordinal)
             || line.StartsWith("snapshotId=", StringComparison.Ordinal)
-            || line.StartsWith("analyzedScope=", StringComparison.Ordinal)
-            || line.StartsWith("analysisCompleteness=", StringComparison.Ordinal)
-            || line.StartsWith("resultContinuation=", StringComparison.Ordinal)));
+            || line.StartsWith("omissions=", StringComparison.Ordinal)
+            || line.StartsWith("continuationToken=", StringComparison.Ordinal)
+            || line.StartsWith("nextAction: ", StringComparison.Ordinal)
+            || line.StartsWith("domainNextAction: ", StringComparison.Ordinal)));
         Assert.True(incomingText.Contains("ClosureBridge", StringComparison.Ordinal),
             $"Bridge caller missing after reconstructing {incoming.Pages} outer page(s). First outer continuation={firstOuterContinuation}. First metadata:\n{firstMetadata}\nFirst response:\n{incoming.FirstPage}\nReconstructed graph:\n{incomingText}");
         Assert.True(incomingText.Contains("ClosureRoot", StringComparison.Ordinal),
@@ -2092,7 +2099,7 @@ public sealed class AssemblyToolsContractTests
         var bridgeHandle = ReadCallTreeHandoff(incomingText, "Forward", bridge);
         var bridgeBody = await symbols.GetSymbolBody(bridge, [bridgeHandle], maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertOwnerResult(bridgeBody, "Forward");
-        var rootHandle = ReadCallTreeHandoff(incomingText, "Run", root);
+        var rootHandle = ReadCallTreeHandoff(incomingText, "Entry.Run", root);
         var rootBody = await symbols.GetSymbolBody(root, [rootHandle], maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertOwnerResult(rootBody, "Run");
 
@@ -2271,12 +2278,15 @@ public sealed class AssemblyToolsContractTests
         return handoff!;
     }
 
-    private static string ReadCallTreeHandoff(string text, string name, string expectedOwnerPath)
+    private static string ReadCallTreeHandoff(string text, string name, string expectedOwnerPath, bool expectOwnerPath = true)
     {
         var line = text.Split('\n').FirstOrDefault(value => value.Contains(name, StringComparison.Ordinal)
             && value.Contains("asm:", StringComparison.Ordinal));
         Assert.True(line is not null, text);
-        Assert.Contains("targetPath: " + expectedOwnerPath, line, StringComparison.OrdinalIgnoreCase);
+        if (expectOwnerPath)
+            Assert.Contains("targetPath: " + expectedOwnerPath, line, StringComparison.OrdinalIgnoreCase);
+        else
+            Assert.DoesNotContain("targetPath:", line, StringComparison.OrdinalIgnoreCase);
         var reference = Assert.Single(IntegrationMcpAssertions.ReadStableReferences(line!));
         Assert.StartsWith("asm:", reference, StringComparison.Ordinal);
         return reference;
@@ -2348,7 +2358,7 @@ public sealed class AssemblyToolsContractTests
         Assert.False(body.IsError ?? false, text);
         Assert.DoesNotContain("INVALID_SYMBOL_REFERENCE", text, StringComparison.Ordinal);
         Assert.DoesNotContain("TARGET_MISMATCH", text, StringComparison.Ordinal);
-        Assert.Contains("Status: operation=ok", text, StringComparison.Ordinal);
+        Assert.Contains("Lines: ", text, StringComparison.Ordinal);
     }
 
     private static void AssertOwnerResult(CallToolResult result, string expectedText)
@@ -2452,7 +2462,8 @@ public sealed class AssemblyToolsContractTests
 
     private static void AssertOwnerPage(string text)
     {
-        Assert.Contains("Status: operation=ok", text, StringComparison.Ordinal);
+        Assert.Contains("snapshotId=", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Status: operation=ok", text, StringComparison.Ordinal);
         Assert.DoesNotContain("operation=running", text, StringComparison.Ordinal);
         Assert.DoesNotContain("operation=retry", text, StringComparison.Ordinal);
         Assert.DoesNotContain("operation=loading", text, StringComparison.Ordinal);
@@ -2506,6 +2517,7 @@ public sealed class AssemblyToolsContractTests
         int? tokens = 89;
         string? continuation = null;
         var sawExactBudgetRecovery = false;
+        string? snapshotId = null;
         for (var pageNumber = 0; pageNumber < 100; pageNumber++)
         {
             var result = await invoke(bytes, tokens, continuation);
@@ -2537,7 +2549,11 @@ public sealed class AssemblyToolsContractTests
                 Assert.False(result.IsError ?? false, page);
             }
 
-            Assert.Contains("Status: operation=ok", page, StringComparison.Ordinal);
+            Assert.Contains("snapshotId=", page, StringComparison.Ordinal);
+            var pageSnapshotId = ReadHeader(page, "snapshotId");
+            snapshotId ??= pageSnapshotId;
+            Assert.Equal(snapshotId, pageSnapshotId);
+            Assert.DoesNotContain("Status: operation=ok", page, StringComparison.Ordinal);
             Assert.DoesNotContain("operation=running", page, StringComparison.Ordinal);
             Assert.DoesNotContain("operation=retry", page, StringComparison.Ordinal);
             text.Append(BodyOf(page));
@@ -2554,11 +2570,9 @@ public sealed class AssemblyToolsContractTests
         var lines = text.Split('\n');
         var firstContentLine = lines.Length > 0 && lines[0].StartsWith("Status:", StringComparison.Ordinal) ? 1 : 0;
         while (firstContentLine < lines.Length && (lines[firstContentLine].StartsWith("snapshotId=", StringComparison.Ordinal)
-            || lines[firstContentLine].StartsWith("analyzedScope=", StringComparison.Ordinal)
-            || lines[firstContentLine].StartsWith("analysisCompleteness=", StringComparison.Ordinal)
-            || lines[firstContentLine].StartsWith("resultContinuation=", StringComparison.Ordinal)
             || lines[firstContentLine].StartsWith("omissions=", StringComparison.Ordinal)
             || lines[firstContentLine].StartsWith("nextAction: ", StringComparison.Ordinal)
+            || lines[firstContentLine].StartsWith("domainNextAction: ", StringComparison.Ordinal)
             || lines[firstContentLine].StartsWith("continuationToken=", StringComparison.Ordinal))) firstContentLine++;
         return string.Join("\n", lines.Skip(firstContentLine));
     }

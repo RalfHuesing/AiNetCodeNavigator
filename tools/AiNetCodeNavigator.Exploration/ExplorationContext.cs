@@ -74,7 +74,10 @@ internal sealed class ExplorationContext
                 await File.WriteAllTextAsync(Path.Combine(attemptDirectory, "response.txt"), text, _cancellationToken).ConfigureAwait(false);
                 // Keep the latest complete raw response even when a subsequent call fails.
                 await WriteJsonAsync(Path.Combine(directory, "response.json"), result).ConfigureAwait(false);
-                visible.Append(text).Append('\n');
+                var attemptKind = arguments.ContainsKey("continuationToken") ? "outer page"
+                    : arguments.ContainsKey("operationToken") ? "poll" : "initial call";
+                visible.Append(CultureInfo.InvariantCulture, $"--- Attempt {attempt:D3}: {attemptKind} ---\n")
+                    .Append(text).Append('\n');
                 await File.WriteAllTextAsync(Path.Combine(directory, "response.txt"), visible.ToString(), _cancellationToken).ConfigureAwait(false);
                 if (result.IsError == true)
                 {
@@ -148,7 +151,7 @@ internal sealed class ExplorationContext
     {
         var lines = text.Split('\n');
         var first = lines.Length > 0 && lines[0].StartsWith("Status:", StringComparison.Ordinal) ? 1 : 0;
-        string[] prefixes = ["snapshotId=", "analyzedScope=", "analysisCompleteness=", "resultContinuation=", "omissions=", "nextAction: ", "continuationToken="];
+        string[] prefixes = ["snapshotId=", "omissions=", "nextAction: ", "domainNextAction: ", "continuationToken="];
         while (first < lines.Length && prefixes.Any(prefix => lines[first].StartsWith(prefix, StringComparison.Ordinal))) first++;
         return string.Join('\n', lines.Skip(first));
     }

@@ -355,7 +355,7 @@ internal sealed class TrafficCaptureSession : IAsyncDisposable
             Encoding.UTF8.GetByteCount(visibleText),
             visibleText.Length == 0 ? 0 : McpResponseFormatter.CountTokens(visibleText),
             isError,
-            metadata.Operation ?? structured.Operation,
+            metadata.Operation ?? structured.Operation ?? (isError ? "error" : "ok"),
             null,
             isError ? visibleText : null,
             metadata.OperationToken ?? structured.OperationToken,

@@ -109,6 +109,7 @@ internal static class IntegrationMcpAssertions
         var continuation = initialContinuation;
         if (continuation is not null) seenContinuations.Add(continuation);
         string? firstPage = null;
+        string? snapshotId = null;
         for (var pageNumber = 0; pageNumber < 100; pageNumber++)
         {
             var result = await invoke(maxResponseBytes, maxResponseTokens, continuation);
@@ -117,6 +118,9 @@ internal static class IntegrationMcpAssertions
             Assert.False(result.IsError ?? false, $"Outer page {pageNumber} failed: {text}");
             Assert.InRange(Encoding.UTF8.GetByteCount(text), 0, maxResponseBytes);
             if (maxResponseTokens is { } tokens) Assert.InRange(TokenCount(text), 0, tokens);
+            var pageSnapshotId = ReadHeader(text, "snapshotId");
+            snapshotId ??= pageSnapshotId;
+            Assert.Equal(snapshotId, pageSnapshotId);
             Assert.DoesNotContain("operation=running", text, StringComparison.Ordinal);
             Assert.DoesNotContain("operation=retry", text, StringComparison.Ordinal);
             accumulated.Append(BodyOf(text));
@@ -178,11 +182,9 @@ internal static class IntegrationMcpAssertions
 
     private static bool IsResponseMetadata(string line) =>
         line.StartsWith("snapshotId=", StringComparison.Ordinal)
-        || line.StartsWith("analyzedScope=", StringComparison.Ordinal)
-        || line.StartsWith("analysisCompleteness=", StringComparison.Ordinal)
-        || line.StartsWith("resultContinuation=", StringComparison.Ordinal)
         || line.StartsWith("omissions=", StringComparison.Ordinal)
         || line.StartsWith("nextAction: ", StringComparison.Ordinal)
+        || line.StartsWith("domainNextAction: ", StringComparison.Ordinal)
         || line.StartsWith("continuationToken=", StringComparison.Ordinal);
 
     internal static bool TryReadToken(string text, string name, out string token)

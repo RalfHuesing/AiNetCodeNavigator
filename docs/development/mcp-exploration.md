@@ -45,7 +45,7 @@ Each run writes below `temp/exploration/<scenario>/<UTC-run>/` (created automati
 
 - `request.json`: the original MCP tool name and arguments.
 - `response.json`: the latest raw `CallToolResult`.
-- `response.txt`: all visible response text, including progress and page headers.
+- `response.txt`: all visible responses with attempt boundaries identifying initial calls, polls, and outer pages. The text inside each attempt is unchanged; `response.json` contains only the latest attempt. Earlier pages remain valid when a later outer page needs a larger response budget.
 - `payload.txt`: the completed payload with outer-page metadata removed.
 - `attempts/<number>/`: the exact request, raw response and text for each initial call, poll, or outer page.
 - `error.txt`: the exception when a technical failure occurs. The run directory also receives an error file.

@@ -46,8 +46,8 @@ pwsh -File ./scripts/explore.ps1 -Scenario ExploreFeatureX -TimeoutSeconds 180
 
 Outputs are stored under `temp/exploration/<ScenarioName>/<UTC-timestamp>/` (git-ignored, ensured automatically):
 - `##-tool_name/request.json`: Input arguments.
-- `##-tool_name/response.json`: Raw `CallToolResult`.
-- `##-tool_name/response.txt`: Full delivered text (headers + body).
+- `##-tool_name/response.json`: Latest raw `CallToolResult`.
+- `##-tool_name/response.txt`: All delivered text with initial-call, poll, and outer-page attempt boundaries.
 - `##-tool_name/payload.txt`: Reconstructed body with transport/page headers stripped.
 - `##-tool_name/attempts/`: Individual polling/paging attempt logs.
 - `error.txt`: Captured exception on failure.

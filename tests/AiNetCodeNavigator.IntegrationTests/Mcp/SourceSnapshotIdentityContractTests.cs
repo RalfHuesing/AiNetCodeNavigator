@@ -128,7 +128,7 @@ public sealed class SourceSnapshotIdentityContractTests
             continuationToken: continuation), 16384, 1024);
         var bodyText = body.Text;
         Assert.Equal(ReadHeader(refreshedOrigin.FirstPage, "snapshotId"), ReadHeader(body.FirstPage, "snapshotId"));
-        Assert.Contains("Resolution status: resolved (availability: available)", bodyText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Availability: available", bodyText, StringComparison.Ordinal);
         Assert.Contains("Read", bodyText, StringComparison.Ordinal);
         Assert.Contains("=> 1", bodyText, StringComparison.Ordinal);
     }
@@ -196,7 +196,7 @@ public sealed class SourceSnapshotIdentityContractTests
             [reference], maxResponseBytes: bytes, maxResponseTokens: tokens, operationToken: operation,
             continuationToken: continuation), 16384, 1024);
         Assert.Equal(newSnapshot, ReadHeader(body.FirstPage, "snapshotId"));
-        Assert.Contains("Resolution status: resolved (availability: available)", body.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Availability: available", body.Text, StringComparison.Ordinal);
         Assert.Contains("=> 1", body.Text, StringComparison.Ordinal);
     }
 

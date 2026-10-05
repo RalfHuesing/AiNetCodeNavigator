@@ -10,7 +10,7 @@ namespace AiNetCodeNavigator.FastTests.Mcp;
 public sealed class LongRunningToolCallStoreTests
 {
     [Fact]
-    public async Task AnalysisScopeHeaderEscapesMultilineQueryWithoutCreatingExtraHeaders()
+    public async Task AnalysisMetadataDoesNotInjectHeadersFromEscapedScope()
     {
         await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
         var metadata = new NavigationAnalysisMetadata(
@@ -28,7 +28,8 @@ public sealed class LongRunningToolCallStoreTests
 
         var text = TextOf(result);
         Assert.Equal(1, text.Split('\n').Count(line => line.StartsWith("snapshotId=", StringComparison.Ordinal)));
-        Assert.Contains("analyzedScope=findSymbol(pattern=Run\\\\n snapshotId=forged, kind=method)", text, StringComparison.Ordinal);
+        Assert.Contains("snapshotId=source:0123456789abcdef01234567", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("analyzedScope=", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -63,8 +64,9 @@ public sealed class LongRunningToolCallStoreTests
         Assert.Equal(39, cursor.Length);
         Assert.All(cursor, character => Assert.InRange(character, '0', '9'));
         Assert.Contains("snapshotId=assembly:0123456789abcdef01234567", text, StringComparison.Ordinal);
-        Assert.Contains("analyzedScope=inspectAssembly(maxResults=50)", text, StringComparison.Ordinal);
-        Assert.Contains("analysisCompleteness=complete", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("analyzedScope=", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("analysisCompleteness=", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("resultContinuation=", text, StringComparison.Ordinal);
         Assert.Equal("Widget", parsed.RootElement.GetProperty("types")[0].GetProperty("name").GetString());
     }
 
@@ -89,9 +91,10 @@ public sealed class LongRunningToolCallStoreTests
         var text = TextOf(result);
 
         Assert.Contains("snapshotId=assembly:0123456789abcdef01234567", text, StringComparison.Ordinal);
-        Assert.Contains("analyzedScope=inspectAssembly(maxResults=50)", text, StringComparison.Ordinal);
-        Assert.Contains("analysisCompleteness=complete", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("resultContinuation=none", text, StringComparison.Ordinal);
+        Assert.Contains("{\"types\":[]}", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("analyzedScope=", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("analysisCompleteness=", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("resultContinuation=", text, StringComparison.Ordinal);
         Assert.DoesNotContain("omissions=none", text, StringComparison.Ordinal);
     }
 
@@ -118,10 +121,47 @@ public sealed class LongRunningToolCallStoreTests
             "inspect_assembly", "target", "query=partial", (_, _) => Task.FromResult(response)));
         var text = TextOf(result);
 
-        Assert.Contains("analysisCompleteness=partial", text, StringComparison.Ordinal);
-        Assert.Contains("resultContinuation=available", text, StringComparison.Ordinal);
+        Assert.Contains("snapshotId=assembly:0123456789abcdef01234567", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("analysisCompleteness=", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("resultContinuation=", text, StringComparison.Ordinal);
         Assert.Contains("omissions=maxFiles", text, StringComparison.Ordinal);
         Assert.Contains("resultCursor", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EmbeddedAnalysisIsProjectedAsEscapedSnapshotAndOmissionsWithoutDuplicatingJsonMetadata()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
+        var source = JsonSerializer.Serialize(new
+        {
+            analysis = new
+            {
+                snapshotId = "source:0123456789abcdef01234567",
+                analyzedScope = "findSymbol(pattern=Run\nsnapshotId=forged)",
+                omissionReasons = new[] { "maxFiles", "custom\nsnapshotId=forged" },
+                analysisCompleteness = "partial",
+                resultContinuationAvailable = true,
+            },
+            items = new[] { "Run", "Read" },
+        }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        var result = await store.RunAsync(Request("find_symbol", "target", "pattern=Run", _ =>
+            Task.FromResult(new CallToolResult { Content = [new TextContentBlock { Text = source }] }), maxResponseBytes: 4096));
+        var text = TextOf(result);
+        var body = BodyOf(result);
+
+        Assert.False(result.IsError ?? false, text);
+        Assert.Contains("snapshotId=source:0123456789abcdef01234567", text, StringComparison.Ordinal);
+        Assert.Contains("omissions=maxFiles,custom\\nsnapshotId=forged", text, StringComparison.Ordinal);
+        Assert.Equal(1, text.Split('\n').Count(line => line.StartsWith("snapshotId=", StringComparison.Ordinal)));
+        Assert.DoesNotContain("analyzedScope=", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("analysisCompleteness=", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("resultContinuation=", text, StringComparison.Ordinal);
+
+        using var roundTripped = JsonDocument.Parse(body);
+        Assert.False(roundTripped.RootElement.TryGetProperty("analysis", out _));
+        Assert.Equal(new[] { "Run", "Read" }, roundTripped.RootElement.GetProperty("items").EnumerateArray()
+            .Select(item => item.GetString()).ToArray());
     }
 
     [Fact]
@@ -583,13 +623,22 @@ public sealed class LongRunningToolCallStoreTests
         while (true)
         {
             var text = TextOf(current);
-            Assert.Contains("completeness=truncated", text, StringComparison.Ordinal);
-            Assert.Contains("nextAction: Increase maxResults and repeat the query.", text, StringComparison.Ordinal);
+            var token = TryTokenOf(current, "continuationToken");
+            if (token is null)
+            {
+                Assert.StartsWith("nextAction: Increase maxResults and repeat the query.", text, StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.StartsWith("continuationToken=", text, StringComparison.Ordinal);
+                Assert.Contains("nextAction: Read all outer pages with continuationToken alone", text, StringComparison.Ordinal);
+                Assert.Contains("domainNextAction: Increase maxResults and repeat the query.", text, StringComparison.Ordinal);
+            }
+            Assert.DoesNotContain("completeness=", text, StringComparison.Ordinal);
             Assert.Null(current.StructuredContent);
             Assert.True(Encoding.UTF8.GetByteCount(text) <= 512);
             collected.Append(BodyOf(current));
             pageNumber++;
-            var token = TryTokenOf(current, "continuationToken");
             if (token is null) break;
 
             current = await store.RunAsync(Request("find_symbol", "target", "pattern=Symbol", Work,
@@ -719,6 +768,9 @@ public sealed class LongRunningToolCallStoreTests
                 continuationToken: continuation, maxResponseBytes: 512, maxResponseTokens: 120));
             var retryBytes = IntField(tooSmall, "minimumResponseBytes");
             var retryTokens = IntField(tooSmall, "minimumResponseTokens");
+            Assert.Contains("Keep the same continuationToken; prior pages remain valid.", TextOf(tooSmall), StringComparison.Ordinal);
+            Assert.True(Encoding.UTF8.GetByteCount(TextOf(tooSmall)) <= 512);
+            Assert.True(McpResponseFormatter.CountTokens(TextOf(tooSmall)) <= 120);
             var retry = await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", _ => Task.FromResult(new CallToolResult()),
                 continuationToken: continuation, maxResponseBytes: retryBytes, maxResponseTokens: retryTokens));
 
@@ -824,7 +876,8 @@ public sealed class LongRunningToolCallStoreTests
         Assert.False(replay.IsError ?? false);
         Assert.NotEqual(expiredContinuation, renewedContinuation);
         Assert.NotEqual(expiredContinuation, changedBudgetContinuation);
-        Assert.Contains("completeness=truncated", TextOf(replay), StringComparison.Ordinal);
+        Assert.DoesNotContain("completeness=", TextOf(replay), StringComparison.Ordinal);
+        Assert.Contains("continuationToken=", TextOf(replay), StringComparison.Ordinal);
         Assert.Contains("CONTINUATION_EXPIRED", TextOf(oldPage), StringComparison.Ordinal);
         Assert.False(newPage.IsError ?? false);
         Assert.False((await store.RunAsync(Request("get_call_tree", "target", "symbol=Foo", _ => release.Task,
@@ -1313,10 +1366,8 @@ public sealed class LongRunningToolCallStoreTests
         var lines = TextOf(result).Split('\n');
         var firstContentLine = lines.Length > 0 && lines[0].StartsWith("Status:", StringComparison.Ordinal) ? 1 : 0;
         while (firstContentLine < lines.Length && (lines[firstContentLine].StartsWith("snapshotId=", StringComparison.Ordinal)
-            || lines[firstContentLine].StartsWith("analyzedScope=", StringComparison.Ordinal)
-            || lines[firstContentLine].StartsWith("analysisCompleteness=", StringComparison.Ordinal)
-            || lines[firstContentLine].StartsWith("resultContinuation=", StringComparison.Ordinal)
             || lines[firstContentLine].StartsWith("omissions=", StringComparison.Ordinal)
+            || lines[firstContentLine].StartsWith("domainNextAction: ", StringComparison.Ordinal)
             || lines[firstContentLine].StartsWith("nextAction: ", StringComparison.Ordinal)
             || lines[firstContentLine].StartsWith("continuationToken=", StringComparison.Ordinal))) firstContentLine++;
         return string.Join("\n", lines.Skip(firstContentLine));

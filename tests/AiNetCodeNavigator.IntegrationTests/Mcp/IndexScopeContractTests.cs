@@ -269,7 +269,8 @@ public sealed class IndexScopeContractTests
             if (assemblyText.StartsWith(McpToolResults.RunningStatusPrefix, StringComparison.Ordinal)) continue;
             if (assemblyText.StartsWith(McpToolResults.LoadingStatusPrefix, StringComparison.Ordinal)) continue;
             Assert.False(assemblyResult.IsError ?? false, assemblyText);
-            Assert.StartsWith("Status: operation=ok,", assemblyText, StringComparison.Ordinal);
+            Assert.Contains("snapshotId=assembly:", assemblyText, StringComparison.Ordinal);
+            Assert.DoesNotContain("Status: operation=ok", assemblyText, StringComparison.Ordinal);
             assemblyPollCompleted = true;
             break;
         }

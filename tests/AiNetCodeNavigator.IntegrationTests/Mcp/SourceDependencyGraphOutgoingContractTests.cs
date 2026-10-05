@@ -194,7 +194,6 @@ public sealed class SourceDependencyGraphOutgoingContractTests
         Assert.False(string.IsNullOrWhiteSpace(endpoint));
         var body = await new SymbolTools(testHost.Runtime).GetSymbolBody(target, [endpoint!], maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(body, 32768, 4096);
-        Assert.Contains("Resolution status: resolved", TextOf(body), StringComparison.Ordinal);
         Assert.Contains("class Right", TextOf(body), StringComparison.Ordinal);
 
         var rootFile = fixture.GetPath("src/App/Root.cs");

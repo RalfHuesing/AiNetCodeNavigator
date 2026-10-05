@@ -43,7 +43,6 @@ public sealed class SourceDependencyGraphCacheContractTests
         var followedWarmEndpoints = await symbols.GetSymbolBody(target, [rootHandoff, dependencyHandoff],
             maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(followedWarmEndpoints, 32768, 4096);
-        Assert.Contains("Resolution status: resolved", TextOf(followedWarmEndpoints), StringComparison.Ordinal);
         Assert.Contains("class Root", TextOf(followedWarmEndpoints), StringComparison.Ordinal);
         Assert.Contains("class Dependency", TextOf(followedWarmEndpoints), StringComparison.Ordinal);
         var changedRoot = await relationships.DependencyGraph(target, symbolIdentifier: "T:CacheProbe.Caller",
@@ -60,7 +59,6 @@ public sealed class SourceDependencyGraphCacheContractTests
         var followedFilteredEndpoint = await symbols.GetSymbolBody(target, [filteredEndpointHandoff],
             maxResponseBytes: 32768, maxResponseTokens: 4096);
         AssertSuccessWithinBudget(followedFilteredEndpoint, 32768, 4096);
-        Assert.Contains("Resolution status: resolved", TextOf(followedFilteredEndpoint), StringComparison.Ordinal);
         Assert.Contains("class Root", TextOf(followedFilteredEndpoint), StringComparison.Ordinal);
         Assert.Equal(3, Volatile.Read(ref collectedDocumentCount));
 

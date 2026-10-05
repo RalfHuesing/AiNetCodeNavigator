@@ -145,9 +145,8 @@ public sealed class McpFormattingTests
     [Fact]
     public void Format_CompactBudgetErrorKeepsExactMetadataAwareMinimaAtEightyAndOneHundredTwentyTokens()
     {
-        var text = "{\n  \"items\": [\n" + string.Join(",\n", Enumerable.Range(0, 20).Select(index => $"    \"item-{index:D2}\"")) + "\n  ]\n}";
-        var responsePrefix = "Status: operation=ok\nsnapshotId=source:0123456789abcdef01234567\n"
-            + $"analyzedScope=findSymbol(pattern={new string('s', 600)})\nanalysisCompleteness=complete\n";
+        var text = string.Join(' ', Enumerable.Range(0, 150).Select(index => $"required-item-{index:D3}"));
+        var responsePrefix = "snapshotId=source:0123456789abcdef01234567\n";
 
         foreach (var tokenBudget in new[] { 80, 120 })
         {
@@ -161,7 +160,7 @@ public sealed class McpFormattingTests
             var retry = McpResponseFormatter.Format(text, failure.MinimumResponseBytes!.Value,
                 failure.MinimumResponseTokens!.Value, responsePrefix: responsePrefix);
             Assert.Null(retry.ErrorCode);
-            Assert.True(retry.IsTruncated);
+            Assert.False(retry.IsTruncated);
             Assert.InRange(retry.Utf8Bytes, 0, failure.MinimumResponseBytes.Value);
             Assert.InRange(retry.TokenCount, 0, failure.MinimumResponseTokens.Value);
         }

@@ -283,7 +283,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                             else if (resolved.Body is { } body)
                             {
                                 resolvedSourceBodies++;
-                                items.Add(FormatBody(identifier, body, target.CanonicalPath, effectiveLines));
+                                items.Add(FormatBody(identifier, body, target.CanonicalPath, targetPath, effectiveLines, symbolIdentifiers.Length > 1));
                             }
                         }
                         if (resolvedSourceBodies == 0 && firstSourceResolutionError is { } resolutionError)
@@ -291,7 +291,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                                 maxResponseBytes, maxResponseTokens, "$.symbolIdentifiers");
 
                         var response = NavigationToolSupport.SuccessText(string.Join("\n\n", items), hasDomainGaps,
-                            hasDomainGaps ? "Use each item's stated next action. Read all outer response pages first, then continue each successful body from its own next body window." : null);
+                            hasDomainGaps ? "Follow each item's next body window or error action." : null);
                         return source.WithMetadata(response,
                             $"symbolBody(identifiers={string.Join('|', symbolIdentifiers)}, lines={startLine}..{(endLine?.ToString() ?? $"+{effectiveLines}")})",
                             new[]
@@ -353,7 +353,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                     else if (resolved.Body is { } body)
                     {
                         resolvedAssemblyBodies++;
-                        items.Add(FormatBody(identifier, body, target.CanonicalPath, effectiveLines));
+                        items.Add(FormatBody(identifier, body, target.CanonicalPath, targetPath, effectiveLines, symbolIdentifiers.Length > 1));
                     }
                 }
                 if (resolvedAssemblyBodies == 0 && firstAssemblyResolutionError is { } resolutionError)
@@ -365,7 +365,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                 if (resolvedAssemblyBodies > 0 && !string.IsNullOrWhiteSpace(decompiledSourceRoot))
                     responseText = $"Decompiled source root: {decompiledSourceRoot}\n\n{responseText}";
                 var assemblyResponse = NavigationToolSupport.SuccessText(responseText, hasDomainGaps,
-                    hasDomainGaps ? "Use each item's stated next action. Read all outer response pages first, then continue each successful body from its own next body window." : null);
+                    hasDomainGaps ? "Follow each item's next body window or error action." : null);
                 return NavigationToolSupport.WithAssemblyMetadata(assemblyResponse, AssemblySymbolInputResolver.CreateIdentity(assemblyScope),
                     $"symbolBody(identifiers={string.Join('|', symbolIdentifiers)}, lines={startLine}..{(endLine?.ToString() ?? $"+{effectiveLines}")})",
                     new[]
@@ -501,11 +501,16 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                 "Open the source solution target and use the src: reference there.");
     }
 
-    private static string FormatBody(string identifier, SymbolBodyResult body, string targetPath, int windowLineCount)
+    private static string FormatBody(string identifier, SymbolBodyResult body, string targetPath, string requestedTargetPath,
+        int windowLineCount, bool includeSelector)
     {
-        var status = body.HasMore ? ", more lines available" : ", complete";
-        var handoff = body.HandoffId is null ? string.Empty : $"\nHandoff: {body.HandoffId}\nOwner targetPath: {targetPath}";
-        var symbol = string.Equals(identifier, body.HandoffId, StringComparison.Ordinal) ? string.Empty : $"Symbol: {identifier}\n";
+        var handoff = body.HandoffId is null || string.Equals(identifier, body.HandoffId, StringComparison.Ordinal)
+            ? string.Empty : $"Handoff: {body.HandoffId}\n";
+        var owner = string.Equals(targetPath, requestedTargetPath, StringComparison.OrdinalIgnoreCase)
+            ? string.Empty : $"Owner targetPath: {targetPath}\n";
+        var symbol = includeSelector ? $"## {identifier}\n" : string.Empty;
+        var availability = body.Availability == "available" ? string.Empty : $"Availability: {body.Availability}\n";
+        var mode = body.ContentMode == "source" ? string.Empty : $"Content mode: {body.ContentMode}\n";
         var hint = string.IsNullOrWhiteSpace(body.Hint) ? string.Empty : $"\nHint: {body.Hint}";
         var nextAction = body.HasMore
             ? body.HandoffId is not null
@@ -513,7 +518,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
                 : $"Next body window: startLine={body.DisplayedEnd + 1}, maxBodyLines={windowLineCount}; repeat the original symbolIdentifier with the same targetPath."
             : string.Empty;
         var nextActionLine = nextAction.Length == 0 ? string.Empty : $"{nextAction}\n";
-        return $"{symbol}Resolution status: resolved (availability: {body.Availability})\nContent mode: {body.ContentMode}{handoff}\nLines: {body.DisplayedStart}-{body.DisplayedEnd} of {body.TotalLines}{status}{hint}\n{nextActionLine}{body.Body}";
+        return $"{symbol}{availability}{mode}{handoff}{owner}Lines: {body.DisplayedStart}-{body.DisplayedEnd}/{body.TotalLines}{hint}\n{nextActionLine}{body.Body}";
     }
 
     private static string FormatResolutionFailure(string identifier, ResultError error, string candidates)
@@ -524,7 +529,7 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
             NavigationErrorCodes.StaleSnapshot => "Repeat the original discovery query against the current target and use a reference from that response.",
             _ => "Repeat the discovery query and use a current reference when one is available; otherwise use the raw source location.",
         };
-        return $"Symbol: {identifier}\nResolution status: failed ({error.Code})\nError: {error.Message}{candidates}\nNext action: {nextAction}";
+        return $"## {identifier}\nResolution status: failed ({error.Code})\nError: {error.Message}{candidates}\nNext action: {nextAction}";
     }
 
     private static ResultError AggregateResolutionFailures(ResultError primary, IReadOnlyList<string> itemFailures) =>

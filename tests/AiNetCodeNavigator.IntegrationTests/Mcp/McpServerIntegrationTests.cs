@@ -734,7 +734,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             }, timeout.Token);
             var sourceBody = await ReadResponseAsync(process, 4, timeout.Token);
             Assert.False(sourceBody.GetProperty("result").GetProperty("isError").GetBoolean());
-            Assert.Contains("Content mode: source", GetFirstText(sourceBody), StringComparison.Ordinal);
+            Assert.DoesNotContain("Content mode: source", GetFirstText(sourceBody), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 35, "tools/call", new
             {
@@ -1033,7 +1033,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             var firstDomainPage = await ReadResponseAsync(process, 50, timeout.Token);
             var firstDomainText = GetFirstText(firstDomainPage);
             Assert.False(firstDomainPage.GetProperty("result").GetProperty("isError").GetBoolean(), firstDomainText);
-            Assert.Contains("Status: operation=ok, completeness=truncated", firstDomainText, StringComparison.Ordinal);
+            Assert.DoesNotContain("Status: operation=ok", firstDomainText, StringComparison.Ordinal);
             var firstDomainJson = ParsePayload(firstDomainText);
             Assert.True(firstDomainJson.GetProperty("truncated").GetBoolean());
             var domainCursor = firstDomainJson.GetProperty("resultCursor").GetString();
@@ -1065,15 +1065,13 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
                     ? nextCursor.GetString()
                     : null;
                 Assert.Equal(domainCursor is not null, payload.GetProperty("truncated").GetBoolean());
-                Assert.Contains(domainCursor is null
-                    ? "Status: operation=ok, completeness=complete"
-                    : "Status: operation=ok, completeness=truncated", domainText, StringComparison.Ordinal);
+                Assert.DoesNotContain("Status: operation=ok", domainText, StringComparison.Ordinal);
             }
             Assert.Null(domainCursor);
             Assert.Equal(expectedDomainTypeCount, domainNames.Count);
             Assert.Equal(domainNames.Count, domainNames.Distinct(StringComparer.Ordinal).Count());
             Assert.Equal(expectedDomainTypeCount, domainIds.Distinct(StringComparer.Ordinal).Count());
-            Assert.Contains("Status: operation=ok, completeness=complete", finalDomainText, StringComparison.Ordinal);
+            Assert.DoesNotContain("Status: operation=ok", finalDomainText, StringComparison.Ordinal);
 
             await SendRequestAsync(process, 70, "tools/call", new
             {
@@ -1083,7 +1081,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             var replayedDomainPage = await ReadResponseAsync(process, 70, timeout.Token);
             Assert.False(replayedDomainPage.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(replayedDomainPage));
             var replayedDomainPayload = ParsePayload(GetFirstText(replayedDomainPage));
-            Assert.Contains("Status: operation=ok, completeness=truncated", GetFirstText(replayedDomainPage), StringComparison.Ordinal);
+            Assert.DoesNotContain("Status: operation=ok", GetFirstText(replayedDomainPage), StringComparison.Ordinal);
             Assert.Equal(domainNames[1], replayedDomainPayload.GetProperty("types")[0].GetProperty("name").GetString());
             Assert.Equal(domainIds[1], replayedDomainPayload.GetProperty("types")[0].GetProperty("handoffId").GetString());
 
@@ -1197,7 +1195,7 @@ ClearReadOnlyAttributesWithinOwnedFixture(fixtureRoot);
             Assert.Null(searchCursor);
             Assert.True(searchPageNumber > 0);
             Assert.Equal(searchPageIdentity.Count, searchPageIdentity.Select(hit => (hit.File, hit.Line, hit.Text)).Distinct().Count());
-            Assert.Contains("Status: operation=ok, completeness=truncated", finalSearchPageText, StringComparison.Ordinal);
+            Assert.DoesNotContain("Status: operation=ok", finalSearchPageText, StringComparison.Ordinal);
 
             await SendRequestAsync(process, 32, "tools/call", new
             {
@@ -1533,7 +1531,7 @@ if (Directory.Exists(fixtureRoot))
             var limitedOwnerLine = limitedClosureText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Single(line => line.Contains("targetPath:", StringComparison.OrdinalIgnoreCase)
                     && (line.Contains("ClosureB.Run", StringComparison.Ordinal) || line.Contains("ClosureOnlyC.LocalRun", StringComparison.Ordinal)));
-            Assert.Contains("completeness=truncated", limitedClosureText, StringComparison.Ordinal);
+            Assert.Contains("nextAction:", limitedClosureText, StringComparison.Ordinal);
             var limitedOwnerHandoff = limitedOwnerLine.Split('`')[1];
             var limitedOwnerPath = limitedOwnerLine.Split("targetPath:", StringSplitOptions.None)[1].Trim();
             Assert.True(string.Equals(Path.GetFullPath(bPath), limitedOwnerPath, StringComparison.OrdinalIgnoreCase)
@@ -1716,7 +1714,7 @@ if (Directory.Exists(fixtureRoot))
             Assert.Contains(depthThreeReferencePayload.GetProperty("references").EnumerateArray(),
                 entry => entry.GetProperty("enclosingSymbolName").GetString() == "ClosureA.Run"
                     && entry.GetProperty("depth").GetInt32() == 2);
-            Assert.Contains("completeness=complete", depthThreeReferencesText, StringComparison.Ordinal);
+            Assert.DoesNotContain("continuationToken=", depthThreeReferencesText, StringComparison.Ordinal);
 
             await SendRequestAsync(process, 86, "tools/call", new
             {
@@ -1750,7 +1748,7 @@ if (Directory.Exists(fixtureRoot))
             var depthThreeImpactPayload = ParsePayload(depthThreeImpactText);
             Assert.Equal(4, depthThreeImpactPayload.GetProperty("summary").GetProperty("totalReferenceSiteCount").GetInt32());
             Assert.Equal(2, depthThreeImpactPayload.GetProperty("summary").GetProperty("summary").GetProperty("maxDepthReached").GetInt32());
-            Assert.Contains("completeness=complete", depthThreeImpactText, StringComparison.Ordinal);
+            Assert.DoesNotContain("continuationToken=", depthThreeImpactText, StringComparison.Ordinal);
 
             await SendRequestAsync(process, 88, "tools/call", new
             {
@@ -1760,7 +1758,7 @@ if (Directory.Exists(fixtureRoot))
             var composedIncomingTree = await ReadResponseAsync(process, 88, timeout.Token);
             var composedIncomingTreeText = GetFirstText(composedIncomingTree);
             Assert.False(composedIncomingTree.GetProperty("result").GetProperty("isError").GetBoolean(), composedIncomingTreeText);
-            Assert.Contains("completeness=complete", composedIncomingTreeText, StringComparison.Ordinal);
+            Assert.DoesNotContain("continuationToken=", composedIncomingTreeText, StringComparison.Ordinal);
             var aRunNodeLine = composedIncomingTreeText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Single(line => line.Contains("(ClosureA.Run)", StringComparison.Ordinal));
             Assert.Contains(aPath, aRunNodeLine, StringComparison.OrdinalIgnoreCase);
@@ -1806,7 +1804,7 @@ if (Directory.Exists(fixtureRoot))
             var outgoingDepthTwo = await ReadResponseAsync(process, 91, timeout.Token);
             var outgoingDepthTwoText = GetFirstText(outgoingDepthTwo);
             Assert.False(outgoingDepthTwo.GetProperty("result").GetProperty("isError").GetBoolean(), outgoingDepthTwoText);
-            Assert.Contains("completeness=complete", outgoingDepthTwoText, StringComparison.Ordinal);
+            Assert.DoesNotContain("continuationToken=", outgoingDepthTwoText, StringComparison.Ordinal);
             Assert.DoesNotContain("not composed yet", outgoingDepthTwoText, StringComparison.OrdinalIgnoreCase);
             var cReadNodeLine = outgoingDepthTwoText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .FirstOrDefault(line => line.Contains("(ClosureOnlyC.Read)", StringComparison.Ordinal));
@@ -1852,7 +1850,7 @@ if (Directory.Exists(fixtureRoot))
             var rawDocumentationIdBody = await ReadResponseAsync(process, 101, timeout.Token);
             Assert.False(rawDocumentationIdBody.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(rawDocumentationIdBody));
             Assert.Contains("Read()", GetFirstText(rawDocumentationIdBody), StringComparison.Ordinal);
-            Assert.Contains($"Owner targetPath: {Path.GetFullPath(cPath)}", GetFirstText(rawDocumentationIdBody), StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Owner targetPath:", GetFirstText(rawDocumentationIdBody), StringComparison.Ordinal);
             var rawBodyHandoff = ExtractBodyHandoff(GetFirstText(rawDocumentationIdBody));
 
             await SendRequestAsync(process, 105, "tools/call", new
@@ -2089,7 +2087,11 @@ if (Directory.Exists(fixtureRoot))
             }, timeout.Token);
             var mixedBodyBatch = await ReadResponseAsync(process, 39, timeout.Token);
             Assert.False(mixedBodyBatch.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(mixedBodyBatch));
-            Assert.Contains("completeness=truncated", GetFirstText(mixedBodyBatch), StringComparison.Ordinal);
+            Assert.Contains("nextAction:", GetFirstText(mixedBodyBatch), StringComparison.Ordinal);
+            Assert.Contains($"## {handoff}\n", GetFirstText(mixedBodyBatch), StringComparison.Ordinal);
+            Assert.Contains("Lines: ", GetFirstText(mixedBodyBatch), StringComparison.Ordinal);
+            Assert.Contains("Resolution status: failed (INVALID_SYMBOL_REFERENCE)", GetFirstText(mixedBodyBatch), StringComparison.Ordinal);
+            Assert.Contains("omissions=unresolvedSymbol", GetFirstText(mixedBodyBatch), StringComparison.Ordinal);
             Assert.Contains("ClosureOnlyC", GetFirstText(mixedBodyBatch), StringComparison.Ordinal);
             Assert.Contains("INVALID_SYMBOL_REFERENCE", GetFirstText(mixedBodyBatch), StringComparison.Ordinal);
 
@@ -2201,7 +2203,7 @@ if (Directory.Exists(fixtureRoot))
             }
             Assert.False(missingFind.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(missingFind));
             Assert.Contains("No symbols matched 'ClosureOnlyC'", GetFirstText(missingFind), StringComparison.Ordinal);
-            Assert.Contains("completeness=truncated", GetFirstText(missingFind), StringComparison.Ordinal);
+            Assert.Contains("nextAction:", GetFirstText(missingFind), StringComparison.Ordinal);
             Assert.Contains("unresolvedReferences", GetFirstText(missingFind), StringComparison.Ordinal);
 
             await SendRequestAsync(process, 53, "tools/call", new
@@ -2289,7 +2291,7 @@ if (Directory.Exists(fixtureRoot))
             var callTree = await ReadResponseAsync(process, 9, timeout.Token);
             var text = GetFirstText(callTree);
             Assert.False(callTree.GetProperty("result").GetProperty("isError").GetBoolean(), text);
-            Assert.Contains("completeness=truncated", text, StringComparison.Ordinal);
+            Assert.Contains("nextAction:", text, StringComparison.Ordinal);
             Assert.Contains("more relationship edges", text, StringComparison.Ordinal);
             Assert.Contains("Some reachable owner symbols could not be mapped or expanded within the bounded reference closure", text, StringComparison.Ordinal);
             var visibleHandoffCount = text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
@@ -2322,7 +2324,7 @@ if (Directory.Exists(fixtureRoot))
             var edgeCappedTree = await ReadResponseAsync(process, 17, timeout.Token);
             var edgeCappedText = GetFirstText(edgeCappedTree);
             Assert.False(edgeCappedTree.GetProperty("result").GetProperty("isError").GetBoolean(), edgeCappedText);
-            Assert.Contains("completeness=truncated", edgeCappedText, StringComparison.Ordinal);
+            Assert.Contains("nextAction:", edgeCappedText, StringComparison.Ordinal);
             Assert.Contains("more relationship edges", edgeCappedText, StringComparison.Ordinal);
             var edgeCappedHandoffs = edgeCappedText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Count(line => line.StartsWith("- [n", StringComparison.Ordinal) && line.Contains("`src:", StringComparison.Ordinal));
@@ -2445,7 +2447,7 @@ if (Directory.Exists(fixtureRoot))
             var thirdPayload = ParsePayload(thirdText);
             Assert.Equal("PagedGamma", thirdPayload.GetProperty("results")[0].GetProperty("symbol").GetString());
             Assert.False(thirdPayload.GetProperty("truncated").GetBoolean());
-            Assert.Contains("Status: operation=ok, completeness=complete", thirdText, StringComparison.Ordinal);
+            Assert.DoesNotContain("Status: operation=ok", thirdText, StringComparison.Ordinal);
 
             await SendRequestAsync(process, 5, "tools/call", new
             {
@@ -2656,7 +2658,7 @@ if (Directory.Exists(fixtureRoot))
             var incompleteAssemblyReferences = await ReadResponseAsync(process, 63, timeout.Token);
             var completeAssemblyReferencesText = GetFirstText(incompleteAssemblyReferences);
             Assert.False(incompleteAssemblyReferences.GetProperty("result").GetProperty("isError").GetBoolean(), completeAssemblyReferencesText);
-            Assert.Contains("completeness=complete", completeAssemblyReferencesText, StringComparison.Ordinal);
+            Assert.DoesNotContain("continuationToken=", completeAssemblyReferencesText, StringComparison.Ordinal);
             var completeAssemblyReference = ParsePayload(completeAssemblyReferencesText).GetProperty("references").EnumerateArray()
                 .Single(item => item.GetProperty("snippet").GetString()!.Contains("ReadBeta", StringComparison.Ordinal));
             Assert.Contains("BetaInvoker.Invoke", completeAssemblyReference.GetProperty("enclosingSymbolName").GetString(), StringComparison.Ordinal);
@@ -2693,7 +2695,7 @@ if (Directory.Exists(fixtureRoot))
             var incompleteAssemblyImpact = await ReadResponseAsync(process, 73, timeout.Token);
             Assert.False(incompleteAssemblyImpact.GetProperty("result").GetProperty("isError").GetBoolean(), GetFirstText(incompleteAssemblyImpact));
             var closureImpactText = GetFirstText(incompleteAssemblyImpact);
-            Assert.Contains("completeness=complete", closureImpactText, StringComparison.Ordinal);
+            Assert.DoesNotContain("continuationToken=", closureImpactText, StringComparison.Ordinal);
             var closureImpactCaller = ParsePayload(closureImpactText).GetProperty("references").EnumerateArray()
                 .Single(item => item.GetProperty("enclosingSymbolName").GetString() == "BetaInvoker.Invoke");
             Assert.Equal(Path.GetFullPath(assemblyPath), Path.GetFullPath(closureImpactCaller.GetProperty("ownerTargetPath").GetString()!), StringComparer.OrdinalIgnoreCase);
@@ -2857,7 +2859,7 @@ if (Directory.Exists(fixtureRoot))
             var incompleteAssemblyCallTree = await ReadResponseAsync(process, 66, timeout.Token);
             var completeAssemblyCallTreeText = GetFirstText(incompleteAssemblyCallTree);
             Assert.False(incompleteAssemblyCallTree.GetProperty("result").GetProperty("isError").GetBoolean(), completeAssemblyCallTreeText);
-            Assert.Contains("completeness=complete", completeAssemblyCallTreeText, StringComparison.Ordinal);
+            Assert.DoesNotContain("continuationToken=", completeAssemblyCallTreeText, StringComparison.Ordinal);
             Assert.Contains("BetaInvoker.Invoke", completeAssemblyCallTreeText, StringComparison.Ordinal);
 
             await SendRequestAsync(process, 58, "tools/call", new
@@ -2975,7 +2977,7 @@ if (Directory.Exists(fixtureRoot))
             var mixedAssemblySkeletonText = GetFirstText(mixedAssemblySkeleton);
             Assert.False(mixedAssemblySkeleton.GetProperty("result").GetProperty("isError").GetBoolean(), mixedAssemblySkeletonText);
             Assert.Contains("ReadBeta", mixedAssemblySkeletonText, StringComparison.Ordinal);
-            Assert.Contains("completeness=truncated", mixedAssemblySkeletonText, StringComparison.Ordinal);
+            Assert.Contains("nextAction:", mixedAssemblySkeletonText, StringComparison.Ordinal);
 
             await SendRequestAsync(process, 21, "tools/call", new
             {

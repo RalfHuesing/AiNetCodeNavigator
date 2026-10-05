@@ -508,8 +508,6 @@ internal sealed class McpResponseContinuationStore : IDisposable
     {
         var text = McpToolResults.NormalizeExistingResult(response);
         Expire();
-        if (!text.StartsWith(McpToolResults.TruncatedSuccessStatusPrefix, StringComparison.Ordinal))
-            return RefreshDomainCursorAccess(ExtractStatusBody(text), request);
         var tokenLine = text.Split('\n').FirstOrDefault(static line => line.StartsWith("continuationToken=", StringComparison.Ordinal));
         if (tokenLine is null) return RefreshDomainCursorAccess(ExtractStatusBody(text), request);
         var token = tokenLine["continuationToken=".Length..];
@@ -554,10 +552,9 @@ internal sealed class McpResponseContinuationStore : IDisposable
         var lines = text.Split('\n');
         var first = lines.Length > 0 && lines[0].StartsWith("Status:", StringComparison.Ordinal) ? 1 : 0;
         while (first < lines.Length && (lines[first].StartsWith("snapshotId=", StringComparison.Ordinal)
-            || lines[first].StartsWith("analyzedScope=", StringComparison.Ordinal)
-            || lines[first].StartsWith("analysisCompleteness=", StringComparison.Ordinal)
             || lines[first].StartsWith("omissions=", StringComparison.Ordinal)
             || lines[first].StartsWith("nextAction: ", StringComparison.Ordinal)
+            || lines[first].StartsWith("domainNextAction: ", StringComparison.Ordinal)
             || lines[first].StartsWith("continuationToken=", StringComparison.Ordinal))) first++;
         return string.Join('\n', lines.Skip(first));
     }
@@ -635,7 +632,18 @@ internal sealed class McpResponseContinuationStore : IDisposable
             return McpToolResults.Recoverable("STRUCTURED_RESULT_TOO_LARGE", "Structured content cannot be returned with a partial text page.", "Narrow the query or increase the response budget.", maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
         }
         var analysis = ReadAnalysisMetadata(result, source);
-        if (analysis is not null) request = request with { AnalysisSnapshotId = analysis.SnapshotId, AnalysisMetadata = analysis };
+        if (analysis is not null)
+        {
+            request = request with { AnalysisSnapshotId = analysis.SnapshotId, AnalysisMetadata = analysis };
+            // Assembly scanners carry typed analysis in their JSON model. Retain it
+            // internally and project the compact preamble only once for the caller.
+            try
+            {
+                if (JsonNode.Parse(source) is JsonObject document && document.Remove("analysis"))
+                    source = McpResponseFormatter.FormatCompactJson(document.ToJsonString());
+            }
+            catch (JsonException) { /* Text bodies have no embedded analysis metadata. */ }
+        }
         var registeredCursors = RegisterDomainCursors(source, request, snapshotId);
         if (registeredCursors.Error is not null) return registeredCursors.Error;
         var response = CreatePage(snapshotId, registeredCursors.Source, offset: 0, request, source);
@@ -757,25 +765,31 @@ internal sealed class McpResponseContinuationStore : IDisposable
     private CallToolResult CreatePage(string snapshotId, string source, int offset, LongRunningToolCallRequest request, string? coreSnapshot = null)
     {
         var analysis = request.AnalysisMetadata ?? ReadAnalysisMetadata(null, source);
-        var analysisMetadata = CreateAnalysisMetadata(analysis, request);
+        var analysisMetadata = CreateAnalysisMetadata(analysis);
         var completePrefix = (request.DomainTruncated
-            ? McpToolResults.TruncatedSuccessStatusPrefix + $"nextAction: {request.DomainNextAction}\n"
-            : McpToolResults.SuccessStatusPrefix) + analysisMetadata;
+            ? $"nextAction: {request.DomainNextAction}\n"
+            : string.Empty) + analysisMetadata;
         var complete = McpResponseFormatter.Format(source, request.MaxResponseBytes, request.MaxResponseTokens,
             startOffset: offset, responsePrefix: completePrefix);
         if (complete.ErrorCode is null && !complete.IsTruncated)
             return McpToolResults.TextResult(complete.Text, isError: false);
         var token = CreateOpaqueToken();
-        var prefix = McpToolResults.TruncatedSuccessStatusPrefix
-            + (request.DomainTruncated ? $"nextAction: {request.DomainNextAction}\n" : string.Empty)
-            + analysisMetadata
-            + $"continuationToken={token}\n";
+        // Outer paging and domain coverage are independent. Put the executable outer-page
+        // action first; domain cursors/body windows apply only after all outer pages.
+        var prefix = $"continuationToken={token}\n"
+            + "nextAction: Read all outer pages with continuationToken alone before following resultCursor or body windows.\n"
+            + (request.DomainTruncated ? $"domainNextAction: {request.DomainNextAction}\n" : string.Empty)
+            + analysisMetadata;
         var page = McpResponseFormatter.Format(source, request.MaxResponseBytes, request.MaxResponseTokens,
             startOffset: offset, responsePrefix: prefix);
         if (page.ErrorCode is not null)
+        {
+            if (request.ContinuationToken is not null)
+                page = page with { RecoveryHint = page.RecoveryHint + " Keep the same continuationToken; prior pages remain valid." };
             return McpToolResults.BudgetTooSmall(page, request.MaxResponseBytes, request.MaxResponseTokens);
+        }
         if (!page.IsTruncated || page.NextOffset is null)
-            return McpToolResults.Success(source[offset..], maxResponseBytes: request.MaxResponseBytes, maxResponseTokens: request.MaxResponseTokens);
+            return McpToolResults.TextResult(completePrefix + source[offset..], isError: false);
 
         var text = page.ContinuationHint is { } hint && page.Text.EndsWith("\n" + hint, StringComparison.Ordinal)
             ? page.Text[..^(hint.Length + 1)]
@@ -832,13 +846,10 @@ internal sealed class McpResponseContinuationStore : IDisposable
         ? 0
         : Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(metadata));
 
-    private static string CreateAnalysisMetadata(NavigationAnalysisMetadata? analysis, LongRunningToolCallRequest request)
+    private static string CreateAnalysisMetadata(NavigationAnalysisMetadata? analysis)
     {
         if (analysis is null) return string.Empty;
-        var metadata = $"snapshotId={analysis.SnapshotId}\n"
-            + $"analyzedScope={EscapeHeaderValue(analysis.AnalyzedScope)}\n"
-            + $"analysisCompleteness={analysis.AnalysisCompleteness}\n";
-        if (analysis.ResultContinuationAvailable) metadata += "resultContinuation=available\n";
+        var metadata = $"snapshotId={EscapeHeaderValue(analysis.SnapshotId)}\n";
         if (analysis.OmissionReasons.Count > 0)
             metadata += $"omissions={string.Join(',', analysis.OmissionReasons.Select(EscapeHeaderValue))}\n";
         return metadata;
@@ -861,7 +872,6 @@ internal sealed class McpResponseContinuationStore : IDisposable
     {
         if (result.IsError == true) return McpToolResults.NormalizeExistingResult(result);
         var text = McpToolResults.NormalizeExistingResult(result);
-        if (text.StartsWith(McpToolResults.SuccessStatusPrefix, StringComparison.Ordinal)) text = text[McpToolResults.SuccessStatusPrefix.Length..];
         if (text.StartsWith(McpToolResults.TruncatedSuccessStatusPrefix, StringComparison.Ordinal))
             throw new InvalidOperationException("A truncated result cannot be used as a complete continuation snapshot.");
         return text;

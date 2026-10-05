@@ -7,8 +7,8 @@ namespace AiNetCodeNavigator.Mcp.Formatting;
 
 internal static class McpToolResults
 {
-    internal const string SuccessStatusPrefix = "Status: operation=ok, completeness=complete\n";
-    internal const string TruncatedSuccessStatusPrefix = "Status: operation=ok, completeness=truncated\n";
+    internal const string SuccessStatusPrefix = "";
+    internal const string TruncatedSuccessStatusPrefix = "truncated\n";
     internal const string ErrorStatusPrefix = "Status: operation=error, completeness=not_applicable\n";
     internal const string LoadingStatusPrefix = "Status: operation=retry, completeness=not_applicable\n";
     internal const string RunningStatusPrefix = "Status: operation=running, completeness=not_applicable\n";

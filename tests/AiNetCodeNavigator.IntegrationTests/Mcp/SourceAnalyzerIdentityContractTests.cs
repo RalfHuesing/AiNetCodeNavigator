@@ -103,7 +103,9 @@ public sealed class SourceAnalyzerIdentityContractTests
                 maxResponseTokens: 1024, operationToken: operation));
             var regularText = TextOf(regular);
             Assert.False(regular.IsError ?? false, regularText);
-            Assert.Equal("complete", ReadHeader(regularText, "analysisCompleteness"));
+            Assert.DoesNotContain("analysisCompleteness=", regularText, StringComparison.Ordinal);
+            Assert.DoesNotContain("omissions=", regularText, StringComparison.Ordinal);
+            Assert.Contains("snapshotId=source:", regularText, StringComparison.Ordinal);
             var regularReference = Assert.Single(ReadStableReferences(regularText));
 
             var generated = await CompleteAsync(operation => symbols.FindSymbol(solutionPath,
@@ -111,7 +113,9 @@ public sealed class SourceAnalyzerIdentityContractTests
                 maxResponseBytes: 16384, maxResponseTokens: 1024, operationToken: operation));
             var generatedText = TextOf(generated);
             Assert.False(generated.IsError ?? false, generatedText);
-            Assert.Equal("complete", ReadHeader(generatedText, "analysisCompleteness"));
+            Assert.DoesNotContain("analysisCompleteness=", generatedText, StringComparison.Ordinal);
+            Assert.DoesNotContain("omissions=", generatedText, StringComparison.Ordinal);
+            Assert.Contains("snapshotId=source:", generatedText, StringComparison.Ordinal);
             var generatedReference = Assert.Single(ReadStableReferences(generatedText));
 
             var regularBody = await CompleteAsync(operation => symbols.GetSymbolBody(solutionPath, [regularReference],
@@ -198,7 +202,9 @@ public sealed class SourceAnalyzerIdentityContractTests
         var discovered = await ReadPagesAsync((bytes, tokens, operation, continuation) => symbols.FindSymbol(solutionPath,
             pattern: "AnalyzerFixture.Generated.GeneratedProbe.Read", kind: "method", includeGenerated: true, maxResponseBytes: bytes,
             maxResponseTokens: tokens, operationToken: operation, continuationToken: continuation), 16384, 1024);
-        Assert.Equal("complete", ReadHeader(discovered.FirstPage, "analysisCompleteness"));
+        Assert.DoesNotContain("analysisCompleteness=", discovered.FirstPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("omissions=", discovered.FirstPage, StringComparison.Ordinal);
+        Assert.Contains("snapshotId=source:", discovered.FirstPage, StringComparison.Ordinal);
         var discoveredReferences = ReadGeneratedMethodReferences(discovered.Text, generatedMethodDeclarationId!);
         Assert.True(discoveredReferences.Length == 1, discovered.Text);
         var reference = discoveredReferences[0];

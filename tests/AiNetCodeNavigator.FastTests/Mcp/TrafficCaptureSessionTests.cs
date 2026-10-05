@@ -143,7 +143,7 @@ public sealed class TrafficCaptureSessionTests
         using var fixture = new CaptureFixture();
         await using var session = fixture.CreateSession();
         var input = Frame("{\"jsonrpc\":\"2.0\",\"id\":\"\\u0061\",\"method\":\"tools/call\",\"params\":{\"name\":\"find_symbol\",\"arguments\":{}}}");
-        var visibleText = "Status: operation=ok, completeness=complete\nuseful body text";
+        var visibleText = "useful body text";
         var output = Frame("{\"jsonrpc\":\"2.0\",\"id\":\"a\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":" + JsonSerializer.Serialize(visibleText) + "}]}}");
         session.RecordInbound(input);
         session.RecordOutbound(output);
