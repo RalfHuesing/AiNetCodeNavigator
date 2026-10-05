@@ -16,7 +16,7 @@ Execute the first open child point, in order. A parent closes only after its imp
 - [x] **M3 — [Discovery and metadata ownership](roadmap/03-discovery-and-metadata.md)**: concept P3; final catalog of twelve tools.
 - [x] **M4 — [Focused dependencies and assembly output](roadmap/04-focused-output.md)**: concept P4.
 - [x] **M5 — [Helper-based test navigation](roadmap/05-test-navigation.md)**: concept P5.
-- [ ] **M6 — [Runtime findings and capacity recovery](roadmap/06-runtime.md)**: concept P6; implement demonstrated corrections without speculative infrastructure.
+- [x] **M6 — [Runtime findings and capacity recovery](roadmap/06-runtime.md)**: concept P6; implement demonstrated corrections without speculative infrastructure.
 - [ ] **M7 — [Final agent-flow verification and release readiness](roadmap/07-final-verification.md)**: concept P7 and sections 8.2–8.4.
 
 The concept owns product requirements; milestone files own progress and completion evidence; the orchestrator prompt owns execution policy. Use links instead of copying the full contracts into each file. A conflict is resolved in the owning document before dependent work continues; do not silently change a product contract.
