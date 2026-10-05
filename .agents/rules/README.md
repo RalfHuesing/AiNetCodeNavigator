@@ -12,3 +12,5 @@ The linked rules apply to work in this repository:
 - [AiNetCodeNavigator MCP navigation](08-ainetcodenavigator-mcp-navigation.mdc)
 
 Keep rules short and enforceable. Put implementation details in `docs/` only after they exist. Put planned contracts in `tasks/`.
+
+Keep the copyable MCP navigation rule independent of repository paths. Tool parameters, defaults, examples and protocol details belong in the [MCP tool reference](../../docs/tools/README.md) and its linked current-state documentation; use exposed schemas and response instructions while navigating.
