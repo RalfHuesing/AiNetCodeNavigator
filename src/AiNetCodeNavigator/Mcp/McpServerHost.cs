@@ -57,6 +57,7 @@ internal static class McpServerHost
 
             using (var host = builder.Build())
             {
+                host.Services.GetRequiredService<NavigatorHostRuntime>().StartScratchCleanup();
                 await host.RunAsync(cancellationToken).ConfigureAwait(false);
             }
 

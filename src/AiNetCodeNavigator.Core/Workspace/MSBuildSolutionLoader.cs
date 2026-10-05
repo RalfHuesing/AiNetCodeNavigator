@@ -12,6 +12,7 @@ using Microsoft.Build.Evaluation;
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
+using Serilog;
 
 namespace AiNetCodeNavigator.Core.Workspace;
 
@@ -23,10 +24,19 @@ namespace AiNetCodeNavigator.Core.Workspace;
 public static class MSBuildSolutionLoader
 {
     private static readonly Lock RegistrationLock = new();
+    private static readonly Lock ScratchLock = new();
+    private static FileStream? processScratchOwnership;
 
     public static Dictionary<string, string> CreateWorkspaceProperties()
     {
-        var scratchRoot = Path.Combine(Path.GetTempPath(), "AiNetCodeNavigator", "msbuild-analysis", Environment.ProcessId.ToString(), Guid.NewGuid().ToString("N"));
+        var processRoot = Path.Combine(DesignTimeScratchMaintenance.Root, Environment.ProcessId.ToString());
+        lock (ScratchLock)
+        {
+            Directory.CreateDirectory(processRoot);
+            processScratchOwnership ??= new FileStream(DesignTimeScratchMaintenance.OwnerFilePath(DesignTimeScratchMaintenance.Root, Environment.ProcessId),
+                FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read);
+        }
+        var scratchRoot = Path.Combine(processRoot, Guid.NewGuid().ToString("N"));
         var customTargets = EnsureDesignTimeTargets(scratchRoot);
         return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -45,17 +55,39 @@ public static class MSBuildSolutionLoader
     public static void CleanupDesignTimeScratch()
     {
         var scratchRoot = Path.Combine(Path.GetTempPath(), "AiNetCodeNavigator", "msbuild-analysis", Environment.ProcessId.ToString());
+        lock (ScratchLock)
+        {
+            processScratchOwnership?.Dispose();
+            processScratchOwnership = null;
+            TryDeleteDirectory(scratchRoot);
+            try
+            {
+                File.Delete(DesignTimeScratchMaintenance.OwnerFilePath(DesignTimeScratchMaintenance.Root, Environment.ProcessId));
+            }
+            catch (IOException exception)
+            {
+                Log.Warning(exception, "Could not remove the design-time scratch ownership file.");
+            }
+            catch (UnauthorizedAccessException exception)
+            {
+                Log.Warning(exception, "Could not remove the design-time scratch ownership file.");
+            }
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
         try
         {
-            if (Directory.Exists(scratchRoot)) Directory.Delete(scratchRoot, recursive: true);
+            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
         }
-        catch (IOException)
+        catch (IOException exception)
         {
-            // A second in-process MSBuild workspace may still be releasing files; the OS temp cleanup owns leftovers.
+            Log.Warning(exception, "Could not remove design-time scratch directory {ScratchDirectory}; shutdown or a later startup will retry.", path);
         }
-        catch (UnauthorizedAccessException)
+        catch (UnauthorizedAccessException exception)
         {
-            // Do not fail host shutdown because a transient design-time output remains locked.
+            Log.Warning(exception, "Could not remove design-time scratch directory {ScratchDirectory}; shutdown or a later startup will retry.", path);
         }
     }
 
@@ -64,7 +96,18 @@ public static class MSBuildSolutionLoader
         Directory.CreateDirectory(scratchRoot);
         var targetsPath = Path.Combine(scratchRoot, "Navigator.DesignTime.targets");
         var escapedRoot = scratchRoot.Replace("&", "&amp;", StringComparison.Ordinal).Replace("<", "&lt;", StringComparison.Ordinal);
-        var content = $"""<Project><PropertyGroup><NavigatorProjectScratchKey>$(MSBuildProjectDirectory.Replace(':','_'))</NavigatorProjectScratchKey><IntermediateOutputPath>{escapedRoot}\$(NavigatorProjectScratchKey)\$(MSBuildProjectName)\$(Configuration)\$(TargetFramework)\obj\</IntermediateOutputPath><OutputPath>{escapedRoot}\$(NavigatorProjectScratchKey)\$(MSBuildProjectName)\$(Configuration)\$(TargetFramework)\bin\</OutputPath></PropertyGroup></Project>""";
+        // Hash the project and build dimensions rather than mirroring the source directory tree.
+        // A 128-bit prefix keeps design-time artifacts below legacy Windows path limits for normal temp roots.
+        var content = $"""
+            <Project>
+              <PropertyGroup>
+                <NavigatorProjectScratchHash>$([MSBuild]::StableStringHash('$(MSBuildProjectFullPath)|$(Configuration)|$(Platform)|$(TargetFramework)|$(RuntimeIdentifier)', 'Sha256'))</NavigatorProjectScratchHash>
+                <NavigatorProjectScratchKey>$(NavigatorProjectScratchHash.Substring(0,32))</NavigatorProjectScratchKey>
+                <IntermediateOutputPath>{escapedRoot}\$(NavigatorProjectScratchKey)\obj\</IntermediateOutputPath>
+                <OutputPath>{escapedRoot}\$(NavigatorProjectScratchKey)\bin\</OutputPath>
+              </PropertyGroup>
+            </Project>
+            """;
         if (!File.Exists(targetsPath) || !string.Equals(File.ReadAllText(targetsPath), content, StringComparison.Ordinal))
             File.WriteAllText(targetsPath, content);
         return targetsPath;
@@ -102,6 +145,31 @@ public static class MSBuildSolutionLoader
     }
 
     public static MSBuildWorkspace CreateWorkspace() => CreateWorkspace(CreateWorkspaceProperties());
+
+    internal static void DisposeWorkspace(Microsoft.CodeAnalysis.Workspace? workspace)
+    {
+        var properties = (workspace as MSBuildWorkspace)?.Properties;
+        try
+        {
+            workspace?.Dispose();
+        }
+        finally
+        {
+            if (properties is not null) CleanupWorkspaceProperties(properties);
+        }
+    }
+
+    internal static void CleanupWorkspaceProperties(IReadOnlyDictionary<string, string> properties)
+    {
+        if (!properties.TryGetValue("NavigatorAnalysisScratchRoot", out var scratchRoot)) return;
+        var processRoot = Path.Combine(Path.GetTempPath(), "AiNetCodeNavigator", "msbuild-analysis", Environment.ProcessId.ToString());
+        var fullPath = Path.GetFullPath(scratchRoot);
+        if (string.Equals(Path.GetDirectoryName(fullPath), processRoot, StringComparison.OrdinalIgnoreCase)
+            && Guid.TryParseExact(Path.GetFileName(fullPath), "N", out _))
+        {
+            TryDeleteDirectory(fullPath);
+        }
+    }
 
     private static MSBuildWorkspace CreateWorkspace(IDictionary<string, string> properties)
     {
@@ -164,7 +232,7 @@ public static class MSBuildSolutionLoader
         }
         catch
         {
-            workspace.Dispose();
+            DisposeWorkspace(workspace);
             TryDeleteDirectory(scratchRoot);
             throw;
         }
@@ -235,22 +303,6 @@ public static class MSBuildSolutionLoader
                 && !relativePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
     }
 
-    private static void TryDeleteDirectory(string path)
-    {
-        try
-        {
-            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
-        }
-        catch (IOException)
-        {
-            // Process-level scratch cleanup handles files that are still held by MSBuild.
-        }
-        catch (UnauthorizedAccessException)
-        {
-            // Process-level scratch cleanup handles files that are still held by MSBuild.
-        }
-    }
-
     /// <summary>
     /// Creates a resident instance that loads and later reloads the given solution through MSBuildWorkspace.
     /// </summary>
@@ -279,7 +331,7 @@ public static class MSBuildSolutionLoader
         }
         catch
         {
-            workspace.Dispose();
+            DisposeWorkspace(workspace);
             throw;
         }
     }

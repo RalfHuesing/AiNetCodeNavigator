@@ -12,6 +12,8 @@ public sealed class NavigatorHostRuntime : IAsyncDisposable, IDisposable
     internal static readonly TimeSpan ResponseWindow = TimeSpan.FromSeconds(15);
     internal static readonly TimeSpan PollResponseWindow = TimeSpan.FromSeconds(1);
     private int _disposeStarted;
+    private readonly CancellationTokenSource scratchCleanupCancellation = new();
+    private Task scratchCleanupTask = Task.CompletedTask;
 
     // Internal override keeps routing and polling tests deterministic; hosts retain the production default.
     internal NavigatorHostRuntime(
@@ -40,10 +42,17 @@ public sealed class NavigatorHostRuntime : IAsyncDisposable, IDisposable
     internal AnalysisSymbolIdentityService AnalysisIdentities { get; }
     internal LongRunningToolCallStore Operations { get; }
 
+    internal void StartScratchCleanup() => scratchCleanupTask = Task.Run(() =>
+        DesignTimeScratchMaintenance.CleanupAbandonedDirectories(scratchCleanupCancellation.Token));
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
             return;
+
+        await scratchCleanupCancellation.CancelAsync().ConfigureAwait(false);
+        await scratchCleanupTask.ConfigureAwait(false);
+        scratchCleanupCancellation.Dispose();
 
         await Operations.DisposeAsync().ConfigureAwait(false);
         await AnalysisIdentities.DisposeAsync().ConfigureAwait(false);

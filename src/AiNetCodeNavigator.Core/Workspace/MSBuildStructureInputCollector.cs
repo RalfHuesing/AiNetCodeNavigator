@@ -41,7 +41,8 @@ internal static class MSBuildStructureInputCollector
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(path => Path.GetFullPath(path!))
             .Distinct(StringComparer.OrdinalIgnoreCase);
-        using var collection = new ProjectCollection(MSBuildSolutionLoader.CreateWorkspaceProperties());
+        using var evaluationProperties = new StructureEvaluationProperties(solution);
+        using var collection = new ProjectCollection(evaluationProperties.Properties);
 
         foreach (var projectPath in projectPaths)
         {
@@ -75,6 +76,10 @@ internal static class MSBuildStructureInputCollector
         }
 
         collection.UnloadAllProjects();
+        // The injected Navigator import belongs to the analysis lifetime, not to the source project's inputs.
+        var navigatorTargets = evaluationProperties.Properties["CustomBeforeMicrosoftCommonTargets"];
+        importedFiles.Remove(navigatorTargets);
+        potentialImportPaths.Remove(navigatorTargets);
         return new SolutionStructureInputs(
             importedFiles.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
             potentialImportPaths.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
@@ -82,6 +87,32 @@ internal static class MSBuildStructureInputCollector
             wildcardImportPatterns.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
             unresolvedExpressions.Order(StringComparer.Ordinal).ToArray(),
             configuredTargetFrameworks);
+    }
+
+    private sealed class StructureEvaluationProperties : IDisposable
+    {
+        private readonly bool ownsScratch;
+
+        internal StructureEvaluationProperties(Solution solution)
+        {
+            if (solution.Workspace is Microsoft.CodeAnalysis.MSBuild.MSBuildWorkspace workspace
+                && workspace.Properties.ContainsKey("NavigatorAnalysisScratchRoot"))
+            {
+                Properties = workspace.Properties.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+            }
+            else
+            {
+                Properties = MSBuildSolutionLoader.CreateWorkspaceProperties();
+                ownsScratch = true;
+            }
+        }
+
+        internal Dictionary<string, string> Properties { get; }
+
+        public void Dispose()
+        {
+            if (ownsScratch) MSBuildSolutionLoader.CleanupWorkspaceProperties(Properties);
+        }
     }
 
     private static string NormalizeProjectPath(string projectPath) => Path.GetFullPath(projectPath).Replace('\\', '/');

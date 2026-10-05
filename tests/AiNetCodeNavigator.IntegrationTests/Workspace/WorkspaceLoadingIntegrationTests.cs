@@ -509,6 +509,131 @@ public sealed class WorkspaceLoadingIntegrationTests
         Assert.False(Directory.Exists(processScratchRoot));
     }
 
+    [Fact]
+    public async Task MSBuildSolutionLoader_DeepSameNamedProjectsUseShortIsolatedScratchPaths()
+    {
+        using var tempDir = TestTempDirectory.Create("integration-scratch-paths-");
+        var projectPaths = new[]
+        {
+            "src/DeepCompanyProduct/DeepCompanyProduct/First/App/App.csproj",
+            "src/DeepCompanyProduct/DeepCompanyProduct/Second/App/App.csproj",
+        };
+        foreach (var projectPath in projectPaths)
+        {
+            WriteProject(tempDir, projectPath, """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+                  <Target Name="CaptureNavigatorScratchPaths" BeforeTargets="ResolveReferences">
+                    <WriteLinesToFile File="$(NavigatorAnalysisScratchRoot)/$([MSBuild]::StableStringHash('$(MSBuildProjectFullPath)|$(TargetFramework)')).paths"
+                                      Lines="$(IntermediateOutputPath);$(OutputPath)" Overwrite="true" />
+                  </Target>
+                </Project>
+                """);
+            tempDir.CreateFile(Path.Combine(Path.GetDirectoryName(projectPath)!, "App.cs"), "namespace Sample; public sealed class AppType;");
+        }
+        var solutionPath = tempDir.CreateFile("Integration.slnx",
+            $"<Solution><Folder Name=\"/First/\"><Project Path=\"{projectPaths[0]}\" /></Folder><Folder Name=\"/Second/\"><Project Path=\"{projectPaths[1]}\" /></Folder></Solution>");
+        var before = SnapshotFilesAndDirectories(tempDir.DirectoryPath);
+        var (solution, workspace) = await MSBuildSolutionLoader.LoadSolutionAsync(solutionPath);
+        using (workspace)
+        {
+            Assert.Equal(2, solution.Projects.Count());
+            var scratchRoot = ((Microsoft.CodeAnalysis.MSBuild.MSBuildWorkspace)workspace).Properties["NavigatorAnalysisScratchRoot"];
+            var captures = Directory.GetFiles(scratchRoot, "*.paths").Select(File.ReadAllLines).ToArray();
+            Assert.Equal(2, captures.Length);
+            Assert.Equal(2, captures.Select(paths => paths[0]).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+            Assert.Equal(2, captures.Select(paths => paths[1]).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+            foreach (var paths in captures)
+            {
+                Assert.Equal(2, paths.Length);
+                foreach (var path in paths)
+                {
+                    Assert.StartsWith(scratchRoot, path, StringComparison.OrdinalIgnoreCase);
+                    var generatedFile = Path.Combine(path, ".NETFramework,Version=v4.8.AssemblyAttributes.cs");
+                    Assert.True(generatedFile.Length < 260, $"Design-time artifact exceeds legacy path limit: {generatedFile}");
+                }
+                Assert.True(Directory.Exists(paths[0]));
+            }
+        }
+        Assert.Equal(before, SnapshotFilesAndDirectories(tempDir.DirectoryPath));
+    }
+
+    [Fact]
+    public async Task MSBuildSolutionLoader_ResidentScratchIsReleasedOnReloadAndDisposal()
+    {
+        using var tempDir = TestTempDirectory.Create("integration-scratch-lifetime-");
+        var projectPath = tempDir.CreateFile("App.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        var solutionPath = await WriteSolutionAsync(tempDir, "App.csproj");
+        var processRoot = Path.Combine(Path.GetTempPath(), "AiNetCodeNavigator", "msbuild-analysis", Environment.ProcessId.ToString());
+        var rootsBefore = Directory.Exists(processRoot) ? Directory.GetDirectories(processRoot) : [];
+        var resident = MSBuildSolutionLoader.CreateResidentSolution(solutionPath);
+        string? currentRoot = null;
+        try
+        {
+            await resident.LoadTask!;
+            var initial = await resident.GetCurrentSnapshotAsync();
+            Assert.True(initial.Succeeded, initial.Error?.Message);
+            var workspace = Assert.IsType<Microsoft.CodeAnalysis.MSBuild.MSBuildWorkspace>(initial.Solution!.Workspace);
+            var firstRoot = workspace.Properties["NavigatorAnalysisScratchRoot"];
+            var parent = Path.GetDirectoryName(firstRoot)!;
+            var entries = Directory.GetDirectories(parent).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+            Assert.Single(entries.Except(rootsBefore, StringComparer.OrdinalIgnoreCase));
+            for (var iteration = 0; iteration < 3; iteration++)
+            {
+                var snapshot = await resident.GetCurrentSnapshotAsync();
+                Assert.True(snapshot.Succeeded, snapshot.Error?.Message);
+            }
+            Assert.Equal(entries, Directory.GetDirectories(parent).Order(StringComparer.OrdinalIgnoreCase).ToArray());
+            await File.WriteAllTextAsync(projectPath,
+                "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><AssemblyName>Changed</AssemblyName></PropertyGroup></Project>");
+            var refreshed = await resident.GetCurrentSnapshotAsync();
+            Assert.True(refreshed.Succeeded, refreshed.Error?.Message);
+            currentRoot = Assert.IsType<Microsoft.CodeAnalysis.MSBuild.MSBuildWorkspace>(refreshed.Solution!.Workspace).Properties["NavigatorAnalysisScratchRoot"];
+            Assert.NotEqual(firstRoot, currentRoot);
+            Assert.False(Directory.Exists(firstRoot));
+            Assert.True(Directory.Exists(currentRoot));
+        }
+        finally
+        {
+            await resident.DisposeAsync();
+        }
+        Assert.False(Directory.Exists(currentRoot));
+    }
+
+    [Fact]
+    public async Task MSBuildSolutionLoader_ScratchPathsAreStableAndIsolateBuildVariants()
+    {
+        MSBuildSolutionLoader.EnsureMSBuildRegistered();
+        using var tempDir = TestTempDirectory.Create("integration-scratch-variants-");
+        var projectPath = tempDir.CreateFile("App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><TargetFrameworks>net10.0;net10.0-windows</TargetFrameworks></PropertyGroup>
+              <Target Name="CaptureNavigatorScratchPaths" BeforeTargets="ResolveReferences">
+                <WriteLinesToFile File="$(NavigatorAnalysisScratchRoot)/variant.paths" Lines="$(IntermediateOutputPath)" Overwrite="true" />
+              </Target>
+            </Project>
+            """);
+        var properties = MSBuildSolutionLoader.CreateWorkspaceProperties();
+        var outputPaths = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var configuration in new[] { "Debug", "Release" })
+        foreach (var framework in new[] { "net10.0", "net10.0-windows" })
+        {
+            properties["Configuration"] = configuration;
+            properties["TargetFramework"] = framework;
+            using var workspace = Microsoft.CodeAnalysis.MSBuild.MSBuildWorkspace.Create(properties);
+            await workspace.OpenProjectAsync(projectPath);
+            Assert.DoesNotContain(workspace.Diagnostics, diagnostic => diagnostic.Kind == WorkspaceDiagnosticKind.Failure);
+            var capturePath = Path.Combine(properties["NavigatorAnalysisScratchRoot"], "variant.paths");
+            var intermediatePath = (await File.ReadAllTextAsync(capturePath)).Trim();
+            Assert.True(outputPaths.Add(intermediatePath), $"Build variants share scratch output: {intermediatePath}");
+            using var reloaded = Microsoft.CodeAnalysis.MSBuild.MSBuildWorkspace.Create(properties);
+            await reloaded.OpenProjectAsync(projectPath);
+            Assert.DoesNotContain(reloaded.Diagnostics, diagnostic => diagnostic.Kind == WorkspaceDiagnosticKind.Failure);
+            Assert.Equal(intermediatePath, (await File.ReadAllTextAsync(capturePath)).Trim());
+        }
+    }
+
     private static string WriteProject(TestTempDirectory tempDir, string relativePath, string content) => tempDir.CreateFile(relativePath, content);
 
     private static async Task<string> CreateColdSameNamedSolution(TestTempDirectory tempDir, string marker)

@@ -160,12 +160,12 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
             }
             catch (OperationCanceledException)
             {
-                uncommittedResult?.Workspace?.Dispose();
+                MSBuildSolutionLoader.DisposeWorkspace(uncommittedResult?.Workspace);
                 return null;
             }
             catch (Exception ex)
             {
-                uncommittedResult?.Workspace?.Dispose();
+                MSBuildSolutionLoader.DisposeWorkspace(uncommittedResult?.Workspace);
                 lock (syncLock)
                 {
                     loadFailure = CreateResidentError(ex);
@@ -434,7 +434,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
                 loadFailure = null;
             }
 
-            oldWorkspace?.Dispose();
+            MSBuildSolutionLoader.DisposeWorkspace(oldWorkspace);
             return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -443,9 +443,12 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            newlyLoadedWorkspace?.Dispose();
             SetResidentFailure(ex);
             return false;
+        }
+        finally
+        {
+            MSBuildSolutionLoader.DisposeWorkspace(newlyLoadedWorkspace);
         }
     }
 
@@ -707,7 +710,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
                 loadFunc = null;
             }
 
-            workspace?.Dispose();
+            MSBuildSolutionLoader.DisposeWorkspace(workspace);
         }
         finally
         {
@@ -748,7 +751,7 @@ public sealed class ResidentSolution : IDisposable, IAsyncDisposable
                 loadFunc = null;
             }
 
-            workspace?.Dispose();
+            MSBuildSolutionLoader.DisposeWorkspace(workspace);
         }
         finally
         {
