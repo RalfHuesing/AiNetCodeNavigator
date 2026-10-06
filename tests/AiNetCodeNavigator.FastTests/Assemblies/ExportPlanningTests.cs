@@ -73,11 +73,15 @@ public sealed class ExportPlanningTests
         var outside = temp.GetPath("outside");
         Directory.CreateDirectory(sources);
         Emit(Path.Combine(outside, "External.dll"), "External");
+        var local = Emit(Path.Combine(sources, "Local.dll"), "Local");
         var link = Path.Combine(sources, "redirect");
         CreateJunction(link, outside);
         try
         {
             Assert.Throws<InvalidOperationException>(() => ExportPlanner.Expand([sources]));
+            var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [sources]));
+            Assert.Contains(plan.Assemblies, item => item.SourcePath == local);
+            Assert.Contains(plan.Issues, issue => issue.Error.Contains("Reparse-point source directory", StringComparison.Ordinal));
         }
         finally { Directory.Delete(link); }
     }
@@ -122,7 +126,7 @@ public sealed class ExportPlanningTests
     public void Filter_UsesOnlyDocumentedNameRules(string name, string? rule) => Assert.Equal(rule, AutomaticExportFilter.Match(name));
 
     [Fact]
-    public void Plan_DeduplicatesProvenIdentityRejectsCollisionAndIncompleteClosureBeforeMutation()
+    public void Plan_DeduplicatesProvenIdentityAndPlansCollisionVariantsBeforeMutation()
     {
         using var temp = TestTempDirectory.Create("export-preflight-");
         var source = Emit(temp.GetPath("one/Shared.dll"), "Shared");
@@ -144,13 +148,14 @@ public sealed class ExportPlanningTests
         File.Copy(conflictingIdentity, temp.GetPath("two/Shared.dll"), overwrite: true);
         var equalVersionDifferentBytes = ExportPlanner.Create(new(output, [source, temp.GetPath("two/Shared.dll")]));
         Assert.Equal(2, equalVersionDifferentBytes.Assemblies.Count);
-        Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(output, [source]),
-            (_, _) => new(new("Shared", "1.0.0.0", "neutral", ""), [], [], false)));
+        var incomplete = ExportPlanner.Create(new(output, [source]),
+            (_, _) => new(new("Shared", "1.0.0.0", "neutral", ""), [], [], false));
+        Assert.Contains(incomplete.Issues, issue => issue.SourcePath == source && issue.Error.Contains("Incomplete reference closure", StringComparison.Ordinal));
         Assert.False(Directory.Exists(output));
     }
 
     [Fact]
-    public void Plan_RefusesVariantLayoutWhenLegacyFlatChildContainsUserContent()
+    public void Plan_ReportsVariantLayoutConflictWithoutChangingUserContent()
     {
         using var temp = TestTempDirectory.Create("export-variant-migration-");
         var source = Emit(temp.GetPath("one/Shared.dll"), "Shared");
@@ -163,9 +168,10 @@ public sealed class ExportPlanningTests
         var sentinel = Path.Combine(initial.Assemblies.Single().ChildPath, "keep.txt");
         File.WriteAllText(sentinel, "keep");
 
-        var exception = Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(output, [source, other])));
+        var conflictedPlan = ExportPlanner.Create(new(output, [source, other]));
 
-        Assert.Contains("legacy flat child contains unowned content", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(2, conflictedPlan.Issues.Count);
+        Assert.Contains(conflictedPlan.Issues, issue => issue.Error.Contains("legacy flat child contains unowned content", StringComparison.Ordinal));
         Assert.Equal("keep", File.ReadAllText(sentinel));
     }
 
@@ -289,7 +295,8 @@ public sealed class ExportPlanningTests
         ownership.ValidateStagingPath(Path.Combine(plan.OutputDirectory, ".assembly-export-stage-123"));
         Assert.Throws<InvalidOperationException>(() => ownership.ValidateStagingPath(other));
         var inside = Emit(Path.Combine(plan.OutputDirectory, "Inside.dll"), "Inside");
-        Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(plan.OutputDirectory, [inside])));
+        var sourceConflict = ExportPlanner.Create(new(plan.OutputDirectory, [inside]));
+        Assert.Contains(sourceConflict.Issues, issue => issue.Error.Contains("inside the output dump", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -310,7 +317,8 @@ public sealed class ExportPlanningTests
         CreateJunction(link, outside);
         try
         {
-            Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(plan.OutputDirectory, [source])));
+            var childConflict = ExportPlanner.Create(new(plan.OutputDirectory, [source]));
+            Assert.Contains(childConflict.Issues, issue => issue.SourcePath == source && issue.Error.Contains("Reparse point", StringComparison.Ordinal));
             Assert.Throws<InvalidOperationException>(() => ownership.DeleteSelectedChild(child));
             Assert.Equal("keep", File.ReadAllText(Path.Combine(outside, "keep.txt")));
         }
@@ -328,6 +336,59 @@ public sealed class ExportPlanningTests
             Assert.Equal("keep", File.ReadAllText(Path.Combine(outside, "keep.txt")));
         }
         finally { Directory.Delete(reportLink); }
+    }
+
+    [Fact]
+    public async Task Plan_ReportsJunctionAtSelectedChildAndExportsIndependentSibling()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        using var temp = TestTempDirectory.Create("export-child-junction-");
+        var blocked = Emit(temp.GetPath("Blocked.dll"), "Blocked");
+        var usable = Emit(temp.GetPath("Usable.dll"), "Usable");
+        var output = temp.GetPath("dump");
+        var initial = ExportPlanner.Create(new(output, [blocked, usable]));
+        new ExportDumpOwnership(initial).CreateOrValidateRoot();
+        var outside = temp.GetPath("outside");
+        Directory.CreateDirectory(outside);
+        var sentinel = Path.Combine(outside, "keep.txt");
+        await File.WriteAllTextAsync(sentinel, "keep");
+        var link = Path.Combine(output, "Blocked.dll");
+        CreateJunction(link, outside);
+        try
+        {
+            var plan = ExportPlanner.Create(initial.Arguments);
+            Assert.Contains(plan.Issues, issue => issue.SourcePath == blocked && issue.Error.Contains("Reparse point", StringComparison.Ordinal));
+            using var stdout = new StringWriter();
+            using var stderr = new StringWriter();
+            Assert.Equal(1, await ExportRunner.RunAsync(plan, stdout, stderr, export: async (item, stage, _) =>
+            {
+                await File.WriteAllTextAsync(Path.Combine(stage, "Usable.csproj"), "<Project />");
+                await File.WriteAllTextAsync(Path.Combine(stage, "Usable.cs"), "public class Usable { }");
+                return new(true, "Usable.csproj", ["Usable.cs"], item.ContentHash, "test", []);
+            }));
+            Assert.True(File.Exists(Path.Combine(output, "Usable.dll", "export-manifest.json")));
+            Assert.Equal("keep", await File.ReadAllTextAsync(sentinel));
+        }
+        finally { Directory.Delete(link); }
+    }
+
+    [Fact]
+    public void Ownership_AppendsFatalMessageOnlyToRecentLogUnderValidMarker()
+    {
+        using var temp = TestTempDirectory.Create("export-fatal-log-");
+        var source = Emit(temp.GetPath("Root.dll"), "Root");
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [source]));
+        var ownership = new ExportDumpOwnership(plan);
+        ownership.CreateOrValidateRoot();
+        var log = Path.Combine(plan.OutputDirectory, "last-run.log");
+        File.WriteAllText(log, "run output\n");
+
+        ownership.AppendRunFailureIfSafe("Export failed: report write failed.", DateTimeOffset.UtcNow.AddSeconds(-1));
+
+        Assert.StartsWith("run output\nExport failed: report write failed.", File.ReadAllText(log), StringComparison.Ordinal);
+        File.WriteAllText(Path.Combine(plan.OutputDirectory, ExportDumpOwnership.MarkerName), "invalid");
+        Assert.Throws<InvalidOperationException>(() => ownership.AppendRunFailureIfSafe("unsafe", DateTimeOffset.UtcNow.AddSeconds(-1)));
+        Assert.DoesNotContain("unsafe", File.ReadAllText(log), StringComparison.Ordinal);
     }
 
     private static void CreateJunction(string path, string target)

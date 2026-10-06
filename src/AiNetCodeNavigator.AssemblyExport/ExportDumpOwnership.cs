@@ -8,34 +8,32 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
     internal const string MarkerContent = "AiNetCodeNavigator.AssemblyExport:1\n";
     private string MarkerPath => Path.Combine(plan.OutputDirectory, MarkerName);
 
-    internal void ValidatePreflight()
+    internal void ValidateRootPreflight()
     {
         RejectReparseAncestors(plan.OutputDirectory);
         if (File.Exists(plan.OutputDirectory)) throw new InvalidOperationException("Output root is a file.");
         if (Directory.Exists(plan.OutputDirectory)) ValidateMarker();
         ValidateRunReportPath();
-        foreach (var group in plan.Assemblies.GroupBy(item => Path.GetFileName(item.SourcePath), StringComparer.OrdinalIgnoreCase))
-        {
-            if (!group.Any(item => item.ChildRelativePath.Contains(Path.DirectorySeparatorChar))) continue;
-            var legacyFlatChild = Path.Combine(plan.OutputDirectory, group.Key);
-            RejectReparseAncestors(legacyFlatChild);
-            if (File.Exists(legacyFlatChild))
-                throw new InvalidOperationException($"Cannot place filename variants because a legacy flat child already exists: {legacyFlatChild}");
-            if (Directory.Exists(legacyFlatChild))
-            {
-                var variantNames = group.Select(item => Path.GetFileName(item.ChildPath)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                var entries = Directory.EnumerateFileSystemEntries(legacyFlatChild).ToArray();
-                if (entries.Any(entry => !Directory.Exists(entry)
-                    || (!variantNames.Contains(Path.GetFileName(entry)) && !LooksLikeVariantPath(Path.GetFileName(entry)))))
-                    throw new InvalidOperationException($"Cannot place filename variants because a legacy flat child contains unowned content: {legacyFlatChild}");
-            }
-        }
-        foreach (var assembly in plan.Assemblies) ValidateSelectedChild(assembly.ChildPath);
+        ValidateLogPath();
+    }
+
+    internal void ValidateVariantLayout(IReadOnlyList<PlannedAssembly> group)
+    {
+        var legacyFlatChild = Path.Combine(plan.OutputDirectory, Path.GetFileName(group[0].SourcePath));
+        RejectReparseAncestors(legacyFlatChild);
+        if (File.Exists(legacyFlatChild))
+            throw new InvalidOperationException($"Cannot place filename variants because a legacy flat child already exists: {legacyFlatChild}");
+        if (!Directory.Exists(legacyFlatChild)) return;
+        var variantNames = group.Select(item => Path.GetFileName(item.ChildPath)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var entries = Directory.EnumerateFileSystemEntries(legacyFlatChild).ToArray();
+        if (entries.Any(entry => !Directory.Exists(entry)
+            || (!variantNames.Contains(Path.GetFileName(entry)) && !LooksLikeVariantPath(Path.GetFileName(entry)))))
+            throw new InvalidOperationException($"Cannot place filename variants because a legacy flat child contains unowned content: {legacyFlatChild}");
     }
 
     internal void CreateOrValidateRoot()
     {
-        ValidatePreflight();
+        ValidateRootPreflight();
         if (Directory.Exists(plan.OutputDirectory)) return;
         Directory.CreateDirectory(plan.OutputDirectory);
         using var stream = new FileStream(MarkerPath, FileMode.CreateNew, FileAccess.Write);
@@ -44,7 +42,7 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
 
     internal void DeleteSelectedChild(string childPath)
     {
-        ValidatePreflight();
+        ValidateRootPreflight();
         ValidateMarker();
         ValidateSelectedChild(childPath);
         if (Directory.Exists(childPath)) DeleteCheckedTree(Path.GetFullPath(childPath));
@@ -79,6 +77,27 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
         if (Directory.Exists(path)) throw new InvalidOperationException("Run report path is a directory.");
     }
 
+    internal void ValidateLogPath()
+    {
+        var path = Path.Combine(plan.OutputDirectory, "last-run.log");
+        RejectReparseAncestors(path);
+        if (Directory.Exists(path)) throw new InvalidOperationException("Run log path is a directory.");
+    }
+
+    internal void AppendRunFailureIfSafe(string message, DateTimeOffset runStartedAt)
+    {
+        if (!Directory.Exists(plan.OutputDirectory)) return;
+        ValidateRootPreflight();
+        ValidateMarker();
+        ValidateLogPath();
+        var path = Path.Combine(plan.OutputDirectory, "last-run.log");
+        if (!File.Exists(path) || File.GetLastWriteTimeUtc(path) < runStartedAt.UtcDateTime) return;
+        RejectReparseAncestors(path);
+        using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
+        using var writer = new StreamWriter(stream, new UTF8Encoding(false));
+        writer.WriteLine(message);
+    }
+
     internal void DeleteStaging(string path)
     {
         ValidateStagingPath(path);
@@ -88,7 +107,7 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
 
     internal void PublishStaging(string stage, string child)
     {
-        ValidatePreflight();
+        ValidateRootPreflight();
         ValidateMarker();
         ValidateSelectedChild(child);
         ValidateStagingPath(stage);
@@ -153,8 +172,16 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
     {
         var group = Path.Combine(outputDirectory, filename);
         if (!Directory.Exists(group)) return false;
-        RejectReparseAncestors(group);
-        return Directory.EnumerateDirectories(group).Any(path => LooksLikeVariantPath(Path.GetFileName(path)));
+        // A redirected child is reported by per-child preflight, not by variant detection.
+        try
+        {
+            RejectReparseAncestors(group);
+            return Directory.EnumerateDirectories(group).Any(path => LooksLikeVariantPath(Path.GetFileName(path)));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     private static bool LooksLikeVariantPath(string name)

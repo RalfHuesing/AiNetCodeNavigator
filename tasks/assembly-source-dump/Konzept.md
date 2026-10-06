@@ -38,6 +38,7 @@ AiNetCodeNavigator.AssemblyExport.exe "C:\asm-dump" "C:\Programme" "foo*.exe" "*
 C:\asm-dump\
   .ainetcodenavigator-assembly-export
   last-run.json
+  last-run.log
   fooTool.exe\
     fooTool.sln
     <decompiler-generated .csproj and .cs tree>
@@ -46,9 +47,9 @@ C:\asm-dump\
     ...
 ```
 
-Validate argument count, output ownership, recursive source directories and all globs, managed images, canonical input/output paths, the dependency closure, output-name collisions and cleanup containment before creating the output root or deleting any existing assembly child. Report one line per selected assembly for start, dependency/filter decisions, success/failure and output path, followed by counts and an exit status. A no-match directory or pattern, invalid marker, or collision fails the whole invocation before publishing. Later per-assembly decompilation errors do not erase successful siblings.
+Validate argument count, output ownership, recursive source directories and globs, managed images, canonical input/output paths, the dependency closure, output-name collisions and cleanup containment before deleting any existing assembly child. Root ownership, root reparse redirects, invalid marker, and unsafe run-report/log paths fail globally before writing. Recoverable no-match inputs, closure errors, and selected-child conflicts are recorded as per-input or per-assembly failures; continue with independent assemblies and return nonzero. A conflicting selected child is preserved. Report one line per selected assembly for start, dependency/filter decisions, success/failure and output path, followed by counts and an exit status. `last-run.log` mirrors the run's stdout and stderr.
 
-The marker protects the output root, and only exact direct assembly children selected in the current invocation are replaceable. The tool does not sweep children whose input is absent from a later invocation. Such old children remain visible as prior exports; `last-run.json` distinguishes them from the latest selection. If root creation is interrupted before its marker is written, the next run refuses to touch that unmarked directory until the user removes it.
+The marker protects the output root, and only exact selected assembly child paths in the current invocation are replaceable, including selected variant subdirectories. The tool does not sweep children whose input is absent from a later invocation. Such old children remain visible as prior exports; `last-run.json` distinguishes them from the latest selection. If root creation is interrupted before its marker is written, the next run refuses to touch that unmarked directory until the user removes it.
 
 ## Design and verified feasibility
 

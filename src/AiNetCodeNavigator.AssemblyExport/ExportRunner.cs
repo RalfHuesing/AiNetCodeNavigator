@@ -9,6 +9,7 @@ internal sealed record ExportRunItem(string SourcePath, string ChildName, Assemb
     IReadOnlyList<AssemblyExportReferenceDiagnostic>? Diagnostics = null)
 {
     public string ChildRelativePath { get; init; } = ChildName;
+    public bool ExistingChildPreserved { get; init; }
 }
 
 internal static class ExportRunner
@@ -23,24 +24,47 @@ internal static class ExportRunner
             item.ContentHash, item.DecompilationReferences, token);
         var owner = new ExportDumpOwnership(plan);
         owner.CreateOrValidateRoot();
+        owner.ValidateLogPath();
+        await using var logStream = new FileStream(Path.Combine(plan.OutputDirectory, "last-run.log"), FileMode.Create, FileAccess.Write, FileShare.Read);
+        await using var log = new StreamWriter(logStream, new UTF8Encoding(false)) { AutoFlush = true };
         var runId = Guid.NewGuid().ToString("N");
         var startedAt = DateTimeOffset.UtcNow;
         var items = plan.Assemblies.Select(item => new ExportRunItem(item.SourcePath, Path.GetFileName(item.SourcePath),
             item.Identity, item.IsExplicit, "pending", item.Closure.References.Where(edge => !edge.Resolved).ToArray(), Diagnostics: [])
             { ChildRelativePath = item.ChildRelativePath }).ToArray();
         WriteRunReport("running");
+        foreach (var issue in plan.Issues)
+        {
+            await WriteErrorAsync($"{(issue.BlocksAssembly ? "Input failure" : "Closure limitation")}: {issue.Input}: {issue.Error}").ConfigureAwait(false);
+        }
         var interrupted = false;
+        var blocked = new HashSet<string>(plan.Issues.Where(issue => issue.BlocksAssembly && issue.SourcePath is not null)
+            .Select(issue => issue.SourcePath!), StringComparer.OrdinalIgnoreCase);
         for (var index = 0; index < plan.Assemblies.Count; index++)
         {
             var item = plan.Assemblies[index];
+            if (blocked.Contains(item.SourcePath))
+            {
+                var issue = plan.Issues.Last(candidate => candidate.SourcePath?.Equals(item.SourcePath, StringComparison.OrdinalIgnoreCase) == true);
+                items[index] = items[index] with
+                {
+                    State = "failed",
+                    Error = issue.Error,
+                    ExistingChildPreserved = Directory.Exists(item.ChildPath) || File.Exists(item.ChildPath),
+                };
+                await WriteOutputAsync($"Start: {item.SourcePath} -> {item.ChildPath}").ConfigureAwait(false);
+                await WriteErrorAsync($"Failure: {item.SourcePath}: {issue.Error}").ConfigureAwait(false);
+                WriteRunReport("running");
+                continue;
+            }
             var stage = Path.Combine(plan.OutputDirectory, ".assembly-export-stage-" + Guid.NewGuid().ToString("N"));
-            await output.WriteLineAsync($"Start: {item.SourcePath} -> {item.ChildPath}").ConfigureAwait(false);
+            await WriteOutputAsync($"Start: {item.SourcePath} -> {item.ChildPath}").ConfigureAwait(false);
             foreach (var edge in item.Closure.References)
             {
                 var rule = AutomaticExportFilter.Match(edge.Name);
-                await output.WriteLineAsync($"Dependency: {edge.SourceAssemblyPath} -> {edge.Name}: {edge.ResolutionState}, {edge.ResolutionProvenance ?? "unresolved"}{(rule is null ? "" : ", excluded " + rule)}").ConfigureAwait(false);
+                await WriteOutputAsync($"Dependency: {edge.SourceAssemblyPath} -> {edge.Name}: {edge.ResolutionState}, {edge.ResolutionProvenance ?? "unresolved"}{(rule is null ? "" : ", excluded " + rule)}").ConfigureAwait(false);
                 if (!edge.Resolved)
-                    await errors.WriteLineAsync($"Unresolved dependency: {edge.SourceAssemblyPath} -> {edge.Name}, {edge.Version}: {edge.Diagnostic}").ConfigureAwait(false);
+                    await WriteErrorAsync($"Unresolved dependency: {edge.SourceAssemblyPath} -> {edge.Name}, {edge.Version}: {edge.Diagnostic}").ConfigureAwait(false);
             }
             try
             {
@@ -61,10 +85,11 @@ internal static class ExportRunner
                 owner.ValidateStagingPath(stage);
                 AssemblyProjectExporter.ValidateArtifacts(stage, result.ProjectRelativePath, result.SourceRelativePaths);
                 WriteSolution(stage, result.ProjectRelativePath);
-                var hasLimitations = !result.IsComplete || result.Diagnostics.Count > 0 || items[index].UnresolvedDependencies.Count > 0;
+                var hasLimitations = !result.IsComplete || !item.Closure.IsComplete
+                    || result.Diagnostics.Count > 0 || items[index].UnresolvedDependencies.Count > 0;
                 var completionState = hasLimitations ? "partial" : "complete";
                 foreach (var diagnostic in result.Diagnostics)
-                    await output.WriteLineAsync($"Diagnostic ({(diagnostic.IsError ? "error" : "warning")}): {item.SourcePath}: {diagnostic.Message}").ConfigureAwait(false);
+                    await WriteOutputAsync($"Diagnostic ({(diagnostic.IsError ? "error" : "warning")}): {item.SourcePath}: {diagnostic.Message}").ConfigureAwait(false);
                 var automaticChildren = plan.Assemblies.Where(candidate => !candidate.IsExplicit
                     && item.DecompilationReferences.Any(edge => edge.ResolvedPath is not null
                         && edge.ResolvedPath.Equals(candidate.SourcePath, StringComparison.OrdinalIgnoreCase)))
@@ -75,6 +100,8 @@ internal static class ExportRunner
                     childRelativePath = item.ChildRelativePath, contentHash = result.ContentHash,
                     decompilerVersion = result.DecompilerVersion, isExplicit = item.IsExplicit,
                     completionState,
+                    referenceClosureComplete = item.Closure.IsComplete,
+                    referenceClosureDiagnostics = item.Closure.Diagnostics,
                     projectPath = result.ProjectRelativePath, sourceFiles = result.SourceRelativePaths,
                     dependencies = item.Closure.References,
                     dependencyChildren = item.DecompilationReferences.Select((edge, index) => new
@@ -90,7 +117,7 @@ internal static class ExportRunner
                 });
                 owner.PublishStaging(stage, item.ChildPath);
                 items[index] = items[index] with { State = completionState, Diagnostics = result.Diagnostics };
-                await output.WriteLineAsync($"Success ({items[index].State}): {item.ChildPath}").ConfigureAwait(false);
+                await WriteOutputAsync($"Success ({items[index].State}): {item.ChildPath}").ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -100,7 +127,7 @@ internal static class ExportRunner
             catch (Exception ex) when (AssemblyProjectExporter.IsRecoverableFailure(ex))
             {
                 items[index] = items[index] with { State = "failed", Error = ex.Message };
-                await errors.WriteLineAsync($"Failure: {item.SourcePath}: {ex.Message}").ConfigureAwait(false);
+                await WriteErrorAsync($"Failure: {item.SourcePath}: {ex.Message}").ConfigureAwait(false);
             }
             finally
             {
@@ -108,24 +135,27 @@ internal static class ExportRunner
                 catch (Exception ex) when (AssemblyProjectExporter.IsRecoverableFailure(ex))
                 {
                     items[index] = items[index] with { State = "failed", Error = $"Staging cleanup failed: {ex.Message}" };
-                    await errors.WriteLineAsync(items[index].Error).ConfigureAwait(false);
+                    await WriteErrorAsync(items[index].Error ?? "Staging cleanup failed.").ConfigureAwait(false);
                 }
             }
             WriteRunReport("running");
             if (interrupted) break;
         }
-        var failed = items.Count(item => item.State == "failed");
+        var failed = items.Count(item => item.State == "failed")
+            + plan.Issues.Count(issue => !issue.BlocksAssembly || issue.SourcePath is null
+                || !plan.Assemblies.Any(item => item.SourcePath.Equals(issue.SourcePath, StringComparison.OrdinalIgnoreCase)));
         var succeeded = items.Count(item => item.State is "complete" or "partial");
         var state = interrupted ? "interrupted" : failed > 0 ? "failed" : items.Any(item => item.State == "partial") ? "partial" : "complete";
         WriteRunReport(state);
         var exitCode = failed > 0 || interrupted ? 1 : 0;
+        var assemblyFailures = items.Count(item => item.State == "failed");
         var unresolved = items.Sum(item => item.UnresolvedDependencies.Count);
-        await output.WriteLineAsync($"Finished: selected={items.Length}, succeeded={succeeded}, failed={failed}, unresolved={unresolved}, state={state}, exit={exitCode}.").ConfigureAwait(false);
+        await WriteOutputAsync($"Finished: selected={items.Length}, exported={succeeded}, assemblyFailures={assemblyFailures}, planIssues={plan.Issues.Count}, unresolved={unresolved}, state={state}, exit={exitCode}.").ConfigureAwait(false);
         return exitCode;
 
         void WriteRunReport(string state)
         {
-            owner.ValidatePreflight();
+            owner.ValidateRootPreflight();
             owner.ValidateRunReportPath();
             var path = Path.Combine(plan.OutputDirectory, "last-run.json");
             var temporary = Path.Combine(plan.OutputDirectory, ".assembly-export-report-" + Guid.NewGuid().ToString("N") + ".tmp");
@@ -137,8 +167,12 @@ internal static class ExportRunner
                     outputArgument = plan.Arguments.OutputDirectory, outputDirectory = plan.OutputDirectory,
                     exactInputs = plan.Arguments.Sources, explicitPaths = plan.ExplicitPaths,
                     completionState = state, isComplete = state == "complete", selectedChildren = items,
+                    inputFailures = plan.Issues,
                     exclusions = plan.Assemblies.SelectMany(item => item.FilteredReferences).ToArray(),
-                    failures = items.Where(item => item.State == "failed").ToArray(),
+                    failures = items.Where(item => item.State == "failed").Cast<object>()
+                        .Concat(plan.Issues.Where(issue => !issue.BlocksAssembly || issue.SourcePath is null
+                            || !plan.Assemblies.Any(item => item.SourcePath.Equals(issue.SourcePath, StringComparison.OrdinalIgnoreCase)))
+                            .Cast<object>()).ToArray(),
                 });
                 owner.ValidateRunReportPath();
                 File.Move(temporary, path, overwrite: true);
@@ -148,6 +182,18 @@ internal static class ExportRunner
                 ExportDumpOwnership.RejectReparseAncestors(temporary);
                 if (File.Exists(temporary)) File.Delete(temporary);
             }
+        }
+
+        async Task WriteOutputAsync(string line)
+        {
+            await output.WriteLineAsync(line).ConfigureAwait(false);
+            await log.WriteLineAsync(line).ConfigureAwait(false);
+        }
+
+        async Task WriteErrorAsync(string line)
+        {
+            await errors.WriteLineAsync(line).ConfigureAwait(false);
+            await log.WriteLineAsync(line).ConfigureAwait(false);
         }
     }
 

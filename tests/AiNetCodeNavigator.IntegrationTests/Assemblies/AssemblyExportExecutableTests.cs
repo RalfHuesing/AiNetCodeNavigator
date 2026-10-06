@@ -106,7 +106,7 @@ public sealed class AssemblyExportExecutableTests
         Assert.Equal(pattern, Assert.Single(report.RootElement.GetProperty("exactInputs").EnumerateArray()).GetString());
         Assert.Equal(2, report.RootElement.GetProperty("selectedChildren").GetArrayLength());
         Assert.Empty(report.RootElement.GetProperty("failures").EnumerateArray());
-        Assert.Contains("succeeded=2", second.Output, StringComparison.Ordinal);
+        Assert.Contains("exported=2, assemblyFailures=0, planIssues=0", second.Output, StringComparison.Ordinal);
     }
 
     private static string ReadSources(string path) => string.Join("\n", Directory.GetFiles(path, "*.cs", SearchOption.AllDirectories).Select(File.ReadAllText));

@@ -29,6 +29,87 @@ public sealed class ExportRunnerTests
         Assert.Equal("failed", run.RootElement.GetProperty("completionState").GetString());
         Assert.Equal("AFails.dll", Assert.Single(run.RootElement.GetProperty("failures").EnumerateArray()).GetProperty("childName").GetString());
         Assert.Empty(Directory.GetDirectories(plan.OutputDirectory, ".assembly-export-stage-*"));
+        var log = await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.log"));
+        Assert.Contains(output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries), line => log.Contains(line, StringComparison.Ordinal));
+        Assert.Contains(errors.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries), line => log.Contains(line, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Runner_ReportsInputAndChildPreflightFailuresAndContinuesIndependentChildren()
+    {
+        using var temp = TestTempDirectory.Create("export-best-effort-preflight-");
+        var blocked = AssemblyTestHelper.EmitAssembly(temp, "Blocked", "public class Blocked { }");
+        var usable = AssemblyTestHelper.EmitAssembly(temp, "Usable", "public class Usable { }");
+        var outputDirectory = temp.GetPath("dump");
+        var plan = ExportPlanner.Create(new(outputDirectory, [blocked, usable, temp.GetPath("missing*.dll")]));
+        new ExportDumpOwnership(plan).CreateOrValidateRoot();
+        await File.WriteAllTextAsync(Path.Combine(outputDirectory, "Blocked.dll"), "owned path conflict");
+        plan = ExportPlanner.Create(plan.Arguments);
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+
+        var exitCode = await ExportRunner.RunAsync(plan, output, errors, export: async (item, stage, _) =>
+        {
+            await File.WriteAllTextAsync(Path.Combine(stage, "Usable.csproj"), "<Project />");
+            await File.WriteAllTextAsync(Path.Combine(stage, "Usable.cs"), "public class Usable { }");
+            return new(true, "Usable.csproj", ["Usable.cs"], item.ContentHash, "test", []);
+        });
+
+        Assert.Equal(1, exitCode);
+        Assert.True(File.Exists(Path.Combine(outputDirectory, "Usable.dll", "export-manifest.json")));
+        using var report = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(outputDirectory, "last-run.json")));
+        Assert.Equal("failed", report.RootElement.GetProperty("completionState").GetString());
+        Assert.Equal(2, report.RootElement.GetProperty("failures").GetArrayLength());
+        Assert.True(Assert.Single(report.RootElement.GetProperty("selectedChildren").EnumerateArray(), item =>
+            item.GetProperty("childName").GetString() == "Blocked.dll").GetProperty("existingChildPreserved").GetBoolean());
+        Assert.Contains("missing*.dll", errors.ToString(), StringComparison.Ordinal);
+        Assert.Contains("Blocked.dll", errors.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Runner_ExportsPartialClosureRootsAndTheirProvenDependenciesButReturnsFailure()
+    {
+        using var temp = TestTempDirectory.Create("export-incomplete-closure-");
+        var dependency = AssemblyTestHelper.EmitAssembly(temp, "ProvenDependency", "public class Dependency { }");
+        var root = AssemblyTestHelper.EmitAssembly(temp, "PartialRoot", "public class Root { }");
+        AssemblyExportReferenceClosure Resolve(string path, Func<AssemblyReferenceDto, bool> _)
+        {
+            var identity = System.Reflection.AssemblyName.GetAssemblyName(path);
+            if (path == root)
+            {
+                var edge = new AssemblyReferenceDto("ProvenDependency", "1.0.0.0", "neutral", true, dependency,
+                    ResolutionProvenance: "adjacent");
+                return new(new(identity.Name!, identity.Version!.ToString(), "neutral", ""), [edge],
+                    [new("reference-limit", "Reference traversal stopped at its configured limit.", true)], false);
+            }
+            return new(new(identity.Name!, identity.Version!.ToString(), "neutral", ""), [], [], true);
+        }
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [root]), Resolve);
+        var exported = new List<string>();
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+
+        var exitCode = await ExportRunner.RunAsync(plan, output, errors, export: async (item, stage, _) =>
+        {
+            exported.Add(item.SourcePath);
+            var name = item.Identity.Name;
+            await File.WriteAllTextAsync(Path.Combine(stage, name + ".csproj"), "<Project />");
+            await File.WriteAllTextAsync(Path.Combine(stage, name + ".cs"), "public class Exported { }");
+            return new(true, name + ".csproj", [name + ".cs"], item.ContentHash, "test", []);
+        });
+
+        Assert.Equal(1, exitCode);
+        Assert.Contains(root, exported);
+        Assert.Contains(dependency, exported);
+        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "PartialRoot.dll", "export-manifest.json")));
+        Assert.Equal("partial", manifest.RootElement.GetProperty("completionState").GetString());
+        Assert.False(manifest.RootElement.GetProperty("referenceClosureComplete").GetBoolean());
+        Assert.Contains("reference-limit", manifest.RootElement.GetProperty("referenceClosureDiagnostics").EnumerateArray()
+            .Select(item => item.GetProperty("code").GetString()));
+        using var report = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.json")));
+        Assert.Equal("failed", report.RootElement.GetProperty("completionState").GetString());
+        Assert.Contains(report.RootElement.GetProperty("failures").EnumerateArray(), failure =>
+            failure.TryGetProperty("blocksAssembly", out var blocks) && !blocks.GetBoolean());
     }
 
     [Fact]

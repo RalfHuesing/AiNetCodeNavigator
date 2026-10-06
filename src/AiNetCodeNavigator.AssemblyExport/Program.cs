@@ -30,12 +30,16 @@ internal static class Program
         }
 
         using var cancellation = new CancellationTokenSource();
+        var runStartedAt = DateTimeOffset.UtcNow;
         ConsoleCancelEventHandler handler = (_, eventArgs) => { eventArgs.Cancel = true; cancellation.Cancel(); };
         Console.CancelKeyPress += handler;
         try { return await ExportRunner.RunAsync(plan, Console.Out, Console.Error, cancellation.Token).ConfigureAwait(false); }
         catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
         {
-            Console.Error.WriteLine($"Export failed: {exception.Message}");
+            var message = $"Export failed: {exception.Message}";
+            Console.Error.WriteLine(message);
+            try { new ExportDumpOwnership(plan).AppendRunFailureIfSafe(message, runStartedAt); }
+            catch (Exception logException) when (logException is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException) { }
             return 1;
         }
         finally { Console.CancelKeyPress -= handler; }
