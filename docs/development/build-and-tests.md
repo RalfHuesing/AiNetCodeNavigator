@@ -7,10 +7,11 @@
 
 ## Solution Structure
 
-The solution `AiNetCodeNavigator.slnx` contains six projects:
+The solution `AiNetCodeNavigator.slnx` contains seven projects:
 
 - `src/AiNetCodeNavigator.Core/`: Core library for Roslyn workspace resolution, AST exploration, symbol queries, call hierarchies, decompilation, and caching.
 - `src/AiNetCodeNavigator/`: MCP server host executable and Serilog logging bootstrap.
+- `src/AiNetCodeNavigator.AssemblyExport/`: Separate offline assembly-export command. Its current CLI validates the positional argument count and accepts `--help`; export execution is not yet implemented.
 - `tests/AiNetCodeNavigator.TestKit/`: Shared test support infrastructure, sample code fixtures, and workspace builders.
 - `tests/AiNetCodeNavigator.FastTests/`: Fast unit and component test suite. It retains one E2E MCP SDK stream fixture, which performs a protocol handshake and remains excluded from routine gates.
 - `tests/AiNetCodeNavigator.IntegrationTests/`: Workspace-loading and transport-free source/assembly handler contract tests, including budgets, recovery, domain paging, and owner references. Bounded traffic-capture component tests exercise the SDK host with in-memory streams and fixture tools. Retained complete stdio/client product flows are categorized `E2EIntegration` and excluded from current completion gates.

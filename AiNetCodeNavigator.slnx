@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/AiNetCodeNavigator.Core/AiNetCodeNavigator.Core.csproj" />
+    <Project Path="src/AiNetCodeNavigator.AssemblyExport/AiNetCodeNavigator.AssemblyExport.csproj" />
     <Project Path="src/AiNetCodeNavigator/AiNetCodeNavigator.csproj" />
   </Folder>
   <Folder Name="/tests/">

@@ -2,7 +2,7 @@
 
 The [concept](Konzept.md) is the contract for these ordered implementation slices. Each completed slice includes its affected automated tests, current-state documentation, required repository verification, diff review and a conventional commit. Check a box only after its acceptance evidence exists.
 
-- [ ] **1. Establish the product and CLI boundary**
+- [x] **1. Establish the product and CLI boundary**
   - Add the separate executable project and minimum positional command contract to the solution. Update the product rule to permit this explicit offline exporter while keeping MCP navigation read-only and its stdout protocol-only.
   - Verify argument parsing and help/error behavior for zero, one and multiple input patterns; document the chosen glob limits and exit statuses.
 

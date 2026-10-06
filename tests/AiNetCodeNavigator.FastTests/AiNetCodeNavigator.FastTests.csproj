@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AiNetCodeNavigator.Core\AiNetCodeNavigator.Core.csproj" />
+    <ProjectReference Include="..\..\src\AiNetCodeNavigator.AssemblyExport\AiNetCodeNavigator.AssemblyExport.csproj" />
     <ProjectReference Include="..\..\src\AiNetCodeNavigator\AiNetCodeNavigator.csproj" />
     <ProjectReference Include="..\AiNetCodeNavigator.TestKit\AiNetCodeNavigator.TestKit.csproj" />
   </ItemGroup>

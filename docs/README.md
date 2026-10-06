@@ -4,6 +4,7 @@ The binding product references are these current-state pages and local Navigator
 
 ## Development
 
+- [Assembly export CLI](assembly-export.md): Current positional command boundary and pattern limits.
 - [Build and Tests](development/build-and-tests.md): Solution structure, PowerShell scripts, and static log files in `temp/`.
 - [Manual MCP Exploration](development/mcp-exploration.md): On-demand C# scenarios, real local tool output, and inspection artifacts under `temp/exploration/`.
 - [MCP Response Budgets](mcp-response-budgets.md): Host-side UTF-8 limits, token accounting, explicit truncation, and recoverable undersized-budget results.
