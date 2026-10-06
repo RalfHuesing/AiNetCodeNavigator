@@ -31,6 +31,26 @@ internal sealed class AssemblyReferenceResolver
     private static FileStream OpenReadShared(string path) =>
         new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
+    private readonly AssemblyGacCandidateSource gac;
+    private readonly IReadOnlyList<string> trustedPaths;
+    private readonly bool exportClosure;
+    private readonly Func<AssemblyReferenceDto, bool>? traverseReference;
+    private readonly int maxDepth;
+    private readonly int maxNodes;
+
+    internal AssemblyReferenceResolver(AssemblyGacCandidateSource? gac = null,
+        IReadOnlyList<string>? trustedPaths = null, bool exportClosure = false,
+        Func<AssemblyReferenceDto, bool>? traverseReference = null,
+        int maxDepth = MaxReferenceDepth, int maxNodes = MaxReferenceNodes)
+    {
+        this.gac = gac ?? new AssemblyGacCandidateSource();
+        this.trustedPaths = trustedPaths ?? GetTrustedPlatformAssemblyPaths();
+        this.exportClosure = exportClosure;
+        this.traverseReference = traverseReference;
+        this.maxDepth = maxDepth;
+        this.maxNodes = maxNodes;
+    }
+
     internal AssemblyReferenceResolution Resolve(string assemblyPath)
     {
         var canonicalPath = AssemblyFingerprintCalculator.Canonicalize(assemblyPath);
@@ -47,7 +67,10 @@ internal sealed class AssemblyReferenceResolver
             var graph = BuildReferenceGraph(canonicalPath, metadata, diagnostics);
             var metadataResult = CreateMetadataReferences(graph.Paths, diagnostics);
             var references = graph.References.Select(reference => NormalizeReference(reference, metadataResult.SuccessfulPaths)).ToList();
-            return new AssemblyReferenceResolution(metadata.Identity, references, metadataResult.References, diagnostics);
+            return new AssemblyReferenceResolution(metadata.Identity, references, metadataResult.References, diagnostics,
+                !diagnostics.Any(diagnostic => diagnostic.Code is BoundaryDiagnosticCode or "assembly-gac-candidate-failed")
+                && !references.Any(reference => reference.ResolutionState is "ambiguous" or "invalid")
+                && graph.Paths.All(metadataResult.SuccessfulPaths.Contains), exportClosure);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException or ArgumentException)
         {
@@ -55,45 +78,49 @@ internal sealed class AssemblyReferenceResolver
         }
     }
 
-    private static ReferenceGraph BuildReferenceGraph(
+    private ReferenceGraph BuildReferenceGraph(
         string canonicalPath,
         AssemblyMetadata metadata,
         ICollection<AssemblySessionDiagnostic> diagnostics)
     {
-        var trustedPaths = GetTrustedPlatformAssemblyPaths();
         var graph = new ReferenceGraph(canonicalPath, metadata);
         VisitNode(canonicalPath, trustedPaths, graph, diagnostics);
         return graph;
     }
 
-    private static void VisitNode(
+    private void VisitNode(
         string path,
         IReadOnlyList<string> trustedPaths,
         ReferenceGraph graph,
         ICollection<AssemblySessionDiagnostic> diagnostics)
     {
-        if (graph.Visited.Count >= MaxReferenceNodes) return;
         var node = graph.Nodes[path];
         foreach (var reference in node.Metadata.References)
         {
-            var resolution = FindReferencePath(reference, Path.GetDirectoryName(node.Path), trustedPaths, diagnostics);
-            var candidate = CreateCandidate(node, reference, resolution, graph, diagnostics);
+            var resolution = FindReferencePath(reference, node.Path, trustedPaths, diagnostics);
+            var candidate = CreateCandidate(node, reference, resolution, graph, diagnostics, out var shouldTraverse);
             if (!graph.TryAdd(candidate)) continue;
             if (candidate.ResolutionState is not "resolved" || candidate.ResolvedPath is null) continue;
+            if (!shouldTraverse)
+            {
+                graph.AddPath(candidate.ResolvedPath);
+                continue;
+            }
             VisitChild(candidate, node, trustedPaths, graph, diagnostics);
         }
     }
 
-    private static void VisitChild(
+    private void VisitChild(
         AssemblyReferenceDto candidate,
         ReferenceNode parent,
         IReadOnlyList<string> trustedPaths,
         ReferenceGraph graph,
         ICollection<AssemblySessionDiagnostic> diagnostics)
     {
-        if (graph.Visited.Count >= MaxReferenceNodes)
+        if (graph.Visited.Count >= maxNodes)
         {
-            diagnostics.Add(new(BoundaryDiagnosticCode, $"Reference resolution reached the limit of {MaxReferenceNodes} assemblies.", AssemblyDiagnosticSeverity.Warning));
+            diagnostics.Add(new(BoundaryDiagnosticCode, $"Reference resolution reached the limit of {maxNodes} assemblies.", AssemblyDiagnosticSeverity.Warning));
+            graph.ReplaceLast(candidate with { Resolved = false, ResolvedPath = null, ResolutionState = "node_limit" });
             return;
         }
 
@@ -115,26 +142,14 @@ internal sealed class AssemblyReferenceResolver
         VisitNode(candidate.ResolvedPath!, trustedPaths, graph, diagnostics);
     }
 
-    private static AssemblyReferenceDto CreateCandidate(
+    private AssemblyReferenceDto CreateCandidate(
         ReferenceNode node,
         AssemblyReferenceDto reference,
         ReferencePathResolution resolution,
         ReferenceGraph graph,
-        ICollection<AssemblySessionDiagnostic> diagnostics)
+        ICollection<AssemblySessionDiagnostic> diagnostics,
+        out bool shouldTraverse)
     {
-        var state = DetermineState(node, resolution, graph);
-        var diagnostic = resolution.Diagnostic;
-        if (state is "depth_limit" or "cycle")
-        {
-            diagnostic = state switch
-            {
-                "depth_limit" => $"Reference '{reference.Name}' exceeds the maximum reference depth {MaxReferenceDepth}.",
-                "cycle" => $"Cyclic reference detected: '{reference.Name}' references '{resolution.Path}'.",
-                _ => null,
-            };
-            diagnostics.Add(new(state == "cycle" ? "assembly-reference-cycle" : BoundaryDiagnosticCode, diagnostic!, AssemblyDiagnosticSeverity.Warning));
-        }
-
         string? contentHash = null;
         AssemblySessionDiagnostic? fingerprintDiagnostic = null;
         if (resolution.Path is not null
@@ -142,33 +157,48 @@ internal sealed class AssemblyReferenceResolver
         {
             contentHash = fingerprint?.Sha256;
         }
+        var candidate = reference with
+        {
+            Resolved = resolution.Path is not null && contentHash is not null,
+            ResolvedPath = contentHash is null ? null : resolution.Path,
+            Depth = node.Depth + 1,
+            ContentHash = contentHash,
+            ResolutionProvenance = resolution.Provenance,
+        };
+        shouldTraverse = !exportClosure || traverseReference?.Invoke(candidate) != false;
+        var state = !shouldTraverse && resolution.Path is not null
+            ? "resolved" : DetermineState(node, resolution, graph);
+        var diagnostic = resolution.Diagnostic;
+        if (state is "depth_limit" or "cycle")
+        {
+            diagnostic = state == "depth_limit"
+                ? $"Reference '{reference.Name}' exceeds the maximum reference depth {maxDepth}."
+                : $"Cyclic reference detected: '{reference.Name}' references '{resolution.Path}'.";
+            diagnostics.Add(new(state == "cycle" ? "assembly-reference-cycle" : BoundaryDiagnosticCode, diagnostic, AssemblyDiagnosticSeverity.Warning));
+        }
         if (resolution.Path is not null && contentHash is null)
         {
             diagnostic ??= fingerprintDiagnostic?.Message ?? $"Reference candidate could not be fingerprinted: {resolution.Path}.";
             diagnostics.Add(new(AssemblyDiagnosticCodes.For(nameof(AssemblyReferenceResolver), nameof(AssemblyFingerprintCalculator)), diagnostic, AssemblyDiagnosticSeverity.Warning));
             state = "invalid";
         }
-
-        return reference with
+        return candidate with
         {
-            Resolved = resolution.Path is not null && contentHash is not null && state is ("resolved" or "cycle" or "deduplicated"),
-            ResolvedPath = contentHash is null ? null : resolution.Path,
+            Resolved = candidate.Resolved && state is ("resolved" or "cycle" or "deduplicated"),
             ResolutionState = state,
-            Depth = node.Depth + 1,
             Diagnostic = diagnostic,
-            ContentHash = contentHash,
         };
     }
 
-    private static string DetermineState(ReferenceNode node, ReferencePathResolution resolution, ReferenceGraph graph) =>
+    private string DetermineState(ReferenceNode node, ReferencePathResolution resolution, ReferenceGraph graph) =>
         resolution.Path is null
             ? resolution.State
-            : node.Depth >= MaxReferenceDepth
-                ? "depth_limit"
-                : node.Ancestors.Contains(resolution.Path)
-                    ? "cycle"
-                    : graph.Visited.Contains(resolution.Path)
-                        ? "deduplicated"
+            : node.Ancestors.Contains(resolution.Path)
+                ? "cycle"
+                : graph.Visited.Contains(resolution.Path)
+                    ? "deduplicated"
+                    : node.Depth >= maxDepth
+                        ? "depth_limit"
                         : "resolved";
 
     private static AssemblyReferenceDto NormalizeReference(
@@ -182,19 +212,30 @@ internal sealed class AssemblyReferenceResolver
                 : null,
         };
 
-    private static ReferencePathResolution FindReferencePath(
+    private ReferencePathResolution FindReferencePath(
         AssemblyReferenceDto reference,
-        string? directory,
+        string referringPath,
         IReadOnlyList<string> trustedPlatformAssemblies,
         ICollection<AssemblySessionDiagnostic> diagnostics)
     {
+        var directory = Path.GetDirectoryName(referringPath);
         var candidates = EnumerateCandidatePaths(reference.Name, directory, trustedPlatformAssemblies, diagnostics);
         var mismatches = new List<string>();
         foreach (var candidate in candidates)
         {
             if (!TryReadIdentity(candidate, out var identity, diagnostics)) continue;
-            if (IdentityMatches(reference, identity)) return new(candidate, "resolved", null);
+            if (IdentityMatches(reference, identity)) return new(candidate, "resolved", null,
+                string.Equals(Path.GetDirectoryName(candidate), directory, StringComparison.OrdinalIgnoreCase) ? "adjacent" : "runtime");
             mismatches.Add($"{candidate} ({identity.Version}, {identity.Culture})");
+        }
+
+        var gacCandidates = gac.Find(reference, referringPath, diagnostics);
+        if (gacCandidates.Count == 1) return new(gacCandidates[0], "resolved", null, "gac");
+        if (gacCandidates.Count > 1)
+        {
+            var ambiguity = $"Multiple compatible GAC candidates for '{reference.Name}': {string.Join(", ", gacCandidates)}.";
+            diagnostics.Add(new("assembly-reference-ambiguous", ambiguity, AssemblyDiagnosticSeverity.Warning));
+            return new(null, "ambiguous", ambiguity);
         }
 
         if (mismatches.Count > 0)
@@ -331,7 +372,7 @@ internal sealed class AssemblyReferenceResolver
         return new AssemblyMetadata(identity, references);
     }
 
-    private static AssemblyIdentityDto ReadIdentity(MetadataReader reader)
+    internal static AssemblyIdentityDto ReadIdentity(MetadataReader reader)
     {
         var definition = reader.GetAssemblyDefinition();
         return new AssemblyIdentityDto(
@@ -377,7 +418,7 @@ internal sealed class AssemblyReferenceResolver
     private static AssemblyReferenceResolution FailedResolution(string code, string message)
     {
         message = $"{message} Note: a managed .NET .dll or .exe with IL is required.";
-        return new AssemblyReferenceResolution(null, [], [], [new AssemblySessionDiagnostic(code, message, AssemblyDiagnosticSeverity.Error)]);
+        return new AssemblyReferenceResolution(null, [], [], [new AssemblySessionDiagnostic(code, message, AssemblyDiagnosticSeverity.Error)], false);
     }
 
     private static IReadOnlyList<string> GetTrustedPlatformAssemblyPaths() =>
@@ -432,7 +473,8 @@ internal sealed class AssemblyReferenceResolver
     private sealed record ReferencePathResolution(
         string? Path,
         string State,
-        string? Diagnostic);
+        string? Diagnostic,
+        string? Provenance = null);
 
     private sealed record MetadataReferenceResult(
         IReadOnlyList<MetadataReference> References,

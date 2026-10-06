@@ -118,6 +118,7 @@ internal sealed class AssemblyDecompilationAdapter
                 resolver.AddSearchDirectory(extraDirectory);
             }
         }
+        using var provenResolver = new ProvenAssemblyDecompilerResolver(resolver, references?.References ?? [], references?.UseOnlyProvenReferences ?? false);
         var decompiler = new WholeProjectDecompiler(
             new DecompilerSettings
             {
@@ -125,7 +126,7 @@ internal sealed class AssemblyDecompilationAdapter
                 YieldReturn = true,
                 AsyncAwait = true,
             },
-            resolver,
+            provenResolver,
             projectWriter: null,
             assemblyReferenceClassifier: null,
             debugInfoProvider: null);

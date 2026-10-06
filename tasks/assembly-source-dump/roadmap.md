@@ -6,7 +6,7 @@ The [concept](Konzept.md) is the contract for these ordered implementation slice
   - Add the separate executable project and minimum positional command contract to the solution. Update the product rule to permit this explicit offline exporter while keeping MCP navigation read-only and its stdout protocol-only.
   - Verify argument parsing and help/error behavior for zero, one and multiple input patterns; document the chosen glob limits and exit statuses.
 
-- [ ] **2. Resolve GAC references in Core**
+- [x] **2. Resolve GAC references in Core**
   - Extend the existing metadata reference resolver with testable .NET Framework GAC candidate lookup and identity/architecture selection; feed proven paths into whole-project decompilation. Expose a cycle-safe reference closure that identifies any limit or ambiguity instead of silently omitting dependencies.
   - Verify local, runtime and GAC candidates; exact/mismatched versions and tokens; absent GAC; transitive references; traversal boundaries; and affected MCP assembly-navigation behavior using temporary fixtures.
 

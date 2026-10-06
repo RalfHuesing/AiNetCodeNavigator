@@ -30,7 +30,8 @@ public sealed record AssemblyReferenceDto(
     string? SourceProjectPath = null,
     string PublicKeyToken = "",
     string? ContentHash = null,
-    string? SourceAssemblyPath = null);
+    string? SourceAssemblyPath = null,
+    string? ResolutionProvenance = null);
 
 // ---------------------------------------------------------------------------
 // Session status
@@ -241,7 +242,9 @@ internal sealed record AssemblyReferenceResolution(
     AssemblyIdentityDto? Identity,
     IReadOnlyList<AssemblyReferenceDto> References,
     IReadOnlyList<MetadataReference> MetadataReferences,
-    IReadOnlyList<AssemblySessionDiagnostic> Diagnostics);
+    IReadOnlyList<AssemblySessionDiagnostic> Diagnostics,
+    bool IsComplete = true,
+    bool UseOnlyProvenReferences = false);
 
 internal sealed record AssemblyWorkspaceRequest(
     string AssemblyPath,
