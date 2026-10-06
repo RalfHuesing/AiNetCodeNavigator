@@ -96,10 +96,10 @@ pwsh -File ./scripts/deploy.ps1 -OutputDir C:\Tools\AiNetCodeNavigator
 # Verify a fresh local package without running the test suites
 $deployCheck = Join-Path $env:TEMP 'AiNetCodeNavigator-deploy-check'
 pwsh -File ./scripts/deploy.ps1 -OutputDir $deployCheck -SkipTests -Clean
-& (Join-Path $deployCheck 'assembly-export/AiNetCodeNavigator.AssemblyExport.exe') --help
+& (Join-Path $deployCheck 'AiNetCodeNavigator.AssemblyExport.exe') --help
 ```
 
-- Builds the solution (`AiNetCodeNavigator.slnx`), runs tests, and publishes `src/AiNetCodeNavigator/` to the output root and `src/AiNetCodeNavigator.AssemblyExport/` to `assembly-export/` using `dotnet publish`.
+- Builds the solution (`AiNetCodeNavigator.slnx`), runs tests, and publishes both `src/AiNetCodeNavigator/` and `src/AiNetCodeNavigator.AssemblyExport/` directly to the output root using `dotnet publish`.
 - The default destination directory `<RepoRoot>/deploy` is ignored in `.gitignore`.
 - Verifies both executable files after publishing. `hostsettings.json` and the printed ready-to-copy process snippets apply only to the MCP server; the exporter is run directly with its positional arguments. `-Clean` removes all existing contents of the selected deployment directory before publishing.
 - Console output is streamed directly to `temp/deploy.log`.

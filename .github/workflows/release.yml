@@ -39,13 +39,13 @@ jobs:
           --self-contained true
           -p:PublishSingleFile=false
           -p:PublishTrimmed=false
-          -o ./publish/assembly-export
+          -o ./publish
 
       - name: Verify published executables
         shell: pwsh
         run: |
           $mcpExecutable = "./publish/AiNetCodeNavigator.exe"
-          $exportExecutable = "./publish/assembly-export/AiNetCodeNavigator.AssemblyExport.exe"
+          $exportExecutable = "./publish/AiNetCodeNavigator.AssemblyExport.exe"
           if (-not (Test-Path -LiteralPath $mcpExecutable -PathType Leaf)) {
             throw "Published MCP executable is missing: $mcpExecutable"
           }

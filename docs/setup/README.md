@@ -4,16 +4,16 @@ AiNetCodeNavigator provides a local MCP server that uses standard input/output (
 
 ## Windows release package
 
-The [release workflow](../../.github/workflows/release.yml) publishes both executables in a self-contained Windows x64 package, `AiNetCodeNavigator-win-x64.zip`, including the .NET runtime, `hostsettings.json`, README, and license. The MCP server and its dependencies are at the archive root; the exporter and its dependencies are under `assembly-export/`. Check [GitHub Releases](https://github.com/RalfHuesing/AiNetCodeNavigator/releases) for published packages. Extract the entire archive and keep each executable with its dependencies. Source-solution loading uses installed MSBuild/.NET SDK tooling appropriate to the target solution, even with a self-contained server package.
+The [release workflow](../../.github/workflows/release.yml) publishes both executables in a self-contained Windows x64 package, `AiNetCodeNavigator-win-x64.zip`, including the .NET runtime, `hostsettings.json`, README, and license. Both the MCP server and the exporter executables and their shared dependencies are located at the archive root. Check [GitHub Releases](https://github.com/RalfHuesing/AiNetCodeNavigator/releases) for published packages. Extract the entire archive and keep the executables with their dependencies. Source-solution loading uses installed MSBuild/.NET SDK tooling appropriate to the target solution, even with a self-contained server package.
 
 The included `hostsettings.json` is used only when selected with `--config`; placing it beside the executable does not change the default settings-file path described below.
 
 ## Offline assembly export
 
-The local deployment script publishes `AiNetCodeNavigator.AssemblyExport.exe` and its dependencies to `<deployment-directory>\assembly-export\`. In the release archive, the same files are under `assembly-export/`. Invoke this executable directly with an output directory, source directory, and quoted filename patterns. Matching managed DLL/EXE files are found recursively:
+The local deployment script publishes both `AiNetCodeNavigator.exe` and `AiNetCodeNavigator.AssemblyExport.exe` with their dependencies directly to `<deployment-directory>\`. In the release archive, the same files are at the root. Invoke this executable directly with an output directory, source directory, and quoted filename patterns. Matching managed DLL/EXE files are found recursively:
 
 ```powershell
-& "C:\Tools\AiNetCodeNavigator\assembly-export\AiNetCodeNavigator.AssemblyExport.exe" "C:\asm-dump" "C:\Programme" "foo*.exe" "*bar*.dll"
+& "C:\Tools\AiNetCodeNavigator\AiNetCodeNavigator.AssemblyExport.exe" "C:\asm-dump" "C:\Programme" "foo*.exe" "*bar*.dll"
 ```
 
 The exporter has no MCP process configuration and does not read `hostsettings.json`. It writes the dump only to the explicit, marked output directory. Read [Assembly export CLI](../assembly-export.md) for glob limits, dependency handling, cleanup ownership, output structure, and how to check run completeness.

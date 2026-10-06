@@ -8,8 +8,8 @@
     Executes a complete local release/deployment pipeline for both executables:
     1. Builds the solution (AiNetCodeNavigator.slnx).
     2. Runs tests (routine solution suite via scripts/test.ps1, or scripts/test-fast.ps1 if -FastTestsOnly).
-    3. Publishes the MCP server to the specified directory root.
-    4. Publishes the assembly export CLI and its dependencies to an assembly-export subdirectory.
+    3. Publishes the MCP server and assembly export CLI executables and their
+       shared dependencies directly to the specified directory root.
     
     The default deploy target directory is <RepoRoot>/deploy, which is excluded by .gitignore.
     Console output is logged to temp/deploy.log.
@@ -178,9 +178,8 @@ function Publish-ExecutableProject {
 
 $mcpProjectPath = Join-Path $repoRoot 'src/AiNetCodeNavigator/AiNetCodeNavigator.csproj'
 $exportProjectPath = Join-Path $repoRoot 'src/AiNetCodeNavigator.AssemblyExport/AiNetCodeNavigator.AssemblyExport.csproj'
-$exportOutputDir = Join-Path $resolvedOutputDir 'assembly-export'
 $exePath = Publish-ExecutableProject -ProjectPath $mcpProjectPath -Destination $resolvedOutputDir -ExpectedExecutable 'AiNetCodeNavigator.exe'
-$exportExePath = Publish-ExecutableProject -ProjectPath $exportProjectPath -Destination $exportOutputDir -ExpectedExecutable 'AiNetCodeNavigator.AssemblyExport.exe'
+$exportExePath = Publish-ExecutableProject -ProjectPath $exportProjectPath -Destination $resolvedOutputDir -ExpectedExecutable 'AiNetCodeNavigator.AssemblyExport.exe'
 
 # Ensure hostsettings.json exists in target directory
 $settingsPath = Join-Path $resolvedOutputDir 'hostsettings.json'

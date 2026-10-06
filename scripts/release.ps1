@@ -6,10 +6,11 @@
 .DESCRIPTION
     1. Prueft, ob der Working Tree sauber ist (bricht bei uncommitteten Aenderungen ab)
     2. Synchronisiert mit origin/main und laedt ausstehende lokale Commits vorab hoch
-    3. Liest die Version aus src/AiNetCodeNavigator/AiNetCodeNavigator.csproj
-    4. Erhoeht die Patch-Version um 1 (z. B. 1.0.0 -> 1.0.1) bzw. setzt die angegebene Version
+    3. Liest die Version aus src/AiNetCodeNavigator/AiNetCodeNavigator.csproj und
+       src/AiNetCodeNavigator.AssemblyExport/AiNetCodeNavigator.AssemblyExport.csproj
+    4. Erhoeht die Patch-Version um 1 (z. B. 1.0.0 -> 1.0.1) bzw. setzt die angegebene Version fuer beide Projekte
     5. Fuehrt Build, FastTests und IntegrationTests aus
-    6. Committet die Versionsaenderung, pusht main und den Tag vX.Y.Z
+    6. Committet die Versionsaenderung beider Projekte, pusht main und den Tag vX.Y.Z
     7. Der GitHub-Workflow .github/workflows/release.yml erstellt das Release
 
     Git-Authentifizierung erfolgt ueber die lokale Umgebung (Credential Manager / SSH).
@@ -38,7 +39,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$ProjectFile = 'src/AiNetCodeNavigator/AiNetCodeNavigator.csproj'
+$ProjectFiles = @(
+    'src/AiNetCodeNavigator/AiNetCodeNavigator.csproj',
+    'src/AiNetCodeNavigator.AssemblyExport/AiNetCodeNavigator.AssemblyExport.csproj'
+)
 $VersionPattern = '(?<=<Version>)\d+\.\d+\.\d+(?=</Version>)'
 
 function Get-RepoRoot {
@@ -249,12 +253,24 @@ try {
     Assert-CleanWorkingTree
     Sync-PreReleaseCommits -TargetBranch $Branch
 
-    $projectPath = Join-Path $repoRoot $ProjectFile
-    if (-not (Test-Path $projectPath)) {
-        throw "Projektdatei nicht gefunden: $projectPath"
+    foreach ($relPath in $ProjectFiles) {
+        $projPath = Join-Path $repoRoot $relPath
+        if (-not (Test-Path $projPath)) {
+            throw "Projektdatei nicht gefunden: $projPath"
+        }
     }
 
-    $currentVersion = Get-ProjectVersion -ProjectPath $projectPath
+    $primaryProjectPath = Join-Path $repoRoot $ProjectFiles[0]
+    $currentVersion = Get-ProjectVersion -ProjectPath $primaryProjectPath
+
+    foreach ($relPath in $ProjectFiles) {
+        $projPath = Join-Path $repoRoot $relPath
+        $projVer = Get-ProjectVersion -ProjectPath $projPath
+        if ($projVer -ne $currentVersion) {
+            Write-Host "[WARN] Version in '$relPath' ($projVer) weicht von '$($ProjectFiles[0])' ($currentVersion) ab. Wird auf Zielversion synchronisiert." -ForegroundColor Yellow
+        }
+    }
+
     if ($Version) {
         $newVersion = [version]$Version
     }
@@ -274,6 +290,7 @@ try {
     Write-Host "  Neu     : $newVersion"
     Write-Host "  Tag     : $tagName"
     Write-Host "  DryRun  : $DryRun"
+    Write-Host "  Projekte: $($ProjectFiles -join ', ')"
     Write-Host ''
 
     if (git tag --list $tagName) {
@@ -285,16 +302,30 @@ try {
         throw "Tag $tagName existiert bereits auf Remote 'origin'."
     }
 
-    if (-not $DryRun) {
-        Invoke-DotNetValidation -RepoRoot $repoRoot
-        Assert-CleanWorkingTree
-        if ($newVersion -ne $currentVersion) {
-            Set-ProjectVersion -ProjectPath $projectPath -NewVersion $newVersion
+    $needsVersionUpdate = $false
+    foreach ($relPath in $ProjectFiles) {
+        $projPath = Join-Path $repoRoot $relPath
+        if ((Get-ProjectVersion -ProjectPath $projPath) -ne $newVersion) {
+            $needsVersionUpdate = $true
+            break
         }
     }
 
-    if ($newVersion -ne $currentVersion) {
-        Invoke-GitStep "git add $ProjectFile" { git add -- $ProjectFile }
+    if (-not $DryRun) {
+        Invoke-DotNetValidation -RepoRoot $repoRoot
+        Assert-CleanWorkingTree
+        if ($needsVersionUpdate) {
+            foreach ($relPath in $ProjectFiles) {
+                $projPath = Join-Path $repoRoot $relPath
+                Set-ProjectVersion -ProjectPath $projPath -NewVersion $newVersion
+            }
+        }
+    }
+
+    if ($needsVersionUpdate) {
+        foreach ($relPath in $ProjectFiles) {
+            Invoke-GitStep "git add $relPath" { git add -- $relPath }
+        }
         Invoke-GitStep "git commit -m `"$commitMessage`"" { git commit -m $commitMessage }
     }
     Invoke-GitStep "git push origin $Branch" { git push origin $Branch }
