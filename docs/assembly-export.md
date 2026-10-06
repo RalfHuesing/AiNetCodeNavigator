@@ -6,6 +6,8 @@
 AiNetCodeNavigator.AssemblyExport.exe "C:\Dump" "C:\Vendor\*.dll" "C:\Other\Product.Core.dll"
 ```
 
+The local deployment places the executable and its dependencies under `assembly-export/` beside the MCP server package. The self-contained Windows release archive uses the same subdirectory. This CLI is invoked directly; MCP client process entries and `hostsettings.json` configure the server only. When an agent needs whole readable source for selected DLLs, it should run this command and check `last-run.json` and the selected DLL's `export-manifest.json` before treating output as current or complete.
+
 The positional parser requires at least two arguments. Preflight expands `*` and `?` only in the final filename segment; directory wildcards and recursive `**` are unsupported. Every pattern must match managed DLL files. Paths are normalized, deduplicated and sorted. `--help` prints usage and exits with status `0`; argument or preflight failures return `2`. A completed run returns `0`; a per-DLL export failure or interrupted run returns `1`. Missing dependencies are reported as a partial limitation and do not alone make the exit status nonzero.
 
 ## Input planning and ownership

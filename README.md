@@ -1,8 +1,8 @@
-# AiNetCodeNavigator — MCP server for C# code navigation and .NET assembly inspection
+# AiNetCodeNavigator — C# navigation and assembly export tools
 
-AiNetCodeNavigator gives AI coding agents read-only navigation tools for **C# source code and compiled .NET assemblies** through the **Model Context Protocol (MCP)**. Find symbols, read method bodies, trace callers and references, inspect type hierarchies, and explore decompiled libraries without editing the analyzed code.
+AiNetCodeNavigator includes a read-only MCP server for **C# source code and compiled .NET assemblies** and a separate offline command that exports selected managed DLLs as searchable C# project trees. The MCP server finds symbols, reads method bodies, traces callers and references, inspects type hierarchies, and explores decompiled libraries without editing analyzed code.
 
-The server runs locally over stdio. Source navigation uses Roslyn; assembly navigation uses the ILSpy decompiler (`ICSharpCode.Decompiler`). Targets are existing `.sln` / `.slnx` solutions or managed `.dll` / `.exe` files.
+The MCP server runs locally over stdio. Source navigation uses Roslyn; assembly navigation and export use the ILSpy decompiler (`ICSharpCode.Decompiler`). Navigation targets are existing `.sln` / `.slnx` solutions or managed `.dll` / `.exe` files. The offline exporter writes only to its explicitly selected, marked dump directory.
 
 ## What you can do
 
@@ -32,7 +32,15 @@ To build from source instead, use PowerShell 7 or later and the .NET 10 SDK spec
 pwsh -File ./scripts/deploy.ps1 -SkipTests
 ```
 
-This builds the solution and publishes the executable and its dependencies to `deploy/`, skipping the test suite. Keep the published files together. This local deployment is framework-dependent and requires the .NET 10 runtime. See [setup requirements](docs/setup/README.md) for both installation options.
+This builds the solution and publishes the MCP executable at `deploy/` and the exporter with its dependencies under `deploy/assembly-export/`, skipping the test suite. Keep each executable with its published dependencies. These local deployments are framework-dependent and require the .NET 10 runtime. See [setup requirements](docs/setup/README.md).
+
+To create a source dump from explicit DLLs, run the exporter with an output directory followed by one or more DLL paths or quoted filename patterns:
+
+```powershell
+& .\deploy\assembly-export\AiNetCodeNavigator.AssemblyExport.exe "C:\Dump" "C:\Vendor\*.dll"
+```
+
+The output root is owned by the exporter and must contain its marker before later runs can replace selected DLL child directories. Review `last-run.json` and each child `export-manifest.json` before using a dump. See the [assembly export guide](docs/assembly-export.md) for filtering, dependency closure, cleanup, and completeness details.
 
 ### 2. Configure your MCP client
 
@@ -64,7 +72,7 @@ Pass the exact reference returned by `find_symbol`. For a compiled library, star
 
 ## Scope and limitations
 
-- Navigation is read-only. The server writes its own logs, caches, and temporary analysis files; navigation tools do not edit analyzed source files or binaries. Source loading uses MSBuild design-time evaluation, which is not a sandbox for arbitrary custom build targets.
+- MCP navigation is read-only. The server writes its own logs, caches, and temporary analysis files; navigation tools do not edit analyzed source files or binaries. The separate offline exporter writes generated source only beneath its validated, marked output directory. Source loading uses MSBuild design-time evaluation, which is not a sandbox for arbitrary custom build targets.
 - The product focuses on C# navigation. Linting, compiler diagnostics, code-quality scoring, and automatic refactoring are outside its scope.
 - Assembly navigation requires managed .NET binaries with IL. Native binaries are unsupported; the server does not execute analyzed assemblies.
 - Test context identifies static test candidates, including heuristic name matches. It does not measure test coverage.

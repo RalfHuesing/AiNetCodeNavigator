@@ -15,6 +15,7 @@ The binding product references are these current-state pages and local Navigator
 - [MCP Traffic Capture](mcp-traffic-capture.md): Optional raw tool-call frames, session summaries, measurements, and storage limits.
 - [MCP Tools](tools/README.md): The 12 navigation tools, targets, wire arguments, defaults, paging, recovery, and usage examples.
 - [Setup](setup/README.md): Windows executable, stdio process configuration, host settings, and current Claude Desktop, Cursor, and Antigravity setup references.
+- [Assembly export CLI](assembly-export.md): Explicit DLL selection, dependency closure, marked dump ownership, generated project layout, and run-completeness reports.
 - [MCP Navigation Registration Status](navigation/mcp-registration-status.md): Current transport-free handler contracts and the boundary around retained end-to-end tests.
 
 ## Navigation

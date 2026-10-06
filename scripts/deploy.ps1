@@ -1,20 +1,21 @@
 #requires -Version 7.0
 <#
 .SYNOPSIS
-    Builds the solution, executes automated tests, and deploys the AiNetCodeNavigator
-    MCP server executable and dependencies to a testable output directory.
+    Builds the solution, executes automated tests, and deploys the MCP server and
+    assembly export executables to a testable output directory.
 
 .DESCRIPTION
-    Executes a complete local release/deployment pipeline for the MCP server:
+    Executes a complete local release/deployment pipeline for both executables:
     1. Builds the solution (AiNetCodeNavigator.slnx).
     2. Runs tests (routine solution suite via scripts/test.ps1, or scripts/test-fast.ps1 if -FastTestsOnly).
-    3. Publishes the MCP server executable (AiNetCodeNavigator.csproj) to the specified directory.
+    3. Publishes the MCP server to the specified directory root.
+    4. Publishes the assembly export CLI and its dependencies to an assembly-export subdirectory.
     
     The default deploy target directory is <RepoRoot>/deploy, which is excluded by .gitignore.
     Console output is logged to temp/deploy.log.
 
 .PARAMETER OutputDir
-    Destination path for the deployed MCP server. Defaults to <RepoRoot>/deploy.
+    Destination path for both deployed executables. Defaults to <RepoRoot>/deploy.
 
 .PARAMETER Configuration
     Build and publish configuration. Defaults to 'Release'.
@@ -134,10 +135,10 @@ if ($SkipTests) {
 }
 
 # -----------------------------------------------------------------------------
-# STEP 3: Publish to Target Directory
+# STEP 3: Publish both executables
 # -----------------------------------------------------------------------------
-Write-Host "`n[STEP 3/3] Deploying MCP server to $resolvedOutputDir..." -ForegroundColor Cyan
-"[INFO] Publishing MCP server project to $resolvedOutputDir..." | Out-File -FilePath $logFile -Append -Encoding utf8
+Write-Host "`n[STEP 3/3] Deploying executables to $resolvedOutputDir..." -ForegroundColor Cyan
+"[INFO] Publishing MCP server and assembly export projects to $resolvedOutputDir..." | Out-File -FilePath $logFile -Append -Encoding utf8
 
 if ($Clean -and (Test-Path $resolvedOutputDir)) {
     Write-Host "[INFO] Cleaning existing output directory (-Clean specified)..." -ForegroundColor Yellow
@@ -148,31 +149,38 @@ if (-not (Test-Path $resolvedOutputDir)) {
     New-Item -ItemType Directory -Path $resolvedOutputDir -Force | Out-Null
 }
 
+function Publish-ExecutableProject {
+    param(
+        [string]$ProjectPath,
+        [string]$Destination,
+        [string]$ExpectedExecutable
+    )
+
+    $publishArgs = @('publish', $ProjectPath, '-c', $Configuration, '-o', $Destination)
+    if ($AdditionalPublishArgs) {
+        $publishArgs += $AdditionalPublishArgs
+    }
+
+    & dotnet @publishArgs 2>&1 | Tee-Object -FilePath $logFile -Append | Out-Host
+    $publishExitCode = $LASTEXITCODE
+    if ($publishExitCode -ne 0) {
+        Write-Host "[ERROR] Publish failed with exit code $publishExitCode for $ProjectPath. Log: $logFile" -ForegroundColor Red
+        exit $publishExitCode
+    }
+
+    $executablePath = Join-Path $Destination $ExpectedExecutable
+    if (-not (Test-Path -LiteralPath $executablePath -PathType Leaf)) {
+        Write-Host "[ERROR] Expected executable not found at: $executablePath" -ForegroundColor Red
+        exit 1
+    }
+    return $executablePath
+}
+
 $mcpProjectPath = Join-Path $repoRoot 'src/AiNetCodeNavigator/AiNetCodeNavigator.csproj'
-$publishArgs = @(
-    'publish',
-    $mcpProjectPath,
-    '-c', $Configuration,
-    '-o', $resolvedOutputDir
-)
-if ($AdditionalPublishArgs) {
-    $publishArgs += $AdditionalPublishArgs
-}
-
-& dotnet @publishArgs 2>&1 | Tee-Object -FilePath $logFile -Append
-$publishExitCode = $LASTEXITCODE
-
-if ($publishExitCode -ne 0) {
-    Write-Host "[ERROR] Publish failed with exit code $publishExitCode. Log: $logFile" -ForegroundColor Red
-    exit $publishExitCode
-}
-
-# Verify output executable exists
-$exePath = Join-Path $resolvedOutputDir 'AiNetCodeNavigator.exe'
-if (-not (Test-Path $exePath)) {
-    Write-Host "[ERROR] Expected server executable not found at: $exePath" -ForegroundColor Red
-    exit 1
-}
+$exportProjectPath = Join-Path $repoRoot 'src/AiNetCodeNavigator.AssemblyExport/AiNetCodeNavigator.AssemblyExport.csproj'
+$exportOutputDir = Join-Path $resolvedOutputDir 'assembly-export'
+$exePath = Publish-ExecutableProject -ProjectPath $mcpProjectPath -Destination $resolvedOutputDir -ExpectedExecutable 'AiNetCodeNavigator.exe'
+$exportExePath = Publish-ExecutableProject -ProjectPath $exportProjectPath -Destination $exportOutputDir -ExpectedExecutable 'AiNetCodeNavigator.AssemblyExport.exe'
 
 # Ensure hostsettings.json exists in target directory
 $settingsPath = Join-Path $resolvedOutputDir 'hostsettings.json'
@@ -184,9 +192,10 @@ $escapedExePath = $exePath.Replace('\', '\\')
 $escapedSettingsPath = $settingsPath.Replace('\', '\\')
 
 Write-Host "`n========================================================" -ForegroundColor Green
-Write-Host "[SUCCESS] MCP Server deployed successfully!" -ForegroundColor Green
+Write-Host "[SUCCESS] AiNetCodeNavigator executables deployed successfully!" -ForegroundColor Green
 Write-Host "========================================================" -ForegroundColor Green
 Write-Host "Executable: $exePath" -ForegroundColor Cyan
+Write-Host "Exporter:   $exportExePath" -ForegroundColor Cyan
 Write-Host "Settings:   $settingsPath" -ForegroundColor Cyan
 Write-Host "Log file:   $logFile" -ForegroundColor DarkGray
 Write-Host "`nYou can now test the server directly with your MCP client:" -ForegroundColor Yellow
@@ -223,5 +232,7 @@ Configuration for Antigravity IDE (.agents/mcp_config.json or ~/.gemini/config/m
   }
 }
 "@ -ForegroundColor Gray
+
+Write-Host "`nRun the offline exporter separately with:`n  `"$exportExePath`" <output-directory> <source-dll-or-pattern> [<source-dll-or-pattern> ...]" -ForegroundColor Yellow
 
 exit 0

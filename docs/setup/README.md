@@ -1,16 +1,26 @@
 # Setup
 
-AiNetCodeNavigator is a local MCP server that uses standard input/output (stdio). Use a Windows `AiNetCodeNavigator.exe` built or published from this repository. Building requires the .NET 10 SDK version in [`global.json`](../../global.json) (10.0.203 with latest-feature roll-forward); a framework-dependent executable also needs the .NET 10 runtime on the host. The source build command is `pwsh -File ./scripts/build.ps1`; deploy the executable and its dependencies to a testable directory with `pwsh -File ./scripts/deploy.ps1`.
+AiNetCodeNavigator provides a local MCP server that uses standard input/output (stdio) and a separate offline assembly export command. Build both with the .NET 10 SDK version in [`global.json`](../../global.json) (10.0.203 with latest-feature roll-forward). Framework-dependent local deployments require the .NET 10 runtime on the host. Use `pwsh -File ./scripts/build.ps1` to build the solution and `pwsh -File ./scripts/deploy.ps1` to publish both executables to a testable directory.
 
 ## Windows release package
 
-The [release workflow](../../.github/workflows/release.yml) publishes a self-contained Windows x64 build as `AiNetCodeNavigator-win-x64.zip`, including the .NET runtime, `hostsettings.json`, README, and license. Check [GitHub Releases](https://github.com/RalfHuesing/AiNetCodeNavigator/releases) for published packages. Extract the entire archive and keep the executable and its dependencies together. Source-solution loading uses installed MSBuild/.NET SDK tooling appropriate to the target solution, even with a self-contained server package.
+The [release workflow](../../.github/workflows/release.yml) publishes both executables in a self-contained Windows x64 package, `AiNetCodeNavigator-win-x64.zip`, including the .NET runtime, `hostsettings.json`, README, and license. The MCP server and its dependencies are at the archive root; the exporter and its dependencies are under `assembly-export/`. Check [GitHub Releases](https://github.com/RalfHuesing/AiNetCodeNavigator/releases) for published packages. Extract the entire archive and keep each executable with its dependencies. Source-solution loading uses installed MSBuild/.NET SDK tooling appropriate to the target solution, even with a self-contained server package.
 
 The included `hostsettings.json` is used only when selected with `--config`; placing it beside the executable does not change the default settings-file path described below.
 
+## Offline assembly export
+
+The local deployment script publishes `AiNetCodeNavigator.AssemblyExport.exe` and its dependencies to `<deployment-directory>\assembly-export\`. In the release archive, the same files are under `assembly-export/`. Invoke this executable directly with an output directory and one or more managed DLL paths or quoted filename patterns:
+
+```powershell
+& "C:\Tools\AiNetCodeNavigator\assembly-export\AiNetCodeNavigator.AssemblyExport.exe" "C:\Dump" "C:\Vendor\*.dll"
+```
+
+The exporter has no MCP process configuration and does not read `hostsettings.json`. It writes the dump only to the explicit, marked output directory. Read [Assembly export CLI](../assembly-export.md) for glob limits, dependency handling, cleanup ownership, output structure, and how to check run completeness.
+
 ## Local process configuration
 
-Clients start the executable as a child process. Set `command` to the executable's absolute path, and pass each CLI argument as its own string in `args`. The server reads MCP JSON-RPC from standard input and writes only protocol messages to standard output. Startup/configuration errors go to standard error. Logging goes to daily rolling files in `<exe-directory>\logs` by default; error and fatal log events are also written to standard error. Set `AINET_CODE_NAVIGATOR_LOG_DIRECTORY` in the server process environment to select another log directory.
+MCP clients start the server executable as a child process. Set `command` to its absolute path, and pass each server argument as its own string in `args`. The server reads MCP JSON-RPC from standard input and writes only protocol messages to standard output. Startup/configuration errors go to standard error. Logging goes to daily rolling files in `<exe-directory>\logs` by default; error and fatal log events are also written to standard error. Set `AINET_CODE_NAVIGATOR_LOG_DIRECTORY` in the server process environment to select another log directory. These process settings apply to the MCP server only.
 
 The optional server argument `--config <absolute-path>` selects a host-settings JSON file. If omitted, the default is `%LOCALAPPDATA%\AiNetCodeNavigator\hostsettings.json`; if that default file does not exist, startup uses built-in `Information` logging with traffic capture disabled. The supplied [hostsettings.json](../../hostsettings.json) includes every supported option:
 

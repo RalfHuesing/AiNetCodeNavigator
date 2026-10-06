@@ -11,7 +11,7 @@ The solution `AiNetCodeNavigator.slnx` contains seven projects:
 
 - `src/AiNetCodeNavigator.Core/`: Core library for Roslyn workspace resolution, AST exploration, symbol queries, call hierarchies, decompilation, and caching.
 - `src/AiNetCodeNavigator/`: MCP server host executable and Serilog logging bootstrap.
-- `src/AiNetCodeNavigator.AssemblyExport/`: Separate offline assembly-export command. Its current CLI validates the positional argument count and accepts `--help`; export execution is not yet implemented.
+- `src/AiNetCodeNavigator.AssemblyExport/`: Separate offline command that writes a marked, searchable C# dump for explicitly selected DLLs and their resolved non-system dependency closure.
 - `tests/AiNetCodeNavigator.TestKit/`: Shared test support infrastructure, sample code fixtures, and workspace builders.
 - `tests/AiNetCodeNavigator.FastTests/`: Fast unit and component test suite. It retains one E2E MCP SDK stream fixture, which performs a protocol handshake and remains excluded from routine gates.
 - `tests/AiNetCodeNavigator.IntegrationTests/`: Workspace-loading and transport-free source/assembly handler contract tests, including budgets, recovery, domain paging, and owner references. Bounded traffic-capture component tests exercise the SDK host with in-memory streams and fixture tools. Retained complete stdio/client product flows are categorized `E2EIntegration` and excluded from current completion gates.
@@ -81,7 +81,7 @@ pwsh -File ./scripts/build.ps1
 
 ## Deployment
 
-Deploy the MCP server executable and dependencies to a testable output directory using the PowerShell deployment script:
+Deploy both executables and their dependencies to a testable output directory using the PowerShell deployment script:
 
 ```powershell
 # Default: builds solution (Release), runs routine tests, and deploys to <RepoRoot>/deploy
@@ -92,12 +92,19 @@ pwsh -File ./scripts/deploy.ps1 -FastTestsOnly
 
 # Custom output directory
 pwsh -File ./scripts/deploy.ps1 -OutputDir C:\Tools\AiNetCodeNavigator
+
+# Verify a fresh local package without running the test suites
+$deployCheck = Join-Path $env:TEMP 'AiNetCodeNavigator-deploy-check'
+pwsh -File ./scripts/deploy.ps1 -OutputDir $deployCheck -SkipTests -Clean
+& (Join-Path $deployCheck 'assembly-export/AiNetCodeNavigator.AssemblyExport.exe') --help
 ```
 
-- Builds the solution (`AiNetCodeNavigator.slnx`), runs tests, and publishes `src/AiNetCodeNavigator/` via `dotnet publish`.
+- Builds the solution (`AiNetCodeNavigator.slnx`), runs tests, and publishes `src/AiNetCodeNavigator/` to the output root and `src/AiNetCodeNavigator.AssemblyExport/` to `assembly-export/` using `dotnet publish`.
 - The default destination directory `<RepoRoot>/deploy` is ignored in `.gitignore`.
-- Copies the repository's complete default `hostsettings.json` if the destination has no settings file, preserves existing settings, and outputs ready-to-copy JSON configuration snippets for MCP clients (Cursor, Claude Desktop, Antigravity IDE).
+- Verifies both executable files after publishing. `hostsettings.json` and the printed ready-to-copy process snippets apply only to the MCP server; the exporter is run directly with its positional arguments. `-Clean` removes all existing contents of the selected deployment directory before publishing.
 - Console output is streamed directly to `temp/deploy.log`.
+
+The release workflow publishes the same two-project layout into the self-contained Windows x64 ZIP and checks for both executables. It also runs the exporter's `--help` command before creating the archive. To verify the protocol boundary locally, use the existing MCP transport integration coverage; its complete child-process flows are categorized `E2EIntegration` and remain excluded from official routine test scripts.
 
 ## Running Tests
 

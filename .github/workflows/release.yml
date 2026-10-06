@@ -21,7 +21,7 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Publish
+      - name: Publish MCP server
         run: >
           dotnet publish src/AiNetCodeNavigator/AiNetCodeNavigator.csproj
           -c Release
@@ -30,6 +30,32 @@ jobs:
           -p:PublishSingleFile=false
           -p:PublishTrimmed=false
           -o ./publish
+
+      - name: Publish assembly export CLI
+        run: >
+          dotnet publish src/AiNetCodeNavigator.AssemblyExport/AiNetCodeNavigator.AssemblyExport.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=false
+          -p:PublishTrimmed=false
+          -o ./publish/assembly-export
+
+      - name: Verify published executables
+        shell: pwsh
+        run: |
+          $mcpExecutable = "./publish/AiNetCodeNavigator.exe"
+          $exportExecutable = "./publish/assembly-export/AiNetCodeNavigator.AssemblyExport.exe"
+          if (-not (Test-Path -LiteralPath $mcpExecutable -PathType Leaf)) {
+            throw "Published MCP executable is missing: $mcpExecutable"
+          }
+          if (-not (Test-Path -LiteralPath $exportExecutable -PathType Leaf)) {
+            throw "Published assembly export executable is missing: $exportExecutable"
+          }
+          & $exportExecutable --help
+          if ($LASTEXITCODE -ne 0) {
+            throw "Assembly export CLI help failed with exit code $LASTEXITCODE."
+          }
 
       - name: Prepare Release Archive
         shell: pwsh
