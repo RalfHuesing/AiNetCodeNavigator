@@ -71,7 +71,7 @@ internal sealed class AssemblyDecompilationAdapter
                 AssemblyDiagnosticSeverity.Error));
             return new DecompilationResult([], diagnostics.ToList(), false);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException or MetadataFileNotSupportedException or InvalidOperationException or ArgumentException or InvalidDataException or DecompilerException)
+        catch (Exception ex) when (IsRecoverableFailure(ex))
         {
             diagnostics.Add(new AssemblySessionDiagnostic(
                 AssemblyDiagnosticCodes.For(nameof(AssemblyDecompilationAdapter), nameof(AssemblyDecompilationOptions)),
@@ -86,6 +86,13 @@ internal sealed class AssemblyDecompilationAdapter
             if (ownsStagingDirectory) AssemblyCacheCleanup.DeleteDirectory(stagingDirectory);
         }
     }
+
+    internal static bool IsRecoverableFailure(Exception exception) =>
+        exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException
+            or AccessViolationException or AppDomainUnloadedException or ThreadAbortException)
+        && (exception is AggregateException aggregate
+            ? aggregate.InnerExceptions.All(IsRecoverableFailure)
+            : exception.InnerException is null || IsRecoverableFailure(exception.InnerException));
 
     private static DecompilationResult DecompileProject(
         DecompilationRequest request,

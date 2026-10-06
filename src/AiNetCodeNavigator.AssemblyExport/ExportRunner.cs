@@ -49,6 +49,7 @@ internal static class ExportRunner
                 if (!result.IsComplete || result.ProjectRelativePath is null)
                     throw new InvalidDataException(string.Join("; ", result.Diagnostics.Select(diagnostic => diagnostic.Message)));
                 owner.ValidateStagingPath(stage);
+                AssemblyProjectExporter.ValidateArtifacts(stage, result.ProjectRelativePath, result.SourceRelativePaths);
                 WriteSolution(stage, result.ProjectRelativePath);
                 var automaticChildren = plan.Assemblies.Where(candidate => !candidate.IsExplicit
                     && item.DecompilationReferences.Any(edge => edge.ResolvedPath is not null
@@ -73,7 +74,7 @@ internal static class ExportRunner
                 items[index] = items[index] with { State = "failed", Error = "Export interrupted." };
                 interrupted = true;
             }
-            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or BadImageFormatException)
+            catch (Exception ex) when (AssemblyProjectExporter.IsRecoverableFailure(ex))
             {
                 items[index] = items[index] with { State = "failed", Error = ex.Message };
                 await errors.WriteLineAsync($"Failure: {item.SourcePath}: {ex.Message}").ConfigureAwait(false);
@@ -81,7 +82,7 @@ internal static class ExportRunner
             finally
             {
                 try { owner.DeleteStaging(stage); }
-                catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException)
+                catch (Exception ex) when (AssemblyProjectExporter.IsRecoverableFailure(ex))
                 {
                     items[index] = items[index] with { State = "failed", Error = $"Staging cleanup failed: {ex.Message}" };
                     await errors.WriteLineAsync(items[index].Error).ConfigureAwait(false);

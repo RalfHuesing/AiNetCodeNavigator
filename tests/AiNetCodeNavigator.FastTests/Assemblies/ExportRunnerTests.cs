@@ -8,6 +8,54 @@ namespace AiNetCodeNavigator.FastTests.Assemblies;
 public sealed class ExportRunnerTests
 {
     [Fact]
+    public async Task Runner_NonfatalDecompilerExceptionFailsOnlyItsChild()
+    {
+        using var temp = TestTempDirectory.Create("export-unsupported-child-");
+        var failed = AssemblyTestHelper.EmitAssembly(temp, "AFails", "public class Unsupported { }");
+        var successful = AssemblyTestHelper.EmitAssembly(temp, "ZWorks", "public class Independent { }");
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [failed, successful]));
+        new ExportDumpOwnership(plan).CreateOrValidateRoot();
+        var failedChild = plan.Assemblies.Single(item => item.SourcePath == failed).ChildPath;
+        Directory.CreateDirectory(failedChild);
+        await File.WriteAllTextAsync(Path.Combine(failedChild, "stale.cs"), "stale");
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+        Assert.Equal(1, await ExportRunner.RunAsync(plan, output, errors, export: (item, stage, token) =>
+            item.SourcePath == failed ? Task.FromException<AssemblyProjectExportResult>(new NotSupportedException("Unsupported decompiler construct."))
+                : AssemblyProjectExporter.ExportAsync(item.SourcePath, stage, item.Identity, item.ContentHash, item.DecompilationReferences, token)));
+        Assert.False(Directory.Exists(failedChild));
+        Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, "ZWorks.dll", "export-manifest.json")));
+        using var run = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.json")));
+        Assert.Equal("failed", run.RootElement.GetProperty("completionState").GetString());
+        Assert.Equal("AFails.dll", Assert.Single(run.RootElement.GetProperty("failures").EnumerateArray()).GetProperty("childName").GetString());
+        Assert.Empty(Directory.GetDirectories(plan.OutputDirectory, ".assembly-export-stage-*"));
+    }
+
+    [Theory]
+    [InlineData("../outside.cs")]
+    [InlineData("missing.cs")]
+    [InlineData("folder.cs")]
+    [InlineData("absolute")]
+    public async Task Runner_RejectsInvalidGeneratedSourceBeforePublishing(string relativeSource)
+    {
+        using var temp = TestTempDirectory.Create("export-invalid-source-");
+        var source = AssemblyTestHelper.EmitAssembly(temp, "Root", "public class Root { }");
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [source]));
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+        Assert.Equal(1, await ExportRunner.RunAsync(plan, output, errors, export: async (item, stage, _) =>
+        {
+            await File.WriteAllTextAsync(Path.Combine(stage, "Root.csproj"), "<Project />");
+            await File.WriteAllTextAsync(Path.GetFullPath(Path.Combine(stage, "../outside.cs")), "public class Outside { }");
+            if (relativeSource == "absolute") relativeSource = Path.GetFullPath(Path.Combine(stage, "../outside.cs"));
+            Directory.CreateDirectory(Path.Combine(stage, "folder.cs"));
+            return new(true, "Root.csproj", [relativeSource], item.ContentHash, "test", []);
+        }));
+        Assert.False(Directory.Exists(plan.Assemblies[0].ChildPath));
+        Assert.Empty(Directory.GetDirectories(plan.OutputDirectory, ".assembly-export-stage-*"));
+    }
+
+    [Fact]
     public async Task Runner_ExportsTemporaryGacDependencyWithProvenanceAndInputHashes()
     {
         using var temp = TestTempDirectory.Create("export-gac-project-");

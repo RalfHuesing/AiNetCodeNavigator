@@ -48,21 +48,50 @@ public static class AssemblyProjectExporter
                     || CSharpSyntaxTree.ParseText(item.CSharpSource).GetDiagnostics(cancellationToken)
                         .Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)))
                 throw new InvalidDataException("Generated project or C# documents did not pass export validation.");
+            var projectPath = Path.GetRelativePath(stage, result.ProjectFilePath);
+            var sourcePaths = result.Documents.Select(item => Path.GetRelativePath(stage, item.GeneratedPath)).ToArray();
+            ValidateArtifacts(stage, projectPath, sourcePaths);
             using (var reader = XmlReader.Create(result.ProjectFilePath, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null }))
             {
                 var project = XDocument.Load(reader);
                 if (project.Root?.Name.LocalName != "Project") throw new InvalidDataException("Generated .csproj has no Project root.");
             }
             ValidateSnapshot(source, expectedIdentity, expectedContentHash, provenReferences);
-            return new(true, Path.GetRelativePath(stage, result.ProjectFilePath),
-                result.Documents.Select(item => Path.GetRelativePath(stage, item.GeneratedPath)).ToArray(), fingerprint.Sha256,
+            return new(true, projectPath, sourcePaths, fingerprint.Sha256,
                 AssemblyDecompilationOptions.CurrentDecompilerVersion, diagnostics);
         }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or BadImageFormatException
-                                  or InvalidOperationException or ArgumentException or XmlException)
+        catch (Exception ex) when (IsRecoverableFailure(ex))
         {
             diagnostics.Add(new("assembly-export-validation-failed", ex.Message, true));
             return new(false, null, [], null, AssemblyDecompilationOptions.CurrentDecompilerVersion, diagnostics);
+        }
+    }
+
+    /// <summary>Classifies per-assembly failures without hiding cancellation or fatal process errors.</summary>
+    public static bool IsRecoverableFailure(Exception exception) => AssemblyDecompilationAdapter.IsRecoverableFailure(exception);
+
+    /// <summary>Checks generated relative paths before returning or publishing a staged export.</summary>
+    public static void ValidateArtifacts(string stagingDirectory, string projectRelativePath, IReadOnlyList<string> sourceRelativePaths)
+    {
+        var stage = Path.TrimEndingDirectorySeparator(Path.GetFullPath(stagingDirectory));
+        if (sourceRelativePaths.Count == 0) throw new InvalidDataException("No generated C# source files were reported.");
+        ValidateFile(projectRelativePath, ".csproj");
+        foreach (var source in sourceRelativePaths) ValidateFile(source, ".cs");
+
+        void ValidateFile(string relativePath, string extension)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath) || Path.IsPathRooted(relativePath))
+                throw new InvalidDataException("Generated artifact must have a relative staging path.");
+            var path = Path.GetFullPath(Path.Combine(stage, relativePath));
+            if (!path.StartsWith(stage + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                || !Path.GetExtension(path).Equals(extension, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException($"Generated artifact escaped staging or has an invalid extension: {relativePath}");
+            var attributes = File.GetAttributes(path);
+            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
+                throw new InvalidDataException($"Generated artifact is not a regular file: {relativePath}");
+            for (string? ancestor = Path.GetDirectoryName(path); ancestor is not null; ancestor = Path.GetDirectoryName(ancestor))
+                if ((File.GetAttributes(ancestor) & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException($"Generated artifact has a reparse-point ancestor: {relativePath}");
         }
     }
 

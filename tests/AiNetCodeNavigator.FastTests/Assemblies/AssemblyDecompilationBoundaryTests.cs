@@ -18,6 +18,32 @@ namespace AiNetCodeNavigator.FastTests.Assemblies;
 [Trait("Category", "Component")]
 public sealed class AssemblyDecompilationBoundaryTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DecompileAsync_ConvertsNonfatalExceptionButPropagatesFatalException(bool fatal)
+    {
+        using var temp = TestTempDirectory.Create("assembly-decompile-failure-policy-");
+        var path = AssemblyTestHelper.EmitAssembly(temp, "FailurePolicy", "public class Probe { }");
+        var fingerprint = AssemblyFingerprintCalculator.Create(path);
+        var options = AssemblyDecompilationOptions.Default;
+        var request = new DecompilationRequest(path, fingerprint,
+            AssemblyFingerprintCalculator.CreateCacheKey(fingerprint, options), options, CancellationToken.None);
+        var references = new AssemblyReferenceResolver().Resolve(path);
+        var adapter = new AssemblyDecompilationAdapter((_, _) => Task.FromException<DecompilationResult>(
+            fatal ? new OutOfMemoryException("Fatal probe.") : new NotSupportedException("Unsupported decompiler construct.")));
+        if (fatal)
+        {
+            await Assert.ThrowsAsync<OutOfMemoryException>(() => adapter.DecompileAsync(request, references));
+        }
+        else
+        {
+            var result = await adapter.DecompileAsync(request, references);
+            Assert.False(result.IsComplete);
+            Assert.Contains(result.Diagnostics, item => item.Message.Contains("Unsupported decompiler construct.", StringComparison.Ordinal));
+        }
+    }
+
     [Fact]
     public async Task DecompileAsync_LeavesManagedAssemblyBytesAndTimestampUnchanged()
     {
