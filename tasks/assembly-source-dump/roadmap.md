@@ -10,7 +10,7 @@ The [concept](Konzept.md) is the contract for these ordered implementation slice
   - Extend the existing metadata reference resolver with testable .NET Framework GAC candidate lookup and identity/architecture selection; feed proven paths into whole-project decompilation. Expose a cycle-safe reference closure that identifies any limit or ambiguity instead of silently omitting dependencies.
   - Verify local, runtime and GAC candidates; exact/mismatched versions and tokens; absent GAC; transitive references; traversal boundaries; and affected MCP assembly-navigation behavior using temporary fixtures.
 
-- [ ] **3. Implement safe dump ownership and input planning**
+- [x] **3. Implement safe dump ownership and input planning**
   - Implement path/glob expansion, managed-DLL validation, automatic non-system dependency selection, path deduplication and output-name collision detection before creating or cleaning the dump. Apply the documented Microsoft/System filter, retaining excluded-edge reasons. Create or validate the exact root marker; restrict cleanup to selected direct children and reject reparse-point redirects.
   - Verify all marker, filter, closure, collision, containment, no-match, duplicate and untouched-child cases with filesystem tests.
 

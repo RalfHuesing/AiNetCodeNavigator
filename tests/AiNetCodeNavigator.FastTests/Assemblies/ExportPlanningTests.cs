@@ -1,0 +1,213 @@
+using System.Diagnostics;
+using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
+using System.Reflection.PortableExecutable;
+using System.Text;
+using AiNetCodeNavigator.AssemblyExport;
+using AiNetCodeNavigator.Core.Assemblies;
+
+namespace AiNetCodeNavigator.FastTests.Assemblies;
+
+[Trait("Category", "Component")]
+public sealed class ExportPlanningTests
+{
+    [Fact]
+    public void Expand_SortsDeduplicatesAndExpandsMultipleFinalSegmentPatterns()
+    {
+        using var temp = TestTempDirectory.Create("export-input-");
+        var second = Emit(temp.GetPath("B.dll"), "B");
+        var first = Emit(temp.GetPath("A.dll"), "A");
+        var other = Emit(temp.GetPath("nested/C.dll"), "C");
+        Assert.Equal([first, second, other], ExportPlanner.Expand([temp.GetPath("?.dll"), temp.GetPath("nested/*.dll"), first]));
+        Assert.Throws<ArgumentException>(() => ExportPlanner.Expand([temp.GetPath("*/A.dll")]));
+        Assert.Throws<ArgumentException>(() => ExportPlanner.Expand([temp.GetPath("**.dll")]));
+        Assert.Throws<ArgumentException>(() => ExportPlanner.Expand([temp.GetPath("Absent*.dll")]));
+        File.WriteAllText(temp.GetPath("native.dll"), "not managed");
+        Assert.Throws<BadImageFormatException>(() => ExportPlanner.Expand([temp.GetPath("native.dll")]));
+        File.Copy(first, temp.GetPath("A.exe"));
+        Assert.Throws<ArgumentException>(() => ExportPlanner.Expand([temp.GetPath("A.exe")]));
+    }
+
+    [Fact]
+    public void Plan_FollowsThirdPartyGacAndRuntimeEdgesFiltersSystemAndKeepsExplicitOverride()
+    {
+        using var temp = TestTempDirectory.Create("export-closure-plan-");
+        var root = Emit(temp.GetPath("Root.dll"), "Root", ["Vendor.Local", "Vendor.Gac", "Vendor.Runtime", "System.Hidden"]);
+        var local = Emit(temp.GetPath("Vendor.Local.dll"), "Vendor.Local");
+        var gacRoot = temp.GetPath("gac");
+        var gac = Emit(Path.Combine(gacRoot, "GAC_MSIL/Vendor.Gac/1/Vendor.Gac.dll"), "Vendor.Gac");
+        var runtime = Emit(temp.GetPath("runtime/Vendor.Runtime.dll"), "Vendor.Runtime");
+        var system = Emit(temp.GetPath("System.Hidden.dll"), "System.Hidden", ["Explicit.Dependency"]);
+        var explicitDependency = Emit(temp.GetPath("Explicit.Dependency.dll"), "Explicit.Dependency");
+        AssemblyExportReferenceClosure Resolve(string path, Func<AssemblyReferenceDto, bool> traverse)
+        {
+            var result = new AssemblyReferenceResolver(new AssemblyGacCandidateSource([gacRoot]), [runtime],
+                exportClosure: true, traverseReference: traverse).Resolve(path);
+            return new(result.Identity, result.References, [], result.IsComplete);
+        }
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [root]), Resolve);
+        Assert.Equal(4, plan.Assemblies.Count);
+        Assert.Equal(new[] { root, local, gac, runtime }.Order(StringComparer.OrdinalIgnoreCase),
+            plan.Assemblies.Select(item => item.SourcePath).Order(StringComparer.OrdinalIgnoreCase));
+        var filtered = Assert.Single(plan.Assemblies.Single(item => item.SourcePath == root).FilteredReferences);
+        Assert.Equal("prefix:System.", filtered.Rule);
+        Assert.Equal(system, filtered.Reference.ResolvedPath);
+        Assert.DoesNotContain(plan.Assemblies.SelectMany(item => item.Closure.References), edge => edge.Name == "Explicit.Dependency");
+        var overridden = ExportPlanner.Create(new(temp.GetPath("dump"), [root, system]), Resolve);
+        Assert.Contains(overridden.Assemblies, item => item.SourcePath == system && item.IsExplicit);
+        Assert.Contains(overridden.Assemblies, item => item.SourcePath == explicitDependency);
+        Assert.False(Directory.Exists(plan.OutputDirectory));
+    }
+
+    [Theory]
+    [InlineData("MICROSOFT", "simple-name:Microsoft")]
+    [InlineData("Windows.Native", "prefix:Windows.")]
+    [InlineData("UIAutomationProvider", "simple-name:UIAutomationProvider")]
+    [InlineData("Systematic", null)]
+    [InlineData("MicrosoftVendor", null)]
+    public void Filter_UsesOnlyDocumentedNameRules(string name, string? rule) => Assert.Equal(rule, AutomaticExportFilter.Match(name));
+
+    [Fact]
+    public void Plan_DeduplicatesProvenIdentityRejectsCollisionAndIncompleteClosureBeforeMutation()
+    {
+        using var temp = TestTempDirectory.Create("export-preflight-");
+        var source = Emit(temp.GetPath("one/Shared.dll"), "Shared");
+        var alias = temp.GetPath("Alias.dll");
+        File.Copy(source, alias);
+        var output = temp.GetPath("dump");
+        Assert.Single(ExportPlanner.Create(new(output, [source, alias])).Assemblies);
+        var collision = Emit(temp.GetPath("two/Shared.dll"), "Different");
+        Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(output, [source, collision])));
+        var conflictingIdentity = Emit(temp.GetPath("DifferentBytes.dll"), "Shared");
+        Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(output, [source, conflictingIdentity])));
+        Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(output, [source]),
+            (_, _) => new(new("Shared", "1.0.0.0", "neutral", ""), [], [], false)));
+        Assert.False(Directory.Exists(output));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("AiNetCodeNavigator.AssemblyExport:2\n")]
+    [InlineData("AiNetCodeNavigator.AssemblyExport:1")]
+    public void Plan_RejectsUnownedRootWithoutChangingContent(string? marker)
+    {
+        using var temp = TestTempDirectory.Create("export-unowned-");
+        var source = Emit(temp.GetPath("Root.dll"), "Root");
+        var output = temp.GetPath("dump");
+        Directory.CreateDirectory(output);
+        var sentinel = Path.Combine(output, "keep.txt");
+        File.WriteAllText(sentinel, "keep");
+        if (marker is not null) File.WriteAllText(Path.Combine(output, ExportDumpOwnership.MarkerName), marker);
+        Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(output, [source])));
+        Assert.Equal("keep", File.ReadAllText(sentinel));
+        Assert.Equal(marker, File.Exists(Path.Combine(output, ExportDumpOwnership.MarkerName))
+            ? File.ReadAllText(Path.Combine(output, ExportDumpOwnership.MarkerName)) : null);
+    }
+
+    [Fact]
+    public void Plan_NormalizesIdenticalDependencyAliasesAndRetainsOriginalProvenance()
+    {
+        using var temp = TestTempDirectory.Create("export-alias-");
+        var source = Emit(temp.GetPath("Root.dll"), "Root");
+        var dependency = Emit(temp.GetPath("Dependency.dll"), "Dependency");
+        var alias = temp.GetPath("DependencyAlias.dll");
+        File.Copy(dependency, alias);
+        var original = new[]
+        {
+            new AssemblyReferenceDto("Dependency", "1.0.0.0", "neutral", true, dependency, ResolutionProvenance: "adjacent"),
+            new AssemblyReferenceDto("Dependency", "1.0.0.0", "neutral", true, alias, ResolutionProvenance: "gac"),
+        };
+        AssemblyExportReferenceClosure Resolve(string path, Func<AssemblyReferenceDto, bool> _) =>
+            new(new(path == source ? "Root" : "Dependency", "1.0.0.0", "neutral", ""), path == source ? original : [], [], true);
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [source]), Resolve);
+        Assert.Equal(2, plan.Assemblies.Count);
+        var root = plan.Assemblies.Single(item => item.SourcePath == source);
+        Assert.Equal(new[] { dependency, alias }, root.Closure.References.Select(edge => edge.ResolvedPath));
+        Assert.Single(root.DecompilationReferences.Select(edge => edge.ResolvedPath).Distinct());
+        Assert.Equal(new[] { "adjacent", "gac" }, root.DecompilationReferences.Select(edge => edge.ResolutionProvenance));
+    }
+
+    [Fact]
+    public void Ownership_CreatesExactMarkerDeletesOnlySelectedChildAndRejectsSourceInsideDump()
+    {
+        using var temp = TestTempDirectory.Create("export-owned-");
+        var source = Emit(temp.GetPath("Root.dll"), "Root");
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [source]));
+        var ownership = new ExportDumpOwnership(plan);
+        ownership.CreateOrValidateRoot();
+        Assert.Equal(Encoding.UTF8.GetBytes(ExportDumpOwnership.MarkerContent),
+            File.ReadAllBytes(Path.Combine(plan.OutputDirectory, ExportDumpOwnership.MarkerName)));
+        var child = Assert.Single(plan.Assemblies).ChildPath;
+        Directory.CreateDirectory(Path.Combine(child, "nested"));
+        File.WriteAllText(Path.Combine(child, "nested/old.cs"), "old");
+        var other = Path.Combine(plan.OutputDirectory, "Other.dll");
+        Directory.CreateDirectory(other);
+        File.WriteAllText(Path.Combine(other, "keep.cs"), "keep");
+        Assert.Throws<InvalidOperationException>(() => ownership.DeleteSelectedChild(other));
+        Assert.Throws<InvalidOperationException>(() => ownership.DeleteSelectedChild(temp.GetPath("outside")));
+        ownership.DeleteSelectedChild(child);
+        Assert.False(Directory.Exists(child));
+        Assert.Equal("keep", File.ReadAllText(Path.Combine(other, "keep.cs")));
+        ownership.ValidateStagingPath(Path.Combine(plan.OutputDirectory, ".assembly-export-stage-123"));
+        Assert.Throws<InvalidOperationException>(() => ownership.ValidateStagingPath(other));
+        var inside = Emit(Path.Combine(plan.OutputDirectory, "Inside.dll"), "Inside");
+        Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(plan.OutputDirectory, [inside])));
+    }
+
+    [Fact]
+    public void Ownership_RejectsJunctionDescendantsAndRootBeforeCleanup()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        using var temp = TestTempDirectory.Create("export-reparse-");
+        var source = Emit(temp.GetPath("Root.dll"), "Root");
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [source]));
+        var ownership = new ExportDumpOwnership(plan);
+        ownership.CreateOrValidateRoot();
+        var child = Assert.Single(plan.Assemblies).ChildPath;
+        Directory.CreateDirectory(child);
+        var outside = temp.GetPath("outside");
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(Path.Combine(outside, "keep.txt"), "keep");
+        var link = Path.Combine(child, "redirect");
+        CreateJunction(link, outside);
+        try
+        {
+            Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(plan.OutputDirectory, [source])));
+            Assert.Throws<InvalidOperationException>(() => ownership.DeleteSelectedChild(child));
+            Assert.Equal("keep", File.ReadAllText(Path.Combine(outside, "keep.txt")));
+        }
+        finally { Directory.Delete(link); }
+        var rootLink = temp.GetPath("root-link");
+        CreateJunction(rootLink, plan.OutputDirectory);
+        try { Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(rootLink, [source]))); }
+        finally { Directory.Delete(rootLink); }
+    }
+
+    private static void CreateJunction(string path, string target)
+    {
+        var start = new ProcessStartInfo("cmd.exe") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var argument in new[] { "/c", "mklink", "/J", path, target }) start.ArgumentList.Add(argument);
+        using var process = Process.Start(start)!;
+        process.WaitForExit();
+        Assert.Equal(0, process.ExitCode);
+    }
+
+    private static string Emit(string path, string name, string[]? references = null)
+    {
+        path = Path.GetFullPath(path);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var metadata = new MetadataBuilder();
+        metadata.AddModule(0, metadata.GetOrAddString(name + ".dll"), metadata.GetOrAddGuid(Guid.NewGuid()), default, default);
+        metadata.AddAssembly(metadata.GetOrAddString(name), new Version(1, 0, 0, 0), default, default, (AssemblyFlags)0, AssemblyHashAlgorithm.Sha256);
+        foreach (var reference in references ?? [])
+            metadata.AddAssemblyReference(metadata.GetOrAddString(reference), new Version(1, 0, 0, 0), default, default, (AssemblyFlags)0, default);
+        metadata.AddTypeDefinition(TypeAttributes.NotPublic, default, metadata.GetOrAddString("<Module>"), default,
+            MetadataTokens.FieldDefinitionHandle(1), MetadataTokens.MethodDefinitionHandle(1));
+        var builder = new ManagedPEBuilder(new PEHeaderBuilder(), new MetadataRootBuilder(metadata), new BlobBuilder(), flags: CorFlags.ILOnly);
+        var image = new BlobBuilder();
+        builder.Serialize(image);
+        File.WriteAllBytes(path, image.ToArray());
+        return path;
+    }
+}
