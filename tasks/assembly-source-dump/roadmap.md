@@ -1,6 +1,6 @@
 # Roadmap: assembly source dump
 
-The [concept](Konzept.md) is the contract for these ordered implementation slices. Each completed slice includes its affected automated tests, current-state documentation, required repository verification, diff review and a conventional commit. Check a box only after its acceptance evidence exists.
+These completed slices record the first delivery. The later dump redesign supersedes parts of the [original concept](Konzept.md); the current contract is in the [assembly export guide](../../docs/assembly-export.md).
 
 - [x] **1. Establish the product and CLI boundary**
   - Add the separate executable project and minimum positional command contract to the solution. Update the product rule to permit this explicit offline exporter while keeping MCP navigation read-only and its stdout protocol-only.

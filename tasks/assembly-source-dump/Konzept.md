@@ -1,8 +1,10 @@
 ---
-status: draft
+status: superseded
 ---
 
 # Assembly source dump
+
+The original acceptance notes below describe the first delivery. The later dump redesign supersedes selected-child preservation, root `last-run.json`, and serial export. The implemented contract is maintained in [the assembly export guide](../../docs/assembly-export.md): each marked dump is replaced as a whole, dependencies are planned once through a global queue, exports use bounded parallel stages, and the run writes a short `last-run.log`.
 
 ## Intention
 

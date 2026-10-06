@@ -40,7 +40,7 @@ To create a source dump, run the exporter with an output directory, a source dir
 & .\deploy\AiNetCodeNavigator.AssemblyExport.exe "C:\asm-dump" "C:\Programme" "foo*.exe" "*bar*.dll"
 ```
 
-The output root is owned by the exporter and must contain its marker before later runs can replace selected assembly child directories. Review `last-run.json` and each child `export-manifest.json` before using a dump. See the [assembly export guide](docs/assembly-export.md) for filtering, dependency closure, cleanup, and completeness details.
+The output root is disposable. A later run deletes and rebuilds it only when its exact ownership marker is present. Review `last-run.log` and each child `export-manifest.json` before using a dump. See the [assembly export guide](docs/assembly-export.md) for filtering, dependency closure, cleanup, and completeness details.
 
 ### 2. Configure your MCP client
 

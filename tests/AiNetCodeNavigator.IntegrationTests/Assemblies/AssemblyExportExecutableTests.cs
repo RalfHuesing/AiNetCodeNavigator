@@ -28,10 +28,9 @@ public sealed class AssemblyExportExecutableTests
         Assert.Contains("class Library", ReadSources(Path.Combine(output, "RecursiveLibrary.dll")), StringComparison.Ordinal);
         Assert.Contains("class App", ReadSources(Path.Combine(output, "RecursiveApplication.exe")), StringComparison.Ordinal);
         Assert.False(Directory.Exists(Path.Combine(output, "native.dll")));
-        using var report = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(output, "last-run.json")));
-        Assert.Equal("complete", report.RootElement.GetProperty("completionState").GetString());
-        Assert.Equal(2, report.RootElement.GetProperty("selectedChildren").GetArrayLength());
-        Assert.Equal(sources, Assert.Single(report.RootElement.GetProperty("exactInputs").EnumerateArray()).GetString());
+        Assert.False(File.Exists(Path.Combine(output, "last-run.json")));
+        Assert.True(File.Exists(Path.Combine(output, "last-run.log")));
+        Assert.Equal(2, Directory.GetFiles(output, "export-manifest.json", SearchOption.AllDirectories).Length);
     }
 
     [Fact]
@@ -56,11 +55,8 @@ public sealed class AssemblyExportExecutableTests
         Assert.True(File.Exists(Path.Combine(output, "fooApplication.exe", "export-manifest.json")));
         Assert.True(File.Exists(Path.Combine(output, "mybarLibrary.dll", "export-manifest.json")));
         Assert.False(Directory.Exists(Path.Combine(output, "UnrelatedLibrary.dll")));
-        using var report = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(output, "last-run.json")));
-        Assert.Equal("complete", report.RootElement.GetProperty("completionState").GetString());
-        Assert.Equal(2, report.RootElement.GetProperty("selectedChildren").GetArrayLength());
-        Assert.Equal(new[] { sources, "foo*.exe", "*bar*.dll" }, report.RootElement.GetProperty("exactInputs").EnumerateArray()
-            .Select(item => item.GetString()!).ToArray());
+        Assert.False(File.Exists(Path.Combine(output, "last-run.json")));
+        Assert.Equal(2, Directory.GetFiles(output, "export-manifest.json", SearchOption.AllDirectories).Length);
     }
 
     [Fact]
@@ -70,7 +66,7 @@ public sealed class AssemblyExportExecutableTests
         var dependency = AssemblyTestHelper.EmitAssembly(temp, "CliDependency", "namespace Vendor; public class Api { public int Read() => 42; }");
         var root = AssemblyTestHelper.EmitAssembly(temp, "CliRoot", "public class Root { public Vendor.Api OldMember = new(); }", dependency);
         var output = temp.GetPath("dump");
-        var pattern = temp.GetPath("CliRoot*.dll");
+        var pattern = root;
         var inputBytes = await File.ReadAllBytesAsync(root);
         var dependencyBytes = await File.ReadAllBytesAsync(dependency);
         var first = await RunAsync(output, pattern);
@@ -100,13 +96,10 @@ public sealed class AssemblyExportExecutableTests
         Assert.Contains("NewMember", ReadSources(child), StringComparison.Ordinal);
         Assert.DoesNotContain("OldMember", ReadSources(child), StringComparison.Ordinal);
         Assert.Equal(changedBytes, await File.ReadAllBytesAsync(root));
-        Assert.Equal("keep", await File.ReadAllTextAsync(Path.Combine(untouched, "keep.cs")));
-        using var report = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(output, "last-run.json")));
-        Assert.Equal("complete", report.RootElement.GetProperty("completionState").GetString());
-        Assert.Equal(pattern, Assert.Single(report.RootElement.GetProperty("exactInputs").EnumerateArray()).GetString());
-        Assert.Equal(2, report.RootElement.GetProperty("selectedChildren").GetArrayLength());
-        Assert.Empty(report.RootElement.GetProperty("failures").EnumerateArray());
-        Assert.Contains("exported=2, assemblyFailures=0, planIssues=0", second.Output, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(untouched));
+        Assert.False(File.Exists(Path.Combine(output, "last-run.json")));
+        Assert.Equal(2, Directory.GetFiles(output, "export-manifest.json", SearchOption.AllDirectories).Length);
+        Assert.Contains("exported=2", second.Output, StringComparison.Ordinal);
     }
 
     private static string ReadSources(string path) => string.Join("\n", Directory.GetFiles(path, "*.cs", SearchOption.AllDirectories).Select(File.ReadAllText));

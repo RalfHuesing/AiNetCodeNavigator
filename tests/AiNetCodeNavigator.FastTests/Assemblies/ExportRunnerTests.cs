@@ -14,7 +14,7 @@ public sealed class ExportRunnerTests
         var failed = AssemblyTestHelper.EmitAssembly(temp, "AFails", "public class Unsupported { }");
         var successful = AssemblyTestHelper.EmitAssembly(temp, "ZWorks", "public class Independent { }");
         var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [failed, successful]));
-        new ExportDumpOwnership(plan).CreateOrValidateRoot();
+        new ExportDumpOwnership(plan).ResetRoot();
         var failedChild = plan.Assemblies.Single(item => item.SourcePath == failed).ChildPath;
         Directory.CreateDirectory(failedChild);
         await File.WriteAllTextAsync(Path.Combine(failedChild, "stale.cs"), "stale");
@@ -25,45 +25,124 @@ public sealed class ExportRunnerTests
                 : AssemblyProjectExporter.ExportAsync(item.SourcePath, stage, item.Identity, item.ContentHash, item.DecompilationReferences, token)));
         Assert.False(Directory.Exists(failedChild));
         Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, "ZWorks.dll", "export-manifest.json")));
-        using var run = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.json")));
-        Assert.Equal("failed", run.RootElement.GetProperty("completionState").GetString());
-        Assert.Equal("AFails.dll", Assert.Single(run.RootElement.GetProperty("failures").EnumerateArray()).GetProperty("childName").GetString());
-        Assert.Empty(Directory.GetDirectories(plan.OutputDirectory, ".assembly-export-stage-*"));
+        Assert.False(File.Exists(Path.Combine(plan.OutputDirectory, "last-run.json")));
+        Assert.False(Directory.Exists(Path.Combine(plan.OutputDirectory, ".assembly-export-tmp")));
         var log = await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.log"));
-        Assert.Contains(output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries), line => log.Contains(line, StringComparison.Ordinal));
-        Assert.Contains(errors.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries), line => log.Contains(line, StringComparison.Ordinal));
+        Assert.Contains("FAILURE", log, StringComparison.Ordinal);
+        Assert.Contains("RUN FAILED", log, StringComparison.Ordinal);
+        Assert.Contains("Unsupported decompiler construct", errors.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Runner_ReportsInputAndChildPreflightFailuresAndContinuesIndependentChildren()
+    public async Task Runner_BoundsWorkersAndContinuesAfterOneExportFailure()
+    {
+        using var temp = TestTempDirectory.Create("export-bounded-workers-");
+        var first = AssemblyTestHelper.EmitAssembly(temp, "Alpha", "public class Alpha { }");
+        var second = AssemblyTestHelper.EmitAssembly(temp, "Beta", "public class Beta { }");
+        var third = AssemblyTestHelper.EmitAssembly(temp, "Gamma", "public class Gamma { }");
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [first, second, third]));
+        var pairStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = 0;
+        var active = 0;
+        var maxActive = 0;
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+
+        var exitCode = await ExportRunner.RunAsync(plan, output, errors, export: async (item, stage, token) =>
+        {
+            var current = Interlocked.Increment(ref active);
+            while (true)
+            {
+                var observed = Volatile.Read(ref maxActive);
+                if (current <= observed || Interlocked.CompareExchange(ref maxActive, current, observed) == observed) break;
+            }
+            if (Interlocked.Increment(ref started) >= 2) pairStarted.TrySetResult();
+            try
+            {
+                await pairStarted.Task.WaitAsync(token);
+                if (item.Identity.Name == "Beta") throw new NotSupportedException("Unsupported test construct.");
+                var name = item.Identity.Name;
+                await File.WriteAllTextAsync(Path.Combine(stage, name + ".csproj"), "<Project />", token);
+                await File.WriteAllTextAsync(Path.Combine(stage, name + ".cs"), "public class C { }", token);
+                return new(true, name + ".csproj", [name + ".cs"], item.ContentHash, "test", []);
+            }
+            finally { Interlocked.Decrement(ref active); }
+        }, maxDegreeOfParallelism: 2);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(2, maxActive);
+        Assert.Equal(3, started);
+        Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, "Alpha.dll", "export-manifest.json")));
+        Assert.False(Directory.Exists(Path.Combine(plan.OutputDirectory, "Beta.dll")));
+        Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, "Gamma.dll", "export-manifest.json")));
+        Assert.Contains("Unsupported test construct", errors.ToString(), StringComparison.Ordinal);
+        Assert.False(Directory.Exists(Path.Combine(plan.OutputDirectory, ".assembly-export-tmp")));
+    }
+
+    [Fact]
+    public async Task Runner_ResetsOwnedOutputAndWritesShortLogWithoutRunReport()
+    {
+        using var temp = TestTempDirectory.Create("export-short-log-");
+        var source = AssemblyTestHelper.EmitAssembly(temp, "Entry", "public class Entry { }");
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [source]));
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+        async Task<AssemblyProjectExportResult> Export(PlannedAssembly item, string stage, CancellationToken token)
+        {
+            await File.WriteAllTextAsync(Path.Combine(stage, "Entry.csproj"), "<Project />", token);
+            await File.WriteAllTextAsync(Path.Combine(stage, "Entry.cs"), "public class Entry { }", token);
+            return new(true, "Entry.csproj", ["Entry.cs"], item.ContentHash, "test", []);
+        }
+
+        Assert.Equal(0, await ExportRunner.RunAsync(plan, output, errors, export: Export));
+        var stale = Path.Combine(plan.OutputDirectory, "stale.txt");
+        await File.WriteAllTextAsync(stale, "old content");
+        output.GetStringBuilder().Clear();
+        errors.GetStringBuilder().Clear();
+
+        Assert.Equal(0, await ExportRunner.RunAsync(plan, output, errors, export: Export));
+
+        Assert.False(File.Exists(stale));
+        Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, ExportDumpOwnership.MarkerName)));
+        Assert.False(File.Exists(Path.Combine(plan.OutputDirectory, "last-run.json")));
+        Assert.False(Directory.Exists(Path.Combine(plan.OutputDirectory, ".assembly-export-tmp")));
+        var logLines = (await File.ReadAllLinesAsync(Path.Combine(plan.OutputDirectory, "last-run.log")))
+            .Where(line => !string.IsNullOrWhiteSpace(line)).ToArray();
+        Assert.Equal(4, logLines.Length);
+        Assert.StartsWith("RUN START", logLines[0], StringComparison.Ordinal);
+        Assert.EndsWith("RUN COMPLETE exported=1 partial=0 failed=0", logLines[^1], StringComparison.Ordinal);
+        Assert.Equal(output.ToString(), string.Join(Environment.NewLine, logLines) + Environment.NewLine);
+        Assert.Empty(errors.ToString());
+    }
+
+    [Fact]
+    public async Task Runner_ReportsInputFailureAndReplacesOldChildWhileContinuing()
     {
         using var temp = TestTempDirectory.Create("export-best-effort-preflight-");
         var blocked = AssemblyTestHelper.EmitAssembly(temp, "Blocked", "public class Blocked { }");
         var usable = AssemblyTestHelper.EmitAssembly(temp, "Usable", "public class Usable { }");
         var outputDirectory = temp.GetPath("dump");
-        var plan = ExportPlanner.Create(new(outputDirectory, [blocked, usable, temp.GetPath("missing*.dll")]));
-        new ExportDumpOwnership(plan).CreateOrValidateRoot();
-        await File.WriteAllTextAsync(Path.Combine(outputDirectory, "Blocked.dll"), "owned path conflict");
+        var missingPattern = Path.Combine(temp.GetPath("missing-source"), "missing*.dll");
+        var plan = ExportPlanner.Create(new(outputDirectory, [blocked, usable, missingPattern]));
+        new ExportDumpOwnership(plan).ResetRoot();
+        await File.WriteAllTextAsync(Path.Combine(outputDirectory, "Blocked.dll"), "old content");
         plan = ExportPlanner.Create(plan.Arguments);
         using var output = new StringWriter();
         using var errors = new StringWriter();
 
         var exitCode = await ExportRunner.RunAsync(plan, output, errors, export: async (item, stage, _) =>
         {
-            await File.WriteAllTextAsync(Path.Combine(stage, "Usable.csproj"), "<Project />");
-            await File.WriteAllTextAsync(Path.Combine(stage, "Usable.cs"), "public class Usable { }");
-            return new(true, "Usable.csproj", ["Usable.cs"], item.ContentHash, "test", []);
+            var name = item.Identity.Name;
+            await File.WriteAllTextAsync(Path.Combine(stage, name + ".csproj"), "<Project />");
+            await File.WriteAllTextAsync(Path.Combine(stage, name + ".cs"), "public class Generated { }");
+            return new(true, name + ".csproj", [name + ".cs"], item.ContentHash, "test", []);
         });
 
         Assert.Equal(1, exitCode);
         Assert.True(File.Exists(Path.Combine(outputDirectory, "Usable.dll", "export-manifest.json")));
-        using var report = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(outputDirectory, "last-run.json")));
-        Assert.Equal("failed", report.RootElement.GetProperty("completionState").GetString());
-        Assert.Equal(2, report.RootElement.GetProperty("failures").GetArrayLength());
-        Assert.True(Assert.Single(report.RootElement.GetProperty("selectedChildren").EnumerateArray(), item =>
-            item.GetProperty("childName").GetString() == "Blocked.dll").GetProperty("existingChildPreserved").GetBoolean());
+        Assert.False(File.Exists(Path.Combine(outputDirectory, "last-run.json")));
+        Assert.True(File.Exists(Path.Combine(outputDirectory, "Blocked.dll", "export-manifest.json")));
         Assert.Contains("missing*.dll", errors.ToString(), StringComparison.Ordinal);
-        Assert.Contains("Blocked.dll", errors.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -85,7 +164,7 @@ public sealed class ExportRunnerTests
             return new(new(identity.Name!, identity.Version!.ToString(), "neutral", ""), [], [], true);
         }
         var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [root]), Resolve);
-        var exported = new List<string>();
+        var exported = new System.Collections.Concurrent.ConcurrentBag<string>();
         using var output = new StringWriter();
         using var errors = new StringWriter();
 
@@ -103,13 +182,10 @@ public sealed class ExportRunnerTests
         Assert.Contains(dependency, exported);
         using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "PartialRoot.dll", "export-manifest.json")));
         Assert.Equal("partial", manifest.RootElement.GetProperty("completionState").GetString());
-        Assert.False(manifest.RootElement.GetProperty("referenceClosureComplete").GetBoolean());
-        Assert.Contains("reference-limit", manifest.RootElement.GetProperty("referenceClosureDiagnostics").EnumerateArray()
+        Assert.Contains("reference-limit", manifest.RootElement.GetProperty("diagnostics").GetProperty("referenceClosure").EnumerateArray()
             .Select(item => item.GetProperty("code").GetString()));
-        using var report = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.json")));
-        Assert.Equal("failed", report.RootElement.GetProperty("completionState").GetString());
-        Assert.Contains(report.RootElement.GetProperty("failures").EnumerateArray(), failure =>
-            failure.TryGetProperty("blocksAssembly", out var blocks) && !blocks.GetBoolean());
+        Assert.False(File.Exists(Path.Combine(plan.OutputDirectory, "last-run.json")));
+        Assert.Contains("RUN FAILED", await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.log")), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -128,7 +204,7 @@ public sealed class ExportRunnerTests
             return new(new(identity.Name!, identity.Version!.ToString(), "neutral", ""), references, [], true);
         }
         var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [first, second]), Resolve);
-        var exported = new List<string>();
+        var exported = new System.Collections.Concurrent.ConcurrentBag<string>();
         using var output = new StringWriter();
         using var errors = new StringWriter();
 
@@ -146,9 +222,7 @@ public sealed class ExportRunnerTests
         using var rootManifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(temp.GetPath("dump"), "FirstRoot.dll", "export-manifest.json")));
         var edge = Assert.Single(rootManifest.RootElement.GetProperty("dependencies").EnumerateArray());
         Assert.Equal("SharedVendor", edge.GetProperty("name").GetString());
-        var link = Assert.Single(rootManifest.RootElement.GetProperty("dependencyChildren").EnumerateArray());
-        Assert.Equal(0, link.GetProperty("referenceIndex").GetInt32());
-        Assert.Equal("SharedVendor.dll", link.GetProperty("childRelativePath").GetString());
+        Assert.Equal("SharedVendor.dll", edge.GetProperty("childRelativePath").GetString());
     }
 
     [Fact]
@@ -179,12 +253,10 @@ public sealed class ExportRunnerTests
         Assert.True(File.Exists(Path.Combine(child, "Empty.cs")));
         using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(child, "export-manifest.json")));
         Assert.Equal("partial", manifest.RootElement.GetProperty("completionState").GetString());
-        Assert.Equal(2, manifest.RootElement.GetProperty("diagnostics").GetArrayLength());
-        using var run = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.json")));
-        Assert.Equal("partial", run.RootElement.GetProperty("completionState").GetString());
-        Assert.Equal("partial", Assert.Single(run.RootElement.GetProperty("selectedChildren").EnumerateArray())
-            .GetProperty("state").GetString());
-        Assert.Contains("CS1525", output.ToString(), StringComparison.Ordinal);
+        Assert.Equal(2, manifest.RootElement.GetProperty("diagnostics").GetProperty("decompilation").GetArrayLength());
+        Assert.False(File.Exists(Path.Combine(plan.OutputDirectory, "last-run.json")));
+        Assert.Contains(manifest.RootElement.GetProperty("diagnostics").GetProperty("decompilation")
+            .EnumerateArray(), item => item.GetProperty("message").GetString()!.Contains("CS1525", StringComparison.Ordinal));
         Assert.Empty(errors.ToString());
     }
 
@@ -209,7 +281,7 @@ public sealed class ExportRunnerTests
             return new(true, "Root.csproj", [relativeSource], item.ContentHash, "test", []);
         }));
         Assert.False(Directory.Exists(plan.Assemblies[0].ChildPath));
-        Assert.Empty(Directory.GetDirectories(plan.OutputDirectory, ".assembly-export-stage-*"));
+        Assert.False(Directory.Exists(Path.Combine(plan.OutputDirectory, ".assembly-export-tmp")));
     }
 
     [Fact]
@@ -241,8 +313,9 @@ public sealed class ExportRunnerTests
         Assert.NotEmpty(Directory.GetFiles(dependencyChild, "*.cs", SearchOption.AllDirectories));
         using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(rootChild, "export-manifest.json")));
         Assert.Contains(manifest.RootElement.GetProperty("dependencies").EnumerateArray(), edge =>
-            edge.GetProperty("name").GetString() == "VendorGac" && edge.GetProperty("resolutionProvenance").GetString() == "gac");
-        Assert.Contains("VendorGac.dll", manifest.RootElement.GetProperty("automaticallyExportedChildren").EnumerateArray().Select(item => item.GetString()));
+            edge.GetProperty("name").GetString() == "VendorGac"
+            && edge.GetProperty("resolutionProvenance").GetString() == "gac"
+            && edge.GetProperty("childRelativePath").GetString() == "VendorGac.dll");
         Assert.Equal(rootHash, await File.ReadAllBytesAsync(root));
         Assert.Equal(dependencyHash, await File.ReadAllBytesAsync(installed));
     }
@@ -255,7 +328,7 @@ public sealed class ExportRunnerTests
         var successful = AssemblyTestHelper.EmitAssembly(temp, "ZWorks", "public class Independent { }");
         var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [failed, successful]));
         var owner = new ExportDumpOwnership(plan);
-        owner.CreateOrValidateRoot();
+        owner.ResetRoot();
         var oldChild = plan.Assemblies.Single(item => item.SourcePath == failed).ChildPath;
         Directory.CreateDirectory(oldChild);
         await File.WriteAllTextAsync(Path.Combine(oldChild, "stale.cs"), "stale");
@@ -266,11 +339,8 @@ public sealed class ExportRunnerTests
         Assert.Equal(1, await ExportRunner.RunAsync(plan, output, errors));
         Assert.False(Directory.Exists(oldChild));
         Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, "ZWorks.dll", "export-manifest.json")));
-        Assert.Empty(Directory.GetDirectories(plan.OutputDirectory, ".assembly-export-stage-*"));
-        using var run = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.json")));
-        Assert.Equal("failed", run.RootElement.GetProperty("completionState").GetString());
-        Assert.Equal(2, run.RootElement.GetProperty("selectedChildren").GetArrayLength());
-        Assert.Single(run.RootElement.GetProperty("failures").EnumerateArray());
+        Assert.False(Directory.Exists(Path.Combine(plan.OutputDirectory, ".assembly-export-tmp")));
+        Assert.False(File.Exists(Path.Combine(plan.OutputDirectory, "last-run.json")));
         Assert.Contains("Source content changed", errors.ToString(), StringComparison.Ordinal);
     }
 
@@ -285,23 +355,12 @@ public sealed class ExportRunnerTests
         using var output = new StringWriter();
         using var errors = new StringWriter();
         Assert.Equal(0, await ExportRunner.RunAsync(plan, output, errors));
-        using var run = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.json")));
-        Assert.Equal("partial", run.RootElement.GetProperty("completionState").GetString());
-        Assert.False(run.RootElement.GetProperty("isComplete").GetBoolean());
-        Assert.Contains("MissingVendor", errors.ToString(), StringComparison.Ordinal);
         using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "PartialRoot.dll", "export-manifest.json")));
-        Assert.Contains(manifest.RootElement.GetProperty("unresolvedDependencies").EnumerateArray(), edge => edge.GetProperty("name").GetString() == "MissingVendor");
-    }
-
-    [Fact]
-    public void Planner_RejectsRunReportDirectoryBeforeDeletingSelectedChild()
-    {
-        using var temp = TestTempDirectory.Create("export-report-path-");
-        var source = AssemblyTestHelper.EmitAssembly(temp, "Root", "public class Root { }");
-        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [source]));
-        new ExportDumpOwnership(plan).CreateOrValidateRoot();
-        Directory.CreateDirectory(Path.Combine(plan.OutputDirectory, "last-run.json"));
-        Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(plan.Arguments));
+        Assert.Equal("partial", manifest.RootElement.GetProperty("completionState").GetString());
+        Assert.Contains(manifest.RootElement.GetProperty("dependencies").EnumerateArray(), edge =>
+            edge.GetProperty("name").GetString() == "MissingVendor"
+            && edge.GetProperty("childRelativePath").ValueKind == JsonValueKind.Null
+            && edge.GetProperty("diagnostic").GetString()!.Contains("MissingVendor", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -319,8 +378,8 @@ public sealed class ExportRunnerTests
             return await Task.FromCanceled<AssemblyProjectExportResult>(token);
         }));
         Assert.False(Directory.Exists(plan.Assemblies[0].ChildPath));
-        Assert.Empty(Directory.GetDirectories(plan.OutputDirectory, ".assembly-export-stage-*"));
-        using var report = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.json")));
-        Assert.Equal("interrupted", report.RootElement.GetProperty("completionState").GetString());
+        Assert.False(Directory.Exists(Path.Combine(plan.OutputDirectory, ".assembly-export-tmp")));
+        Assert.False(File.Exists(Path.Combine(plan.OutputDirectory, "last-run.json")));
+        Assert.Contains("INTERRUPTED", await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.log")), StringComparison.Ordinal);
     }
 }

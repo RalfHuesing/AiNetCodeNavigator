@@ -6,47 +6,72 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
 {
     internal const string MarkerName = ".ainetcodenavigator-assembly-export";
     internal const string MarkerContent = "AiNetCodeNavigator.AssemblyExport:1\n";
+    internal const string TemporaryMarkerName = ".ainetcodenavigator-assembly-export-tmp";
+    internal const string TemporaryMarkerContent = "AiNetCodeNavigator.AssemblyExport.Temporary:1\n";
     private string MarkerPath => Path.Combine(plan.OutputDirectory, MarkerName);
+    private string TemporaryRoot => Path.Combine(plan.OutputDirectory, ".assembly-export-tmp");
+    private string TemporaryMarkerPath => Path.Combine(TemporaryRoot, TemporaryMarkerName);
 
-    internal void ValidateRootPreflight()
+    internal IDisposable AcquireRunLock()
     {
+        var canonicalOutput = Path.GetFullPath(plan.OutputDirectory);
+        if (OperatingSystem.IsWindows()) canonicalOutput = canonicalOutput.ToUpperInvariant();
+        var mutexName = "AiNetCodeNavigator.AssemblyExport." + Convert.ToHexStringLower(
+            System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(canonicalOutput)));
+        return RunLockLease.Acquire(mutexName);
+    }
+
+    internal void ResetRoot()
+    {
+        RejectVolumeRoot(plan.OutputDirectory);
         RejectReparseAncestors(plan.OutputDirectory);
         if (File.Exists(plan.OutputDirectory)) throw new InvalidOperationException("Output root is a file.");
-        if (Directory.Exists(plan.OutputDirectory)) ValidateMarker();
-        ValidateRunReportPath();
-        ValidateLogPath();
-    }
-
-    internal void ValidateVariantLayout(IReadOnlyList<PlannedAssembly> group)
-    {
-        var legacyFlatChild = Path.Combine(plan.OutputDirectory, Path.GetFileName(group[0].SourcePath));
-        RejectReparseAncestors(legacyFlatChild);
-        if (File.Exists(legacyFlatChild))
-            throw new InvalidOperationException($"Cannot place filename variants because a legacy flat child already exists: {legacyFlatChild}");
-        if (!Directory.Exists(legacyFlatChild)) return;
-        var variantNames = group.Select(item => Path.GetFileName(item.ChildPath)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var entries = Directory.EnumerateFileSystemEntries(legacyFlatChild).ToArray();
-        if (entries.Any(entry => !Directory.Exists(entry)
-            || (!variantNames.Contains(Path.GetFileName(entry)) && !LooksLikeVariantPath(Path.GetFileName(entry)))))
-            throw new InvalidOperationException($"Cannot place filename variants because a legacy flat child contains unowned content: {legacyFlatChild}");
-    }
-
-    internal void CreateOrValidateRoot()
-    {
-        ValidateRootPreflight();
-        if (Directory.Exists(plan.OutputDirectory)) return;
+        if (Directory.Exists(plan.OutputDirectory))
+        {
+            ValidateMarker();
+            DeleteMarkedDirectory(plan.OutputDirectory, MarkerName, MarkerContent);
+        }
         Directory.CreateDirectory(plan.OutputDirectory);
-        using var stream = new FileStream(MarkerPath, FileMode.CreateNew, FileAccess.Write);
-        stream.Write(Encoding.UTF8.GetBytes(MarkerContent));
+        WriteMarker(MarkerPath, MarkerContent);
     }
 
-    internal void DeleteSelectedChild(string childPath)
+    internal void CreateTemporaryRoot()
     {
         ValidateRootPreflight();
         ValidateMarker();
-        ValidateSelectedChild(childPath);
-        if (Directory.Exists(childPath)) DeleteCheckedTree(Path.GetFullPath(childPath));
-        else if (File.Exists(childPath)) throw new InvalidOperationException($"Selected child is a file: {childPath}");
+        if (Directory.Exists(TemporaryRoot) || File.Exists(TemporaryRoot))
+        {
+            ValidateTemporaryRoot();
+            DeleteMarkedDirectory(TemporaryRoot, TemporaryMarkerName, TemporaryMarkerContent);
+        }
+        Directory.CreateDirectory(TemporaryRoot);
+        WriteMarker(TemporaryMarkerPath, TemporaryMarkerContent);
+    }
+
+    internal string CreateStagingPath()
+    {
+        var path = Path.Combine(TemporaryRoot, ".assembly-export-stage-" + Guid.NewGuid().ToString("N"));
+        ValidateStagingPath(path);
+        return path;
+    }
+
+    internal void DeleteTemporaryRoot()
+    {
+        ValidateRootPreflight();
+        ValidateMarker();
+        if (File.Exists(TemporaryRoot)) throw new InvalidOperationException($"Temporary root is a file: {TemporaryRoot}");
+        if (!Directory.Exists(TemporaryRoot)) return;
+        ValidateTemporaryRoot();
+        DeleteMarkedDirectory(TemporaryRoot, TemporaryMarkerName, TemporaryMarkerContent);
+    }
+
+    internal void ValidateRootPreflight()
+    {
+        RejectVolumeRoot(plan.OutputDirectory);
+        RejectReparseAncestors(plan.OutputDirectory);
+        if (File.Exists(plan.OutputDirectory)) throw new InvalidOperationException("Output root is a file.");
+        if (Directory.Exists(plan.OutputDirectory)) ValidateMarker();
+        ValidateLogPath();
     }
 
     internal void ValidateSelectedChild(string path)
@@ -63,18 +88,15 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
     internal void ValidateStagingPath(string path)
     {
         var canonical = Path.GetFullPath(path);
-        if (!string.Equals(Path.GetDirectoryName(canonical), plan.OutputDirectory, StringComparison.OrdinalIgnoreCase)
-            || !Path.GetFileName(canonical).StartsWith(".assembly-export-stage-", StringComparison.Ordinal)
+        var parent = Path.GetDirectoryName(canonical);
+        if (!string.Equals(parent, TemporaryRoot, StringComparison.OrdinalIgnoreCase)
+            || !IsUuidStageName(Path.GetFileName(canonical))
             || plan.Assemblies.Any(item => IsWithin(canonical, item.ChildPath)))
             throw new InvalidOperationException($"Invalid staging path: {path}");
+        ValidateRootPreflight();
+        ValidateMarker();
+        ValidateTemporaryRoot();
         RejectReparseTree(canonical);
-    }
-
-    internal void ValidateRunReportPath()
-    {
-        var path = Path.Combine(plan.OutputDirectory, "last-run.json");
-        RejectReparseAncestors(path);
-        if (Directory.Exists(path)) throw new InvalidOperationException("Run report path is a directory.");
     }
 
     internal void ValidateLogPath()
@@ -84,25 +106,11 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
         if (Directory.Exists(path)) throw new InvalidOperationException("Run log path is a directory.");
     }
 
-    internal void AppendRunFailureIfSafe(string message, DateTimeOffset runStartedAt)
-    {
-        if (!Directory.Exists(plan.OutputDirectory)) return;
-        ValidateRootPreflight();
-        ValidateMarker();
-        ValidateLogPath();
-        var path = Path.Combine(plan.OutputDirectory, "last-run.log");
-        if (!File.Exists(path) || File.GetLastWriteTimeUtc(path) < runStartedAt.UtcDateTime) return;
-        RejectReparseAncestors(path);
-        using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
-        using var writer = new StreamWriter(stream, new UTF8Encoding(false));
-        writer.WriteLine(message);
-    }
-
     internal void DeleteStaging(string path)
     {
         ValidateStagingPath(path);
         ValidateMarker();
-        if (Directory.Exists(path)) DeleteCheckedTree(path);
+        if (Directory.Exists(path)) DeleteCheckedTree(path, requireTemporaryMarker: true);
     }
 
     internal void PublishStaging(string stage, string child)
@@ -120,28 +128,149 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
 
     private void ValidateMarker()
     {
-        RejectReparseAncestors(MarkerPath);
-        if (!File.Exists(MarkerPath) || !File.ReadAllBytes(MarkerPath).SequenceEqual(Encoding.UTF8.GetBytes(MarkerContent)))
-            throw new InvalidOperationException($"Output root has no valid ownership marker: {plan.OutputDirectory}");
+        ValidateExactMarker(MarkerPath, MarkerContent);
     }
 
-    private void DeleteCheckedTree(string directory)
+    private void ValidateTemporaryRoot()
+    {
+        ValidateRootPreflight();
+        ValidateMarker();
+        RejectReparseAncestors(TemporaryRoot);
+        if (!Directory.Exists(TemporaryRoot) || File.Exists(TemporaryRoot))
+            throw new InvalidOperationException($"Temporary root is missing or is not a directory: {TemporaryRoot}");
+        ValidateExactMarker(TemporaryMarkerPath, TemporaryMarkerContent);
+    }
+
+    private static void ValidateExactMarker(string path, string content)
+    {
+        RejectReparseAncestors(path);
+        if (!File.Exists(path) || (File.GetAttributes(path) & FileAttributes.Directory) != 0
+            || !File.ReadAllBytes(path).SequenceEqual(Encoding.UTF8.GetBytes(content)))
+            throw new InvalidOperationException($"Directory has no valid ownership marker: {Path.GetDirectoryName(path)}");
+    }
+
+    private static void WriteMarker(string path, string content)
+    {
+        using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        stream.Write(Encoding.UTF8.GetBytes(content));
+    }
+
+    private void DeleteMarkedDirectory(string directory, string markerName, string markerContent)
+    {
+        var marker = Path.Combine(directory, markerName);
+        ValidateExactMarker(marker, markerContent);
+        RejectReparseTree(directory);
+        foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+        {
+            ValidateExactMarker(marker, markerContent);
+            if (!IsWithin(entry, directory)) throw new InvalidOperationException($"Cleanup escaped owned directory: {entry}");
+            if (string.Equals(entry, marker, StringComparison.OrdinalIgnoreCase)) continue;
+            RejectReparseAncestors(entry);
+            if (Directory.Exists(entry)) DeleteCheckedTree(entry, requireTemporaryMarker: markerName == TemporaryMarkerName);
+            else File.Delete(entry);
+        }
+        ValidateExactMarker(marker, markerContent);
+        File.Delete(marker);
+        Directory.Delete(directory, recursive: false);
+    }
+
+    private static bool IsUuidStageName(string name)
+    {
+        const string prefix = ".assembly-export-stage-";
+        return name.StartsWith(prefix, StringComparison.Ordinal)
+            && Guid.TryParseExact(name[prefix.Length..], "N", out _);
+    }
+
+    private static void RejectVolumeRoot(string path)
+    {
+        var canonical = Path.GetFullPath(path);
+        var root = Path.GetPathRoot(canonical);
+        if (root is not null && string.Equals(Path.TrimEndingDirectorySeparator(canonical),
+                Path.TrimEndingDirectorySeparator(root), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Output root cannot be a volume root: {canonical}");
+    }
+
+    private void DeleteCheckedTree(string directory, bool requireTemporaryMarker = false)
     {
         RejectReparseAncestors(directory);
         foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
         {
             ValidateMarker();
+            if (requireTemporaryMarker) ValidateTemporaryRoot();
             if (!IsWithin(entry, directory)) throw new InvalidOperationException($"Cleanup escaped selected directory: {entry}");
             RejectReparseAncestors(entry);
-            if (Directory.Exists(entry)) DeleteCheckedTree(entry);
+            if (Directory.Exists(entry)) DeleteCheckedTree(entry, requireTemporaryMarker);
             else File.Delete(entry);
         }
+        if (requireTemporaryMarker) ValidateTemporaryRoot();
         RejectReparseAncestors(directory);
         Directory.Delete(directory, recursive: false);
     }
 
     internal static bool IsWithin(string path, string root) => path.Equals(root, StringComparison.OrdinalIgnoreCase)
         || path.StartsWith(Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+
+    private sealed class RunLockLease : IDisposable
+    {
+        private readonly ManualResetEventSlim _release = new(false);
+        private readonly Thread _ownerThread;
+        private bool _disposed;
+
+        private RunLockLease(string mutexName, out bool acquired, out Exception? failure)
+        {
+            using var ready = new ManualResetEventSlim(false);
+            var ownsMutex = false;
+            Exception? lockFailure = null;
+            _ownerThread = new Thread(() =>
+            {
+                try
+                {
+                    using var mutex = new Mutex(initiallyOwned: false, name: mutexName);
+                    try { ownsMutex = mutex.WaitOne(0); }
+                    catch (AbandonedMutexException) { ownsMutex = true; }
+                    ready.Set();
+                    if (!ownsMutex) return;
+                    _release.Wait();
+                    mutex.ReleaseMutex();
+                }
+                catch (Exception exception)
+                {
+                    lockFailure = exception;
+                    ready.Set();
+                }
+            }) { IsBackground = true };
+            _ownerThread.Start();
+            ready.Wait();
+            acquired = ownsMutex;
+            failure = lockFailure;
+            if (!acquired) _ownerThread.Join();
+        }
+
+        internal static IDisposable Acquire(string mutexName)
+        {
+            var lease = new RunLockLease(mutexName, out var acquired, out var failure);
+            if (failure is not null)
+            {
+                lease.Dispose();
+                throw new InvalidOperationException("Could not acquire the output run lock.", failure);
+            }
+            if (!acquired)
+            {
+                lease.Dispose();
+                throw new InvalidOperationException("Another assembly export run already owns this output directory.");
+            }
+            return lease;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _release.Set();
+            _ownerThread.Join();
+            _release.Dispose();
+        }
+    }
 
     internal static void RejectReparseAncestors(string path)
     {
@@ -168,28 +297,4 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
         }
     }
 
-    internal static bool HasVariantChildren(string outputDirectory, string filename)
-    {
-        var group = Path.Combine(outputDirectory, filename);
-        if (!Directory.Exists(group)) return false;
-        // A redirected child is reported by per-child preflight, not by variant detection.
-        try
-        {
-            RejectReparseAncestors(group);
-            return Directory.EnumerateDirectories(group).Any(path => LooksLikeVariantPath(Path.GetFileName(path)));
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
-        {
-            return false;
-        }
-    }
-
-    private static bool LooksLikeVariantPath(string name)
-    {
-        var separator = name.IndexOf('-');
-        if (separator < 0 || name.Length - separator - 1 != 64) return false;
-        var origin = name[..separator];
-        return origin is "local" or "gac32" or "gac64" or "gacmsil"
-            && name[(separator + 1)..].All(Uri.IsHexDigit);
-    }
 }

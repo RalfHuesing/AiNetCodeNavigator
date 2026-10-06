@@ -4,197 +4,259 @@ using AiNetCodeNavigator.Core.Assemblies;
 
 namespace AiNetCodeNavigator.AssemblyExport;
 
-internal sealed record ExportRunItem(string SourcePath, string ChildName, AssemblyIdentityDto Identity,
-    bool IsExplicit, string State, IReadOnlyList<AssemblyReferenceDto> UnresolvedDependencies, string? Error = null,
-    IReadOnlyList<AssemblyExportReferenceDiagnostic>? Diagnostics = null)
-{
-    public string ChildRelativePath { get; init; } = ChildName;
-    public bool ExistingChildPreserved { get; init; }
-}
-
 internal static class ExportRunner
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    private const int MaximumDegreeOfParallelism = 8;
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
 
     internal static async Task<int> RunAsync(ExportPlan plan, TextWriter output, TextWriter errors,
         CancellationToken cancellationToken = default,
-        Func<PlannedAssembly, string, CancellationToken, Task<AssemblyProjectExportResult>>? export = null)
+        Func<PlannedAssembly, string, CancellationToken, Task<AssemblyProjectExportResult>>? export = null,
+        int? maxDegreeOfParallelism = null)
     {
-        export ??= (item, stage, token) => AssemblyProjectExporter.ExportAsync(item.SourcePath, stage, item.Identity,
-            item.ContentHash, item.DecompilationReferences, token);
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(errors);
+        var degree = maxDegreeOfParallelism ?? Math.Clamp(Environment.ProcessorCount, 1, MaximumDegreeOfParallelism);
+        if (degree < 1) throw new ArgumentOutOfRangeException(nameof(maxDegreeOfParallelism));
+
+        export ??= (item, stage, token) => AssemblyProjectExporter.ExportAsync(item.SourcePath, stage,
+            item.Identity, item.ContentHash, item.DecompilationReferences, token);
+
         var owner = new ExportDumpOwnership(plan);
-        owner.CreateOrValidateRoot();
-        owner.ValidateLogPath();
-        await using var logStream = new FileStream(Path.Combine(plan.OutputDirectory, "last-run.log"), FileMode.Create, FileAccess.Write, FileShare.Read);
-        await using var log = new StreamWriter(logStream, new UTF8Encoding(false)) { AutoFlush = true };
-        var runId = Guid.NewGuid().ToString("N");
-        var startedAt = DateTimeOffset.UtcNow;
-        var items = plan.Assemblies.Select(item => new ExportRunItem(item.SourcePath, Path.GetFileName(item.SourcePath),
-            item.Identity, item.IsExplicit, "pending", item.Closure.References.Where(edge => !edge.Resolved).ToArray(), Diagnostics: [])
-            { ChildRelativePath = item.ChildRelativePath }).ToArray();
-        WriteRunReport("running");
-        foreach (var issue in plan.Issues)
+        using var runLock = owner.AcquireRunLock();
+        owner.ResetRoot();
+        owner.CreateTemporaryRoot();
+        var temporaryCleanupAttempted = false;
+        try
         {
-            await WriteErrorAsync($"{(issue.BlocksAssembly ? "Input failure" : "Closure limitation")}: {issue.Input}: {issue.Error}").ConfigureAwait(false);
-        }
-        var interrupted = false;
-        var blocked = new HashSet<string>(plan.Issues.Where(issue => issue.BlocksAssembly && issue.SourcePath is not null)
-            .Select(issue => issue.SourcePath!), StringComparer.OrdinalIgnoreCase);
-        for (var index = 0; index < plan.Assemblies.Count; index++)
-        {
-            var item = plan.Assemblies[index];
-            if (blocked.Contains(item.SourcePath))
+            owner.ValidateLogPath();
+            await using var logStream = new FileStream(Path.Combine(plan.OutputDirectory, "last-run.log"),
+                FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+            await using var log = new StreamWriter(logStream, new UTF8Encoding(false)) { AutoFlush = true };
+            using var logGate = new SemaphoreSlim(1, 1);
+
+            async Task WriteLineAsync(TextWriter destination, string line)
             {
-                var issue = plan.Issues.Last(candidate => candidate.SourcePath?.Equals(item.SourcePath, StringComparison.OrdinalIgnoreCase) == true);
-                items[index] = items[index] with
+                await logGate.WaitAsync().ConfigureAwait(false);
+                try
                 {
-                    State = "failed",
-                    Error = issue.Error,
-                    ExistingChildPreserved = Directory.Exists(item.ChildPath) || File.Exists(item.ChildPath),
-                };
-                await WriteOutputAsync($"Start: {item.SourcePath} -> {item.ChildPath}").ConfigureAwait(false);
-                await WriteErrorAsync($"Failure: {item.SourcePath}: {issue.Error}").ConfigureAwait(false);
-                WriteRunReport("running");
-                continue;
+                    await log.WriteLineAsync(line).ConfigureAwait(false);
+                    await destination.WriteLineAsync(line).ConfigureAwait(false);
+                }
+                finally { logGate.Release(); }
             }
-            var stage = Path.Combine(plan.OutputDirectory, ".assembly-export-stage-" + Guid.NewGuid().ToString("N"));
-            await WriteOutputAsync($"Start: {item.SourcePath} -> {item.ChildPath}").ConfigureAwait(false);
-            foreach (var edge in item.Closure.References)
+
+            Task WriteOutputAsync(string line) => WriteLineAsync(output, line);
+            Task WriteErrorAsync(string line) => WriteLineAsync(errors, line);
+
+            var runId = Guid.NewGuid().ToString("N");
+            var count = plan.Assemblies.Count;
+            var childPaths = plan.Assemblies.ToDictionary(item => item.SourcePath, item => item.ChildRelativePath,
+                StringComparer.OrdinalIgnoreCase);
+            await WriteOutputAsync($"RUN START selected={count} workers={degree}").ConfigureAwait(false);
+            foreach (var issue in plan.Issues)
             {
-                var rule = AutomaticExportFilter.Match(edge.Name);
-                await WriteOutputAsync($"Dependency: {edge.SourceAssemblyPath} -> {edge.Name}: {edge.ResolutionState}, {edge.ResolutionProvenance ?? "unresolved"}{(rule is null ? "" : ", excluded " + rule)}").ConfigureAwait(false);
-                if (!edge.Resolved)
-                    await WriteErrorAsync($"Unresolved dependency: {edge.SourceAssemblyPath} -> {edge.Name}, {edge.Version}: {edge.Diagnostic}").ConfigureAwait(false);
+                var label = issue.BlocksAssembly ? "INPUT FAILURE" : "CLOSURE LIMITATION";
+                await WriteErrorAsync($"{label}: {ShortPath(issue.Input)}: {ShortMessage(issue.Error)}").ConfigureAwait(false);
             }
+
+            var blocked = plan.Issues.Where(issue => issue.BlocksAssembly && issue.SourcePath is not null)
+                .Select(issue => issue.SourcePath!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var results = new WorkResult?[count];
+            var interrupted = false;
+            string? runFailure = null;
             try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                owner.DeleteSelectedChild(item.ChildPath);
-                items[index] = items[index] with { State = "running" };
-                WriteRunReport("running");
-                owner.ValidateStagingPath(stage);
-                Directory.CreateDirectory(stage);
-                var result = await export(item, stage, cancellationToken).ConfigureAwait(false);
-                if (result.ProjectRelativePath is null || result.SourceRelativePaths.Count == 0)
+                await Parallel.ForEachAsync(Enumerable.Range(0, count),
+                new ParallelOptions { MaxDegreeOfParallelism = degree, CancellationToken = cancellationToken },
+                async (index, token) =>
                 {
-                    var failure = string.Join("; ", result.Diagnostics.Select(diagnostic => diagnostic.Message));
-                    throw new InvalidDataException(string.IsNullOrWhiteSpace(failure)
-                        ? "Decompilation produced no usable project or C# source files."
-                        : failure);
-                }
-                owner.ValidateStagingPath(stage);
-                AssemblyProjectExporter.ValidateArtifacts(stage, result.ProjectRelativePath, result.SourceRelativePaths);
-                WriteSolution(stage, result.ProjectRelativePath);
-                var hasLimitations = !result.IsComplete || !item.Closure.IsComplete
-                    || result.Diagnostics.Count > 0 || items[index].UnresolvedDependencies.Count > 0;
-                var completionState = hasLimitations ? "partial" : "complete";
-                foreach (var diagnostic in result.Diagnostics)
-                    await WriteOutputAsync($"Diagnostic ({(diagnostic.IsError ? "error" : "warning")}): {item.SourcePath}: {diagnostic.Message}").ConfigureAwait(false);
-                var automaticChildren = plan.Assemblies.Where(candidate => !candidate.IsExplicit
-                    && item.DecompilationReferences.Any(edge => edge.ResolvedPath is not null
-                        && edge.ResolvedPath.Equals(candidate.SourcePath, StringComparison.OrdinalIgnoreCase)))
-                    .Select(candidate => candidate.ChildRelativePath).ToArray();
-                WriteJson(Path.Combine(stage, "export-manifest.json"), new
-                {
-                    schemaVersion = 1, runId, sourcePath = item.SourcePath, identity = item.Identity,
-                    childRelativePath = item.ChildRelativePath, contentHash = result.ContentHash,
-                    decompilerVersion = result.DecompilerVersion, isExplicit = item.IsExplicit,
-                    completionState,
-                    referenceClosureComplete = item.Closure.IsComplete,
-                    referenceClosureDiagnostics = item.Closure.Diagnostics,
-                    projectPath = result.ProjectRelativePath, sourceFiles = result.SourceRelativePaths,
-                    dependencies = item.Closure.References,
-                    dependencyChildren = item.DecompilationReferences.Select((edge, index) => new
+                    var item = plan.Assemblies[index];
+                    var label = $"[{index + 1}/{count}] {ShortPath(item.SourcePath)}";
+                    await WriteOutputAsync($"START {label}").ConfigureAwait(false);
+                    if (blocked.Contains(item.SourcePath))
                     {
-                        referenceIndex = index,
-                        edge.ResolvedPath,
-                        childRelativePath = edge.ResolvedPath is not { } resolvedPath ? null
-                            : plan.Assemblies.FirstOrDefault(candidate => candidate.SourcePath.Equals(resolvedPath, StringComparison.OrdinalIgnoreCase))?.ChildRelativePath,
-                    }).Where(link => link.childRelativePath is not null).ToArray(),
-                    automaticallyExportedChildren = automaticChildren,
-                    filteredEdges = item.FilteredReferences, unresolvedDependencies = items[index].UnresolvedDependencies,
-                    diagnostics = result.Diagnostics,
-                });
-                owner.PublishStaging(stage, item.ChildPath);
-                items[index] = items[index] with { State = completionState, Diagnostics = result.Diagnostics };
-                await WriteOutputAsync($"Success ({items[index].State}): {item.ChildPath}").ConfigureAwait(false);
+                        var issue = plan.Issues.Last(candidate => candidate.SourcePath?.Equals(item.SourcePath,
+                            StringComparison.OrdinalIgnoreCase) == true);
+                        await WriteErrorAsync($"FAILURE {label}: {ShortMessage(issue.Error)}").ConfigureAwait(false);
+                        results[index] = new(item, null, "failed", issue.Error, []);
+                        return;
+                    }
+
+                    string? stage = null;
+                    try
+                    {
+                        stage = owner.CreateStagingPath();
+                        owner.ValidateStagingPath(stage);
+                        Directory.CreateDirectory(stage);
+                        token.ThrowIfCancellationRequested();
+                        var result = await export(item, stage, token).ConfigureAwait(false);
+                        if (result.ProjectRelativePath is null || result.SourceRelativePaths.Count == 0)
+                        {
+                            var details = string.Join("; ", result.Diagnostics.Select(diagnostic => diagnostic.Message));
+                            throw new InvalidDataException(string.IsNullOrWhiteSpace(details)
+                                ? "Decompilation produced no usable project or C# source files."
+                                : details);
+                        }
+
+                        owner.ValidateStagingPath(stage);
+                        AssemblyProjectExporter.ValidateArtifacts(stage, result.ProjectRelativePath, result.SourceRelativePaths);
+                        WriteSolution(stage, result.ProjectRelativePath);
+                        var state = IsPartial(item, result) ? "partial" : "complete";
+                        WriteManifest(item, stage, result, runId, state, childPaths);
+                        results[index] = new(item, stage, state, null, result.Diagnostics);
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    {
+                        var cleanup = stage is null ? null : TryDeleteStaging(owner, stage);
+                        var message = cleanup is null ? "Export interrupted." : $"Export interrupted; {cleanup}";
+                        results[index] = new(item, null, "failed", message, []);
+                        await WriteErrorAsync($"FAILURE {label}: {ShortMessage(message)}").ConfigureAwait(false);
+                        throw;
+                    }
+                    catch (Exception exception) when (AssemblyProjectExporter.IsRecoverableFailure(exception))
+                    {
+                        var cleanup = stage is null ? null : TryDeleteStaging(owner, stage);
+                        var message = cleanup is null ? exception.Message : $"{exception.Message}; {cleanup}";
+                        results[index] = new(item, null, "failed", message, []);
+                        await WriteErrorAsync($"FAILURE {label}: {ShortMessage(message)}").ConfigureAwait(false);
+                    }
+                }).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                items[index] = items[index] with { State = "failed", Error = "Export interrupted." };
                 interrupted = true;
             }
-            catch (Exception ex) when (AssemblyProjectExporter.IsRecoverableFailure(ex))
+            catch (Exception exception) when (AssemblyProjectExporter.IsRecoverableFailure(exception))
             {
-                items[index] = items[index] with { State = "failed", Error = ex.Message };
-                await WriteErrorAsync($"Failure: {item.SourcePath}: {ex.Message}").ConfigureAwait(false);
+                runFailure = exception.Message;
+                await WriteErrorAsync($"RUN ERROR: {ShortMessage(exception.Message)}").ConfigureAwait(false);
             }
-            finally
+
+            // Publish successful stages serially in deterministic plan order.
+            for (var index = 0; index < count; index++)
             {
-                try { owner.DeleteStaging(stage); }
-                catch (Exception ex) when (AssemblyProjectExporter.IsRecoverableFailure(ex))
+                var result = results[index];
+                if (result?.StagePath is not { } stage) continue;
+                try
                 {
-                    items[index] = items[index] with { State = "failed", Error = $"Staging cleanup failed: {ex.Message}" };
-                    await WriteErrorAsync(items[index].Error ?? "Staging cleanup failed.").ConfigureAwait(false);
+                    owner.ValidateStagingPath(stage);
+                    owner.PublishStaging(stage, result.Item.ChildPath);
+                    await WriteOutputAsync($"PUBLISHED [{index + 1}/{count}] {ShortPath(result.Item.ChildPath)} ({result.State})")
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception) when (AssemblyProjectExporter.IsRecoverableFailure(exception))
+                {
+                    results[index] = result with { State = "failed", Error = exception.Message };
+                    await WriteErrorAsync($"FAILURE [{index + 1}/{count}] {ShortPath(result.Item.SourcePath)}: {ShortMessage(exception.Message)}")
+                        .ConfigureAwait(false);
                 }
             }
-            WriteRunReport("running");
-            if (interrupted) break;
-        }
-        var failed = items.Count(item => item.State == "failed")
-            + plan.Issues.Count(issue => !issue.BlocksAssembly || issue.SourcePath is null
-                || !plan.Assemblies.Any(item => item.SourcePath.Equals(issue.SourcePath, StringComparison.OrdinalIgnoreCase)));
-        var succeeded = items.Count(item => item.State is "complete" or "partial");
-        var state = interrupted ? "interrupted" : failed > 0 ? "failed" : items.Any(item => item.State == "partial") ? "partial" : "complete";
-        WriteRunReport(state);
-        var exitCode = failed > 0 || interrupted ? 1 : 0;
-        var assemblyFailures = items.Count(item => item.State == "failed");
-        var unresolved = items.Sum(item => item.UnresolvedDependencies.Count);
-        await WriteOutputAsync($"Finished: selected={items.Length}, exported={succeeded}, assemblyFailures={assemblyFailures}, planIssues={plan.Issues.Count}, unresolved={unresolved}, state={state}, exit={exitCode}.").ConfigureAwait(false);
-        return exitCode;
 
-        void WriteRunReport(string state)
-        {
-            owner.ValidateRootPreflight();
-            owner.ValidateRunReportPath();
-            var path = Path.Combine(plan.OutputDirectory, "last-run.json");
-            var temporary = Path.Combine(plan.OutputDirectory, ".assembly-export-report-" + Guid.NewGuid().ToString("N") + ".tmp");
-            try
+            temporaryCleanupAttempted = true;
+            string? cleanupFailure = null;
+            try { owner.DeleteTemporaryRoot(); }
+            catch (Exception exception) when (AssemblyProjectExporter.IsRecoverableFailure(exception))
             {
-                WriteJson(temporary, new
+                cleanupFailure = exception.Message;
+                await WriteErrorAsync($"TEMP CLEANUP FAILURE: {ShortMessage(exception.Message)}").ConfigureAwait(false);
+            }
+
+            var unprocessed = results.Count(result => result is null);
+            var failed = results.Count(result => result?.State == "failed") + unprocessed
+                + plan.Issues.Count(issue => !issue.BlocksAssembly || issue.SourcePath is null
+                    || !plan.Assemblies.Any(item => item.SourcePath.Equals(issue.SourcePath, StringComparison.OrdinalIgnoreCase)))
+                + (runFailure is null ? 0 : 1) + (cleanupFailure is null ? 0 : 1);
+            var exported = results.Count(result => result?.State is "complete" or "partial");
+            var partial = results.Count(result => result?.State == "partial");
+            var stateLabel = interrupted ? "RUN INTERRUPTED" : failed > 0 ? "RUN FAILED" : "RUN COMPLETE";
+            await WriteOutputAsync($"{stateLabel} exported={exported} partial={partial} failed={failed}").ConfigureAwait(false);
+            return failed > 0 || interrupted ? 1 : 0;
+        }
+        finally
+        {
+            if (!temporaryCleanupAttempted) owner.DeleteTemporaryRoot();
+        }
+    }
+
+    private static bool IsPartial(PlannedAssembly item, AssemblyProjectExportResult result) =>
+        !result.IsComplete || !item.Closure.IsComplete || result.Diagnostics.Count > 0
+        || item.Closure.References.Any(reference => !reference.Resolved);
+
+    private static string? TryDeleteStaging(ExportDumpOwnership owner, string stage)
+    {
+        try
+        {
+            owner.DeleteStaging(stage);
+            return null;
+        }
+        catch (Exception exception) when (AssemblyProjectExporter.IsRecoverableFailure(exception))
+        {
+            // Continue only while the root, temporary marker, and remaining stage tree still validate.
+            owner.ValidateStagingPath(stage);
+            return $"staging cleanup failed: {ShortMessage(exception.Message)}";
+        }
+    }
+
+    private static void WriteManifest(PlannedAssembly item, string stage, AssemblyProjectExportResult result,
+        string runId, string state, IReadOnlyDictionary<string, string> childPaths)
+    {
+        var directLinks = item.DecompilationReferences
+            .Select(edge =>
+            {
+                var child = edge.ResolvedPath is not null && childPaths.TryGetValue(edge.ResolvedPath, out var relativePath)
+                    ? relativePath : null;
+                return new
                 {
-                    schemaVersion = 1, runId, startedAt, updatedAt = DateTimeOffset.UtcNow,
-                    outputArgument = plan.Arguments.OutputDirectory, outputDirectory = plan.OutputDirectory,
-                    exactInputs = plan.Arguments.Sources, explicitPaths = plan.ExplicitPaths,
-                    completionState = state, isComplete = state == "complete", selectedChildren = items,
-                    inputFailures = plan.Issues,
-                    exclusions = plan.Assemblies.SelectMany(item => item.FilteredReferences).ToArray(),
-                    failures = items.Where(item => item.State == "failed").Cast<object>()
-                        .Concat(plan.Issues.Where(issue => !issue.BlocksAssembly || issue.SourcePath is null
-                            || !plan.Assemblies.Any(item => item.SourcePath.Equals(issue.SourcePath, StringComparison.OrdinalIgnoreCase)))
-                            .Cast<object>()).ToArray(),
-                });
-                owner.ValidateRunReportPath();
-                File.Move(temporary, path, overwrite: true);
-            }
-            finally
+                    edge.Name,
+                    edge.Version,
+                    edge.Culture,
+                    edge.ResolutionState,
+                    edge.ResolutionProvenance,
+                    edge.Diagnostic,
+                    childRelativePath = child,
+                };
+            }).ToArray();
+
+        WriteJson(Path.Combine(stage, "export-manifest.json"), new
+        {
+            schemaVersion = 1,
+            runId,
+            sourcePath = item.SourcePath,
+            identity = item.Identity,
+            childRelativePath = item.ChildRelativePath,
+            contentHash = result.ContentHash ?? item.ContentHash,
+            decompilerVersion = result.DecompilerVersion,
+            isExplicit = item.IsExplicit,
+            completionState = state,
+            projectPath = result.ProjectRelativePath,
+            sourceFiles = result.SourceRelativePaths,
+            dependencies = directLinks,
+            filteredEdges = item.FilteredReferences,
+            diagnostics = new
             {
-                ExportDumpOwnership.RejectReparseAncestors(temporary);
-                if (File.Exists(temporary)) File.Delete(temporary);
-            }
-        }
+                referenceClosure = item.Closure.Diagnostics,
+                decompilation = result.Diagnostics,
+            },
+        });
+    }
 
-        async Task WriteOutputAsync(string line)
-        {
-            await output.WriteLineAsync(line).ConfigureAwait(false);
-            await log.WriteLineAsync(line).ConfigureAwait(false);
-        }
+    private static string ShortPath(string path)
+    {
+        var fileName = Path.GetFileName(path);
+        var parent = Path.GetFileName(Path.GetDirectoryName(path));
+        return string.IsNullOrEmpty(parent) ? fileName : Path.Combine(parent, fileName);
+    }
 
-        async Task WriteErrorAsync(string line)
-        {
-            await errors.WriteLineAsync(line).ConfigureAwait(false);
-            await log.WriteLineAsync(line).ConfigureAwait(false);
-        }
+    private static string ShortMessage(string message)
+    {
+        var oneLine = string.Join(' ', message.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return oneLine.Length <= 240 ? oneLine : oneLine[..237] + "...";
     }
 
     private static void WriteJson<T>(string path, T value)
@@ -226,4 +288,8 @@ internal static class ExportRunner
         using var writer = new StreamWriter(stream, new UTF8Encoding(false));
         writer.Write(solution + "\n");
     }
+
+    private sealed record WorkResult(PlannedAssembly Item, string? StagePath, string State,
+        string? Error, IReadOnlyList<AssemblyExportReferenceDiagnostic> Diagnostics);
+
 }
