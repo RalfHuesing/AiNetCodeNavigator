@@ -12,6 +12,7 @@ internal sealed record PlannedAssembly(string SourcePath, string ChildPath, Asse
     // Original closure edges retain their provenance; decompilation gets one proven path per identity.
     internal IReadOnlyList<AssemblyReferenceDto> DecompilationReferences { get; init; } = Closure.References;
     internal string ContentHash { get; init; } = "";
+    internal string ChildRelativePath { get; init; } = "";
 }
 internal sealed record ExportPlan(ExportArguments Arguments, string OutputDirectory,
     IReadOnlyList<string> ExplicitPaths, IReadOnlyList<PlannedAssembly> Assemblies);
@@ -38,11 +39,23 @@ internal static class ExportPlanner
     {
         resolve ??= (path, traverse) => AssemblyExportReferenceResolver.Resolve(path, traverse);
         var output = Path.TrimEndingDirectorySeparator(Path.GetFullPath(arguments.OutputDirectory));
-        var explicitPaths = Expand(arguments.Sources);
-        var queue = new Queue<string>(explicitPaths);
+        var expanded = ExpandDetailed(arguments.Sources);
+        var explicitPaths = expanded.Paths;
+        var expandedCandidates = expanded.RecursivePaths;
+        var directExplicitPaths = expanded.DirectPaths;
+        var preferredVersions = expandedCandidates.Select(path => (Path: path, Identity: ReadManagedIdentity(path)))
+            .GroupBy(item => Path.GetFileName(item.Path), StringComparer.OrdinalIgnoreCase)
+            .SelectMany(group =>
+            {
+                var highest = group.Max(item => Version.Parse(item.Identity.Version));
+                return group.Where(item => Version.Parse(item.Identity.Version) == highest).Select(item => item.Path);
+            }).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectedExplicit = explicitPaths.Where(path => directExplicitPaths.Contains(path)
+            || !expandedCandidates.Contains(path, StringComparer.OrdinalIgnoreCase)
+            || preferredVersions.Contains(path)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var queue = new Queue<string>(explicitPaths.Where(selectedExplicit.Contains));
         var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var seenIdentities = new Dictionary<string, (string Path, string Hash)>(StringComparer.OrdinalIgnoreCase);
-        var children = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var assemblies = new List<PlannedAssembly>();
         while (queue.TryDequeue(out var source))
         {
@@ -52,32 +65,24 @@ internal static class ExportPlanner
             if (ExportDumpOwnership.IsWithin(source, output))
                 throw new InvalidOperationException($"Source DLL is inside the output dump: {source}");
             var identity = ReadManagedIdentity(source);
-            var child = Path.Combine(output, Path.GetFileName(source));
-            if (children.TryGetValue(child, out var previous) && !previous.Equals(source, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException($"Different source files map to the same output child: {previous}, {source}");
-            children[child] = source;
             var identityKey = string.Join("|", identity.Name, identity.Version, identity.Culture, identity.PublicKeyToken);
             using var sourceStream = File.OpenRead(source);
             var hash = Convert.ToHexStringLower(SHA256.HashData(sourceStream));
             var duplicateIdentity = seenIdentities.TryGetValue(identityKey, out var existing);
-            if (duplicateIdentity)
-            {
-                if (existing.Hash != hash)
-                    throw new InvalidOperationException($"Assembly identity resolves to different content: {existing.Path}, {source}");
-            }
-            else seenIdentities[identityKey] = (source, hash);
+            if (!duplicateIdentity) seenIdentities[identityKey] = (source, hash);
             var closure = resolve(source, reference => AutomaticExportFilter.Match(reference.Name) is null);
             if (closure.Identity is null || !closure.IsComplete)
                 throw new InvalidOperationException($"Incomplete reference closure for {source}: {string.Join("; ", closure.Diagnostics.Select(item => item.Message))}");
             var filtered = closure.References.Select(reference => (reference, rule: AutomaticExportFilter.Match(reference.Name)))
                 .Where(item => item.rule is not null).Select(item => new FilteredExportReference(item.reference, item.rule!)).ToArray();
-            if (!duplicateIdentity)
-                assemblies.Add(new(source, child, identity, explicitPaths.Contains(source, StringComparer.OrdinalIgnoreCase), closure, filtered) { ContentHash = hash });
+            if (!duplicateIdentity || existing.Hash != hash)
+                assemblies.Add(new(source, "", identity, selectedExplicit.Contains(source), closure, filtered) { ContentHash = hash });
             foreach (var reference in closure.References.Where(reference => reference.Resolved && reference.ResolvedPath is not null
                          && AutomaticExportFilter.Match(reference.Name) is null).OrderBy(reference => reference.ResolvedPath, StringComparer.OrdinalIgnoreCase))
                 queue.Enqueue(reference.ResolvedPath!);
         }
         var canonicalReferences = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var aliasRepresentatives = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var reference in assemblies.SelectMany(item => item.Closure.References).Where(edge => edge.ResolvedPath is not null)
                      .OrderBy(edge => edge.ResolvedPath, StringComparer.OrdinalIgnoreCase))
         {
@@ -86,37 +91,58 @@ internal static class ExportPlanner
             if (ExportDumpOwnership.IsWithin(path, output))
                 throw new InvalidOperationException($"Resolved dependency is inside the output dump: {path}");
             var identity = ReadManagedIdentity(path);
-            var key = string.Join("|", identity.Name, identity.Version, identity.Culture, identity.PublicKeyToken);
             using var stream = File.OpenRead(path);
             var hash = Convert.ToHexStringLower(SHA256.HashData(stream));
-            if (seenIdentities.TryGetValue(key, out var representative))
+            var aliasKey = string.Join("|", identity.Name, identity.Version, identity.Culture, identity.PublicKeyToken, hash);
+            if (!aliasRepresentatives.TryGetValue(aliasKey, out var representativePath))
             {
-                if (representative.Hash != hash)
-                    throw new InvalidOperationException($"Assembly identity resolves to different content: {representative.Path}, {path}");
+                representativePath = assemblies.FirstOrDefault(item => item.Identity == identity && item.ContentHash == hash)?.SourcePath ?? path;
+                aliasRepresentatives[aliasKey] = representativePath;
             }
-            else seenIdentities[key] = representative = (path, hash);
-            canonicalReferences[path] = representative.Path;
+            canonicalReferences[path] = representativePath;
         }
-        var normalizedAssemblies = assemblies.Select(item => item with
+        var deduplicated = new List<PlannedAssembly>();
+        var identityHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in assemblies)
         {
+            var key = string.Join("|", item.Identity.Name, item.Identity.Version, item.Identity.Culture, item.Identity.PublicKeyToken, item.ContentHash);
+            if (identityHashes.Add(key)) deduplicated.Add(item);
+        }
+
+        var basenameGroups = deduplicated.GroupBy(item => Path.GetFileName(item.SourcePath), StringComparer.OrdinalIgnoreCase).ToArray();
+        var collisions = basenameGroups.Where(group => group.Count() > 1
+                || ExportDumpOwnership.HasVariantChildren(output, group.Key))
+            .SelectMany(group => group).ToHashSet();
+        var normalizedAssemblies = deduplicated.Select(item => item with
+        {
+            ChildPath = collisions.Contains(item) ? Path.Combine(output, Path.GetFileName(item.SourcePath), VariantKey(item))
+                : Path.Combine(output, Path.GetFileName(item.SourcePath)),
             DecompilationReferences = item.Closure.References.Select(edge => edge.ResolvedPath is not null
                 ? edge with { ResolvedPath = canonicalReferences[Path.GetFullPath(edge.ResolvedPath)] } : edge).ToArray(),
-        }).OrderBy(item => item.ChildPath, StringComparer.OrdinalIgnoreCase).ToArray();
+        }).Select(item => item with { ChildRelativePath = Path.GetRelativePath(output, item.ChildPath) })
+            .OrderBy(item => item.ChildPath, StringComparer.OrdinalIgnoreCase).ToArray();
         var plan = new ExportPlan(arguments, output, explicitPaths, normalizedAssemblies);
         new ExportDumpOwnership(plan).ValidatePreflight();
         return plan;
     }
 
     internal static IReadOnlyList<string> Expand(IReadOnlyList<string> patterns)
+        => ExpandDetailed(patterns).Paths;
+
+    private static (IReadOnlyList<string> Paths, IReadOnlySet<string> RecursivePaths, IReadOnlySet<string> DirectPaths) ExpandDetailed(IReadOnlyList<string> patterns)
     {
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var recursivePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var directPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var index = 0; index < patterns.Count; index++)
         {
             var pattern = patterns[index];
             var full = Path.GetFullPath(pattern);
+            var recursiveSelection = false;
             IReadOnlyList<string> matches;
             if (Directory.Exists(full))
             {
+                recursiveSelection = true;
                 var filenamePatterns = new List<string>();
                 while (index + 1 < patterns.Count && IsBareFilenamePattern(patterns[index + 1]))
                 {
@@ -136,7 +162,10 @@ internal static class ExportPlanner
                 if (directory.IndexOfAny(['*', '?']) >= 0 || filePattern.Contains("**", StringComparison.Ordinal))
                     throw new ArgumentException($"Only final filename segment wildcards * and ? are supported: {pattern}");
                 if (filePattern.IndexOfAny(['*', '?']) >= 0)
+                {
+                    recursiveSelection = true;
                     matches = Directory.Exists(directory) ? FindManagedFiles(directory, [filePattern]) : [];
+                }
                 else if (File.Exists(full))
                 {
                     ExportDumpOwnership.RejectReparseAncestors(full);
@@ -146,9 +175,24 @@ internal static class ExportPlanner
                 else matches = [];
             }
             if (matches.Count == 0) throw new ArgumentException($"Source path or pattern has no managed DLL or EXE matches: {pattern}");
-            foreach (var match in matches) paths.Add(match);
+            foreach (var match in matches)
+            {
+                paths.Add(match);
+                if (recursiveSelection) recursivePaths.Add(Path.GetFullPath(match));
+                else directPaths.Add(Path.GetFullPath(match));
+            }
         }
-        return paths.Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        return (paths.Order(StringComparer.OrdinalIgnoreCase).ToArray(), recursivePaths, directPaths);
+    }
+
+    private static string VariantKey(PlannedAssembly item)
+    {
+        var origin = item.SourcePath.Contains(Path.Combine("assembly", "GAC_32"), StringComparison.OrdinalIgnoreCase) ? "gac32"
+                : item.SourcePath.Contains(Path.Combine("assembly", "GAC_64"), StringComparison.OrdinalIgnoreCase) ? "gac64"
+                : item.SourcePath.Contains("GAC_MSIL", StringComparison.OrdinalIgnoreCase) ? "gacmsil" : "local";
+        var hashInput = System.Text.Encoding.UTF8.GetBytes(string.Join("|", item.Identity.Name, item.Identity.Version,
+            item.Identity.Culture, item.Identity.PublicKeyToken, item.ContentHash));
+        return origin + "-" + Convert.ToHexStringLower(SHA256.HashData(hashInput));
     }
 
     private static bool IsBareFilenamePattern(string pattern) =>

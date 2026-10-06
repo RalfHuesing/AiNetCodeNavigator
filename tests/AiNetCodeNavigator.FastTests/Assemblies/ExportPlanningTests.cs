@@ -128,15 +128,99 @@ public sealed class ExportPlanningTests
         var source = Emit(temp.GetPath("one/Shared.dll"), "Shared");
         var alias = temp.GetPath("Alias.dll");
         File.Copy(source, alias);
+        var sameNameAlias = temp.GetPath("two/Shared.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(sameNameAlias)!);
+        File.Copy(source, sameNameAlias);
         var output = temp.GetPath("dump");
-        Assert.Single(ExportPlanner.Create(new(output, [source, alias])).Assemblies);
-        var collision = Emit(temp.GetPath("two/Shared.dll"), "Different");
-        Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(output, [source, collision])));
+        Assert.Single(ExportPlanner.Create(new(output, [source, alias, sameNameAlias])).Assemblies);
+        var collision = Emit(temp.GetPath("two/Shared.dll"), "Different", version: new Version(2, 0, 0, 0));
+        var collisionPlan = ExportPlanner.Create(new(output, [source, collision]));
+        Assert.Equal(2, collisionPlan.Assemblies.Count);
+        Assert.All(collisionPlan.Assemblies, item => Assert.Equal(Path.Combine(output, "Shared.dll"), Path.GetDirectoryName(item.ChildPath)));
+        Assert.Equal(collisionPlan.Assemblies.Select(item => item.ChildPath).Distinct(StringComparer.OrdinalIgnoreCase).Count(), 2);
+        Assert.All(collisionPlan.Assemblies, item => Assert.StartsWith(Path.Combine("Shared.dll", "local-"), item.ChildRelativePath, StringComparison.OrdinalIgnoreCase));
         var conflictingIdentity = Emit(temp.GetPath("DifferentBytes.dll"), "Shared");
-        Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(output, [source, conflictingIdentity])));
+        Directory.CreateDirectory(temp.GetPath("two"));
+        File.Copy(conflictingIdentity, temp.GetPath("two/Shared.dll"), overwrite: true);
+        var equalVersionDifferentBytes = ExportPlanner.Create(new(output, [source, temp.GetPath("two/Shared.dll")]));
+        Assert.Equal(2, equalVersionDifferentBytes.Assemblies.Count);
         Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(output, [source]),
             (_, _) => new(new("Shared", "1.0.0.0", "neutral", ""), [], [], false)));
         Assert.False(Directory.Exists(output));
+    }
+
+    [Fact]
+    public void Plan_RefusesVariantLayoutWhenLegacyFlatChildContainsUserContent()
+    {
+        using var temp = TestTempDirectory.Create("export-variant-migration-");
+        var source = Emit(temp.GetPath("one/Shared.dll"), "Shared");
+        var other = Emit(temp.GetPath("two/Shared.dll"), "Different", version: new Version(2, 0, 0, 0));
+        var output = temp.GetPath("dump");
+        var initial = ExportPlanner.Create(new(output, [source]));
+        var ownership = new ExportDumpOwnership(initial);
+        ownership.CreateOrValidateRoot();
+        Directory.CreateDirectory(initial.Assemblies.Single().ChildPath);
+        var sentinel = Path.Combine(initial.Assemblies.Single().ChildPath, "keep.txt");
+        File.WriteAllText(sentinel, "keep");
+
+        var exception = Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(output, [source, other])));
+
+        Assert.Contains("legacy flat child contains unowned content", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("keep", File.ReadAllText(sentinel));
+    }
+
+    [Fact]
+    public async Task Plan_RerunOfOneVariantKeepsExistingSiblingVariant()
+    {
+        using var temp = TestTempDirectory.Create("export-variant-rerun-");
+        var first = Emit(temp.GetPath("one/Shared.dll"), "First", version: new Version(1, 0, 0, 0));
+        var second = Emit(temp.GetPath("two/Shared.dll"), "Second", version: new Version(2, 0, 0, 0));
+        var output = temp.GetPath("dump");
+        var firstPlan = ExportPlanner.Create(new(output, [first, second]));
+        new ExportDumpOwnership(firstPlan).CreateOrValidateRoot();
+        var firstChild = firstPlan.Assemblies.Single(item => item.SourcePath == first).ChildPath;
+        var secondChild = firstPlan.Assemblies.Single(item => item.SourcePath == second).ChildPath;
+        Directory.CreateDirectory(firstChild);
+        Directory.CreateDirectory(secondChild);
+        var sentinel = Path.Combine(secondChild, "keep.txt");
+        await File.WriteAllTextAsync(sentinel, "keep");
+
+        var rerun = ExportPlanner.Create(new(output, [first]));
+        Assert.Equal(firstChild, Assert.Single(rerun.Assemblies).ChildPath);
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+        Assert.Equal(0, await ExportRunner.RunAsync(rerun, stdout, stderr, export: async (item, stage, _) =>
+        {
+            await File.WriteAllTextAsync(Path.Combine(stage, "Shared.csproj"), "<Project />");
+            await File.WriteAllTextAsync(Path.Combine(stage, "Shared.cs"), "public class Shared { }");
+            return new(true, "Shared.csproj", ["Shared.cs"], item.ContentHash, "test", []);
+        }));
+        Assert.Equal("keep", await File.ReadAllTextAsync(sentinel));
+        Assert.True(File.Exists(Path.Combine(firstChild, "export-manifest.json")));
+    }
+
+    [Fact]
+    public void Plan_PatternSelectionKeepsHighestVersionAndClosureKeepsReferencedOlderVersion()
+    {
+        using var temp = TestTempDirectory.Create("export-pattern-versions-");
+        var sources = temp.GetPath("sources");
+        var older = Emit(Path.Combine(sources, "old", "Shared.dll"), "Shared", version: new Version(1, 0, 0, 0));
+        var newer = Emit(Path.Combine(sources, "new", "Shared.dll"), "Shared", version: new Version(2, 0, 0, 0));
+        var root = Emit(Path.Combine(sources, "Root.dll"), "Root", ["Shared"], new Version(1, 0, 0, 0));
+        AssemblyExportReferenceClosure Resolve(string path, Func<AssemblyReferenceDto, bool> _)
+        {
+            var identity = AssemblyName.GetAssemblyName(path);
+            var references = path == root
+                ? new[] { new AssemblyReferenceDto("Shared", "1.0.0.0", "neutral", true, older, ResolutionProvenance: "adjacent") }
+                : [];
+            return new(new(identity.Name!, identity.Version!.ToString(), "neutral", ""), references, [], true);
+        }
+
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [sources, "*.dll"]), Resolve);
+
+        Assert.Contains(plan.Assemblies, item => item.SourcePath == root && item.IsExplicit);
+        Assert.Contains(plan.Assemblies, item => item.SourcePath == newer && item.IsExplicit);
+        Assert.Contains(plan.Assemblies, item => item.SourcePath == older && !item.IsExplicit);
     }
 
     [Theory]
@@ -255,13 +339,13 @@ public sealed class ExportPlanningTests
         Assert.Equal(0, process.ExitCode);
     }
 
-    private static string Emit(string path, string name, string[]? references = null)
+    private static string Emit(string path, string name, string[]? references = null, Version? version = null)
     {
         path = Path.GetFullPath(path);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var metadata = new MetadataBuilder();
         metadata.AddModule(0, metadata.GetOrAddString(name + ".dll"), metadata.GetOrAddGuid(Guid.NewGuid()), default, default);
-        metadata.AddAssembly(metadata.GetOrAddString(name), new Version(1, 0, 0, 0), default, default, (AssemblyFlags)0, AssemblyHashAlgorithm.Sha256);
+        metadata.AddAssembly(metadata.GetOrAddString(name), version ?? new Version(1, 0, 0, 0), default, default, (AssemblyFlags)0, AssemblyHashAlgorithm.Sha256);
         foreach (var reference in references ?? [])
             metadata.AddAssemblyReference(metadata.GetOrAddString(reference), new Version(1, 0, 0, 0), default, default, (AssemblyFlags)0, default);
         metadata.AddTypeDefinition(TypeAttributes.NotPublic, default, metadata.GetOrAddString("<Module>"), default,

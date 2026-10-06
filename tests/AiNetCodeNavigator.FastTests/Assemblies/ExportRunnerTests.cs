@@ -32,6 +32,45 @@ public sealed class ExportRunnerTests
     }
 
     [Fact]
+    public async Task Runner_ExportsSharedDependencyOnceAndReportsItsRelativeChildPath()
+    {
+        using var temp = TestTempDirectory.Create("export-shared-dependency-");
+        var first = AssemblyTestHelper.EmitAssembly(temp, "FirstRoot", "public class First { }");
+        var second = AssemblyTestHelper.EmitAssembly(temp, "SecondRoot", "public class Second { }");
+        var shared = AssemblyTestHelper.EmitAssembly(temp, "SharedVendor", "public class Shared { }");
+        AssemblyExportReferenceClosure Resolve(string path, Func<AssemblyReferenceDto, bool> _)
+        {
+            var identity = System.Reflection.AssemblyName.GetAssemblyName(path);
+            var references = path == first || path == second
+                ? new[] { new AssemblyReferenceDto("SharedVendor", "1.0.0.0", "neutral", true, shared, ResolutionProvenance: "adjacent") }
+                : [];
+            return new(new(identity.Name!, identity.Version!.ToString(), "neutral", ""), references, [], true);
+        }
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [first, second]), Resolve);
+        var exported = new List<string>();
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+
+        Assert.Equal(0, await ExportRunner.RunAsync(plan, output, errors, export: async (item, stage, _) =>
+        {
+            exported.Add(item.SourcePath);
+            var name = item.Identity.Name;
+            await File.WriteAllTextAsync(Path.Combine(stage, name + ".csproj"), "<Project />");
+            await File.WriteAllTextAsync(Path.Combine(stage, name + ".cs"), "public class Exported { }");
+            return new(true, name + ".csproj", [name + ".cs"], item.ContentHash, "test", []);
+        }));
+
+        Assert.Equal(3, exported.Count);
+        Assert.Single(exported.Where(path => path == shared));
+        using var rootManifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(temp.GetPath("dump"), "FirstRoot.dll", "export-manifest.json")));
+        var edge = Assert.Single(rootManifest.RootElement.GetProperty("dependencies").EnumerateArray());
+        Assert.Equal("SharedVendor", edge.GetProperty("name").GetString());
+        var link = Assert.Single(rootManifest.RootElement.GetProperty("dependencyChildren").EnumerateArray());
+        Assert.Equal(0, link.GetProperty("referenceIndex").GetInt32());
+        Assert.Equal("SharedVendor.dll", link.GetProperty("childRelativePath").GetString());
+    }
+
+    [Fact]
     public async Task Runner_PublishesUsablePartialOutputWithSyntaxAndEmptySourceDiagnostics()
     {
         using var temp = TestTempDirectory.Create("export-partial-output-");

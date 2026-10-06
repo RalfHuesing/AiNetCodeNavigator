@@ -1,0 +1,2 @@
+# This raw-string test fixture depends on LF line endings.
+tests/AiNetCodeNavigator.TestKit/Fixtures/SampleCodeFixtures.cs text eol=lf

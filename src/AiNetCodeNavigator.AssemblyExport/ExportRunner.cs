@@ -6,7 +6,10 @@ namespace AiNetCodeNavigator.AssemblyExport;
 
 internal sealed record ExportRunItem(string SourcePath, string ChildName, AssemblyIdentityDto Identity,
     bool IsExplicit, string State, IReadOnlyList<AssemblyReferenceDto> UnresolvedDependencies, string? Error = null,
-    IReadOnlyList<AssemblyExportReferenceDiagnostic>? Diagnostics = null);
+    IReadOnlyList<AssemblyExportReferenceDiagnostic>? Diagnostics = null)
+{
+    public string ChildRelativePath { get; init; } = ChildName;
+}
 
 internal static class ExportRunner
 {
@@ -22,8 +25,9 @@ internal static class ExportRunner
         owner.CreateOrValidateRoot();
         var runId = Guid.NewGuid().ToString("N");
         var startedAt = DateTimeOffset.UtcNow;
-        var items = plan.Assemblies.Select(item => new ExportRunItem(item.SourcePath, Path.GetFileName(item.ChildPath),
-            item.Identity, item.IsExplicit, "pending", item.Closure.References.Where(edge => !edge.Resolved).ToArray(), Diagnostics: [])).ToArray();
+        var items = plan.Assemblies.Select(item => new ExportRunItem(item.SourcePath, Path.GetFileName(item.SourcePath),
+            item.Identity, item.IsExplicit, "pending", item.Closure.References.Where(edge => !edge.Resolved).ToArray(), Diagnostics: [])
+            { ChildRelativePath = item.ChildRelativePath }).ToArray();
         WriteRunReport("running");
         var interrupted = false;
         for (var index = 0; index < plan.Assemblies.Count; index++)
@@ -64,14 +68,23 @@ internal static class ExportRunner
                 var automaticChildren = plan.Assemblies.Where(candidate => !candidate.IsExplicit
                     && item.DecompilationReferences.Any(edge => edge.ResolvedPath is not null
                         && edge.ResolvedPath.Equals(candidate.SourcePath, StringComparison.OrdinalIgnoreCase)))
-                    .Select(candidate => Path.GetFileName(candidate.ChildPath)).ToArray();
+                    .Select(candidate => candidate.ChildRelativePath).ToArray();
                 WriteJson(Path.Combine(stage, "export-manifest.json"), new
                 {
                     schemaVersion = 1, runId, sourcePath = item.SourcePath, identity = item.Identity,
-                    contentHash = result.ContentHash, decompilerVersion = result.DecompilerVersion, isExplicit = item.IsExplicit,
+                    childRelativePath = item.ChildRelativePath, contentHash = result.ContentHash,
+                    decompilerVersion = result.DecompilerVersion, isExplicit = item.IsExplicit,
                     completionState,
                     projectPath = result.ProjectRelativePath, sourceFiles = result.SourceRelativePaths,
-                    dependencies = item.Closure.References, automaticallyExportedChildren = automaticChildren,
+                    dependencies = item.Closure.References,
+                    dependencyChildren = item.DecompilationReferences.Select((edge, index) => new
+                    {
+                        referenceIndex = index,
+                        edge.ResolvedPath,
+                        childRelativePath = edge.ResolvedPath is not { } resolvedPath ? null
+                            : plan.Assemblies.FirstOrDefault(candidate => candidate.SourcePath.Equals(resolvedPath, StringComparison.OrdinalIgnoreCase))?.ChildRelativePath,
+                    }).Where(link => link.childRelativePath is not null).ToArray(),
+                    automaticallyExportedChildren = automaticChildren,
                     filteredEdges = item.FilteredReferences, unresolvedDependencies = items[index].UnresolvedDependencies,
                     diagnostics = result.Diagnostics,
                 });

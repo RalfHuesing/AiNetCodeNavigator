@@ -14,6 +14,22 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
         if (File.Exists(plan.OutputDirectory)) throw new InvalidOperationException("Output root is a file.");
         if (Directory.Exists(plan.OutputDirectory)) ValidateMarker();
         ValidateRunReportPath();
+        foreach (var group in plan.Assemblies.GroupBy(item => Path.GetFileName(item.SourcePath), StringComparer.OrdinalIgnoreCase))
+        {
+            if (!group.Any(item => item.ChildRelativePath.Contains(Path.DirectorySeparatorChar))) continue;
+            var legacyFlatChild = Path.Combine(plan.OutputDirectory, group.Key);
+            RejectReparseAncestors(legacyFlatChild);
+            if (File.Exists(legacyFlatChild))
+                throw new InvalidOperationException($"Cannot place filename variants because a legacy flat child already exists: {legacyFlatChild}");
+            if (Directory.Exists(legacyFlatChild))
+            {
+                var variantNames = group.Select(item => Path.GetFileName(item.ChildPath)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var entries = Directory.EnumerateFileSystemEntries(legacyFlatChild).ToArray();
+                if (entries.Any(entry => !Directory.Exists(entry)
+                    || (!variantNames.Contains(Path.GetFileName(entry)) && !LooksLikeVariantPath(Path.GetFileName(entry)))))
+                    throw new InvalidOperationException($"Cannot place filename variants because a legacy flat child contains unowned content: {legacyFlatChild}");
+            }
+        }
         foreach (var assembly in plan.Assemblies) ValidateSelectedChild(assembly.ChildPath);
     }
 
@@ -39,8 +55,9 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
     {
         var canonical = Path.GetFullPath(path);
         if (!plan.Assemblies.Any(item => item.ChildPath.Equals(canonical, StringComparison.OrdinalIgnoreCase))
-            || !string.Equals(Path.GetDirectoryName(canonical), plan.OutputDirectory, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException($"Path is not a selected direct dump child: {path}");
+            || !IsWithin(canonical, plan.OutputDirectory)
+            || string.Equals(canonical, plan.OutputDirectory, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Path is not a selected dump child: {path}");
         RejectReparseTree(canonical);
         if (File.Exists(canonical)) throw new InvalidOperationException($"Selected child is a file: {path}");
     }
@@ -76,6 +93,9 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
         ValidateSelectedChild(child);
         ValidateStagingPath(stage);
         if (Directory.Exists(child)) throw new InvalidOperationException("Selected child unexpectedly reappeared before publication.");
+        var parent = Path.GetDirectoryName(child)!;
+        RejectReparseAncestors(parent);
+        Directory.CreateDirectory(parent);
         Directory.Move(stage, child);
     }
 
@@ -127,5 +147,22 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
             RejectReparseAncestors(entry);
             if (Directory.Exists(entry)) RejectReparseTree(entry);
         }
+    }
+
+    internal static bool HasVariantChildren(string outputDirectory, string filename)
+    {
+        var group = Path.Combine(outputDirectory, filename);
+        if (!Directory.Exists(group)) return false;
+        RejectReparseAncestors(group);
+        return Directory.EnumerateDirectories(group).Any(path => LooksLikeVariantPath(Path.GetFileName(path)));
+    }
+
+    private static bool LooksLikeVariantPath(string name)
+    {
+        var separator = name.IndexOf('-');
+        if (separator < 0 || name.Length - separator - 1 != 64) return false;
+        var origin = name[..separator];
+        return origin is "local" or "gac32" or "gac64" or "gacmsil"
+            && name[(separator + 1)..].All(Uri.IsHexDigit);
     }
 }
