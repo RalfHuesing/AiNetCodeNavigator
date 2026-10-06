@@ -6,7 +6,6 @@ namespace AiNetCodeNavigator.AssemblyExport;
 
 internal static class ExportRunner
 {
-    private const int MaximumDegreeOfParallelism = 8;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -21,7 +20,7 @@ internal static class ExportRunner
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(output);
         ArgumentNullException.ThrowIfNull(errors);
-        var degree = maxDegreeOfParallelism ?? Math.Clamp(Environment.ProcessorCount, 1, MaximumDegreeOfParallelism);
+        var degree = maxDegreeOfParallelism ?? Math.Max(1, Environment.ProcessorCount - 2);
         if (degree < 1) throw new ArgumentOutOfRangeException(nameof(maxDegreeOfParallelism));
 
         export ??= (item, stage, token) => AssemblyProjectExporter.ExportAsync(item.SourcePath, stage,
