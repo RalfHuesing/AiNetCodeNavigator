@@ -10,6 +10,7 @@ internal sealed record PlannedAssembly(string SourcePath, string ChildPath, Asse
 {
     // Original closure edges retain their provenance; decompilation gets one proven path per identity.
     internal IReadOnlyList<AssemblyReferenceDto> DecompilationReferences { get; init; } = Closure.References;
+    internal string ContentHash { get; init; } = "";
 }
 internal sealed record ExportPlan(ExportArguments Arguments, string OutputDirectory,
     IReadOnlyList<string> ExplicitPaths, IReadOnlyList<PlannedAssembly> Assemblies);
@@ -70,7 +71,7 @@ internal static class ExportPlanner
             var filtered = closure.References.Select(reference => (reference, rule: AutomaticExportFilter.Match(reference.Name)))
                 .Where(item => item.rule is not null).Select(item => new FilteredExportReference(item.reference, item.rule!)).ToArray();
             if (!duplicateIdentity)
-                assemblies.Add(new(source, child, identity, explicitPaths.Contains(source, StringComparer.OrdinalIgnoreCase), closure, filtered));
+                assemblies.Add(new(source, child, identity, explicitPaths.Contains(source, StringComparer.OrdinalIgnoreCase), closure, filtered) { ContentHash = hash });
             foreach (var reference in closure.References.Where(reference => reference.Resolved && reference.ResolvedPath is not null
                          && AutomaticExportFilter.Match(reference.Name) is null).OrderBy(reference => reference.ResolvedPath, StringComparer.OrdinalIgnoreCase))
                 queue.Enqueue(reference.ResolvedPath!);

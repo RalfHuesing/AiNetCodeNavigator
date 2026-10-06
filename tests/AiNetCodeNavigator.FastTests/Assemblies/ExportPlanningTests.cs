@@ -182,6 +182,15 @@ public sealed class ExportPlanningTests
         CreateJunction(rootLink, plan.OutputDirectory);
         try { Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(new(rootLink, [source]))); }
         finally { Directory.Delete(rootLink); }
+        var reportLink = Path.Combine(plan.OutputDirectory, "last-run.json");
+        CreateJunction(reportLink, outside);
+        try
+        {
+            Assert.Throws<InvalidOperationException>(() => ExportPlanner.Create(plan.Arguments));
+            Assert.True(Directory.Exists(child));
+            Assert.Equal("keep", File.ReadAllText(Path.Combine(outside, "keep.txt")));
+        }
+        finally { Directory.Delete(reportLink); }
     }
 
     private static void CreateJunction(string path, string target)

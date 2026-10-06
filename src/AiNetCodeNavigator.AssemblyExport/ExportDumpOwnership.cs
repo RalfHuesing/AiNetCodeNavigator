@@ -13,6 +13,7 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
         RejectReparseAncestors(plan.OutputDirectory);
         if (File.Exists(plan.OutputDirectory)) throw new InvalidOperationException("Output root is a file.");
         if (Directory.Exists(plan.OutputDirectory)) ValidateMarker();
+        ValidateRunReportPath();
         foreach (var assembly in plan.Assemblies) ValidateSelectedChild(assembly.ChildPath);
     }
 
@@ -52,6 +53,30 @@ internal sealed class ExportDumpOwnership(ExportPlan plan)
             || plan.Assemblies.Any(item => IsWithin(canonical, item.ChildPath)))
             throw new InvalidOperationException($"Invalid staging path: {path}");
         RejectReparseTree(canonical);
+    }
+
+    internal void ValidateRunReportPath()
+    {
+        var path = Path.Combine(plan.OutputDirectory, "last-run.json");
+        RejectReparseAncestors(path);
+        if (Directory.Exists(path)) throw new InvalidOperationException("Run report path is a directory.");
+    }
+
+    internal void DeleteStaging(string path)
+    {
+        ValidateStagingPath(path);
+        ValidateMarker();
+        if (Directory.Exists(path)) DeleteCheckedTree(path);
+    }
+
+    internal void PublishStaging(string stage, string child)
+    {
+        ValidatePreflight();
+        ValidateMarker();
+        ValidateSelectedChild(child);
+        ValidateStagingPath(stage);
+        if (Directory.Exists(child)) throw new InvalidOperationException("Selected child unexpectedly reappeared before publication.");
+        Directory.Move(stage, child);
     }
 
     private void ValidateMarker()

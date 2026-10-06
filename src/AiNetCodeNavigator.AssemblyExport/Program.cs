@@ -2,7 +2,7 @@ namespace AiNetCodeNavigator.AssemblyExport;
 
 internal static class Program
 {
-    internal static int Main(string[] args)
+    internal static async Task<int> Main(string[] args)
     {
         if (args.Length == 1 && args[0] is "--help" or "-h")
         {
@@ -17,9 +17,10 @@ internal static class Program
             return 2;
         }
 
+        ExportPlan plan;
         try
         {
-            ExportPlanner.Create(parsed!);
+            plan = ExportPlanner.Create(parsed!);
         }
         catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException
                                          or BadImageFormatException or InvalidOperationException)
@@ -28,7 +29,15 @@ internal static class Program
             return 2;
         }
 
-        Console.Error.WriteLine("Assembly export execution is not available in this build.");
-        return 1;
+        using var cancellation = new CancellationTokenSource();
+        ConsoleCancelEventHandler handler = (_, eventArgs) => { eventArgs.Cancel = true; cancellation.Cancel(); };
+        Console.CancelKeyPress += handler;
+        try { return await ExportRunner.RunAsync(plan, Console.Out, Console.Error, cancellation.Token).ConfigureAwait(false); }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
+        {
+            Console.Error.WriteLine($"Export failed: {exception.Message}");
+            return 1;
+        }
+        finally { Console.CancelKeyPress -= handler; }
     }
 }
