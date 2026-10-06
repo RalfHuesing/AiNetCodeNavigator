@@ -10,5 +10,5 @@ alwaysApply: true
 - AiNetCodeNavigator includes a read-only MCP server for agentic C# code navigation and a separate, explicit offline assembly export executable. The exporter may write only to its validated, marked output dump.
 - Do not implement or copy linting, code auditing, diagnostics, code smell checks, or automatic refactoring into this project.
 - Navigation tools are strictly read-only: never modify analyzed source files or user workspaces.
-- Standard I/O (stdout) is reserved strictly for MCP JSON-RPC protocol transport. Never write log messages, diagnostic prints, or Serilog events to stdout (use stderr or rolling file logging).
+- The MCP server's stdout is reserved strictly for JSON-RPC protocol transport. Never write MCP log messages, diagnostic prints, or Serilog events to stdout (use stderr or rolling file logging). The separate offline exporter may report progress on its own stdout.
 - Do not add dependencies from Core or navigation models to MCP transport/protocol layers.

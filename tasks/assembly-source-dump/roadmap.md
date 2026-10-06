@@ -18,6 +18,6 @@ The [concept](Konzept.md) is the contract for these ordered implementation slice
   - Expose a narrow Core export facade around the existing decompiler and diagnostics. Delete each selected old child, stage and validate its generated files, create its relative-path solution entry point and per-DLL manifest, then publish its fresh child. Write `last-run.json` with completion/failure status; continue independent DLLs and return a nonzero status for failed ones.
   - Verify actual `.csproj`/`.cs`/`.sln` output for explicit and automatically selected GAC dependencies, dependency provenance, rerun replacement, failure leaving no stale selected child, output readability and unchanged input DLL bytes.
 
-- [ ] **5. Integrate and audit the delivered tool**
+- [x] **5. Integrate and audit the delivered tool**
   - Update README/current-state docs, local deployment, release packaging and agent usage guidance for the second executable. Run an end-to-end dump and rerun with representative generated DLLs; inspect the resulting file tree and console summary.
   - Run the official build, affected Fast and Integration tests and final routine solution gate; review the final diff against the concept, including cleanup safety and unchanged MCP protocol behavior.
