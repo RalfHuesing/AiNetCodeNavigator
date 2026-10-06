@@ -16,7 +16,7 @@ The planner expands the named source inputs, then follows resolved non-system as
 
 Automatic selection excludes the simple names `mscorlib`, `netstandard`, `System`, `Microsoft`, `WindowsBase`, `PresentationCore`, `PresentationFramework`, `Accessibility`, `UIAutomationClient`, `UIAutomationTypes`, and `UIAutomationProvider`, and names beginning `System.`, `Microsoft.`, or `Windows.` (case-insensitive). An explicitly named assembly remains selected. GAC or runtime origin alone does not exclude a third-party assembly. Missing or ambiguous dependencies are recorded as limitations; independent assemblies continue.
 
-For recursively discovered local files with the same filename, the highest assembly version is selected. An explicitly named file or an older version proven by a reference is also retained. Byte-identical aliases with the same assembly identity are exported once. Equal-version files with different bytes are distinct variants. When multiple variants remain, they are grouped beneath `<filename>/<origin>-<identity-and-content-hash>`, with `local`, `gac32`, `gac64`, or `gacmsil` origin. A unique filename has a direct `<filename>` child.
+For recursively discovered local files with the same filename, the highest assembly version is selected. An explicitly named file or an older version proven by a reference is also retained. Byte-identical aliases with the same assembly identity are exported once. Equal-version files with different bytes are distinct variants. Output is grouped into an owner directory using the filename stem segment before the first dot, or `_misc` when the stem contains no dot. When multiple variants remain, they are grouped beneath `<owner>/<filename>/<origin>-<identity-and-content-hash>`, with `local`, `gac32`, `gac64`, or `gacmsil` origin. A unique filename has a direct `<owner>/<filename>` child.
 
 ## Owned output directory
 
@@ -28,13 +28,19 @@ The exporter rejects a volume root, output/source overlap, and reparse-point red
 C:\asm-dump\
   .ainetcodenavigator-assembly-export
   last-run.log
-  Example.Core.dll\
-    Example.Core.sln
-    Example.Core.csproj
-    <generated C# tree and project resources>
-    export-manifest.json
-  Example.Dependency.dll\
-    <another complete generated project>
+  Example\
+    Example.Core.dll\
+      Example.Core.sln
+      Example.Core.csproj
+      <generated C# tree and project resources>
+      export-manifest.json
+    Example.Dependency.dll\
+      <another complete generated project>
+  _misc\
+    Standalone.dll\
+      Standalone.sln
+      Standalone.csproj
+      export-manifest.json
 ```
 
 Decompilation uses a bounded number of workers across available processors. Results are validated and published as children of the output root. One failing assembly does not stop independent work. A failed assembly has no published child in that run. The generated `.sln` references the emitted `.csproj`; reconstructed projects are not guaranteed to compile. Decompiled `.cs` files with syntax errors or empty content remain available with diagnostics and a `partial` completion state. Source drift after planning fails the affected export.

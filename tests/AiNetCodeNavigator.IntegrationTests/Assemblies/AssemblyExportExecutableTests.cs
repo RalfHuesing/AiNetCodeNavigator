@@ -23,11 +23,11 @@ public sealed class AssemblyExportExecutableTests
         var result = await RunAsync(output, sources);
 
         Assert.Equal(0, result.ExitCode);
-        Assert.True(File.Exists(Path.Combine(output, "RecursiveLibrary.dll", "export-manifest.json")));
-        Assert.True(File.Exists(Path.Combine(output, "RecursiveApplication.exe", "export-manifest.json")));
-        Assert.Contains("class Library", ReadSources(Path.Combine(output, "RecursiveLibrary.dll")), StringComparison.Ordinal);
-        Assert.Contains("class App", ReadSources(Path.Combine(output, "RecursiveApplication.exe")), StringComparison.Ordinal);
-        Assert.False(Directory.Exists(Path.Combine(output, "native.dll")));
+        Assert.True(File.Exists(Path.Combine(output, "_misc", "RecursiveLibrary.dll", "export-manifest.json")));
+        Assert.True(File.Exists(Path.Combine(output, "_misc", "RecursiveApplication.exe", "export-manifest.json")));
+        Assert.Contains("class Library", ReadSources(Path.Combine(output, "_misc", "RecursiveLibrary.dll")), StringComparison.Ordinal);
+        Assert.Contains("class App", ReadSources(Path.Combine(output, "_misc", "RecursiveApplication.exe")), StringComparison.Ordinal);
+        Assert.False(Directory.Exists(Path.Combine(output, "_misc", "native.dll")));
         Assert.False(File.Exists(Path.Combine(output, "last-run.json")));
         Assert.True(File.Exists(Path.Combine(output, "last-run.log")));
         Assert.Equal(2, Directory.GetFiles(output, "export-manifest.json", SearchOption.AllDirectories).Length);
@@ -52,9 +52,9 @@ public sealed class AssemblyExportExecutableTests
         var result = await RunAsync(output, sources, "foo*.exe", "*bar*.dll");
 
         Assert.True(result.ExitCode == 0, result.Output + result.Errors);
-        Assert.True(File.Exists(Path.Combine(output, "fooApplication.exe", "export-manifest.json")));
-        Assert.True(File.Exists(Path.Combine(output, "mybarLibrary.dll", "export-manifest.json")));
-        Assert.False(Directory.Exists(Path.Combine(output, "UnrelatedLibrary.dll")));
+        Assert.True(File.Exists(Path.Combine(output, "_misc", "fooApplication.exe", "export-manifest.json")));
+        Assert.True(File.Exists(Path.Combine(output, "_misc", "mybarLibrary.dll", "export-manifest.json")));
+        Assert.False(Directory.Exists(Path.Combine(output, "_misc", "UnrelatedLibrary.dll")));
         Assert.False(File.Exists(Path.Combine(output, "last-run.json")));
         Assert.Equal(2, Directory.GetFiles(output, "export-manifest.json", SearchOption.AllDirectories).Length);
     }
@@ -73,7 +73,7 @@ public sealed class AssemblyExportExecutableTests
         Assert.True(first.ExitCode == 0, first.Output + first.Errors);
         Assert.Equal(inputBytes, await File.ReadAllBytesAsync(root));
         Assert.Equal(dependencyBytes, await File.ReadAllBytesAsync(dependency));
-        var child = Path.Combine(output, "CliRoot.dll");
+        var child = Path.Combine(output, "_misc", "CliRoot.dll");
         using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(child, "export-manifest.json")));
         var project = manifest.RootElement.GetProperty("projectPath").GetString()!;
         Assert.False(Path.IsPathRooted(project));
@@ -81,11 +81,11 @@ public sealed class AssemblyExportExecutableTests
         var solution = Assert.Single(Directory.GetFiles(child, "*.sln"));
         Assert.Contains(project.Replace('/', '\\'), await File.ReadAllTextAsync(solution), StringComparison.Ordinal);
         Assert.Contains("OldMember", ReadSources(child), StringComparison.Ordinal);
-        Assert.True(File.Exists(Path.Combine(output, "CliDependency.dll", "export-manifest.json")));
+        Assert.True(File.Exists(Path.Combine(output, "_misc", "CliDependency.dll", "export-manifest.json")));
         Assert.Contains(manifest.RootElement.GetProperty("filteredEdges").EnumerateArray(), edge => edge.GetProperty("rule").GetString()!.StartsWith("prefix:System.", StringComparison.Ordinal));
         var stale = Path.Combine(child, "stale.cs");
         await File.WriteAllTextAsync(stale, "obsolete");
-        var untouched = Path.Combine(output, "Unselected.dll");
+        var untouched = Path.Combine(output, "_misc", "Unselected.dll");
         Directory.CreateDirectory(untouched);
         await File.WriteAllTextAsync(Path.Combine(untouched, "keep.cs"), "keep");
         AssemblyTestHelper.EmitAssembly(temp, "CliRoot", "public class Root { public Vendor.Api NewMember = new(); }", dependency);

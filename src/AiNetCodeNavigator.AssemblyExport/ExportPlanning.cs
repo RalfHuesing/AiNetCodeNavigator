@@ -139,7 +139,7 @@ internal static class ExportPlanner
             var closure = new AssemblyExportReferenceClosure(node.Identity, references, closureDiagnostics,
                 node.DirectClosure.IsComplete && node.LimitEdges.Count == 0);
             if (!closure.IsComplete)
-                issues.Add(new(node.SourcePath, node.SourcePath, Path.GetFileName(node.SourcePath),
+                issues.Add(new(node.SourcePath, node.SourcePath, Path.Combine(GetOwnerDirectory(node.SourcePath), Path.GetFileName(node.SourcePath)),
                     $"Incomplete reference closure: {string.Join("; ", closure.Diagnostics.Select(item => item.Message))}", BlocksAssembly: false));
             var filtered = references.Select(reference => (reference, rule: AutomaticExportFilter.Match(reference.Name)))
                 .Where(item => item.rule is not null).Select(item => new FilteredExportReference(item.reference, item.rule!)).ToArray();
@@ -176,7 +176,7 @@ internal static class ExportPlanner
                                                  or BadImageFormatException or InvalidOperationException)
                 {
                     invalidAssemblies.Add(item.SourcePath);
-                    issues.Add(new(item.SourcePath, item.SourcePath, Path.GetFileName(item.SourcePath),
+                    issues.Add(new(item.SourcePath, item.SourcePath, Path.Combine(GetOwnerDirectory(item.SourcePath), Path.GetFileName(item.SourcePath)),
                         $"Resolved dependency could not be checked ({reference.Name}): {exception.Message}"));
                 }
             }
@@ -194,8 +194,8 @@ internal static class ExportPlanner
             .SelectMany(group => group).ToHashSet();
         var normalizedAssemblies = deduplicated.Select(item => item with
         {
-            ChildPath = collisions.Contains(item) ? Path.Combine(output, Path.GetFileName(item.SourcePath), VariantKey(item))
-                : Path.Combine(output, Path.GetFileName(item.SourcePath)),
+            ChildPath = collisions.Contains(item) ? Path.Combine(output, GetOwnerDirectory(item.SourcePath), Path.GetFileName(item.SourcePath), VariantKey(item))
+                : Path.Combine(output, GetOwnerDirectory(item.SourcePath), Path.GetFileName(item.SourcePath)),
             DecompilationReferences = item.Closure.References.Select(edge => edge.ResolvedPath is not null
                 && canonicalReferences.TryGetValue(Path.GetFullPath(edge.ResolvedPath), out var canonicalPath)
                 ? edge with { ResolvedPath = canonicalPath } : edge).ToArray(),
@@ -304,6 +304,20 @@ internal static class ExportPlanner
             }
         }
         return (paths.Order(StringComparer.OrdinalIgnoreCase).ToArray(), recursivePaths, directPaths, issues);
+    }
+
+    internal const string MiscOwnerDirectory = "_misc";
+
+    internal static string GetOwnerDirectory(string sourcePath)
+    {
+        var stem = Path.GetFileNameWithoutExtension(sourcePath);
+        var dotIndex = stem.IndexOf('.');
+        if (dotIndex > 0)
+        {
+            var owner = stem[..dotIndex].Trim();
+            if (owner.Length > 0) return owner;
+        }
+        return MiscOwnerDirectory;
     }
 
     private static string VariantKey(PlannedAssembly item)

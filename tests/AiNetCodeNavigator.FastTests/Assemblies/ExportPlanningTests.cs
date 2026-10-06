@@ -139,9 +139,9 @@ public sealed class ExportPlanningTests
         var collision = Emit(temp.GetPath("two/Shared.dll"), "Different", version: new Version(2, 0, 0, 0));
         var collisionPlan = ExportPlanner.Create(new(output, [source, collision]));
         Assert.Equal(2, collisionPlan.Assemblies.Count);
-        Assert.All(collisionPlan.Assemblies, item => Assert.Equal(Path.Combine(output, "Shared.dll"), Path.GetDirectoryName(item.ChildPath)));
+        Assert.All(collisionPlan.Assemblies, item => Assert.Equal(Path.Combine(output, "_misc", "Shared.dll"), Path.GetDirectoryName(item.ChildPath)));
         Assert.Equal(collisionPlan.Assemblies.Select(item => item.ChildPath).Distinct(StringComparer.OrdinalIgnoreCase).Count(), 2);
-        Assert.All(collisionPlan.Assemblies, item => Assert.StartsWith(Path.Combine("Shared.dll", "local-"), item.ChildRelativePath, StringComparison.OrdinalIgnoreCase));
+        Assert.All(collisionPlan.Assemblies, item => Assert.StartsWith(Path.Combine("_misc", "Shared.dll", "local-"), item.ChildRelativePath, StringComparison.OrdinalIgnoreCase));
         var conflictingIdentity = Emit(temp.GetPath("DifferentBytes.dll"), "Shared");
         Directory.CreateDirectory(temp.GetPath("two"));
         File.Copy(conflictingIdentity, temp.GetPath("two/Shared.dll"), overwrite: true);
@@ -286,6 +286,17 @@ public sealed class ExportPlanningTests
         using var process = Process.Start(start)!;
         process.WaitForExit();
         Assert.Equal(0, process.ExitCode);
+    }
+
+    [Theory]
+    [InlineData("Alpha.Beta.dll", "Alpha")]
+    [InlineData("Alpha.Beta.Gamma.v1.dll", "Alpha")]
+    [InlineData("Standalone.dll", "_misc")]
+    [InlineData("Standalone.exe", "_misc")]
+    [InlineData(".hidden.dll", "_misc")]
+    public void Plan_DeterminesOwnerDirectoryFromStem(string fileName, string expectedOwner)
+    {
+        Assert.Equal(expectedOwner, ExportPlanner.GetOwnerDirectory(fileName));
     }
 
     private static string Emit(string path, string name, string[]? references = null, Version? version = null)

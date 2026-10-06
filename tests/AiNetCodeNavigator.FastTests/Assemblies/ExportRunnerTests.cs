@@ -24,7 +24,7 @@ public sealed class ExportRunnerTests
             item.SourcePath == failed ? Task.FromException<AssemblyProjectExportResult>(new NotSupportedException("Unsupported decompiler construct."))
                 : AssemblyProjectExporter.ExportAsync(item.SourcePath, stage, item.Identity, item.ContentHash, item.DecompilationReferences, token)));
         Assert.False(Directory.Exists(failedChild));
-        Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, "ZWorks.dll", "export-manifest.json")));
+        Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, "_misc", "ZWorks.dll", "export-manifest.json")));
         Assert.False(File.Exists(Path.Combine(plan.OutputDirectory, "last-run.json")));
         Assert.False(Directory.Exists(Path.Combine(plan.OutputDirectory, ".assembly-export-tmp")));
         var log = await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.log"));
@@ -72,9 +72,9 @@ public sealed class ExportRunnerTests
         Assert.Equal(1, exitCode);
         Assert.Equal(2, maxActive);
         Assert.Equal(3, started);
-        Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, "Alpha.dll", "export-manifest.json")));
-        Assert.False(Directory.Exists(Path.Combine(plan.OutputDirectory, "Beta.dll")));
-        Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, "Gamma.dll", "export-manifest.json")));
+        Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, "_misc", "Alpha.dll", "export-manifest.json")));
+        Assert.False(Directory.Exists(Path.Combine(plan.OutputDirectory, "_misc", "Beta.dll")));
+        Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, "_misc", "Gamma.dll", "export-manifest.json")));
         Assert.Contains("Unsupported test construct", errors.ToString(), StringComparison.Ordinal);
         Assert.False(Directory.Exists(Path.Combine(plan.OutputDirectory, ".assembly-export-tmp")));
     }
@@ -139,9 +139,9 @@ public sealed class ExportRunnerTests
         });
 
         Assert.Equal(1, exitCode);
-        Assert.True(File.Exists(Path.Combine(outputDirectory, "Usable.dll", "export-manifest.json")));
+        Assert.True(File.Exists(Path.Combine(outputDirectory, "_misc", "Usable.dll", "export-manifest.json")));
         Assert.False(File.Exists(Path.Combine(outputDirectory, "last-run.json")));
-        Assert.True(File.Exists(Path.Combine(outputDirectory, "Blocked.dll", "export-manifest.json")));
+        Assert.True(File.Exists(Path.Combine(outputDirectory, "_misc", "Blocked.dll", "export-manifest.json")));
         Assert.Contains("missing*.dll", errors.ToString(), StringComparison.Ordinal);
     }
 
@@ -180,7 +180,7 @@ public sealed class ExportRunnerTests
         Assert.Equal(1, exitCode);
         Assert.Contains(root, exported);
         Assert.Contains(dependency, exported);
-        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "PartialRoot.dll", "export-manifest.json")));
+        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "_misc", "PartialRoot.dll", "export-manifest.json")));
         Assert.Equal("partial", manifest.RootElement.GetProperty("completionState").GetString());
         Assert.Contains("reference-limit", manifest.RootElement.GetProperty("diagnostics").GetProperty("referenceClosure").EnumerateArray()
             .Select(item => item.GetProperty("code").GetString()));
@@ -219,10 +219,10 @@ public sealed class ExportRunnerTests
 
         Assert.Equal(3, exported.Count);
         Assert.Single(exported.Where(path => path == shared));
-        using var rootManifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(temp.GetPath("dump"), "FirstRoot.dll", "export-manifest.json")));
+        using var rootManifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(temp.GetPath("dump"), "_misc", "FirstRoot.dll", "export-manifest.json")));
         var edge = Assert.Single(rootManifest.RootElement.GetProperty("dependencies").EnumerateArray());
         Assert.Equal("SharedVendor", edge.GetProperty("name").GetString());
-        Assert.Equal("SharedVendor.dll", edge.GetProperty("childRelativePath").GetString());
+        Assert.Equal(Path.Combine("_misc", "SharedVendor.dll"), edge.GetProperty("childRelativePath").GetString());
     }
 
     [Fact]
@@ -247,7 +247,7 @@ public sealed class ExportRunnerTests
             return new(false, "Partial.csproj", ["Broken.cs", "Empty.cs"], item.ContentHash, "test", diagnostics);
         });
 
-        var child = Path.Combine(plan.OutputDirectory, "Partial.dll");
+        var child = Path.Combine(plan.OutputDirectory, "_misc", "Partial.dll");
         Assert.Equal(0, exitCode);
         Assert.True(File.Exists(Path.Combine(child, "Broken.cs")));
         Assert.True(File.Exists(Path.Combine(child, "Empty.cs")));
@@ -308,14 +308,14 @@ public sealed class ExportRunnerTests
         using var output = new StringWriter();
         using var errors = new StringWriter();
         Assert.Equal(0, await ExportRunner.RunAsync(plan, output, errors));
-        var rootChild = Path.Combine(plan.OutputDirectory, "VendorRoot.dll");
-        var dependencyChild = Path.Combine(plan.OutputDirectory, "VendorGac.dll");
+        var rootChild = Path.Combine(plan.OutputDirectory, "_misc", "VendorRoot.dll");
+        var dependencyChild = Path.Combine(plan.OutputDirectory, "_misc", "VendorGac.dll");
         Assert.NotEmpty(Directory.GetFiles(dependencyChild, "*.cs", SearchOption.AllDirectories));
         using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(rootChild, "export-manifest.json")));
         Assert.Contains(manifest.RootElement.GetProperty("dependencies").EnumerateArray(), edge =>
             edge.GetProperty("name").GetString() == "VendorGac"
             && edge.GetProperty("resolutionProvenance").GetString() == "gac"
-            && edge.GetProperty("childRelativePath").GetString() == "VendorGac.dll");
+            && edge.GetProperty("childRelativePath").GetString() == Path.Combine("_misc", "VendorGac.dll"));
         Assert.Equal(rootHash, await File.ReadAllBytesAsync(root));
         Assert.Equal(dependencyHash, await File.ReadAllBytesAsync(installed));
     }
@@ -338,7 +338,7 @@ public sealed class ExportRunnerTests
         using var errors = new StringWriter();
         Assert.Equal(1, await ExportRunner.RunAsync(plan, output, errors));
         Assert.False(Directory.Exists(oldChild));
-        Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, "ZWorks.dll", "export-manifest.json")));
+        Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, "_misc", "ZWorks.dll", "export-manifest.json")));
         Assert.False(Directory.Exists(Path.Combine(plan.OutputDirectory, ".assembly-export-tmp")));
         Assert.False(File.Exists(Path.Combine(plan.OutputDirectory, "last-run.json")));
         Assert.Contains("Source content changed", errors.ToString(), StringComparison.Ordinal);
@@ -355,7 +355,7 @@ public sealed class ExportRunnerTests
         using var output = new StringWriter();
         using var errors = new StringWriter();
         Assert.Equal(0, await ExportRunner.RunAsync(plan, output, errors));
-        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "PartialRoot.dll", "export-manifest.json")));
+        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "_misc", "PartialRoot.dll", "export-manifest.json")));
         Assert.Equal("partial", manifest.RootElement.GetProperty("completionState").GetString());
         Assert.Contains(manifest.RootElement.GetProperty("dependencies").EnumerateArray(), edge =>
             edge.GetProperty("name").GetString() == "MissingVendor"
@@ -381,5 +381,26 @@ public sealed class ExportRunnerTests
         Assert.False(Directory.Exists(Path.Combine(plan.OutputDirectory, ".assembly-export-tmp")));
         Assert.False(File.Exists(Path.Combine(plan.OutputDirectory, "last-run.json")));
         Assert.Contains("INTERRUPTED", await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.log")), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Runner_PublishesAssemblyIntoOwnerSubdirectoryBasedOnDottedStem()
+    {
+        using var temp = TestTempDirectory.Create("export-owner-subfolder-");
+        var source = AssemblyTestHelper.EmitAssembly(temp, "Vendor.Library.Core", "namespace Vendor.Library; public class Core { }");
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [source]));
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+        Assert.Equal(0, await ExportRunner.RunAsync(plan, output, errors, export: async (item, stage, _) =>
+        {
+            var name = item.Identity.Name;
+            await File.WriteAllTextAsync(Path.Combine(stage, name + ".csproj"), "<Project />");
+            await File.WriteAllTextAsync(Path.Combine(stage, name + ".cs"), "public class Core { }");
+            return new(true, name + ".csproj", [name + ".cs"], item.ContentHash, "test", []);
+        }));
+        var expectedChild = Path.Combine(plan.OutputDirectory, "Vendor", "Vendor.Library.Core.dll");
+        Assert.True(File.Exists(Path.Combine(expectedChild, "export-manifest.json")));
+        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(expectedChild, "export-manifest.json")));
+        Assert.Equal(Path.Combine("Vendor", "Vendor.Library.Core.dll"), manifest.RootElement.GetProperty("childRelativePath").GetString());
     }
 }
