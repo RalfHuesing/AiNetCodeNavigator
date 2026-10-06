@@ -11,10 +11,10 @@ The [concept](Konzept.md) is the contract for these ordered implementation slice
   - Verify local, runtime and GAC candidates; exact/mismatched versions and tokens; absent GAC; transitive references; traversal boundaries; and affected MCP assembly-navigation behavior using temporary fixtures.
 
 - [x] **3. Implement safe dump ownership and input planning**
-  - Implement path/glob expansion, managed-DLL validation, automatic non-system dependency selection, path deduplication and output-name collision detection before creating or cleaning the dump. Apply the documented Microsoft/System filter, retaining excluded-edge reasons. Create or validate the exact root marker; restrict cleanup to selected direct children and reject reparse-point redirects.
+  - Implement recursive source-directory and filename-pattern expansion, managed DLL/EXE validation, automatic non-system dependency selection, path deduplication and output-name collision detection before creating or cleaning the dump. Apply the documented Microsoft/System filter, retaining excluded-edge reasons. Create or validate the exact root marker; restrict cleanup to selected direct children and reject reparse-point redirects.
   - Verify all marker, filter, closure, collision, containment, no-match, duplicate and untouched-child cases with filesystem tests.
 
-- [x] **4. Export whole projects per DLL**
+- [x] **4. Export whole projects per assembly**
   - Expose a narrow Core export facade around the existing decompiler and diagnostics. Delete each selected old child, stage and validate its generated files, create its relative-path solution entry point and per-DLL manifest, then publish its fresh child. Write `last-run.json` with completion/failure status; continue independent DLLs and return a nonzero status for failed ones.
   - Verify actual `.csproj`/`.cs`/`.sln` output for explicit and automatically selected GAC dependencies, dependency provenance, rerun replacement, failure leaving no stale selected child, output readability and unchanged input DLL bytes.
 

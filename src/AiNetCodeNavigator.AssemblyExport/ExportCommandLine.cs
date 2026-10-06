@@ -4,7 +4,7 @@ internal sealed record ExportArguments(string OutputDirectory, IReadOnlyList<str
 
 internal static class ExportCommandLine
 {
-    internal const string Usage = "Usage: AiNetCodeNavigator.AssemblyExport.exe <output-directory> <source-dll-or-pattern> [<source-dll-or-pattern> ...]";
+    internal const string Usage = "Usage: AiNetCodeNavigator.AssemblyExport.exe <output-directory> <source-file-directory-or-pattern> [<source-file-directory-or-pattern> ...]";
 
     internal static bool TryParse(string[] args, out ExportArguments? parsed, out string? error)
     {
@@ -12,7 +12,7 @@ internal static class ExportCommandLine
         error = null;
         if (args.Length < 2 || args.Any(string.IsNullOrWhiteSpace))
         {
-            error = "An output directory and at least one DLL path or pattern are required.";
+            error = "An output directory and at least one managed assembly path, source directory, or filename pattern are required.";
             return false;
         }
 

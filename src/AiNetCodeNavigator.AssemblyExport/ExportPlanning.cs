@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Security.Cryptography;
+using System.IO.Enumeration;
 using AiNetCodeNavigator.Core.Assemblies;
 
 namespace AiNetCodeNavigator.AssemblyExport;
@@ -112,28 +113,74 @@ internal static class ExportPlanner
         foreach (var pattern in patterns)
         {
             var full = Path.GetFullPath(pattern);
-            var directory = Path.GetDirectoryName(full)!;
-            var filePattern = Path.GetFileName(full);
-            if (directory.IndexOfAny(['*', '?']) >= 0 || filePattern.Contains("**", StringComparison.Ordinal))
-                throw new ArgumentException($"Only final filename segment wildcards * and ? are supported: {pattern}");
-            var matches = filePattern.IndexOfAny(['*', '?']) >= 0
-                ? Directory.Exists(directory) ? Directory.GetFiles(directory, filePattern, SearchOption.TopDirectoryOnly) : []
-                : File.Exists(full) ? [full] : [];
-            if (matches.Length == 0) throw new ArgumentException($"Source path or pattern has no matches: {pattern}");
-            foreach (var match in matches)
+            IReadOnlyList<string> matches;
+            if (Directory.Exists(full))
             {
-                ExportDumpOwnership.RejectReparseAncestors(match);
-                ReadManagedIdentity(match);
-                paths.Add(Path.GetFullPath(match));
+                matches = FindManagedFiles(full, "*");
             }
+            else
+            {
+                var directory = Path.GetDirectoryName(full)!;
+                var filePattern = Path.GetFileName(full);
+                if (directory.IndexOfAny(['*', '?']) >= 0 || filePattern.Contains("**", StringComparison.Ordinal))
+                    throw new ArgumentException($"Only final filename segment wildcards * and ? are supported: {pattern}");
+                if (filePattern.IndexOfAny(['*', '?']) >= 0)
+                    matches = Directory.Exists(directory) ? FindManagedFiles(directory, filePattern) : [];
+                else if (File.Exists(full))
+                {
+                    ExportDumpOwnership.RejectReparseAncestors(full);
+                    ReadManagedIdentity(full);
+                    matches = [full];
+                }
+                else matches = [];
+            }
+            if (matches.Count == 0) throw new ArgumentException($"Source path or pattern has no managed DLL or EXE matches: {pattern}");
+            foreach (var match in matches) paths.Add(match);
         }
         return paths.Order(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
+    private static IReadOnlyList<string> FindManagedFiles(string root, string filePattern)
+    {
+        var matches = new List<string>();
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.TryPop(out var directory))
+        {
+            ExportDumpOwnership.RejectReparseAncestors(directory);
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory).Order(StringComparer.OrdinalIgnoreCase))
+            {
+                var attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.Directory) != 0)
+                {
+                    if ((attributes & FileAttributes.ReparsePoint) != 0)
+                        throw new InvalidOperationException($"Reparse-point source directory cannot be searched: {entry}");
+                    pending.Push(entry);
+                    continue;
+                }
+                if (!IsSupportedExtension(entry)
+                    || !FileSystemName.MatchesSimpleExpression(filePattern, Path.GetFileName(entry), ignoreCase: true))
+                    continue;
+                ExportDumpOwnership.RejectReparseAncestors(entry);
+                try { ReadManagedIdentity(entry); }
+                catch (BadImageFormatException) { continue; }
+                matches.Add(Path.GetFullPath(entry));
+            }
+        }
+        return matches;
+    }
+
+    private static bool IsSupportedExtension(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".dll", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".exe", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static AssemblyIdentityDto ReadManagedIdentity(string path)
     {
-        if (!Path.GetExtension(path).Equals(".dll", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException($"Input must be a managed DLL: {path}");
+        if (!IsSupportedExtension(path))
+            throw new ArgumentException($"Input must be a managed DLL or EXE: {path}");
         var name = AssemblyName.GetAssemblyName(path);
         return new(name.Name!, name.Version!.ToString(), string.IsNullOrEmpty(name.CultureName) ? "neutral" : name.CultureName,
             Convert.ToHexStringLower(name.GetPublicKeyToken() ?? []));

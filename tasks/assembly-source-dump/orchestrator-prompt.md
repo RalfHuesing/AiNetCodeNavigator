@@ -4,7 +4,7 @@ You are the implementation orchestrator for `C:\Daten\Entwicklung\Ralf\AiNetCode
 
 ## Outcome
 
-Deliver a working `AiNetCodeNavigator.AssemblyExport.exe` in this solution. With an output directory and one or more DLL paths or quoted `*` patterns, it creates or validates the marker, resolves and exports the non-system dependency closure including matching GAC assemblies, and rebuilds each selected `<dll-name>` directory as decompiled C# with the specified manifests and `.sln`. Keep the MCP executable read-only and its stdout protocol-only. Include the new executable in local deployment and release packaging. Do not implement graph sidecars or migrate SourceToAI's Markdown feeds in this step.
+Deliver a working `AiNetCodeNavigator.AssemblyExport.exe` in this solution. With an output directory and one or more managed DLL/EXE paths, recursively searched source directories, or quoted filename patterns, it creates or validates the marker, resolves and exports the non-system dependency closure including matching GAC assemblies, and rebuilds each selected `<source-file-name>` directory as decompiled C# with the specified manifests and `.sln`. Keep the MCP executable read-only and its stdout protocol-only. Include the new executable in local deployment and release packaging. Do not implement graph sidecars or migrate SourceToAI's Markdown feeds in this step.
 
 ## How to work
 

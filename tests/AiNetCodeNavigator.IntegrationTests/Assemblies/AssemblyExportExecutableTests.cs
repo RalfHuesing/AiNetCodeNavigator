@@ -7,6 +7,34 @@ namespace AiNetCodeNavigator.IntegrationTests.Assemblies;
 public sealed class AssemblyExportExecutableTests
 {
     [Fact]
+    public async Task Executable_RecursivelyExportsManagedDllAndExeFromDirectory()
+    {
+        using var temp = TestTempDirectory.Create("export-recursive-executable-");
+        var sources = temp.GetPath("sources");
+        var nested = Path.Combine(sources, "nested");
+        Directory.CreateDirectory(nested);
+        var library = AssemblyTestHelper.EmitAssembly(temp, "RecursiveLibrary", "namespace Recursive; public sealed class Library { public int Value => 7; }");
+        var application = AssemblyTestHelper.EmitExecutable(temp, "RecursiveApplication", "public static class App { public static void Main() { } }");
+        File.Move(library, Path.Combine(sources, "RecursiveLibrary.dll"));
+        File.Move(application, Path.Combine(nested, "RecursiveApplication.exe"));
+        await File.WriteAllTextAsync(Path.Combine(nested, "native.dll"), "not a managed assembly");
+
+        var output = temp.GetPath("dump");
+        var result = await RunAsync(output, sources);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(File.Exists(Path.Combine(output, "RecursiveLibrary.dll", "export-manifest.json")));
+        Assert.True(File.Exists(Path.Combine(output, "RecursiveApplication.exe", "export-manifest.json")));
+        Assert.Contains("class Library", ReadSources(Path.Combine(output, "RecursiveLibrary.dll")), StringComparison.Ordinal);
+        Assert.Contains("class App", ReadSources(Path.Combine(output, "RecursiveApplication.exe")), StringComparison.Ordinal);
+        Assert.False(Directory.Exists(Path.Combine(output, "native.dll")));
+        using var report = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(output, "last-run.json")));
+        Assert.Equal("complete", report.RootElement.GetProperty("completionState").GetString());
+        Assert.Equal(2, report.RootElement.GetProperty("selectedChildren").GetArrayLength());
+        Assert.Equal(sources, Assert.Single(report.RootElement.GetProperty("exactInputs").EnumerateArray()).GetString());
+    }
+
+    [Fact]
     public async Task Executable_ExportsDependencyAndReadableSolutionThenReplacesSelectedChildren()
     {
         using var temp = TestTempDirectory.Create("export-executable-");

@@ -1,6 +1,6 @@
 # AiNetCodeNavigator — C# navigation and assembly export tools
 
-AiNetCodeNavigator includes a read-only MCP server for **C# source code and compiled .NET assemblies** and a separate offline command that exports selected managed DLLs as searchable C# project trees. The MCP server finds symbols, reads method bodies, traces callers and references, inspects type hierarchies, and explores decompiled libraries without editing analyzed code.
+AiNetCodeNavigator includes a read-only MCP server for **C# source code and compiled .NET assemblies** and a separate offline command that exports selected managed DLLs and EXEs as searchable C# project trees. The MCP server finds symbols, reads method bodies, traces callers and references, inspects type hierarchies, and explores decompiled libraries without editing analyzed code.
 
 The MCP server runs locally over stdio. Source navigation uses Roslyn; assembly navigation and export use the ILSpy decompiler (`ICSharpCode.Decompiler`). Navigation targets are existing `.sln` / `.slnx` solutions or managed `.dll` / `.exe` files. The offline exporter writes only to its explicitly selected, marked dump directory.
 
@@ -34,13 +34,13 @@ pwsh -File ./scripts/deploy.ps1 -SkipTests
 
 This builds the solution and publishes the MCP executable at `deploy/` and the exporter with its dependencies under `deploy/assembly-export/`, skipping the test suite. Keep each executable with its published dependencies. These local deployments are framework-dependent and require the .NET 10 runtime. See [setup requirements](docs/setup/README.md).
 
-To create a source dump from explicit DLLs, run the exporter with an output directory followed by one or more DLL paths or quoted filename patterns:
+To create a source dump, run the exporter with an output directory followed by managed DLL/EXE paths, source directories, or quoted filename patterns. Directory inputs and filename patterns search recursively:
 
 ```powershell
-& .\deploy\assembly-export\AiNetCodeNavigator.AssemblyExport.exe "C:\Dump" "C:\Vendor\*.dll"
+& .\deploy\assembly-export\AiNetCodeNavigator.AssemblyExport.exe "C:\Dump" "C:\Vendor"
 ```
 
-The output root is owned by the exporter and must contain its marker before later runs can replace selected DLL child directories. Review `last-run.json` and each child `export-manifest.json` before using a dump. See the [assembly export guide](docs/assembly-export.md) for filtering, dependency closure, cleanup, and completeness details.
+The output root is owned by the exporter and must contain its marker before later runs can replace selected assembly child directories. Review `last-run.json` and each child `export-manifest.json` before using a dump. See the [assembly export guide](docs/assembly-export.md) for filtering, dependency closure, cleanup, and completeness details.
 
 ### 2. Configure your MCP client
 

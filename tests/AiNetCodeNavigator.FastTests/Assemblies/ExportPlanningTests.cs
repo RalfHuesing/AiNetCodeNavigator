@@ -26,7 +26,44 @@ public sealed class ExportPlanningTests
         File.WriteAllText(temp.GetPath("native.dll"), "not managed");
         Assert.Throws<BadImageFormatException>(() => ExportPlanner.Expand([temp.GetPath("native.dll")]));
         File.Copy(first, temp.GetPath("A.exe"));
-        Assert.Throws<ArgumentException>(() => ExportPlanner.Expand([temp.GetPath("A.exe")]));
+        Assert.Equal([temp.GetPath("A.exe")], ExportPlanner.Expand([temp.GetPath("A.exe")]));
+    }
+
+    [Fact]
+    public void Expand_RecursesDirectoriesAndFilenamePatternsAcrossManagedDllsAndExecutables()
+    {
+        using var temp = TestTempDirectory.Create("export-recursive-input-");
+        var sourceDirectory = temp.GetPath("sources");
+        var rootDll = Emit(Path.Combine(sourceDirectory, "Root.dll"), "Root");
+        var nestedDll = Emit(Path.Combine(sourceDirectory, "nested", "More.dll"), "More");
+        var deepExe = Emit(Path.Combine(sourceDirectory, "nested", "deep", "Tool.exe"), "Tool");
+        File.WriteAllText(Path.Combine(sourceDirectory, "native.dll"), "not managed");
+        File.WriteAllText(Path.Combine(sourceDirectory, "nested", "notes.txt"), "ignored");
+
+        Assert.Equal(new[] { rootDll, nestedDll, deepExe }.Order(StringComparer.OrdinalIgnoreCase),
+            ExportPlanner.Expand([sourceDirectory]));
+        Assert.Equal(new[] { rootDll, nestedDll }.Order(StringComparer.OrdinalIgnoreCase),
+            ExportPlanner.Expand([Path.Combine(sourceDirectory, "*.dll")]));
+        Assert.Equal([deepExe], ExportPlanner.Expand([Path.Combine(sourceDirectory, "*.exe")]));
+        Assert.Throws<ArgumentException>(() => ExportPlanner.Expand([Path.Combine(sourceDirectory, "native*.dll")]));
+    }
+
+    [Fact]
+    public void Expand_RejectsReparseDirectoryInsteadOfFollowingItOutsideSourceRoot()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        using var temp = TestTempDirectory.Create("export-recursive-junction-");
+        var sources = temp.GetPath("sources");
+        var outside = temp.GetPath("outside");
+        Directory.CreateDirectory(sources);
+        Emit(Path.Combine(outside, "External.dll"), "External");
+        var link = Path.Combine(sources, "redirect");
+        CreateJunction(link, outside);
+        try
+        {
+            Assert.Throws<InvalidOperationException>(() => ExportPlanner.Expand([sources]));
+        }
+        finally { Directory.Delete(link); }
     }
 
     [Fact]
