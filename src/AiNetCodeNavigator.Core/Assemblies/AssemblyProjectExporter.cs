@@ -8,8 +8,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
 
 namespace AiNetCodeNavigator.Core.Assemblies;
 
@@ -40,31 +38,41 @@ public static class AssemblyProjectExporter
             var request = new DecompilationRequest(source, fingerprint,
                 AssemblyFingerprintCalculator.CreateCacheKey(fingerprint, options), options, cancellationToken, stage);
             var result = await new AssemblyDecompilationAdapter().DecompileAsync(request, resolution).ConfigureAwait(false);
-            diagnostics.AddRange(result.Diagnostics.Select(item => new AssemblyExportReferenceDiagnostic(item.Code, item.Message,
-                item.Severity == AssemblyDiagnosticSeverity.Error)));
-            if (!result.IsComplete || result.ProjectFilePath is null || result.Documents.Count == 0
-                || result.Diagnostics.Any(item => item.Code is "assembly-type-decompilation-empty" or "assembly-type-decompilation-failed")
-                || result.Documents.Any(item => string.IsNullOrWhiteSpace(item.CSharpSource)
-                    || CSharpSyntaxTree.ParseText(item.CSharpSource).GetDiagnostics(cancellationToken)
-                        .Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)))
-                throw new InvalidDataException("Generated project or C# documents did not pass export validation.");
-            var projectPath = Path.GetRelativePath(stage, result.ProjectFilePath);
-            var sourcePaths = result.Documents.Select(item => Path.GetRelativePath(stage, item.GeneratedPath)).ToArray();
-            ValidateArtifacts(stage, projectPath, sourcePaths);
-            using (var reader = XmlReader.Create(result.ProjectFilePath, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null }))
-            {
-                var project = XDocument.Load(reader);
-                if (project.Root?.Name.LocalName != "Project") throw new InvalidDataException("Generated .csproj has no Project root.");
-            }
+            var export = ValidateGeneratedOutput(stage, result, fingerprint.Sha256, cancellationToken);
             ValidateSnapshot(source, expectedIdentity, expectedContentHash, provenReferences);
-            return new(true, projectPath, sourcePaths, fingerprint.Sha256,
-                AssemblyDecompilationOptions.CurrentDecompilerVersion, diagnostics);
+            return export;
         }
         catch (Exception ex) when (IsRecoverableFailure(ex))
         {
             diagnostics.Add(new("assembly-export-validation-failed", ex.Message, true));
             return new(false, null, [], null, AssemblyDecompilationOptions.CurrentDecompilerVersion, diagnostics);
         }
+    }
+
+    internal static AssemblyProjectExportResult ValidateGeneratedOutput(string stagingDirectory,
+        DecompilationResult result, string contentHash, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (result.ProjectFilePath is null || result.Documents.Count == 0)
+            throw new InvalidDataException("Decompilation produced no usable project or C# source files.");
+
+        var stage = Path.GetFullPath(stagingDirectory);
+        var projectPath = Path.GetRelativePath(stage, result.ProjectFilePath);
+        var sourcePaths = result.Documents.Select(item => Path.GetRelativePath(stage, item.GeneratedPath)).ToArray();
+        ValidateArtifacts(stage, projectPath, sourcePaths);
+        using (var reader = XmlReader.Create(result.ProjectFilePath,
+            new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null }))
+        {
+            var project = XDocument.Load(reader);
+            if (project.Root?.Name.LocalName != "Project")
+                throw new InvalidDataException("Generated .csproj has no Project root.");
+        }
+
+        var diagnostics = result.Diagnostics.Select(item => new AssemblyExportReferenceDiagnostic(
+            item.Code, item.Message, item.Severity == AssemblyDiagnosticSeverity.Error)).ToArray();
+        var isComplete = result.IsComplete && diagnostics.Length == 0;
+        return new(isComplete, projectPath, sourcePaths, contentHash,
+            AssemblyDecompilationOptions.CurrentDecompilerVersion, diagnostics);
     }
 
     /// <summary>Classifies per-assembly failures without hiding cancellation or fatal process errors.</summary>

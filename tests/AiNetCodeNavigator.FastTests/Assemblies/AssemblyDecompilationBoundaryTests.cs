@@ -45,6 +45,35 @@ public sealed class AssemblyDecompilationBoundaryTests
     }
 
     [Fact]
+    public async Task DecompileAsync_RecoversSyntaxInvalidAndEmptyGeneratedFilesAfterFailure()
+    {
+        using var temp = TestTempDirectory.Create("assembly-decompile-partial-output-");
+        var path = AssemblyTestHelper.EmitAssembly(temp, "PartialOutput", "public class Probe { }");
+        var fingerprint = AssemblyFingerprintCalculator.Create(path);
+        var options = AssemblyDecompilationOptions.Default;
+        var request = new DecompilationRequest(path, fingerprint,
+            AssemblyFingerprintCalculator.CreateCacheKey(fingerprint, options), options, CancellationToken.None, temp.GetPath("staging"));
+        var adapter = new AssemblyDecompilationAdapter(async (decompilationRequest, _) =>
+        {
+            var staging = decompilationRequest.StagingDirectory!;
+            Directory.CreateDirectory(staging);
+            await File.WriteAllTextAsync(Path.Combine(staging, "PartialOutput.csproj"), "<Project />");
+            await File.WriteAllTextAsync(Path.Combine(staging, "Broken.cs"), "public class Broken { void M() { int value = ref; } }");
+            await File.WriteAllTextAsync(Path.Combine(staging, "Empty.cs"), string.Empty);
+            throw new NotSupportedException("A later type could not be decompiled.");
+        });
+
+        var result = await adapter.DecompileAsync(request, new AssemblyReferenceResolver().Resolve(path));
+
+        Assert.False(result.IsComplete);
+        Assert.Equal(2, result.Documents.Count);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("CS1525", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("Empty.cs", StringComparison.Ordinal)
+            && diagnostic.Severity == AssemblyDiagnosticSeverity.Warning);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("later type", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task DecompileAsync_LeavesManagedAssemblyBytesAndTimestampUnchanged()
     {
         using var temp = TestTempDirectory.Create("assembly-decompile-read-only-");

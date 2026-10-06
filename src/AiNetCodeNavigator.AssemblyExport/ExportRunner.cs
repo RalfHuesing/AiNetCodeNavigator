@@ -5,7 +5,8 @@ using AiNetCodeNavigator.Core.Assemblies;
 namespace AiNetCodeNavigator.AssemblyExport;
 
 internal sealed record ExportRunItem(string SourcePath, string ChildName, AssemblyIdentityDto Identity,
-    bool IsExplicit, string State, IReadOnlyList<AssemblyReferenceDto> UnresolvedDependencies, string? Error = null);
+    bool IsExplicit, string State, IReadOnlyList<AssemblyReferenceDto> UnresolvedDependencies, string? Error = null,
+    IReadOnlyList<AssemblyExportReferenceDiagnostic>? Diagnostics = null);
 
 internal static class ExportRunner
 {
@@ -22,7 +23,7 @@ internal static class ExportRunner
         var runId = Guid.NewGuid().ToString("N");
         var startedAt = DateTimeOffset.UtcNow;
         var items = plan.Assemblies.Select(item => new ExportRunItem(item.SourcePath, Path.GetFileName(item.ChildPath),
-            item.Identity, item.IsExplicit, "pending", item.Closure.References.Where(edge => !edge.Resolved).ToArray())).ToArray();
+            item.Identity, item.IsExplicit, "pending", item.Closure.References.Where(edge => !edge.Resolved).ToArray(), Diagnostics: [])).ToArray();
         WriteRunReport("running");
         var interrupted = false;
         for (var index = 0; index < plan.Assemblies.Count; index++)
@@ -46,11 +47,20 @@ internal static class ExportRunner
                 owner.ValidateStagingPath(stage);
                 Directory.CreateDirectory(stage);
                 var result = await export(item, stage, cancellationToken).ConfigureAwait(false);
-                if (!result.IsComplete || result.ProjectRelativePath is null)
-                    throw new InvalidDataException(string.Join("; ", result.Diagnostics.Select(diagnostic => diagnostic.Message)));
+                if (result.ProjectRelativePath is null || result.SourceRelativePaths.Count == 0)
+                {
+                    var failure = string.Join("; ", result.Diagnostics.Select(diagnostic => diagnostic.Message));
+                    throw new InvalidDataException(string.IsNullOrWhiteSpace(failure)
+                        ? "Decompilation produced no usable project or C# source files."
+                        : failure);
+                }
                 owner.ValidateStagingPath(stage);
                 AssemblyProjectExporter.ValidateArtifacts(stage, result.ProjectRelativePath, result.SourceRelativePaths);
                 WriteSolution(stage, result.ProjectRelativePath);
+                var hasLimitations = !result.IsComplete || result.Diagnostics.Count > 0 || items[index].UnresolvedDependencies.Count > 0;
+                var completionState = hasLimitations ? "partial" : "complete";
+                foreach (var diagnostic in result.Diagnostics)
+                    await output.WriteLineAsync($"Diagnostic ({(diagnostic.IsError ? "error" : "warning")}): {item.SourcePath}: {diagnostic.Message}").ConfigureAwait(false);
                 var automaticChildren = plan.Assemblies.Where(candidate => !candidate.IsExplicit
                     && item.DecompilationReferences.Any(edge => edge.ResolvedPath is not null
                         && edge.ResolvedPath.Equals(candidate.SourcePath, StringComparison.OrdinalIgnoreCase)))
@@ -59,14 +69,14 @@ internal static class ExportRunner
                 {
                     schemaVersion = 1, runId, sourcePath = item.SourcePath, identity = item.Identity,
                     contentHash = result.ContentHash, decompilerVersion = result.DecompilerVersion, isExplicit = item.IsExplicit,
-                    completionState = items[index].UnresolvedDependencies.Count == 0 ? "complete" : "partial",
+                    completionState,
                     projectPath = result.ProjectRelativePath, sourceFiles = result.SourceRelativePaths,
                     dependencies = item.Closure.References, automaticallyExportedChildren = automaticChildren,
                     filteredEdges = item.FilteredReferences, unresolvedDependencies = items[index].UnresolvedDependencies,
                     diagnostics = result.Diagnostics,
                 });
                 owner.PublishStaging(stage, item.ChildPath);
-                items[index] = items[index] with { State = items[index].UnresolvedDependencies.Count == 0 ? "complete" : "partial" };
+                items[index] = items[index] with { State = completionState, Diagnostics = result.Diagnostics };
                 await output.WriteLineAsync($"Success ({items[index].State}): {item.ChildPath}").ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

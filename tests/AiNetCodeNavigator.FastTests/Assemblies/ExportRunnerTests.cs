@@ -31,6 +31,43 @@ public sealed class ExportRunnerTests
         Assert.Empty(Directory.GetDirectories(plan.OutputDirectory, ".assembly-export-stage-*"));
     }
 
+    [Fact]
+    public async Task Runner_PublishesUsablePartialOutputWithSyntaxAndEmptySourceDiagnostics()
+    {
+        using var temp = TestTempDirectory.Create("export-partial-output-");
+        var source = AssemblyTestHelper.EmitAssembly(temp, "Partial", "public class Partial { }");
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [source]));
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+        var diagnostics = new[]
+        {
+            new AssemblyExportReferenceDiagnostic("syntax-warning", "Broken.cs contains CS1525.", true),
+            new AssemblyExportReferenceDiagnostic("empty-source-warning", "Empty.cs is empty.", false),
+        };
+
+        var exitCode = await ExportRunner.RunAsync(plan, output, errors, export: async (item, stage, _) =>
+        {
+            await File.WriteAllTextAsync(Path.Combine(stage, "Partial.csproj"), "<Project />");
+            await File.WriteAllTextAsync(Path.Combine(stage, "Broken.cs"), "public class Broken { void M() { ref } }");
+            await File.WriteAllTextAsync(Path.Combine(stage, "Empty.cs"), string.Empty);
+            return new(false, "Partial.csproj", ["Broken.cs", "Empty.cs"], item.ContentHash, "test", diagnostics);
+        });
+
+        var child = Path.Combine(plan.OutputDirectory, "Partial.dll");
+        Assert.Equal(0, exitCode);
+        Assert.True(File.Exists(Path.Combine(child, "Broken.cs")));
+        Assert.True(File.Exists(Path.Combine(child, "Empty.cs")));
+        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(child, "export-manifest.json")));
+        Assert.Equal("partial", manifest.RootElement.GetProperty("completionState").GetString());
+        Assert.Equal(2, manifest.RootElement.GetProperty("diagnostics").GetArrayLength());
+        using var run = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.json")));
+        Assert.Equal("partial", run.RootElement.GetProperty("completionState").GetString());
+        Assert.Equal("partial", Assert.Single(run.RootElement.GetProperty("selectedChildren").EnumerateArray())
+            .GetProperty("state").GetString());
+        Assert.Contains("CS1525", output.ToString(), StringComparison.Ordinal);
+        Assert.Empty(errors.ToString());
+    }
+
     [Theory]
     [InlineData("../outside.cs")]
     [InlineData("missing.cs")]
