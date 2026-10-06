@@ -49,6 +49,22 @@ public sealed class ExportPlanningTests
     }
 
     [Fact]
+    public void Expand_AppliesMultipleBareFilenamePatternsToPrecedingDirectoryRecursively()
+    {
+        using var temp = TestTempDirectory.Create("export-filtered-directory-");
+        var sources = temp.GetPath("sources");
+        var fooExe = Emit(Path.Combine(sources, "nested", "fooTool.exe"), "FooTool");
+        var barDll = Emit(Path.Combine(sources, "deep", "nested", "mybarPlugin.dll"), "BarPlugin");
+        Emit(Path.Combine(sources, "unmatched.exe"), "UnmatchedExe");
+        Emit(Path.Combine(sources, "nested", "unmatched.dll"), "UnmatchedDll");
+        File.WriteAllText(Path.Combine(sources, "nativebar.dll"), "native");
+
+        Assert.Equal(new[] { fooExe, barDll }.Order(StringComparer.OrdinalIgnoreCase),
+            ExportPlanner.Expand([sources, "foo*.exe", "*bar*.dll"]));
+        Assert.Throws<ArgumentException>(() => ExportPlanner.Expand([sources, "absent*.exe"]));
+    }
+
+    [Fact]
     public void Expand_RejectsReparseDirectoryInsteadOfFollowingItOutsideSourceRoot()
     {
         if (!OperatingSystem.IsWindows()) return;

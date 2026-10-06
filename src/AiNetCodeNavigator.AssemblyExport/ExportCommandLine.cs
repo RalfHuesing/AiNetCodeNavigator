@@ -4,7 +4,8 @@ internal sealed record ExportArguments(string OutputDirectory, IReadOnlyList<str
 
 internal static class ExportCommandLine
 {
-    internal const string Usage = "Usage: AiNetCodeNavigator.AssemblyExport.exe <output-directory> <source-file-directory-or-pattern> [<source-file-directory-or-pattern> ...]";
+    internal const string Usage = "Usage: AiNetCodeNavigator.AssemblyExport.exe <output-directory> <source-directory> [<filename-pattern> ...]\n"
+        + "       AiNetCodeNavigator.AssemblyExport.exe <output-directory> <source-file-or-path-qualified-pattern> [...]";
 
     internal static bool TryParse(string[] args, out ExportArguments? parsed, out string? error)
     {

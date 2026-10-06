@@ -110,13 +110,24 @@ internal static class ExportPlanner
     internal static IReadOnlyList<string> Expand(IReadOnlyList<string> patterns)
     {
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var pattern in patterns)
+        for (var index = 0; index < patterns.Count; index++)
         {
+            var pattern = patterns[index];
             var full = Path.GetFullPath(pattern);
             IReadOnlyList<string> matches;
             if (Directory.Exists(full))
             {
-                matches = FindManagedFiles(full, "*");
+                var filenamePatterns = new List<string>();
+                while (index + 1 < patterns.Count && IsBareFilenamePattern(patterns[index + 1]))
+                {
+                    var filenamePattern = patterns[++index];
+                    if (filenamePattern.Contains("**", StringComparison.Ordinal))
+                        throw new ArgumentException($"Only final filename segment wildcards * and ? are supported: {filenamePattern}");
+                    filenamePatterns.Add(filenamePattern);
+                }
+                matches = filenamePatterns.Count == 0
+                    ? FindManagedFiles(full, ["*"])
+                    : FindManagedFiles(full, filenamePatterns, requireEveryPattern: true);
             }
             else
             {
@@ -125,7 +136,7 @@ internal static class ExportPlanner
                 if (directory.IndexOfAny(['*', '?']) >= 0 || filePattern.Contains("**", StringComparison.Ordinal))
                     throw new ArgumentException($"Only final filename segment wildcards * and ? are supported: {pattern}");
                 if (filePattern.IndexOfAny(['*', '?']) >= 0)
-                    matches = Directory.Exists(directory) ? FindManagedFiles(directory, filePattern) : [];
+                    matches = Directory.Exists(directory) ? FindManagedFiles(directory, [filePattern]) : [];
                 else if (File.Exists(full))
                 {
                     ExportDumpOwnership.RejectReparseAncestors(full);
@@ -140,9 +151,13 @@ internal static class ExportPlanner
         return paths.Order(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    private static IReadOnlyList<string> FindManagedFiles(string root, string filePattern)
+    private static bool IsBareFilenamePattern(string pattern) =>
+        pattern.IndexOfAny(['*', '?']) >= 0 && string.IsNullOrEmpty(Path.GetDirectoryName(pattern));
+
+    private static IReadOnlyList<string> FindManagedFiles(string root, IReadOnlyList<string> filePatterns, bool requireEveryPattern = false)
     {
         var matches = new List<string>();
+        var matchedPatterns = new bool[filePatterns.Count];
         var pending = new Stack<string>();
         pending.Push(root);
         while (pending.TryPop(out var directory))
@@ -158,15 +173,24 @@ internal static class ExportPlanner
                     pending.Push(entry);
                     continue;
                 }
-                if (!IsSupportedExtension(entry)
-                    || !FileSystemName.MatchesSimpleExpression(filePattern, Path.GetFileName(entry), ignoreCase: true))
-                    continue;
+                if (!IsSupportedExtension(entry)) continue;
+                var name = Path.GetFileName(entry);
+                var matchingPatterns = new List<int>();
+                for (var patternIndex = 0; patternIndex < filePatterns.Count; patternIndex++)
+                    if (FileSystemName.MatchesSimpleExpression(filePatterns[patternIndex], name, ignoreCase: true))
+                        matchingPatterns.Add(patternIndex);
+                if (matchingPatterns.Count == 0) continue;
                 ExportDumpOwnership.RejectReparseAncestors(entry);
                 try { ReadManagedIdentity(entry); }
                 catch (BadImageFormatException) { continue; }
                 matches.Add(Path.GetFullPath(entry));
+                foreach (var patternIndex in matchingPatterns) matchedPatterns[patternIndex] = true;
             }
         }
+        if (requireEveryPattern)
+            for (var index = 0; index < filePatterns.Count; index++)
+                if (!matchedPatterns[index])
+                    throw new ArgumentException($"Source path or pattern has no managed DLL or EXE matches: {filePatterns[index]}");
         return matches;
     }
 

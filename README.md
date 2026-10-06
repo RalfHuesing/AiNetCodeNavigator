@@ -34,10 +34,10 @@ pwsh -File ./scripts/deploy.ps1 -SkipTests
 
 This builds the solution and publishes the MCP executable at `deploy/` and the exporter with its dependencies under `deploy/assembly-export/`, skipping the test suite. Keep each executable with its published dependencies. These local deployments are framework-dependent and require the .NET 10 runtime. See [setup requirements](docs/setup/README.md).
 
-To create a source dump, run the exporter with an output directory followed by managed DLL/EXE paths, source directories, or quoted filename patterns. Directory inputs and filename patterns search recursively:
+To create a source dump, run the exporter with an output directory, a source directory, and quoted filename patterns. It searches the source directory recursively and selects files matching any pattern:
 
 ```powershell
-& .\deploy\assembly-export\AiNetCodeNavigator.AssemblyExport.exe "C:\Dump" "C:\Vendor"
+& .\deploy\assembly-export\AiNetCodeNavigator.AssemblyExport.exe "C:\asm-dump" "C:\Programme" "foo*.exe" "*bar*.dll"
 ```
 
 The output root is owned by the exporter and must contain its marker before later runs can replace selected assembly child directories. Review `last-run.json` and each child `export-manifest.json` before using a dump. See the [assembly export guide](docs/assembly-export.md) for filtering, dependency closure, cleanup, and completeness details.

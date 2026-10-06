@@ -13,7 +13,7 @@ A separate Windows console executable in the AiNetCodeNavigator solution creates
 ### Required
 
 - Add `src/AiNetCodeNavigator.AssemblyExport/AiNetCodeNavigator.AssemblyExport.csproj` as a separate executable in `AiNetCodeNavigator.slnx`. It references a narrow Core export API, never the MCP host. Console progress and errors go to this executable's stdout/stderr; MCP stdout remains reserved for JSON-RPC.
-- Invocation: `AiNetCodeNavigator.AssemblyExport.exe <output-directory> <source-file-directory-or-pattern> [<source-file-directory-or-pattern> ...]`. Thus two positional arguments are the minimum. One invocation accepts multiple absolute or relative source paths. A directory such as `C:\Vendor` recursively selects managed `.dll` and `.exe` files. `*` and `?` in the final file-name segment (for example `C:\Vendor\*.dll`) match recursively below their parent directory; the executable expands patterns received literally, so command examples quote them. Directory-segment wildcards and `**` remain outside this step. Native files found by directory or pattern searches are skipped, but each argument must select at least one managed file. An explicit file path must be a managed `.dll` or `.exe`. Normalize, deduplicate identical source paths, and sort deterministically.
+- Invocation: `AiNetCodeNavigator.AssemblyExport.exe <output-directory> <source-directory> [<filename-pattern> ...]`. Thus two positional arguments are the minimum. One invocation accepts multiple absolute or relative source paths. A directory such as `C:\Vendor` recursively selects managed `.dll` and `.exe` files; bare filename patterns immediately following it filter that directory recursively and are combined as alternatives. For example, `"C:\Programme" "foo*.exe" "*bar*.dll"` selects matching files at any depth below `C:\Programme`. Path-qualified patterns such as `C:\Vendor\*.dll` remain independent inputs and match recursively below their parent directory. `*` and `?` are supported only in the final filename segment; the executable expands patterns received literally, so command examples quote them. Directory-segment wildcards and `**` remain outside this step. Native files found by directory or pattern searches are skipped, but each directory or pattern must select at least one managed file. An explicit file path must be a managed `.dll` or `.exe`. Normalize, deduplicate identical source paths, and sort deterministically.
 - The output directory is an owned dump. After input and reference-closure preflight, if the directory is absent, create it and a regular UTF-8 marker file `.ainetcodenavigator-assembly-export` containing exactly `AiNetCodeNavigator.AssemblyExport:1` followed by a newline before producing content. If it exists without that regular marker and content, abort before deleting or writing anything in it. A user can delete the entire dump manually and rebuild it with the same command.
 - For each selected DLL or EXE, write one direct child `<output-directory>\<source-file-name>\` (for example `C:\Dump\Vendor.Core.dll\`). The child contains the ILSpy whole-project output: generated `.csproj`, C# files and folders. Generate a small `.sln` that includes that project so the promised solution-level entry point exists; a successful decompilation is not a claim that this reconstructed project compiles.
 - Before cleanup, discover the transitive closure of resolved, managed, non-system references for every explicit input. Automatically selected GAC or adjacent third-party DLLs become additional dump children. Explicit inputs always remain selected, even when their names match the automatic exclusion filter. Deduplicate by canonical file path and proven assembly identity; reject two different files mapping to the same `<dll-file-name>` child before cleanup.
@@ -33,13 +33,13 @@ A separate Windows console executable in the AiNetCodeNavigator solution creates
 ## CLI and filesystem contract
 
 ```text
-AiNetCodeNavigator.AssemblyExport.exe "C:\Dump" "C:\VendorA" "C:\VendorB\Product.Core.dll"
+AiNetCodeNavigator.AssemblyExport.exe "C:\asm-dump" "C:\Programme" "foo*.exe" "*bar*.dll"
 
-C:\Dump\
+C:\asm-dump\
   .ainetcodenavigator-assembly-export
   last-run.json
-  Product.Core.dll\
-    Product.Core.sln
+  fooTool.exe\
+    fooTool.sln
     <decompiler-generated .csproj and .cs tree>
     export-manifest.json
   Sub.Dependency.dll\    # automatically found through a non-system reference

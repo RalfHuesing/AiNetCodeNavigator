@@ -35,6 +35,35 @@ public sealed class AssemblyExportExecutableTests
     }
 
     [Fact]
+    public async Task Executable_FiltersRecursiveSourceDirectoryWithMultipleFilenamePatterns()
+    {
+        using var temp = TestTempDirectory.Create("export-filtered-executable-");
+        var sources = temp.GetPath("sources");
+        var fooExe = AssemblyTestHelper.EmitExecutable(temp, "fooApplication", "public static class App { public static void Main() { } }");
+        var barDll = AssemblyTestHelper.EmitAssembly(temp, "mybarLibrary", "public sealed class Library { public int Value => 7; }");
+        var unrelatedDll = AssemblyTestHelper.EmitAssembly(temp, "UnrelatedLibrary", "public sealed class Unrelated { }");
+        var nested = Path.Combine(sources, "nested");
+        var deep = Path.Combine(nested, "deep");
+        Directory.CreateDirectory(deep);
+        File.Move(fooExe, Path.Combine(nested, "fooApplication.exe"));
+        File.Move(barDll, Path.Combine(deep, "mybarLibrary.dll"));
+        File.Move(unrelatedDll, Path.Combine(sources, "UnrelatedLibrary.dll"));
+
+        var output = temp.GetPath("dump");
+        var result = await RunAsync(output, sources, "foo*.exe", "*bar*.dll");
+
+        Assert.True(result.ExitCode == 0, result.Output + result.Errors);
+        Assert.True(File.Exists(Path.Combine(output, "fooApplication.exe", "export-manifest.json")));
+        Assert.True(File.Exists(Path.Combine(output, "mybarLibrary.dll", "export-manifest.json")));
+        Assert.False(Directory.Exists(Path.Combine(output, "UnrelatedLibrary.dll")));
+        using var report = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(output, "last-run.json")));
+        Assert.Equal("complete", report.RootElement.GetProperty("completionState").GetString());
+        Assert.Equal(2, report.RootElement.GetProperty("selectedChildren").GetArrayLength());
+        Assert.Equal(new[] { sources, "foo*.exe", "*bar*.dll" }, report.RootElement.GetProperty("exactInputs").EnumerateArray()
+            .Select(item => item.GetString()!).ToArray());
+    }
+
+    [Fact]
     public async Task Executable_ExportsDependencyAndReadableSolutionThenReplacesSelectedChildren()
     {
         using var temp = TestTempDirectory.Create("export-executable-");

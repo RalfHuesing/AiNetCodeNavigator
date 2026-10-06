@@ -1,14 +1,14 @@
 # Assembly export CLI
 
-`AiNetCodeNavigator.AssemblyExport.exe` is a separate offline command in the solution. It accepts an output directory and one or more managed DLL/EXE files, source directories, or quoted filename patterns:
+`AiNetCodeNavigator.AssemblyExport.exe` is a separate offline command in the solution. Give it an output directory, a source directory, and one or more quoted filename patterns to select matching managed DLL/EXE files recursively:
 
 ```powershell
-AiNetCodeNavigator.AssemblyExport.exe "C:\Dump" "C:\Vendor" "C:\Other\Product.Core.dll"
+AiNetCodeNavigator.AssemblyExport.exe "C:\asm-dump" "C:\Programme" "foo*.exe" "*bar*.dll"
 ```
 
 The local deployment places the executable and its dependencies under `assembly-export/` beside the MCP server package. The self-contained Windows release archive uses the same subdirectory. This CLI is invoked directly; MCP client process entries and `hostsettings.json` configure the server only. When an agent needs whole readable source for selected assemblies, it should run this command and check `last-run.json` and each selected child's `export-manifest.json` before treating output as current or complete.
 
-The positional parser requires at least two arguments. A directory argument searches all its subdirectories for managed `.dll` and `.exe` files. A quoted filename pattern such as `C:\Vendor\*.dll` or `C:\Vendor\Tool?.exe` matches recursively below its parent directory; `*` and `?` are supported only in the final filename segment. Directory-segment wildcards and `**` are unsupported. Native files and other extensions found during a directory or pattern search are skipped; each argument must yield at least one managed file. An explicit file path must be a managed DLL or EXE. Reparse-point source directories are rejected rather than traversed. Paths are normalized, deduplicated and sorted. `--help` prints usage and exits with status `0`; argument or preflight failures return `2`. A completed run returns `0`; a per-assembly export failure or interrupted run returns `1`. Missing dependencies are reported as a partial limitation and do not alone make the exit status nonzero.
+The positional parser requires at least two arguments. Bare filename patterns immediately following a source directory filter that directory and all its subdirectories; multiple patterns are combined, so either pattern can select a file. A directory without following bare patterns selects every managed `.dll` and `.exe` beneath it. A path-qualified pattern such as `C:\Vendor\*.dll` or `C:\Vendor\Tool?.exe` also matches recursively below its parent directory. `*` and `?` are supported only in the final filename segment; directory-segment wildcards and `**` are unsupported. Native files and other extensions found during a directory or pattern search are skipped; each directory or pattern must yield at least one managed file. An explicit file path must be a managed DLL or EXE. Reparse-point source directories are rejected rather than traversed. Paths are normalized, deduplicated and sorted. `--help` prints usage and exits with status `0`; argument or preflight failures return `2`. A completed run returns `0`; a per-assembly export failure or interrupted run returns `1`. Missing dependencies are reported as a partial limitation and do not alone make the exit status nonzero.
 
 ## Input planning and ownership
 
