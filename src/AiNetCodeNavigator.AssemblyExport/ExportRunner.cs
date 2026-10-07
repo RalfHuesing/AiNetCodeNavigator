@@ -55,6 +55,8 @@ internal static class ExportRunner
 
             var runId = Guid.NewGuid().ToString("N");
             var count = plan.Assemblies.Count;
+            DumpNavigationArtifacts.WriteReadme(owner, plan.OutputDirectory);
+            DumpNavigationArtifacts.WriteCatalog(owner, plan.OutputDirectory, runId, "running", count, 0, 0, []);
             var childPaths = plan.Assemblies.ToDictionary(item => item.SourcePath, item => item.ChildRelativePath,
                 StringComparer.OrdinalIgnoreCase);
             await WriteOutputAsync($"RUN START selected={count} workers={degree}").ConfigureAwait(false);
@@ -174,6 +176,10 @@ internal static class ExportRunner
             var exported = results.Count(result => result?.State is "complete" or "partial");
             var partial = results.Count(result => result?.State == "partial");
             var stateLabel = interrupted ? "RUN INTERRUPTED" : failed > 0 ? "RUN FAILED" : "RUN COMPLETE";
+            DumpNavigationArtifacts.WriteCatalog(owner, plan.OutputDirectory, runId,
+                interrupted ? "interrupted" : failed > 0 ? "failed" : "complete", count, partial, failed,
+                results.Where(result => result?.State is "complete" or "partial")
+                    .Select(result => new PublishedAssembly(result!.Item, result.State)));
             await WriteOutputAsync($"{stateLabel} exported={exported} partial={partial} failed={failed}").ConfigureAwait(false);
             return failed > 0 || interrupted ? 1 : 0;
         }

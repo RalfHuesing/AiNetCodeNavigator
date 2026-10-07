@@ -27,6 +27,8 @@ The exporter rejects a volume root, output/source overlap, and reparse-point red
 ```text
 C:\asm-dump\
   .ainetcodenavigator-assembly-export
+  README.md
+  assemblies.json
   last-run.log
   Example\
     Example.Core.dll\
@@ -45,6 +47,10 @@ C:\asm-dump\
 
 Decompilation uses a bounded number of workers across available processors. Results are validated and published as children of the output root. One failing assembly does not stop independent work. A failed assembly has no published child in that run. The generated `.sln` references the emitted `.csproj`; reconstructed projects are not guaranteed to compile. Decompiled `.cs` files with syntax errors or empty content remain available with diagnostics and a `partial` completion state. Source drift after planning fails the affected export.
 
+The generated root `README.md` gives an agent a short navigation procedure. `assemblies.json` is a compact catalog of published assembly children in the current dump. Its `columns` array names the positions in each `rows` array; use a row's relative child path to open the corresponding directory. It omits source-file lists, which are already in each child's manifest. Check the catalog's run state and the child's `completionState` before relying on an export. A planned dependency path in a manifest does not prove that dependency was published; confirm it has a catalog row.
+
 `last-run.log` contains short progress, errors, and a final run summary; it is also printed in the console. There is no root `last-run.json`. Each published child's `export-manifest.json` identifies its source path, assembly identity and hash, output path, project and source paths, dependency information and diagnostics, and `complete` or `partial` state. Check the final log summary and the manifest before using a child. An abruptly terminated run may have no final summary; temporary stages are not published exports.
 
-A complete run exits `0`. Recoverable input or assembly failures return `1` after other work is attempted. Invalid arguments or global ownership/preflight failures return `2`. Missing dependencies are visible limitations and do not by themselves make the exit status nonzero.
+For a repeatable local inspection, run `pwsh -File ./scripts/export-assembly-smoke.ps1`. It builds the solution, exports one representative managed DLL to `temp/asm-dump/`, and checks the navigation artifacts and generated C# tree. The dump is disposable and excluded from Git.
+
+A run with no failed inputs or exports exits `0`, even if some published assemblies are `partial`; inspect the catalog's `partial` count and the corresponding manifests. Recoverable input or assembly failures return `1` after other work is attempted. Invalid arguments or global ownership/preflight failures return `2`. Missing dependencies are visible limitations and do not by themselves make the exit status nonzero.

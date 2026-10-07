@@ -31,6 +31,11 @@ public sealed class ExportRunnerTests
         Assert.Contains("FAILURE", log, StringComparison.Ordinal);
         Assert.Contains("RUN FAILED", log, StringComparison.Ordinal);
         Assert.Contains("Unsupported decompiler construct", errors.ToString(), StringComparison.Ordinal);
+        using var catalog = ReadCatalog(plan);
+        Assert.Equal("failed", catalog.RootElement.GetProperty("runState").GetString());
+        Assert.Equal(1, catalog.RootElement.GetProperty("failed").GetInt32());
+        var published = Assert.Single(catalog.RootElement.GetProperty("rows").EnumerateArray());
+        Assert.Equal("ZWorks", published[0].GetString());
     }
 
     [Fact]
@@ -95,6 +100,8 @@ public sealed class ExportRunnerTests
         }
 
         Assert.Equal(0, await ExportRunner.RunAsync(plan, output, errors, export: Export));
+        using var firstCatalog = ReadCatalog(plan);
+        var firstRunId = firstCatalog.RootElement.GetProperty("runId").GetString();
         var stale = Path.Combine(plan.OutputDirectory, "stale.txt");
         await File.WriteAllTextAsync(stale, "old content");
         output.GetStringBuilder().Clear();
@@ -113,6 +120,15 @@ public sealed class ExportRunnerTests
         Assert.EndsWith("RUN COMPLETE exported=1 partial=0 failed=0", logLines[^1], StringComparison.Ordinal);
         Assert.Equal(output.ToString(), string.Join(Environment.NewLine, logLines) + Environment.NewLine);
         Assert.Empty(errors.ToString());
+        using var catalog = ReadCatalog(plan);
+        Assert.NotEqual(firstRunId, catalog.RootElement.GetProperty("runId").GetString());
+        Assert.Equal("complete", catalog.RootElement.GetProperty("runState").GetString());
+        Assert.Equal(1, catalog.RootElement.GetProperty("exported").GetInt32());
+        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(plan.Assemblies[0].ChildPath, "export-manifest.json")));
+        Assert.Equal(manifest.RootElement.GetProperty("runId").GetString(), catalog.RootElement.GetProperty("runId").GetString());
+        var readme = await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "README.md"));
+        Assert.Contains("assemblies.json", readme, StringComparison.Ordinal);
+        Assert.Contains("confirm catalog membership", readme, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -258,6 +274,10 @@ public sealed class ExportRunnerTests
         Assert.Contains(manifest.RootElement.GetProperty("diagnostics").GetProperty("decompilation")
             .EnumerateArray(), item => item.GetProperty("message").GetString()!.Contains("CS1525", StringComparison.Ordinal));
         Assert.Empty(errors.ToString());
+        using var catalog = ReadCatalog(plan);
+        Assert.Equal("complete", catalog.RootElement.GetProperty("runState").GetString());
+        Assert.Equal(1, catalog.RootElement.GetProperty("partial").GetInt32());
+        Assert.Equal("partial", Assert.Single(catalog.RootElement.GetProperty("rows").EnumerateArray())[5].GetString());
     }
 
     [Theory]
@@ -282,6 +302,9 @@ public sealed class ExportRunnerTests
         }));
         Assert.False(Directory.Exists(plan.Assemblies[0].ChildPath));
         Assert.False(Directory.Exists(Path.Combine(plan.OutputDirectory, ".assembly-export-tmp")));
+        using var catalog = ReadCatalog(plan);
+        Assert.Equal("failed", catalog.RootElement.GetProperty("runState").GetString());
+        Assert.Empty(catalog.RootElement.GetProperty("rows").EnumerateArray());
     }
 
     [Fact]
@@ -381,6 +404,76 @@ public sealed class ExportRunnerTests
         Assert.False(Directory.Exists(Path.Combine(plan.OutputDirectory, ".assembly-export-tmp")));
         Assert.False(File.Exists(Path.Combine(plan.OutputDirectory, "last-run.json")));
         Assert.Contains("INTERRUPTED", await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.log")), StringComparison.Ordinal);
+        using var catalog = ReadCatalog(plan);
+        Assert.Equal("interrupted", catalog.RootElement.GetProperty("runState").GetString());
+        Assert.Empty(catalog.RootElement.GetProperty("rows").EnumerateArray());
+        Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, "README.md")));
+    }
+
+    [Fact]
+    public async Task Runner_CatalogIsRunningBeforePublicationAndOrdersRowsByRelativePath()
+    {
+        using var temp = TestTempDirectory.Create("export-catalog-order-");
+        var first = AssemblyTestHelper.EmitAssembly(temp, "Zed.Library", "public class Zed { }");
+        var second = AssemblyTestHelper.EmitAssembly(temp, "Alpha.Library", "public class Alpha { }");
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [first, second]));
+        // Force a plan order different from catalog order.
+        plan = plan with { Assemblies = plan.Assemblies.OrderByDescending(item => item.ChildRelativePath, StringComparer.Ordinal).ToArray() };
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+        Assert.Equal(0, await ExportRunner.RunAsync(plan, output, errors, export: async (item, stage, token) =>
+        {
+            using var runningCatalog = ReadCatalog(plan);
+            Assert.Equal("running", runningCatalog.RootElement.GetProperty("runState").GetString());
+            Assert.Empty(runningCatalog.RootElement.GetProperty("rows").EnumerateArray());
+            Assert.True(File.Exists(Path.Combine(plan.OutputDirectory, "README.md")));
+            await File.WriteAllTextAsync(Path.Combine(stage, "Library.csproj"), "<Project />", token);
+            await File.WriteAllTextAsync(Path.Combine(stage, "Library.cs"), "public class Library { }", token);
+            return new(true, "Library.csproj", ["Library.cs"], item.ContentHash, "test", []);
+        }));
+        using var catalog = ReadCatalog(plan);
+        Assert.Equal(["name", "version", "culture", "publicKeyToken", "childRelativePath", "completionState"],
+            catalog.RootElement.GetProperty("columns").EnumerateArray().Select(value => value.GetString()!).ToArray());
+        var rows = catalog.RootElement.GetProperty("rows").EnumerateArray().ToArray();
+        Assert.Equal(["Alpha.Library", "Zed.Library"], rows.Select(row => row[0].GetString()!).ToArray());
+        foreach (var row in rows)
+        {
+            var item = plan.Assemblies.Single(candidate => candidate.Identity.Name == row[0].GetString());
+            Assert.Equal(item.Identity.Version, row[1].GetString());
+            Assert.Equal(item.Identity.Culture, row[2].GetString());
+            Assert.Equal(item.Identity.PublicKeyToken, row[3].GetString());
+            Assert.Equal(item.ChildRelativePath, row[4].GetString());
+            Assert.Equal("complete", row[5].GetString());
+            Assert.Equal(6, row.GetArrayLength());
+        }
+        Assert.False(File.Exists(Path.Combine(plan.OutputDirectory, ".assemblies.json.tmp")));
+    }
+
+    private static JsonDocument ReadCatalog(ExportPlan plan) =>
+        JsonDocument.Parse(File.ReadAllText(Path.Combine(plan.OutputDirectory, "assemblies.json")));
+
+    [Fact]
+    public async Task Runner_CatalogFinalizationFailureKeepsRunningSnapshotAndDoesNotReportSuccess()
+    {
+        using var temp = TestTempDirectory.Create("export-catalog-write-failure-");
+        var source = AssemblyTestHelper.EmitAssembly(temp, "Library", "public class Library { }");
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [source]));
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+        var exception = await Record.ExceptionAsync(() => ExportRunner.RunAsync(plan, output, errors, export: async (item, stage, token) =>
+        {
+            Directory.CreateDirectory(Path.Combine(plan.OutputDirectory, ".assemblies.json.tmp"));
+            await File.WriteAllTextAsync(Path.Combine(stage, "Library.csproj"), "<Project />", token);
+            await File.WriteAllTextAsync(Path.Combine(stage, "Library.cs"), "public class Library { }", token);
+            return new(true, "Library.csproj", ["Library.cs"], item.ContentHash, "test", []);
+        }));
+        Assert.True(exception is IOException or UnauthorizedAccessException, exception?.ToString());
+        using var catalog = ReadCatalog(plan);
+        Assert.Equal("running", catalog.RootElement.GetProperty("runState").GetString());
+        Assert.Empty(catalog.RootElement.GetProperty("rows").EnumerateArray());
+        Assert.True(File.Exists(Path.Combine(plan.Assemblies[0].ChildPath, "export-manifest.json")));
+        var log = await File.ReadAllTextAsync(Path.Combine(plan.OutputDirectory, "last-run.log"));
+        Assert.DoesNotContain("RUN COMPLETE", log, StringComparison.Ordinal);
     }
 
     [Fact]
