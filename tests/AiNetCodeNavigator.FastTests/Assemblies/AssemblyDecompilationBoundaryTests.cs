@@ -58,8 +58,12 @@ public sealed class AssemblyDecompilationBoundaryTests
             var staging = decompilationRequest.StagingDirectory!;
             Directory.CreateDirectory(staging);
             await File.WriteAllTextAsync(Path.Combine(staging, "PartialOutput.csproj"), "<Project />");
-            await File.WriteAllTextAsync(Path.Combine(staging, "Broken.cs"), "public class Broken { void M() { int value = ref; } }");
-            await File.WriteAllTextAsync(Path.Combine(staging, "Empty.cs"), string.Empty);
+            var syntaxDirectory = Path.Combine(staging, "Syntax");
+            var emptyDirectory = Path.Combine(staging, "Empty");
+            Directory.CreateDirectory(syntaxDirectory);
+            Directory.CreateDirectory(emptyDirectory);
+            await File.WriteAllTextAsync(Path.Combine(syntaxDirectory, "Duplicate.cs"), "public class Broken { void M() { int value = ref; } }");
+            await File.WriteAllTextAsync(Path.Combine(emptyDirectory, "Duplicate.cs"), string.Empty);
             throw new NotSupportedException("A later type could not be decompiled.");
         });
 
@@ -67,8 +71,9 @@ public sealed class AssemblyDecompilationBoundaryTests
 
         Assert.False(result.IsComplete);
         Assert.Equal(2, result.Documents.Count);
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("CS1525", StringComparison.Ordinal));
-        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("Empty.cs", StringComparison.Ordinal)
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("Syntax/Duplicate.cs", StringComparison.Ordinal)
+            && diagnostic.Message.Contains("CS1525", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("Empty/Duplicate.cs", StringComparison.Ordinal)
             && diagnostic.Severity == AssemblyDiagnosticSeverity.Warning);
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Message.Contains("later type", StringComparison.Ordinal));
     }

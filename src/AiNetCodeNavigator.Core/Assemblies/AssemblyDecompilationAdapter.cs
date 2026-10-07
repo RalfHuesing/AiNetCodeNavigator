@@ -8,6 +8,7 @@ using System.Reflection.PortableExecutable;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using AiNetCodeNavigator.Core.Common;
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.CSharp.ProjectDecompiler;
 using ICSharpCode.Decompiler.Metadata;
@@ -161,6 +162,7 @@ internal sealed class AssemblyDecompilationAdapter
         foreach (var path in Directory.EnumerateFiles(stagingDirectory, "*.cs", SearchOption.AllDirectories).OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var relativePath = PathNormalizer.NormalizeSeparators(Path.GetRelativePath(stagingDirectory, path));
             try
             {
                 var source = File.ReadAllText(path, new UTF8Encoding(false, true));
@@ -168,7 +170,7 @@ internal sealed class AssemblyDecompilationAdapter
                 {
                     diagnostics.Add(new AssemblySessionDiagnostic(
                         AssemblyDiagnosticCodes.For(nameof(AssemblyDecompilationAdapter), nameof(DecompiledDocument.CSharpSource)),
-                        $"The decompiled file '{Path.GetFileName(path)}' is empty.",
+                        $"The decompiled file '{relativePath}' is empty.",
                         AssemblyDiagnosticSeverity.Warning));
                 }
                 else
@@ -182,7 +184,7 @@ internal sealed class AssemblyDecompilationAdapter
                     {
                         diagnostics.Add(new AssemblySessionDiagnostic(
                             AssemblyDiagnosticCodes.For(nameof(AssemblyDecompilationAdapter), nameof(DecompiledDocument.CSharpSource)),
-                            $"The decompiled file '{Path.GetFileName(path)}' contains syntax errors: {string.Join("; ", syntaxErrors.Select(diagnostic => diagnostic.Id + " " + diagnostic.GetMessage()))}.",
+                            $"The decompiled file '{relativePath}' contains syntax errors: {string.Join("; ", syntaxErrors.Select(diagnostic => diagnostic.Id + " " + diagnostic.GetMessage()))}.",
                             AssemblyDiagnosticSeverity.Warning));
                     }
                 }
@@ -196,7 +198,7 @@ internal sealed class AssemblyDecompilationAdapter
             {
                 diagnostics.Add(new AssemblySessionDiagnostic(
                     AssemblyDiagnosticCodes.For(nameof(AssemblyDecompilationAdapter), nameof(DecompiledDocument.GeneratedPath)),
-                    $"The decompiled file '{Path.GetFileName(path)}' could not be read: {ex.Message}",
+                    $"The decompiled file '{relativePath}' could not be read: {ex.Message}",
                     AssemblyDiagnosticSeverity.Warning));
             }
         }

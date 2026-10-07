@@ -75,6 +75,12 @@ public sealed class AssemblyExportExecutableTests
         Assert.Equal(dependencyBytes, await File.ReadAllBytesAsync(dependency));
         var child = Path.Combine(output, "_misc", "CliRoot.dll");
         using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(child, "export-manifest.json")));
+        Assert.Equal(2, manifest.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.False(manifest.RootElement.TryGetProperty("sourceFiles", out _));
+        var sourcesPath = manifest.RootElement.GetProperty("sourceFilesPath").GetString()!;
+        Assert.Equal("source-files.json", sourcesPath);
+        using var sources = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(child, sourcesPath)));
+        Assert.Equal(manifest.RootElement.GetProperty("counts").GetProperty("sourceFiles").GetInt32(), sources.RootElement.GetArrayLength());
         var project = manifest.RootElement.GetProperty("projectPath").GetString()!;
         Assert.False(Path.IsPathRooted(project));
         Assert.True(File.Exists(Path.Combine(child, project)));
@@ -82,7 +88,8 @@ public sealed class AssemblyExportExecutableTests
         Assert.Contains(project.Replace('/', '\\'), await File.ReadAllTextAsync(solution), StringComparison.Ordinal);
         Assert.Contains("OldMember", ReadSources(child), StringComparison.Ordinal);
         Assert.True(File.Exists(Path.Combine(output, "_misc", "CliDependency.dll", "export-manifest.json")));
-        Assert.Contains(manifest.RootElement.GetProperty("filteredEdges").EnumerateArray(), edge => edge.GetProperty("rule").GetString()!.StartsWith("prefix:System.", StringComparison.Ordinal));
+        using var dependencies = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(child, manifest.RootElement.GetProperty("dependenciesPath").GetString()!)));
+        Assert.Contains(dependencies.RootElement.GetProperty("filteredEdges").EnumerateArray(), edge => edge.GetProperty("rule").GetString()!.StartsWith("prefix:System.", StringComparison.Ordinal));
         var stale = Path.Combine(child, "stale.cs");
         await File.WriteAllTextAsync(stale, "obsolete");
         var untouched = Path.Combine(output, "_misc", "Unselected.dll");

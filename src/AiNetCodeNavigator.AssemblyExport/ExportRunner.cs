@@ -228,9 +228,18 @@ internal static class ExportRunner
                 };
             }).ToArray();
 
+        const string sourceFilesPath = "source-files.json";
+        var dependenciesPath = directLinks.Length > 0 || item.FilteredReferences.Count > 0 ? "dependencies.json" : null;
+        var diagnosticsPath = item.Closure.Diagnostics.Count > 0 || result.Diagnostics.Count > 0 ? "diagnostics.json" : null;
+        WriteJson(Path.Combine(stage, sourceFilesPath), result.SourceRelativePaths);
+        if (dependenciesPath is not null)
+            WriteJson(Path.Combine(stage, dependenciesPath), new { dependencies = directLinks, filteredEdges = item.FilteredReferences });
+        if (diagnosticsPath is not null)
+            WriteJson(Path.Combine(stage, diagnosticsPath), new { referenceClosure = item.Closure.Diagnostics, decompilation = result.Diagnostics });
+
         WriteJson(Path.Combine(stage, "export-manifest.json"), new
         {
-            schemaVersion = 1,
+            schemaVersion = 2,
             runId,
             sourcePath = item.SourcePath,
             identity = item.Identity,
@@ -240,14 +249,17 @@ internal static class ExportRunner
             isExplicit = item.IsExplicit,
             completionState = state,
             projectPath = result.ProjectRelativePath,
-            sourceFiles = result.SourceRelativePaths,
-            dependencies = directLinks,
-            filteredEdges = item.FilteredReferences,
-            diagnostics = new
+            counts = new
             {
-                referenceClosure = item.Closure.Diagnostics,
-                decompilation = result.Diagnostics,
+                sourceFiles = result.SourceRelativePaths.Count,
+                dependencies = directLinks.Length,
+                filteredEdges = item.FilteredReferences.Count,
+                referenceClosureDiagnostics = item.Closure.Diagnostics.Count,
+                decompilationDiagnostics = result.Diagnostics.Count,
             },
+            sourceFilesPath,
+            dependenciesPath,
+            diagnosticsPath,
         });
     }
 
