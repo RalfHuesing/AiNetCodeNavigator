@@ -154,6 +154,168 @@ public sealed class ExportPlanningTests
     }
 
     [Fact]
+    public void Plan_GroupsOnlyLargeSafeNameSegmentsAndKeepsIssuePathsAligned()
+    {
+        using var temp = TestTempDirectory.Create("export-hierarchical-plan-");
+        var sources = temp.GetPath("sources");
+        var paths = new List<string>();
+        for (var index = 0; index < 40; index++)
+        {
+            paths.Add(Emit(Path.Combine(sources, $"Vendor.Core.FeatureA.Alpha.Item{index:000}.dll"),
+                $"Vendor.Core.FeatureA.Alpha.Item{index:000}"));
+            paths.Add(Emit(Path.Combine(sources, $"Vendor.Core.FeatureA.Beta.Item{index:000}.dll"),
+                $"Vendor.Core.FeatureA.Beta.Item{index:000}"));
+        }
+        for (var index = 0; index < 40; index++)
+            paths.Add(Emit(Path.Combine(sources, $"Vendor.Core.FeatureB.Item{index:000}.dll"),
+                $"Vendor.Core.FeatureB.Item{index:000}"));
+        var singleton = Emit(Path.Combine(sources, "Vendor.Core.FeatureC.dll"), "Vendor.Core.FeatureC");
+        paths.Add(singleton);
+        var output = temp.GetPath("dump");
+        var issueSource = paths[0];
+        AssemblyExportReferenceClosure Resolve(string path, Func<AssemblyReferenceDto, bool> _)
+        {
+            var identity = AssemblyName.GetAssemblyName(path);
+            return new(new(identity.Name!, identity.Version!.ToString(), "neutral", ""), [], [], path != issueSource);
+        }
+
+        var plan = ExportPlanner.Create(new(output, paths), Resolve);
+        var alpha = plan.Assemblies.Single(item => item.SourcePath.EndsWith("FeatureA.Alpha.Item000.dll", StringComparison.Ordinal));
+        var beta = plan.Assemblies.Single(item => item.SourcePath.EndsWith("FeatureA.Beta.Item000.dll", StringComparison.Ordinal));
+        var featureB = plan.Assemblies.Single(item => item.SourcePath.EndsWith("FeatureB.Item000.dll", StringComparison.Ordinal));
+        var single = plan.Assemblies.Single(item => item.SourcePath == singleton);
+
+        Assert.Equal(Path.Combine("Vendor", "FeatureA", "Alpha", Path.GetFileName(alpha.SourcePath)), alpha.ChildRelativePath);
+        Assert.Equal(Path.Combine("Vendor", "FeatureA", "Beta", Path.GetFileName(beta.SourcePath)), beta.ChildRelativePath);
+        Assert.Equal(Path.Combine("Vendor", "FeatureB", Path.GetFileName(featureB.SourcePath)), featureB.ChildRelativePath);
+        Assert.Equal(Path.Combine("Vendor", Path.GetFileName(singleton)), single.ChildRelativePath);
+        Assert.Equal(plan.Assemblies.Count, plan.Assemblies.Select(item => item.ChildPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Equal(alpha.ChildRelativePath, Assert.Single(plan.Issues.Where(issue => issue.SourcePath == issueSource)).ChildRelativePath);
+        var ownership = new ExportDumpOwnership(plan);
+        ownership.ResetRoot();
+        Assert.All(plan.Assemblies, item => ownership.ValidateSelectedChild(item.ChildPath));
+
+        var reversed = ExportPlanner.Create(new(output, paths.AsEnumerable().Reverse().ToArray()), Resolve);
+        Assert.Equal(plan.Assemblies.ToDictionary(item => item.SourcePath, item => item.ChildRelativePath),
+            reversed.Assemblies.ToDictionary(item => item.SourcePath, item => item.ChildRelativePath));
+    }
+
+    [Fact]
+    public void Plan_UsesSoftDirectoryLimitAndSkipsUnsafeSegments()
+    {
+        using var temp = TestTempDirectory.Create("export-hierarchical-limits-");
+        var paths = new List<string>();
+        for (var index = 0; index < 64; index++)
+            paths.Add(Emit(temp.GetPath($"Small.Core.Alpha.Item{index:000}.dll"), $"Small.Core.Alpha.Item{index:000}"));
+        for (var index = 0; index < 33; index++)
+            paths.Add(Emit(temp.GetPath($"Large.Core.Alpha.Item{index:000}.dll"), $"Large.Core.Alpha.Item{index:000}"));
+        for (var index = 0; index < 32; index++)
+            paths.Add(Emit(temp.GetPath($"Large.Core.Beta.Item{index:000}.dll"), $"Large.Core.Beta.Item{index:000}"));
+        for (var index = 0; index < 40; index++)
+        {
+            paths.Add(Emit(temp.GetPath($"Safe.Core.CON.Item{index:000}.dll"), $"Safe.Core.CON.Item{index:000}"));
+            paths.Add(Emit(temp.GetPath($"Safe.Core.Valid.Item{index:000}.dll"), $"Safe.Core.Valid.Item{index:000}"));
+        }
+
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), paths));
+        var small = plan.Assemblies.Single(item => item.SourcePath.EndsWith("Small.Core.Alpha.Item000.dll", StringComparison.Ordinal));
+        var largeAlpha = plan.Assemblies.Single(item => item.SourcePath.EndsWith("Large.Core.Alpha.Item000.dll", StringComparison.Ordinal));
+        var largeBeta = plan.Assemblies.Single(item => item.SourcePath.EndsWith("Large.Core.Beta.Item000.dll", StringComparison.Ordinal));
+        var unsafeSegment = plan.Assemblies.Single(item => item.SourcePath.EndsWith("Safe.Core.CON.Item000.dll", StringComparison.Ordinal));
+        var safeSegment = plan.Assemblies.Single(item => item.SourcePath.EndsWith("Safe.Core.Valid.Item000.dll", StringComparison.Ordinal));
+
+        Assert.Equal(Path.Combine("Small", Path.GetFileName(small.SourcePath)), small.ChildRelativePath);
+        Assert.StartsWith(Path.Combine("Large", "Alpha"), largeAlpha.ChildRelativePath, StringComparison.Ordinal);
+        Assert.StartsWith(Path.Combine("Large", "Beta"), largeBeta.ChildRelativePath, StringComparison.Ordinal);
+        Assert.Equal(Path.Combine("Safe", Path.GetFileName(unsafeSegment.SourcePath)), unsafeSegment.ChildRelativePath);
+        Assert.StartsWith(Path.Combine("Safe", "Valid"), safeSegment.ChildRelativePath, StringComparison.Ordinal);
+        Assert.DoesNotContain(plan.Assemblies, item => item.ChildRelativePath.Split(Path.DirectorySeparatorChar)
+            .Any(segment => segment.Equals("CON", StringComparison.OrdinalIgnoreCase)));
+        Assert.Equal("_misc", ExportPlanner.GetOwnerDirectory("CON.Core.dll"));
+        Assert.Equal("_misc", ExportPlanner.GetOwnerDirectory("Bad\u0001Owner.Core.dll"));
+    }
+
+    [Fact]
+    public void Plan_CanonicalizesCaseAndKeepsVariantsInsideTheirNameGroup()
+    {
+        using var temp = TestTempDirectory.Create("export-hierarchical-casing-");
+        var casePaths = new List<string>();
+        for (var index = 0; index < 33; index++)
+            casePaths.Add(Emit(temp.GetPath($"CaseOwner.Core.Feature.Item{index:000}.dll"), $"CaseOwner.Core.Feature.Item{index:000}"));
+        for (var index = 0; index < 32; index++)
+            casePaths.Add(Emit(temp.GetPath($"caseowner.Core.feature.Other{index:000}.dll"), $"caseowner.Core.feature.Other{index:000}"));
+        for (var index = 0; index < 13; index++)
+            casePaths.Add(Emit(temp.GetPath($"CaseOwner.Core.Other.Group{index:000}.dll"), $"CaseOwner.Core.Other.Group{index:000}"));
+
+        var casePlan = ExportPlanner.Create(new(temp.GetPath("case-dump"), casePaths));
+        var reversedCasePlan = ExportPlanner.Create(new(temp.GetPath("case-dump"), casePaths.AsEnumerable().Reverse().ToArray()));
+        Assert.All(casePlan.Assemblies, item => Assert.StartsWith("CaseOwner", item.ChildRelativePath, StringComparison.Ordinal));
+        Assert.All(casePlan.Assemblies.Where(item => Path.GetFileName(item.SourcePath).Contains(".feature.", StringComparison.OrdinalIgnoreCase)),
+            item => Assert.StartsWith(Path.Combine("CaseOwner", "Feature"), item.ChildRelativePath, StringComparison.Ordinal));
+        Assert.Equal(casePlan.Assemblies.ToDictionary(item => item.SourcePath, item => item.ChildRelativePath),
+            reversedCasePlan.Assemblies.ToDictionary(item => item.SourcePath, item => item.ChildRelativePath));
+        Assert.Equal(casePlan.Assemblies.Count, casePlan.Assemblies.Select(item => item.ChildPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Count());
+
+        var variants = new List<string>();
+        for (var index = 0; index < 35; index++)
+            variants.Add(Emit(temp.GetPath($"Vendor.Core.Alpha.Item{index:000}.dll"), $"Vendor.Core.Alpha.Item{index:000}"));
+        for (var index = 0; index < 35; index++)
+            variants.Add(Emit(temp.GetPath($"Vendor.Core.Beta.Item{index:000}.dll"), $"Vendor.Core.Beta.Item{index:000}"));
+        variants.Add(Emit(temp.GetPath("variant-a/Vendor.Core.Alpha.Shared.dll"), "VariantA"));
+        variants.Add(Emit(temp.GetPath("variant-b/Vendor.Core.Alpha.Shared.dll"), "VariantB"));
+        var variantPlan = ExportPlanner.Create(new(temp.GetPath("variant-dump"), variants));
+        var sharedVariants = variantPlan.Assemblies.Where(item => Path.GetFileName(item.SourcePath) == "Vendor.Core.Alpha.Shared.dll").ToArray();
+        Assert.Equal(2, sharedVariants.Length);
+        Assert.Equal(2, sharedVariants.Select(item => item.ChildPath).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.All(sharedVariants, item => Assert.StartsWith(Path.Combine("Vendor", "Alpha", "Vendor.Core.Alpha.Shared.dll", "local-"),
+            item.ChildRelativePath, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Plan_ContinuesGroupingAfterUnsafeSegmentWhenTheRemainingGroupIsLarge()
+    {
+        using var temp = TestTempDirectory.Create("export-hierarchical-unsafe-continuation-");
+        var paths = new List<string>();
+        for (var index = 0; index < 35; index++)
+        {
+            paths.Add(Emit(temp.GetPath($"Safe.CON.Alpha.Item{index:000}.dll"), $"Safe.CON.Alpha.Item{index:000}"));
+            paths.Add(Emit(temp.GetPath($"Safe.CON.Beta.Item{index:000}.dll"), $"Safe.CON.Beta.Item{index:000}"));
+        }
+        for (var index = 0; index < 10; index++)
+            paths.Add(Emit(temp.GetPath($"Safe.Valid.Item{index:000}.dll"), $"Safe.Valid.Item{index:000}"));
+
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), paths));
+        var alpha = plan.Assemblies.Single(item => item.SourcePath.EndsWith("Safe.CON.Alpha.Item000.dll", StringComparison.Ordinal));
+        var beta = plan.Assemblies.Single(item => item.SourcePath.EndsWith("Safe.CON.Beta.Item000.dll", StringComparison.Ordinal));
+        var valid = plan.Assemblies.Single(item => item.SourcePath.EndsWith("Safe.Valid.Item000.dll", StringComparison.Ordinal));
+
+        Assert.Equal(Path.Combine("Safe", "Alpha", Path.GetFileName(alpha.SourcePath)), alpha.ChildRelativePath);
+        Assert.Equal(Path.Combine("Safe", "Beta", Path.GetFileName(beta.SourcePath)), beta.ChildRelativePath);
+        Assert.Equal(Path.Combine("Safe", "Valid", Path.GetFileName(valid.SourcePath)), valid.ChildRelativePath);
+    }
+
+    [Fact]
+    public void Plan_DoesNotGroupByLaterSegmentsAcrossSingletonPrefixBuckets()
+    {
+        using var temp = TestTempDirectory.Create("export-hierarchical-prefix-boundary-");
+        var paths = new List<string>();
+        for (var index = 0; index < 40; index++)
+        {
+            paths.Add(Emit(temp.GetPath($"Owner.Alpha{index:000}.Interop.Client.Item{index:000}.dll"),
+                $"Owner.Alpha{index:000}.Interop.Client.Item{index:000}"));
+            paths.Add(Emit(temp.GetPath($"Owner.Beta{index:000}.Interop.Server.Item{index:000}.dll"),
+                $"Owner.Beta{index:000}.Interop.Server.Item{index:000}"));
+        }
+
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), paths));
+
+        Assert.All(plan.Assemblies, item => Assert.Equal(Path.Combine("Owner", Path.GetFileName(item.SourcePath)),
+            item.ChildRelativePath));
+    }
+
+    [Fact]
     public void Plan_PatternSelectionKeepsHighestVersionAndClosureKeepsReferencedOlderVersion()
     {
         using var temp = TestTempDirectory.Create("export-pattern-versions-");

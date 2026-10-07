@@ -24,11 +24,13 @@ internal static class DumpNavigationArtifacts
             rg -n '^(RUN |INPUT FAILURE|FAILURE |CLOSURE LIMITATION)' last-run.log
             ```
 
-            `assemblies.json` has one row per published assembly. `columns` names each row position; `childRelativePath` is relative to this root. Read matching rows, not the whole catalog. Owner folders derive from filename prefixes (`_misc` for undotted names), not verified vendors; variant subfolders distinguish duplicate filenames.
+            `assemblies.json` has one row per published assembly. `columns` names each row position; `childRelativePath` is relative to this root. Read matching rows, not the whole catalog. Owner folders derive from safe filename prefixes (`_misc` for undotted names or unsafe owner prefixes), not verified vendors; variant subfolders distinguish duplicate filenames.
+
+            Owners with more than 64 assembly children can have further grouping folders from safe filename-stem segments. Homogeneous segments may be skipped; grouping continues recursively for larger groups, while singleton segments stay at the current level. Broad groups with no usable split can remain above the soft target, so directory sizes can vary. Group names are packaging hints only, not proof of vendor, product, or domain. Use the catalog path to navigate and directory listings to inspect the hierarchy; there are no per-folder maps.
 
             Check `last-run.log` for the final `RUN COMPLETE`, `RUN FAILED`, or `RUN INTERRUPTED` summary. The catalog's `runId` must match each child's `export-manifest.json`. `running`, a missing catalog, or a missing final log summary means the run is unfinished; do not assume the catalog is exhaustive. Failed and interrupted runs can still publish usable children. `complete` run status and exit code 0 can include `partial` assemblies.
 
-            Select a catalog child from filename matches, then search and read relevant C# sections:
+            Select a catalog child from filename matches, then search and read relevant C# sections. The catalog path may include intermediate grouping directories:
 
             ```powershell
             $child = '<childRelativePath>'

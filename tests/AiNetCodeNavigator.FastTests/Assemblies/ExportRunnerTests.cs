@@ -258,6 +258,53 @@ public sealed class ExportRunnerTests
     }
 
     [Fact]
+    public async Task Runner_UsesNestedPlannedPathsInCatalogManifestAndDependencyDetails()
+    {
+        using var temp = TestTempDirectory.Create("export-nested-links-");
+        var root = AssemblyTestHelper.EmitAssembly(temp, "Vendor.Core.Alpha.Root", "public class Root { }");
+        var dependency = AssemblyTestHelper.EmitAssembly(temp, "Vendor.Core.Alpha.Dependency", "public class Dependency { }");
+        var selected = new List<string> { root };
+        for (var index = 0; index < 63; index++)
+            selected.Add(AssemblyTestHelper.EmitAssembly(temp, $"Vendor.Core.Beta.Item{index:000}", "public class Sibling { }"));
+        AssemblyExportReferenceClosure Resolve(string path, Func<AssemblyReferenceDto, bool> _)
+        {
+            var identity = System.Reflection.AssemblyName.GetAssemblyName(path);
+            var references = path == root
+                ? new[] { new AssemblyReferenceDto("Vendor.Core.Alpha.Dependency", "1.0.0.0", "neutral", true,
+                    dependency, ResolutionProvenance: "adjacent") }
+                : [];
+            return new(new(identity.Name!, identity.Version!.ToString(), "neutral", ""), references, [], true);
+        }
+
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), selected), Resolve);
+        var rootItem = plan.Assemblies.Single(item => item.SourcePath == root);
+        var dependencyItem = plan.Assemblies.Single(item => item.SourcePath == dependency);
+        Assert.Equal(Path.GetDirectoryName(rootItem.ChildRelativePath), Path.GetDirectoryName(dependencyItem.ChildRelativePath));
+        Assert.NotEqual("Vendor", Path.GetDirectoryName(rootItem.ChildRelativePath));
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+        Assert.Equal(0, await ExportRunner.RunAsync(plan, output, errors, export: async (item, stage, token) =>
+        {
+            var project = item.Identity.Name + ".csproj";
+            await File.WriteAllTextAsync(Path.Combine(stage, project), "<Project />", token);
+            await File.WriteAllTextAsync(Path.Combine(stage, "Source.cs"), "public class Source { }", token);
+            return new(true, project, ["Source.cs"], item.ContentHash, "test", []);
+        }));
+
+        using var catalog = ReadCatalog(plan);
+        var catalogPaths = catalog.RootElement.GetProperty("rows").EnumerateArray()
+            .Select(row => row[4].GetString()).ToArray();
+        Assert.Contains(rootItem.ChildRelativePath, catalogPaths);
+        Assert.Contains(dependencyItem.ChildRelativePath, catalogPaths);
+        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(rootItem.ChildPath, "export-manifest.json")));
+        Assert.Equal(rootItem.ChildRelativePath, manifest.RootElement.GetProperty("childRelativePath").GetString());
+        using var details = ReadDetail(rootItem.ChildPath, manifest, "dependenciesPath");
+        Assert.Equal(dependencyItem.ChildRelativePath,
+            Assert.Single(details.RootElement.GetProperty("dependencies").EnumerateArray())
+                .GetProperty("childRelativePath").GetString());
+    }
+
+    [Fact]
     public async Task Runner_PublishesUsablePartialOutputWithSyntaxAndEmptySourceDiagnostics()
     {
         using var temp = TestTempDirectory.Create("export-partial-output-");

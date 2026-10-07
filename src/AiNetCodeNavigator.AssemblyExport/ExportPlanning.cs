@@ -38,6 +38,7 @@ internal static class ExportPlanner
 {
     private const int MaxReferenceDepth = 128;
     private const int MaxReferenceNodes = 4096;
+    private const int MaxAssemblyChildrenPerDirectory = 64;
 
     internal static ExportPlan Create(ExportArguments arguments,
         Func<string, Func<AssemblyReferenceDto, bool>, AssemblyExportReferenceClosure>? resolve = null)
@@ -189,18 +190,24 @@ internal static class ExportPlanner
             if (identityHashes.Add(key)) deduplicated.Add(item);
         }
 
-        var basenameGroups = deduplicated.GroupBy(item => Path.GetFileName(item.SourcePath), StringComparer.OrdinalIgnoreCase).ToArray();
-        var collisions = basenameGroups.Where(group => group.Count() > 1)
-            .SelectMany(group => group).ToHashSet();
+        var collisions = deduplicated.GroupBy(item => Path.GetFileName(item.SourcePath), StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1).SelectMany(group => group).ToHashSet();
+        var relativePaths = PlanChildRelativePaths(deduplicated, collisions);
         var normalizedAssemblies = deduplicated.Select(item => item with
         {
-            ChildPath = collisions.Contains(item) ? Path.Combine(output, GetOwnerDirectory(item.SourcePath), Path.GetFileName(item.SourcePath), VariantKey(item))
-                : Path.Combine(output, GetOwnerDirectory(item.SourcePath), Path.GetFileName(item.SourcePath)),
+            ChildPath = Path.Combine(output, relativePaths[item.SourcePath]),
             DecompilationReferences = item.Closure.References.Select(edge => edge.ResolvedPath is not null
                 && canonicalReferences.TryGetValue(Path.GetFullPath(edge.ResolvedPath), out var canonicalPath)
                 ? edge with { ResolvedPath = canonicalPath } : edge).ToArray(),
-        }).Select(item => item with { ChildRelativePath = Path.GetRelativePath(output, item.ChildPath) })
+        }).Select(item => item with { ChildRelativePath = relativePaths[item.SourcePath] })
             .OrderBy(item => item.ChildPath, StringComparer.OrdinalIgnoreCase).ToArray();
+        var finalPathsBySource = normalizedAssemblies.ToDictionary(item => item.SourcePath, item => item.ChildRelativePath,
+            StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < issues.Count; index++)
+            if (issues[index].SourcePath is { } source && finalPathsBySource.TryGetValue(source, out var relativePath))
+                issues[index] = issues[index] with { ChildRelativePath = relativePath };
+        if (normalizedAssemblies.Select(item => item.ChildPath).Distinct(StringComparer.OrdinalIgnoreCase).Count() != normalizedAssemblies.Length)
+            throw new InvalidOperationException("Assembly export planning produced colliding child paths.");
         var plan = new ExportPlan(arguments, output, explicitPaths, normalizedAssemblies, issues);
         var owner = new ExportDumpOwnership(plan);
         owner.ValidateRootPreflight();
@@ -315,10 +322,125 @@ internal static class ExportPlanner
         if (dotIndex > 0)
         {
             var owner = stem[..dotIndex].Trim();
-            if (owner.Length > 0) return owner;
+            if (owner.Length > 0 && IsSafeDirectorySegment(owner)) return owner;
         }
         return MiscOwnerDirectory;
     }
+
+    private static Dictionary<string, string> PlanChildRelativePaths(IReadOnlyList<PlannedAssembly> assemblies,
+        IReadOnlySet<PlannedAssembly> basenameCollisions)
+    {
+        var owners = assemblies.GroupBy(item => GetOwnerDirectory(item.SourcePath), StringComparer.OrdinalIgnoreCase)
+            .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .ToArray();
+        var relativePaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var owner in owners)
+        {
+            var ownerName = owner.Select(item => GetOwnerDirectory(item.SourcePath))
+                .Order(StringComparer.OrdinalIgnoreCase).ThenBy(value => value, StringComparer.Ordinal).First();
+            var entries = owner.Select(item => new LayoutEntry(item, GetAdditionalSegments(item.SourcePath))).ToArray();
+            Assign(entries, ownerName, 0);
+        }
+        return relativePaths;
+
+        void Assign(IReadOnlyList<LayoutEntry> entries, string parent, int startSegment)
+        {
+            if (entries.Count <= MaxAssemblyChildrenPerDirectory)
+            {
+                AddLeaves(entries, parent);
+                return;
+            }
+
+            var maxSegment = entries.Max(entry => entry.Segments.Length);
+            for (var segmentIndex = startSegment; segmentIndex < maxSegment; segmentIndex++)
+            {
+                var groups = entries.Where(entry => segmentIndex < entry.Segments.Length)
+                    .GroupBy(entry => entry.Segments[segmentIndex], StringComparer.OrdinalIgnoreCase)
+                    .Select(group => new SegmentGroup(CanonicalSegment(group.Select(entry => entry.Segments[segmentIndex])),
+                        group.ToList())).ToArray();
+                var missing = entries.Where(entry => segmentIndex >= entry.Segments.Length).ToList();
+
+                // A shared segment does not add a useful directory, so inspect the next one.
+                if (groups.Length == 1 && missing.Count == 0) continue;
+
+                // The first differing segment bounds the prefix. Do not skip all-singleton
+                // buckets and group unrelated entries by a later suffix.
+                foreach (var group in groups.OrderBy(group => group.Name, StringComparer.OrdinalIgnoreCase)
+                             .ThenBy(group => group.Name, StringComparer.Ordinal))
+                {
+                    if (IsSafeDirectorySegment(group.Name))
+                    {
+                        if (group.Entries.Count == 1)
+                        {
+                            AddLeaf(group.Entries[0], parent);
+                            continue;
+                        }
+                        var groupPath = Path.Combine(parent, group.Name);
+                        if (group.Entries.Count > MaxAssemblyChildrenPerDirectory)
+                            Assign(group.Entries, groupPath, segmentIndex + 1);
+                        else
+                            AddLeaves(group.Entries, groupPath);
+                    }
+                    else if (group.Entries.Count > MaxAssemblyChildrenPerDirectory)
+                    {
+                        // Unsafe tokens cannot name directories; recurse within that token's
+                        // own bucket so later safe segments can still reduce a large group.
+                        Assign(group.Entries, parent, segmentIndex + 1);
+                    }
+                    else
+                    {
+                        AddLeaves(group.Entries, parent);
+                    }
+                }
+                AddLeaves(missing, parent);
+                return;
+            }
+
+            AddLeaves(entries, parent);
+        }
+
+        void AddLeaves(IEnumerable<LayoutEntry> entries, string parent)
+        {
+            foreach (var entry in entries) AddLeaf(entry, parent);
+        }
+
+        void AddLeaf(LayoutEntry entry, string parent)
+        {
+            var relativePath = basenameCollisions.Contains(entry.Assembly)
+                ? Path.Combine(parent, Path.GetFileName(entry.Assembly.SourcePath), VariantKey(entry.Assembly))
+                : Path.Combine(parent, Path.GetFileName(entry.Assembly.SourcePath));
+            relativePaths.Add(entry.Assembly.SourcePath, relativePath);
+        }
+    }
+
+    private static string[] GetAdditionalSegments(string sourcePath) =>
+        Path.GetFileNameWithoutExtension(sourcePath).Split('.').Skip(1).ToArray();
+
+    private static string CanonicalSegment(IEnumerable<string> segments) =>
+        segments.Order(StringComparer.OrdinalIgnoreCase).ThenBy(value => value, StringComparer.Ordinal).First();
+
+    private static bool IsSafeDirectorySegment(string segment)
+    {
+        if (string.IsNullOrWhiteSpace(segment) || segment is "." or ".."
+            || segment.EndsWith(' ') || segment.EndsWith('.')
+            || segment.Any(character => character <= '\u001f')
+            || segment.IndexOfAny(['<', '>', ':', '"', '/', '\\', '|', '?', '*']) >= 0)
+            return false;
+
+        var deviceName = segment.Split('.')[0];
+        if (deviceName.Equals("CON", StringComparison.OrdinalIgnoreCase)
+            || deviceName.Equals("PRN", StringComparison.OrdinalIgnoreCase)
+            || deviceName.Equals("AUX", StringComparison.OrdinalIgnoreCase)
+            || deviceName.Equals("NUL", StringComparison.OrdinalIgnoreCase)) return false;
+        if (deviceName.Length == 4 && (deviceName.StartsWith("COM", StringComparison.OrdinalIgnoreCase)
+                || deviceName.StartsWith("LPT", StringComparison.OrdinalIgnoreCase))
+            && (deviceName[3] is >= '1' and <= '9' or '\u00b9' or '\u00b2' or '\u00b3')) return false;
+        return true;
+    }
+
+    private sealed record LayoutEntry(PlannedAssembly Assembly, string[] Segments);
+    private sealed record SegmentGroup(string Name, List<LayoutEntry> Entries);
 
     private static string VariantKey(PlannedAssembly item)
     {
