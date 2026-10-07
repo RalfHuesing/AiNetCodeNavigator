@@ -27,6 +27,60 @@ public sealed class SourceToolsContractTests
 
     public SourceToolsContractTests(Xunit.ITestOutputHelper output) => _output = output;
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FindSymbolMatchingModesAgreeAcrossSourceAndAssembly(bool assembly)
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        using var fixture = TestTempDirectory.Create("ainet-matching-contract-");
+        const string source = """
+            namespace Matching
+            {
+                public class Greeter
+                {
+                    public void Greet1() { }
+                    public void Greet12() { }
+                    public void PrefixGreet1() { }
+                }
+                public class Other { public void Greet1() { } }
+            }
+            """;
+        var solutionPath = fixture.CreateFile("Matching.slnx", string.Empty);
+        var sourcePath = fixture.CreateFile("Matching.cs", source);
+        using var workspace = TestWorkspaceBuilder.Create().WithCapturedCoreReferences().WithVirtualSolutionPath(solutionPath)
+            .WithProject("Matching", (sourcePath, source)).Build();
+        await using var registry = new ProjectRegistry(new ProjectRegistryOptions(
+            _ => ResidentSolutionCreation.Resident(new ResidentSolution(workspace.Solution)), TimeProvider.System));
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>(), projectRegistry: registry);
+        var target = assembly ? AssemblyTestHelper.EmitAssembly(fixture, "Matching", source) : solutionPath;
+        var tools = new SymbolTools(runtime);
+        foreach (var (pattern, expected) in new[]
+        {
+            ("gReEt", "Greet1,Greet1,Greet12,PrefixGreet1"),
+            ("*gReEt*", "Greet1,Greet1,Greet12,PrefixGreet1"),
+            ("Greet*", "Greet1,Greet1,Greet12"),
+            ("Greet?", "Greet1,Greet1"),
+            ("^greet[0-9]+$", "Greet1,Greet1,Greet12"),
+            ("Greet\\d+", "Greet1,Greet1,Greet12,PrefixGreet1"),
+            ("^Greet*$", ""),
+            ("^[", ""),
+            ("  `Greet1()`  ", "Greet1,Greet1,Greet12,PrefixGreet1"),
+            ("Matching.Greeter.Greet?", "Greet1"),
+        })
+        {
+            var result = await tools.FindSymbol(target, pattern: pattern, kind: "method", maxResponseBytes: 16384, maxResponseTokens: 4096);
+            AssertSuccessWithinBudget(result, 16384, 4096);
+            using var json = JsonDocument.Parse(JsonBody(TextOf(result)));
+            var entries = json.RootElement.GetProperty("results")[0].GetProperty("entries").EnumerateArray().ToArray();
+            var expectedNames = expected.Length == 0 ? Array.Empty<string>() : expected.Split(',');
+            Assert.Equal(expectedNames.Order(StringComparer.Ordinal),
+                entries.Select(entry => entry.GetProperty("name").GetString()!).Order(StringComparer.Ordinal));
+            foreach (var entry in entries)
+                Assert.StartsWith(assembly ? "asm:" : "src:", entry.GetProperty("handoffId").GetString(), StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
     public async Task SkeletonSdkMetadataDeclaresOutlineCoverage()
     {

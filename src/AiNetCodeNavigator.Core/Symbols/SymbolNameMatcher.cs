@@ -132,28 +132,6 @@ public static class SymbolNameMatcher
         return name => name.Contains(pattern, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool MatchesSimplePattern(string name, string pattern)
-    {
-        if (pattern.Length >= 2 && pattern.StartsWith('*') && pattern.EndsWith('*')
-            && !pattern[1..^1].Contains('*') && !pattern[1..^1].Contains('?'))
-        {
-            return name.Contains(pattern.Trim('*'), StringComparison.OrdinalIgnoreCase);
-        }
-
-        if (pattern.Contains('*') || pattern.Contains('?'))
-        {
-            var regexPattern = RegexAutoDetector.ConvertWildcardToRegex(pattern, anchored: true);
-            if (RegexAutoDetector.IsValidRegex(regexPattern, out var globRegex))
-            {
-                return globRegex!.IsMatch(name);
-            }
-        }
-
-        if (RegexAutoDetector.IsLikelyRegex(pattern) && RegexAutoDetector.IsValidRegex(pattern, out var likelyRegex))
-        {
-            return likelyRegex!.IsMatch(name);
-        }
-
-        return name.Contains(pattern, StringComparison.OrdinalIgnoreCase);
-    }
+    private static bool MatchesSimplePattern(string name, string pattern) =>
+        CreatePredicateForSimplePattern(pattern)(name);
 }

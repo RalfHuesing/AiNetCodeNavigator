@@ -18,6 +18,64 @@ namespace AiNetCodeNavigator.FastTests.Symbols;
 [Trait("Category", "Unit")]
 public sealed class FindSymbolScannerTests
 {
+    [Theory]
+    [InlineData("gReEt", "method", "Greet1,Greet1,Greet1,Greet12,PrefixGreet1")]
+    [InlineData("*gReEt*", "method", "Greet1,Greet1,Greet1,Greet12,PrefixGreet1")]
+    [InlineData("Greet*", "method", "Greet1,Greet1,Greet1,Greet12")]
+    [InlineData("Greet?", "method", "Greet1,Greet1,Greet1")]
+    [InlineData("^greet[0-9]+$", "method", "Greet1,Greet1,Greet1,Greet12")]
+    [InlineData("Greet\\d+", "method", "Greet1,Greet1,Greet1,Greet12,PrefixGreet1")]
+    [InlineData("^[", "method", "")]
+    [InlineData("  `Greet1()`  ", "method", "Greet1,Greet1,Greet1,Greet12,PrefixGreet1")]
+    [InlineData("'Greeter<T>'", "class", "Greeter,Greeter,GreeterDecoy")]
+    [InlineData("Matching.Greeter", "class", "Greeter,GreeterDecoy")]
+    [InlineData("Matching.Greeter.Greet?", "method", "Greet1")]
+    [InlineData("`Matching.Greeter.Greet1()`", "method", "Greet1,Greet12,PrefixGreet1")]
+    public async Task FindMatchesWithDetailsAsync_CharacterizesSimpleAndQualifiedMatching(
+        string pattern, string kind, string expectedNames)
+    {
+        using var fixture = TestWorkspaceBuilder.CreateSolution(new ProjectSpec("Matching",
+            [("Matching.cs", """
+                namespace Matching
+                {
+                    public class Greeter<T>
+                    {
+                        public void Greet1() { }
+                        public void Greet12() { }
+                        public void PrefixGreet1() { }
+                        public void Welcome() { }
+                    }
+                    public class GreeterDecoy { public void Welcome() { } }
+                    public class Other { public void Greet1() { } }
+                }
+                namespace Elsewhere { public class Greeter { public void Greet1() { } } }
+                """)]));
+
+        var result = await FindSymbolScanner.FindMatchesWithDetailsAsync(
+            new FindSymbolScanRequest(fixture.Solution, pattern,
+                Kind: kind == "class" ? SymbolKindFilter.Class : SymbolKindFilter.Method));
+
+        var expected = expectedNames.Length == 0 ? Array.Empty<string>() : expectedNames.Split(',');
+        Assert.Equal(expected.OrderBy(name => name, StringComparer.Ordinal),
+            result.Entries.Select(entry => entry.Name).OrderBy(name => name, StringComparer.Ordinal));
+
+        var compilation = await fixture.Solution.Projects.Single().GetCompilationAsync();
+        var greeter = compilation!.GetTypeByMetadataName("Matching.Greeter`1")!;
+        var candidate = kind == "class" ? (ISymbol)greeter : greeter.GetMembers("Greet1").Single();
+        if (expected.Length > 0)
+        {
+            Assert.True(SymbolNameMatcher.MatchesSymbol(candidate, pattern));
+            Assert.True(SymbolNameMatcher.CreateDeclarationNameFilter(pattern)(candidate.Name));
+        }
+        if (pattern.Contains('.', StringComparison.Ordinal) && kind == "method")
+        {
+            Assert.True(SymbolNameMatcher.CreateDeclarationNameFilter(pattern)("Greeter"));
+            var decoy = compilation.GetTypeByMetadataName("Matching.Other")!.GetMembers("Greet1").Single();
+            Assert.True(SymbolNameMatcher.CreateDeclarationNameFilter(pattern)(decoy.Name));
+            Assert.False(SymbolNameMatcher.MatchesSymbol(decoy, pattern));
+        }
+    }
+
     [Fact]
     public async Task FindMatchesWithDetailsAsync_FindsExactClassMatch()
     {
