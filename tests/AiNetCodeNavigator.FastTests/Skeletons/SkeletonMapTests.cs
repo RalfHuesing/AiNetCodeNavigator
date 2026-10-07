@@ -17,6 +17,27 @@ namespace AiNetCodeNavigator.FastTests.Skeletons;
 public sealed class SkeletonMapTests
 {
     [Fact]
+    public async Task BuildForDocumentAsync_RestrictsDeclarationsToTopLevelTypesAndDirectMembers()
+    {
+        using var fixture = SampleCodeFixtures.CreateStandardTestSolution();
+        var document = fixture.Solution.Projects.First().AddDocument("Nested.cs", """
+            namespace Outline;
+            public class Outer
+            {
+                public int Value = 12345;
+                public int Read() => 54321;
+                public class HiddenNested { public void HiddenMethod() {} }
+            }
+            """);
+        var type = Assert.Single(await SkeletonMapBuilder.BuildForDocumentAsync(document, "."));
+        Assert.Equal("Outer", type.Name);
+        Assert.Equal(2, type.Members.Count);
+        Assert.Contains(type.Members, member => member.Signature == "public int Value;");
+        Assert.Contains(type.Members, member => member.Signature.Contains("Read()"));
+        Assert.DoesNotContain(type.Members, member => member.Signature.Contains("Hidden") || member.Signature.Contains("12345") || member.Signature.Contains("54321"));
+    }
+
+    [Fact]
     public async Task BuildForDocumentAsync_ExtractsTypesAndMembersWithoutBodies()
     {
         using var fixture = SampleCodeFixtures.CreateStandardTestSolution();

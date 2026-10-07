@@ -26,6 +26,8 @@ public static class SkeletonMarkdownRenderer
             + $" | Members: {types.Sum(t => t.Members.Count)}"
             + $" | Pfad: {solutionPath.Replace('\\', '/')}");
         sb.AppendLine();
+        sb.AppendLine("> Scope: top-level types and their direct members; nested types, implementation bodies and initializers are omitted.");
+        sb.AppendLine();
         sb.AppendLine("---");
 
         var byNamespace = types

@@ -917,6 +917,7 @@ public sealed class AssemblyToolsContractTests
         Assert.DoesNotContain("analyzedScope=", TextOf(assemblyOnly), StringComparison.Ordinal);
         Assert.Contains("### Target", TextOf(assemblyOnly), StringComparison.Ordinal);
         Assert.Contains("Read", TextOf(assemblyOnly), StringComparison.Ordinal);
+        Assert.Contains("> Scope: top-level types and their direct members; nested types, implementation bodies and initializers are omitted.", TextOf(assemblyOnly), StringComparison.Ordinal);
 
         var sourceDiscovery = await symbols.FindSymbol(sourceSolutionPath, pattern: "SourceSkeletonBatchProbe.Foreign", kind: "class", maxResponseBytes: 16384, maxResponseTokens: 1024);
         AssertSuccessWithinBudget(sourceDiscovery, 16384, 1024);
@@ -931,6 +932,7 @@ public sealed class AssemblyToolsContractTests
         Assert.DoesNotContain("analyzedScope=", mixedText, StringComparison.Ordinal);
         Assert.Contains("### Target", mixedText, StringComparison.Ordinal);
         Assert.Contains("Read", mixedText, StringComparison.Ordinal);
+        Assert.Contains("> Scope: top-level types and their direct members; nested types, implementation bodies and initializers are omitted.", mixedText, StringComparison.Ordinal);
         foreach (var reference in invalidReferences)
         {
             var item = IntegrationMcpAssertions.ReadItemSection(mixedText, reference);

@@ -28,6 +28,82 @@ public sealed class SourceToolsContractTests
     public SourceToolsContractTests(Xunit.ITestOutputHelper output) => _output = output;
 
     [Fact]
+    public async Task SkeletonSdkMetadataDeclaresOutlineCoverage()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var sdk = ModelContextProtocol.Server.McpServerTool.Create(
+            typeof(StructureTools).GetMethod(nameof(StructureTools.GetFileSkeleton))!, new StructureTools(runtime));
+        Assert.Equal("get_file_skeleton", sdk.ProtocolTool.Name);
+        Assert.Contains("top-level types and their direct members", sdk.ProtocolTool.Description, StringComparison.Ordinal);
+        Assert.Contains("source or decompiled assembly files", sdk.ProtocolTool.Description, StringComparison.Ordinal);
+        Assert.Contains("nested types, implementation bodies and initializers are omitted", sdk.ProtocolTool.Description, StringComparison.Ordinal);
+        Assert.Contains("src:/asm:", sdk.ProtocolTool.Description, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SkeletonScopeSurvivesSourceAndAssemblyOuterPagesAndReferences(bool assembly)
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        using var fixture = TestTempDirectory.Create("ainet-skeleton-scope-");
+        var members = string.Join(" ", Enumerable.Range(0, 20).Select(index => $"public int Entry{index}() => 54321;"));
+        var source = $"namespace Outline; public class Outer {{ public int Value = 12345; {members} public class HiddenNested {{ public void HiddenMethod() {{ }} }} }}";
+        var solutionPath = fixture.CreateFile("Outline.slnx", string.Empty);
+        var sourcePath = fixture.CreateFile("Outline.cs", source);
+        var emptyPath = fixture.CreateFile("Empty.cs", string.Empty);
+        using var workspace = TestWorkspaceBuilder.Create().WithCapturedCoreReferences().WithVirtualSolutionPath(solutionPath)
+            .WithProject("Outline", (sourcePath, source), (emptyPath, string.Empty)).Build();
+        await using var registry = new ProjectRegistry(new ProjectRegistryOptions(
+            _ => ResidentSolutionCreation.Resident(new ResidentSolution(workspace.Solution)), TimeProvider.System));
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>(), projectRegistry: registry);
+        var target = assembly ? AssemblyTestHelper.EmitAssembly(fixture, "Outline", source) : solutionPath;
+        var symbols = new SymbolTools(runtime);
+        var structure = new StructureTools(runtime);
+        var discovery = await symbols.FindSymbol(target, pattern: "Outline.Outer", kind: "class", maxResponseBytes: 16384, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(discovery, 16384, 4096);
+        var reference = Assert.Single(ReadStableReferences(TextOf(discovery)),
+            candidate => candidate.EndsWith("|T:Outline.Outer", StringComparison.Ordinal));
+        var broad = await ReadOuterResponsePagesAsync(
+            (bytes, tokens, continuation) => structure.GetFileSkeleton(target, [reference],
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 65536, 4096);
+        var budgeted = await ReadOuterResponsePagesAsync(
+            (bytes, tokens, continuation) => structure.GetFileSkeleton(target, [reference],
+                maxResponseBytes: bytes, maxResponseTokens: tokens, continuationToken: continuation), 1024, 4096);
+        Assert.True(budgeted.Pages > 1);
+        Assert.Equal(broad.Text, budgeted.Text);
+        const string scope = "> Scope: top-level types and their direct members; nested types, implementation bodies and initializers are omitted.";
+        Assert.Contains(scope, budgeted.Text, StringComparison.Ordinal);
+        Assert.Contains("### Outer", budgeted.Text, StringComparison.Ordinal);
+        Assert.Contains("Entry19()", budgeted.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("HiddenNested", budgeted.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("HiddenMethod", budgeted.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("12345", budgeted.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("54321", budgeted.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("analysisCompleteness=partial", broad.FirstPage, StringComparison.Ordinal);
+        var memberLine = budgeted.Text.Split('\n').Single(line => line.Contains("Entry19()", StringComparison.Ordinal));
+        var memberReference = Assert.Single(ReadStableReferences(memberLine));
+        Assert.StartsWith(assembly ? "asm:" : "src:", memberReference, StringComparison.Ordinal);
+        var body = await symbols.GetSymbolBody(target, [memberReference], maxResponseBytes: 16384, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(body, 16384, 4096);
+        Assert.Contains("54321", TextOf(body), StringComparison.Ordinal);
+
+        var mixed = await structure.GetFileSkeleton(target, [reference, "Missing.cs"], maxResponseBytes: 65536, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(mixed, 65536, 4096);
+        Assert.Contains(scope, TextOf(mixed), StringComparison.Ordinal);
+        Assert.Contains("unresolvedOrMissingFiles", TextOf(mixed), StringComparison.Ordinal);
+        if (!assembly)
+        {
+            var empty = await structure.GetFileSkeleton(target, [emptyPath], maxResponseBytes: 16384, maxResponseTokens: 4096);
+            AssertSuccessWithinBudget(empty, 16384, 4096);
+            Assert.Contains(scope, TextOf(empty), StringComparison.Ordinal);
+            Assert.Contains("Types: 0 | Members: 0", TextOf(empty), StringComparison.Ordinal);
+            Assert.DoesNotContain("analysisCompleteness=partial", TextOf(empty), StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public async Task GetContextTestsReportsActivityWithoutDroppingExcludedTests()
     {
         using var fixture = TestTempDirectory.Create("context-test-activity-");

@@ -147,7 +147,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "get_file_skeleton", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [System.ComponentModel.Description("Show declarations in selected source files and provide stable src:/asm: references when declarations support them.")]
+    [System.ComponentModel.Description("Outline top-level types and their direct members in selected source or decompiled assembly files; nested types, implementation bodies and initializers are omitted. Provide stable src:/asm: references when declarations support them.")]
     public Task<CallToolResult> GetFileSkeleton(
         [Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
         [Required, System.ComponentModel.Description("One or more indexed relative or absolute source paths, or stable src:/asm: references that identify declaring documents.")] string[] filePaths,
