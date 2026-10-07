@@ -19,7 +19,7 @@ Planning baseline: `8a26274876c284661efb24f9dda31f623d9995ba`; working tree clea
 
 ## Ordered implementation points
 
-- [ ] **NCC-01 — Make existing search and relationship contracts discoverable**
+- [x] **NCC-01 — Make existing search and relationship contracts discoverable**
 
   **Problem:** MCP tool/parameter descriptions omit semantics that are already documented and implemented. `find_symbol` does not explain its matching modes; `find_references.depth` says only traversal depth; `dependency_graph` does not clearly explain the containing-type interpretation of member roots or broad incoming analysis. An agent selecting tools can miss these facts without reading repository documentation.
 
@@ -29,7 +29,12 @@ Planning baseline: `8a26274876c284661efb24f9dda31f623d9995ba`; working tree clea
 
   **Acceptance:** The exposed tool metadata contains the relevant distinctions above and agrees with current implementation. No arguments, defaults, validation, matching behavior, traversal behavior or wire fields change. Verify the generated metadata through the existing SDK/schema contract test infrastructure where available; do not rely only on reading attributes. Update affected canonical documentation only where needed.
 
-  **Completion evidence:** Pending.
+  **Completion evidence:** Implemented in `e2870d5` (`docs(mcp): expose search and relationship semantics in tool metadata`). Updated only description attributes in `SymbolTools` and `RelationshipTools`: matching modes and qualified names; direct versus bounded caller references; containing-type/file roots, selected projections, broad incoming source collection, focused shallow outgoing queries, assembly scope, and analysis bounds independent of delivery pages. No arguments, defaults, validators, execution paths, matching/traversal behavior or response fields changed. The public tool reference links the existing canonical semantics; the linked navigation pages already agree with implementation and need no changes.
+
+  Verification on 2026-10-07:
+  - `pwsh -File ./scripts/build.ps1` — passed, zero warnings/errors (13.87 seconds).
+  - `pwsh -File ./scripts/test-integration.ps1 -Filter 'FullyQualifiedName~NavigationSdkMetadataExplainsMatchingTraversalAndDependencyScope|FullyQualifiedName~DependencySdkContractPublishesSelectedLevelAndNullableSourceOptions|FullyQualifiedName~FindReferences_SummarySdkContractRequiresSymbolAndRoutesSourceAndAssemblySymbols'` — passed, 3/3 tests, zero skipped (10 seconds test duration). The new transport-free test creates original SDK tools and asserts generated tool/parameter metadata; existing selected contracts verify schema defaults and validation/routing. No workspace or semantic-analysis implementation changed, so no extended selection is required.
+  - Diff review and `git diff --check` — passed. No suspected stall occurred. Complete eligible routine solution verification remains assigned to NCC-05.
 
 - [ ] **NCC-02 — Declare file skeleton coverage in metadata and output**
 
