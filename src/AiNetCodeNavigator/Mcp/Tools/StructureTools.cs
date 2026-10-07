@@ -82,6 +82,10 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 if (!result.ScanCompleted)
                     return McpToolResults.Recoverable("INDEX_SCOPE_FAILED", result.Error ?? "The source index scope could not be scanned.",
                         "Check the loaded solution and repeat the query.");
+                var projectsWithMissingFrameworks = result.Projects.Count(entry => entry.ConfiguredFrameworksKnown
+                    && entry.ConfiguredFrameworksNotAnalyzed is { Count: > 0 });
+                var projectsWithUnknownFrameworkCoverage = result.Projects.Count(entry => !entry.ConfiguredFrameworksKnown);
+                var frameworkCoverageSummary = $"Framework coverage: {projectsWithMissingFrameworks} project entries with known configured frameworks not analysed; {projectsWithUnknownFrameworkCoverage} project entries with unknown configured-framework coverage. See project items for framework names and loaded contexts.";
                 var items = new List<object>(result.Projects.Count + result.FileTypes.Count);
                 foreach (var entry in result.Projects)
                     items.Add(new { Kind = "project", entry.Name,
@@ -104,7 +108,7 @@ public sealed class StructureTools(NavigatorHostRuntime runtime)
                 {
                     View = "scope", Inventory = "loadedRoslynDocuments", result.SolutionPath, result.ProjectCount, result.TotalDocumentCount, result.CSharpFileCount,
                     result.TestProjectCount, result.GeneratedDocumentCount, result.TestDocumentCount, result.TotalFileTypeCount,
-                    Summary = $"Roslyn documents: {result.TotalDocumentCount}; .cs: {result.CSharpFileCount}; generated C#: {result.GeneratedDocumentCount}; tests: {result.TestDocumentCount}.",
+                    Summary = $"Roslyn documents: {result.TotalDocumentCount}; .cs: {result.CSharpFileCount}; generated C#: {result.GeneratedDocumentCount}; tests: {result.TestDocumentCount}. {frameworkCoverageSummary}",
                     Items = page.Items, TotalItems = items.Count, ReturnedItems = page.Items.Length, ResultCursor = page.NextCursor,
                 });
                 return source.WithMetadata(response,

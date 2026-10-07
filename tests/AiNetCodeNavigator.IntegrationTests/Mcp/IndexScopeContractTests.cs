@@ -11,6 +11,8 @@ using AiNetCodeNavigator.Mcp.Tools.Symbols;
 using AiNetCodeNavigator.Mcp.Tools;
 using AiNetCodeNavigator.Mcp.Validation;
 using AiNetCodeNavigator.TestKit;
+using AiNetCodeNavigator.TestKit.Builders;
+using AiNetCodeNavigator.Core.Workspace;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -22,6 +24,73 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 [Trait("Category", "Integration")]
 public sealed class IndexScopeContractTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public async Task ScopeSummaryReportsUnknownCoverageAndEmptyInventory(int projectCount)
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        using var fixture = TestTempDirectory.Create("ainet-scope-summary-");
+        var target = fixture.CreateFile("Scope.slnx", string.Empty);
+        var builder = TestWorkspaceBuilder.Create().WithCapturedCoreReferences().WithVirtualSolutionPath(target);
+        for (var index = 0; index < projectCount; index++)
+            builder.WithProject($"Project{index}", (fixture.CreateFile($"Source{index}.cs", "public class Source {}"), "public class Source {}"));
+        using var workspace = builder.Build();
+        await using var registry = new ProjectRegistry(new ProjectRegistryOptions(
+            _ => ResidentSolutionCreation.Resident(new ResidentSolution(workspace.Solution)), TimeProvider.System));
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>(), projectRegistry: registry);
+        var tools = new StructureTools(runtime);
+        string? cursor = null;
+        do
+        {
+            var result = await GetIndexScopeUntilCompleteAsync(tools, target, 1, cursor);
+            Assert.False(result.IsError ?? false, TextOf(result));
+            Assert.DoesNotContain("analysisCompleteness=partial", TextOf(result), StringComparison.Ordinal);
+            using var document = JsonDocument.Parse(JsonPayload(TextOf(result)));
+            AssertFrameworkCoverageSummary(document.RootElement, 0, projectCount);
+            Assert.Equal(projectCount, document.RootElement.GetProperty("projectCount").GetInt32());
+            foreach (var item in document.RootElement.GetProperty("items").EnumerateArray()
+                .Where(item => item.GetProperty("kind").GetString() == "project"))
+            {
+                Assert.False(item.GetProperty("configuredFrameworksKnown").GetBoolean());
+                Assert.Empty(item.GetProperty("configuredFrameworksNotAnalyzed").EnumerateArray());
+                Assert.Equal("unknown", item.GetProperty("loadedFrameworkContext").GetString());
+            }
+            cursor = document.RootElement.TryGetProperty("resultCursor", out var value) ? value.GetString() : null;
+        } while (cursor is not null);
+    }
+
+    [Fact]
+    public async Task ScopeSummaryReportsKnownConfigurationWithNoMissingFrameworks()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        using var fixture = TestTempDirectory.Create("ainet-scope-loaded-summary-");
+        var target = await CreateSourceFixtureAsync(fixture.DirectoryPath);
+        foreach (var path in Directory.EnumerateFiles(fixture.DirectoryPath, "*.csproj", SearchOption.AllDirectories))
+            await File.WriteAllTextAsync(path, (await File.ReadAllTextAsync(path)).Replace("net10.0;net9.0", "net10.0", StringComparison.Ordinal));
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var result = await GetIndexScopeUntilCompleteAsync(new StructureTools(runtime), target, 100, null);
+        Assert.False(result.IsError ?? false, TextOf(result));
+        using var document = JsonDocument.Parse(JsonPayload(TextOf(result)));
+        AssertFrameworkCoverageSummary(document.RootElement, 0, 0);
+        Assert.Equal(4, document.RootElement.GetProperty("projectCount").GetInt32());
+        Assert.All(document.RootElement.GetProperty("items").EnumerateArray()
+            .Where(item => item.GetProperty("kind").GetString() == "project"), item =>
+        {
+            Assert.True(item.GetProperty("configuredFrameworksKnown").GetBoolean());
+            Assert.Empty(item.GetProperty("configuredFrameworksNotAnalyzed").EnumerateArray());
+            Assert.Equal("net10.0", item.GetProperty("loadedFrameworkContext").GetString());
+        });
+    }
+
+    private static void AssertFrameworkCoverageSummary(JsonElement payload, int missing, int unknown)
+    {
+        var summary = payload.GetProperty("summary").GetString();
+        Assert.Contains($"Framework coverage: {missing} project entries with known configured frameworks not analysed; {unknown} project entries with unknown configured-framework coverage.", summary, StringComparison.Ordinal);
+        Assert.Contains("See project items for framework names and loaded contexts.", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("all frameworks", summary, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task BrowseTarget_SdkDefinitionPublishesSharedRoutingParameters()
     {
@@ -142,6 +211,7 @@ public sealed class IndexScopeContractTests
             Assert.False(page.IsError ?? false, TextOf(page));
             using var inventoryDocument = JsonDocument.Parse(JsonPayload(TextOf(page)));
             var rootElement = inventoryDocument.RootElement;
+            AssertFrameworkCoverageSummary(rootElement, 4, 0);
             Assert.Equal(8, rootElement.GetProperty("totalDocumentCount").GetInt32());
             Assert.Equal(4, rootElement.GetProperty("generatedDocumentCount").GetInt32());
             Assert.Equal(5, rootElement.GetProperty("totalItems").GetInt32());
