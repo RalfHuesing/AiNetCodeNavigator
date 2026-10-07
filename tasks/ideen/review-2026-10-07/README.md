@@ -21,11 +21,11 @@ Retain the read-only static C#/assembly core provisionally. Prioritize measured 
 ## Decisions
 
 - Confirmed scope: preserve analysis and discussion in this directory; no code changes in this pass.
-- No proposed product changes have been approved yet.
+- The subsequent 2026-10-07 discussion selected four bounded improvements for the [Navigation Contract Clarity roadmap](../../navigation-contract-clarity/roadmap.md); production implementation has not started. Broader product proposals remain unapproved. See the [decision log](decisions.md).
 
 ## Next steps
 
-Use the decision log to choose the next slice; the lowest-cost next action is the two-task shell-versus-Navigator pilot before implementation. Representative legacy/Blazor/WPF solutions or approved fixtures are needed to settle compatibility. Do not treat proposed changes as already approved.
+Use the [Navigation Contract Clarity roadmap](../../navigation-contract-clarity/roadmap.md) for the selected small improvements when implementation is requested. The two-task shell-versus-Navigator pilot remains a proposal for broader investment decisions. Representative legacy/Blazor/WPF solutions or approved fixtures are needed to settle compatibility.
 
 ## Verification record
 

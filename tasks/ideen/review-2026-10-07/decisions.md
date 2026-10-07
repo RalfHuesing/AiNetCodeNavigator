@@ -31,6 +31,10 @@ This file is the continuation point for decisions during subsequent chats. Recom
 6. What cold/warm latency and memory budgets are acceptable on the user's machine and solutions? Reviewer default: collect distributions first; set explicit budgets before optimizing caches or adding selective loading.
 7. Does a current-snapshot change packet suffice, or is baseline/deleted-symbol impact essential? Reviewer default: current snapshot and explicit missing baseline evidence first; historical semantics are a separate feature.
 
+## Subsequent user direction — 2026-10-07
+
+The user selected four bounded improvements for an implementation roadmap: discoverable existing tool semantics, explicit skeleton scope, prominent framework-coverage summaries, and shared simple symbol-name matching. Their sole executable specification is [Navigation Contract Clarity](../../navigation-contract-clarity/roadmap.md). The user requested `gpt-6.1-sol` with reasoning `medium` for implementation and audit, an overall closing audit with finding/correction rounds, and a commit of the planning artifacts. This request creates the implementation basis; production implementation has not started. Broader review proposals remain unapproved.
+
 ## Resumption procedure
 
 Read this file, the [assessment](review.md), and [experiment plan](experiment.md). Ask only for input needed for the next chosen slice. Record each explicit user decision here with date, scope, rationale and superseded proposal. Do not convert the review into an implementation backlog merely because recommendations exist.
