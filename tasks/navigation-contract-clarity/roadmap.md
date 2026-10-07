@@ -36,7 +36,7 @@ Planning baseline: `8a26274876c284661efb24f9dda31f623d9995ba`; working tree clea
   - `pwsh -File ./scripts/test-integration.ps1 -Filter 'FullyQualifiedName~NavigationSdkMetadataExplainsMatchingTraversalAndDependencyScope|FullyQualifiedName~DependencySdkContractPublishesSelectedLevelAndNullableSourceOptions|FullyQualifiedName~FindReferences_SummarySdkContractRequiresSymbolAndRoutesSourceAndAssemblySymbols'` — passed, 3/3 tests, zero skipped (10 seconds test duration). The new transport-free test creates original SDK tools and asserts generated tool/parameter metadata; existing selected contracts verify schema defaults and validation/routing. No workspace or semantic-analysis implementation changed, so no extended selection is required.
   - Diff review and `git diff --check` — passed. No suspected stall occurred. Complete eligible routine solution verification remains assigned to NCC-05.
 
-- [ ] **NCC-02 — Declare file skeleton coverage in metadata and output**
+- [x] **NCC-02 — Declare file skeleton coverage in metadata and output**
 
   **Problem:** The skeleton walker intentionally omits nested types, but the public description broadly promises declarations. The omission is explained in repository documentation rather than being reliably visible to the consuming agent.
 
@@ -46,7 +46,14 @@ Planning baseline: `8a26274876c284661efb24f9dda31f623d9995ba`; working tree clea
 
   **Acceptance:** A file with a nested type yields a visible scope note, retains its top-level declarations/direct members and navigable references, and still excludes nested declarations and bodies. Source and assembly outputs communicate the same scope. Budgeted outer-page reconstruction retains the scope note. Existing empty-file and mixed-success batch behavior remains valid.
 
-  **Completion evidence:** Pending.
+  **Completion evidence:** Implemented in `d1c31de` (`feat(navigation): declare file skeleton scope in metadata and output`). The SDK tool description and shared `SkeletonMarkdownRenderer` now state that outlines cover top-level types and their direct members and omit nested types, implementation bodies and initializers. Every rendered file, including empty files, carries the compact scope note. The walker, declaration signatures/references, status logic, batching and continuation protocol are unchanged. Updated the canonical skeleton contract.
+
+  Verification on 2026-10-07:
+  - `pwsh -File ./scripts/build.ps1` — passed, zero warnings/errors (2.46 seconds final build duration).
+  - `pwsh -File ./scripts/test-fast.ps1 -Filter 'FullyQualifiedName~Skeletons'` — passed, 20/20 tests, zero skipped (687 milliseconds test duration). New cases characterize nested-type omission, direct-member retention, omitted bodies/initializers, resolvable source references and an empty outline carrying the note.
+  - `pwsh -File ./scripts/test-integration.ps1 -Filter 'FullyQualifiedName~SkeletonSdkMetadataDeclaresOutlineCoverage|FullyQualifiedName~SkeletonScopeSurvivesSourceAndAssemblyOuterPagesAndReferences|FullyQualifiedName~SkeletonReferenceBatchPreservesMixedAndAllFailedItemsAndMetadata|FullyQualifiedName~AssemblySkeletonBatch_UsesOneSnapshotAcrossHandoffs|FullyQualifiedName~SourceHandlersReturnNavigableResultsAndTypedDomainErrorsWithoutTransport|FullyQualifiedName~AssemblyNavigationHandlersReturnOwnerResultsAcrossAllTwelveRoutes'` — passed, 8/8 tests, zero skipped (11 seconds test duration). SDK-created metadata is checked; the source/assembly theory reconstructs multiple 1024-byte pages against a broad response, checks the scope note and exclusions, follows returned member references to bodies, and verifies successful, empty and mixed-batch status behavior. Existing batch and all-route contracts verify recovery, snapshot and token-budget behavior.
+  - The first build caught four nullable-budget arguments in the new test (the assertion helper requires an integer); explicit 4096-token limits corrected them. The first integration selection passed 7/8, with the new assembly case failing inside the source-only `ReadHandoff` test helper (`asm:Outline|T:Outline.Outer` versus expected `src:`). Replacing that call with the existing target-independent stable-reference reader corrected the test; the final official build and the same integration selection passed. Neither failure required a production correction.
+  - Diff review and `git diff --check` — passed. No suspected stall occurred; active runs were observed within one minute. The extended-test inventory contains only MSBuild workspace-loader cases; this slice changes no host, workspace, symbol-analysis, response-processing dependency or source/assembly relationship implementation, so no relevant extended selection is required. Complete eligible routine solution verification remains assigned to NCC-05.
 
 - [ ] **NCC-03 — Surface unanalysed framework contexts in the scope summary**
 
