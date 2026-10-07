@@ -4,7 +4,7 @@
 
 Make existing navigation behavior easier for agents to interpret and keep symbol matching consistent. This roadmap is the executable specification for the four small improvements selected in the user discussion on 2026-10-07. It does not adopt the broader architecture proposals in the [independent review](../ideen/review-2026-10-07/review.md).
 
-Planning baseline: `8a26274876c284661efb24f9dda31f623d9995ba`; working tree clean. Status: implementation in progress, authorized by the user on 2026-10-07. Implementation baseline: `bfffbb237d37a3e0224f6a88b511b9bcc27688e5`.
+Planning baseline: `8a26274876c284661efb24f9dda31f623d9995ba`; working tree clean. Status: completed on 2026-10-07 after user-authorized implementation, solution verification and independent audit. Implementation baseline: `bfffbb237d37a3e0224f6a88b511b9bcc27688e5`. Final production change: `c8b567e`; audited implementation/evidence head: `4bd3336192ffe13f7ff5443590cd98b3f190ebed`. Subsequent closure changes affect documentation only.
 
 ## Execution contract
 
@@ -109,7 +109,7 @@ Planning baseline: `8a26274876c284661efb24f9dda31f623d9995ba`; working tree clea
   - Inspected actual category declarations and both extended test bodies. The only `ExtendedIntegration` cases are `WorkspaceLoadingIntegrationTests.MSBuildSolutionLoader_CustomTargetsAndScratchCleanupPreserveWorkspaceSnapshot` and `MSBuildSolutionLoader_ColdSolutionsWithSameNamedProjectsHaveIsolatedSnapshots`, covering MSBuild scratch/custom-target isolation and cold-loader snapshot isolation. The combined changes do not alter those dependencies, workspace loading, host lifecycle or relationship analysis; no affected extended selection is required. All per-slice official build gates passed, including the final matcher build at 2.24 seconds, and no production change or concrete outstanding build concern justifies repeating them here. Performance tests and excluded E2E product flows were not run and are not claimed as covered.
   - Active runs were monitored at intervals below one minute. The minimal routine console logger exposes no per-test completion progress during the integration stage; its final successful result arrived before five minutes without observable progress. No suspected stall occurred. Combined diff review and `git diff --check bfffbb237d37a3e0224f6a88b511b9bcc27688e5..HEAD` passed; evidence-only diff review and `git diff --check` passed before commit. No required gate remains blocked; independent audit and finding resolution remain assigned to NCC-06.
 
-- [ ] **NCC-06 — Audit the entire change and resolve findings through re-audit**
+- [x] **NCC-06 — Audit the entire change and resolve findings through re-audit**
 
   **Problem:** Local self-checks can miss interactions, misleading completeness claims, behavior drift or inadequate verification across the combined implementation.
 
@@ -119,7 +119,11 @@ Planning baseline: `8a26274876c284661efb24f9dda31f623d9995ba`; working tree clea
 
   **Acceptance:** The final independent audit has no unresolved in-scope findings. Every finding has a traceable verified resolution and correction commit, or an explicit user decision recorded here. Required gates cover the final production state. This checkbox stays open while findings or required checks are unresolved. Commit the final roadmap evidence and report the result to the user.
 
-  **Audit rounds and finding resolutions:** Pending.
+  **Audit rounds and finding resolutions:** Round 1 completed on 2026-10-07 by a fresh independent `gpt-6.1-sol` agent with reasoning `medium`. Reviewed range: `bfffbb237d37a3e0224f6a88b511b9bcc27688e5..4bd3336192ffe13f7ff5443590cd98b3f190ebed`. Result: zero actionable findings; all NCC-01 through NCC-05 acceptance criteria fulfilled. No correction or re-audit round was necessary.
+
+  The auditor checked SDK-generated descriptions against actual matching/reference/dependency paths; shared source/assembly skeleton rendering, scopes, references, empty/mixed results and outer-page reconstruction; target-wide missing/unknown framework counts, domain pages, identities and snapshot/cursor binding; unchanged matcher precedence, normalization, fallback and qualified prefilter behavior; canonical docs and completion evidence. No unrelated changes or unsupported performance/framework-support claims were found. The auditor independently ran `git diff --check` successfully and confirmed the clean working tree. It reviewed the preserved full routine log confirming 939 FastTests and 139 IntegrationTests with zero failures/skips; it did not rerun builds/tests or treat excluded E2E/Extended/performance flows as verified. No additional affected extended gate or unresolved required check was identified.
+
+  The orchestrator reviewed each slice's diff, commits and reported verification, confirmed the full routine result and accepted the independent audit. Closure updates only this roadmap and review continuation pointers; all production changes remain within the audited range. Final documentation diff and local Markdown references were checked before the closure commit. There are no unresolved in-scope findings or blocked gates.
 
 ## Excluded work
 

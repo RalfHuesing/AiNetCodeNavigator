@@ -37,4 +37,6 @@ The user selected four bounded improvements for an implementation roadmap: disco
 
 ## Resumption procedure
 
+The user subsequently authorized orchestrated implementation on 2026-10-07. The selected roadmap is now complete, including solution verification and independent audit with no actionable findings. The [roadmap](../../navigation-contract-clarity/roadmap.md) is the sole owner of implementation commits, checks and audit evidence; broader review proposals remain unapproved.
+
 Read this file, the [assessment](review.md), and [experiment plan](experiment.md). Ask only for input needed for the next chosen slice. Record each explicit user decision here with date, scope, rationale and superseded proposal. Do not convert the review into an implementation backlog merely because recommendations exist.
