@@ -16,6 +16,52 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class RelationshipToolsContractTests
 {
     [Fact]
+    public async Task NavigationSdkMetadataExplainsMatchingTraversalAndDependencyScope()
+    {
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var symbols = new SymbolTools(runtime);
+        var relationships = new RelationshipTools(runtime);
+        var find = McpServerTool.Create(typeof(SymbolTools).GetMethod(nameof(SymbolTools.FindSymbol))!, symbols);
+        var references = McpServerTool.Create(typeof(RelationshipTools).GetMethod(nameof(RelationshipTools.FindReferences))!, relationships);
+        var dependencies = McpServerTool.Create(typeof(RelationshipTools).GetMethod(nameof(RelationshipTools.DependencyGraph))!, relationships);
+
+        Assert.Equal("find_symbol", find.ProtocolTool.Name);
+        Assert.Contains("source or assembly", find.ProtocolTool.Description, StringComparison.Ordinal);
+        foreach (var description in new[] { find.ProtocolTool.Description, ParameterDescription(find, "pattern"), ParameterDescription(find, "namePatterns") })
+        {
+            Assert.Contains("case-insensitive substring", description, StringComparison.Ordinal);
+            Assert.Contains("anchored * / ? wildcards", description, StringComparison.Ordinal);
+            Assert.Contains("automatically detected regex", description, StringComparison.Ordinal);
+            Assert.Contains("qualified", description, StringComparison.Ordinal);
+        }
+
+        Assert.Equal("find_references", references.ProtocolTool.Name);
+        Assert.Contains("decompiled", references.ProtocolTool.Description, StringComparison.Ordinal);
+        Assert.Contains("bounded resolved owner closure", references.ProtocolTool.Description, StringComparison.Ordinal);
+        var referenceDepth = ParameterDescription(references, "depth");
+        Assert.Contains("Depth 1 returns direct references", referenceDepth, StringComparison.Ordinal);
+        Assert.Contains("depths 2–3 follow caller symbols breadth-first", referenceDepth, StringComparison.Ordinal);
+        Assert.Contains("fixed symbol-visit budget", referenceDepth, StringComparison.Ordinal);
+        Assert.Contains("pages do not remove", referenceDepth, StringComparison.Ordinal);
+
+        Assert.Equal("dependency_graph", dependencies.ProtocolTool.Name);
+        Assert.Contains("not a call graph", dependencies.ProtocolTool.Description, StringComparison.Ordinal);
+        Assert.Contains("shallow outgoing", dependencies.ProtocolTool.Description, StringComparison.Ordinal);
+        Assert.Contains("materialized decompiled source", dependencies.ProtocolTool.Description, StringComparison.Ordinal);
+        Assert.Contains("output pages do not remove analysis bounds", dependencies.ProtocolTool.Description, StringComparison.Ordinal);
+        Assert.Contains("all declared types", ParameterDescription(dependencies, "filePath"), StringComparison.Ordinal);
+        Assert.Contains("containing type", ParameterDescription(dependencies, "symbolIdentifier"), StringComparison.Ordinal);
+        Assert.Contains("source project owner", ParameterDescription(dependencies, "symbolIdentifier"), StringComparison.Ordinal);
+        Assert.Contains("scans all eligible documents", ParameterDescription(dependencies, "direction"), StringComparison.Ordinal);
+        Assert.Contains("from admitted type edges", ParameterDescription(dependencies, "level"), StringComparison.Ordinal);
+        Assert.Contains("ProjectReference facts without semantic document scanning", ParameterDescription(dependencies, "level"), StringComparison.Ordinal);
+
+        static string ParameterDescription(McpServerTool tool, string parameter) =>
+            tool.ProtocolTool.InputSchema.GetProperty("properties").GetProperty(parameter).GetProperty("description").GetString()!;
+    }
+
+    [Fact]
     public async Task DependencySdkContractPublishesSelectedLevelAndNullableSourceOptions()
     {
         using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();

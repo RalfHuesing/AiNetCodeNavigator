@@ -2,6 +2,8 @@
 
 The server registers 12 read-only navigation tools. Their SDK method definitions are the authority for wire names, descriptions, defaults, and validation; this page explains how to choose and use them. Targets are absolute paths: source tools require an existing `.sln` or `.slnx`, and assembly tools require a managed `.dll` or `.exe`. Assembly navigation uses the selected binary's decompiled source and supported owner references; it never executes analyzed binaries. `browse_target` with `view=scope` is source-only.
 
+The exposed SDK descriptions explain [symbol matching](../navigation/find-symbol.md), [direct references and bounded caller traversal](../navigation/find-references-and-implementations.md), and [dependency roots, projections and analysis scope](../navigation/dependency-graph.md). Output pages deliver known results without expanding analysis bounds.
+
 ## Shared request and response behavior
 
 Unless a tool row says otherwise, `maxResponseBytes` is a hard UTF-8 text limit from 512 through 65,536 bytes and `maxResponseTokens` is an optional positive hard limit counted with `cl100k_base`. Each tool has its own documented byte default. Budgets constrain successful output and recoverable errors; the server does not silently raise them. If a result cannot fit, retry the same request at the exact `minimumResponseBytes` and `minimumResponseTokens` pair in `RESPONSE_BUDGET_TOO_SMALL`; the offered byte minimum is at least the public 512-byte floor. Do not change the query between attempts. A token limit too small to encode even the recovery envelope returns sanitized `InvalidParams`.

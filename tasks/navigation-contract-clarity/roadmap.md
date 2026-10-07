@@ -4,7 +4,7 @@
 
 Make existing navigation behavior easier for agents to interpret and keep symbol matching consistent. This roadmap is the executable specification for the four small improvements selected in the user discussion on 2026-10-07. It does not adopt the broader architecture proposals in the [independent review](../ideen/review-2026-10-07/review.md).
 
-Planning baseline: `8a26274876c284661efb24f9dda31f623d9995ba`; working tree clean. Status: planned; implementation has not started. The current request authorizes creating and committing this roadmap. Start implementation only when the user requests it.
+Planning baseline: `8a26274876c284661efb24f9dda31f623d9995ba`; working tree clean. Status: implementation in progress, authorized by the user on 2026-10-07. Implementation baseline: `bfffbb237d37a3e0224f6a88b511b9bcc27688e5`.
 
 ## Execution contract
 

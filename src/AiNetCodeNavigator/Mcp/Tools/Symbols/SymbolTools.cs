@@ -18,11 +18,11 @@ public sealed class SymbolTools(NavigatorHostRuntime runtime)
     internal Action<int>? BeforeAssemblyBodyBatchItemForTesting { get; set; }
 
     [McpServerTool(Name = "find_symbol", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [System.ComponentModel.Description("Find C# types or members by one or more name patterns; maxResults pages the combined match list with stable src: or asm: declaration references when available.")]
+    [System.ComponentModel.Description("Find source or assembly C# declarations by case-insensitive substring, anchored * / ? wildcards, or automatically detected regex. Dot-separated patterns match qualified type/member names. maxResults pages known matches with src: or asm: references when available.")]
     public Task<CallToolResult> FindSymbol(
         [Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath,
-        [System.ComponentModel.Description("Specify exactly one of this field or pattern, or omit both for extensionOnly enumeration. This field accepts one to ten non-empty name patterns.")] string[]? namePatterns = null,
-        [System.ComponentModel.Description("A single non-empty name pattern. Specify this or namePatterns, but not both.")]
+        [System.ComponentModel.Description("One to ten non-empty patterns: case-insensitive substring, anchored * / ? wildcards, or automatically detected regex; dot-separated names match qualified types/members. Specify this or pattern, or omit both for extensionOnly enumeration.")] string[]? namePatterns = null,
+        [System.ComponentModel.Description("One non-empty pattern: case-insensitive substring, anchored * / ? wildcards, or automatically detected regex; dot-separated names match qualified types/members. Specify this or namePatterns, but not both.")]
         string? pattern = null,
         [System.ComponentModel.Description("Optional C# symbol kind filter: class, interface, record, record class, record struct, struct, enum, delegate, method, property, or field.")]
         string? kind = null,
