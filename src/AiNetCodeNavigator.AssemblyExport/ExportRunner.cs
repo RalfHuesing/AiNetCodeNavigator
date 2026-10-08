@@ -110,7 +110,8 @@ internal static class ExportRunner
                         WriteSolution(stage, result.ProjectRelativePath);
                         var state = IsPartial(item, result) ? "partial" : "complete";
                         WriteManifest(item, stage, result, runId, state, childPaths);
-                        results[index] = new(item, stage, state, null, result.Diagnostics);
+                        var classes = DumpClassMaps.Read(stage, item.ChildRelativePath, result.SourceRelativePaths, token);
+                        results[index] = new(item, stage, state, null, result.Diagnostics, classes);
                     }
                     catch (OperationCanceledException) when (token.IsCancellationRequested)
                     {
@@ -175,6 +176,9 @@ internal static class ExportRunner
                 + (runFailure is null ? 0 : 1) + (cleanupFailure is null ? 0 : 1);
             var exported = results.Count(result => result?.State is "complete" or "partial");
             var partial = results.Count(result => result?.State == "partial");
+            DumpClassMaps.Write(owner, plan.OutputDirectory,
+                results.Where(result => result?.State is "complete" or "partial")
+                    .SelectMany(result => result!.Classes ?? []));
             var stateLabel = interrupted ? "RUN INTERRUPTED" : failed > 0 ? "RUN FAILED" : "RUN COMPLETE";
             DumpNavigationArtifacts.WriteCatalog(owner, plan.OutputDirectory, runId,
                 interrupted ? "interrupted" : failed > 0 ? "failed" : "complete", count, partial, failed,
@@ -307,6 +311,7 @@ internal static class ExportRunner
     }
 
     private sealed record WorkResult(PlannedAssembly Item, string? StagePath, string State,
-        string? Error, IReadOnlyList<AssemblyExportReferenceDiagnostic> Diagnostics);
+        string? Error, IReadOnlyList<AssemblyExportReferenceDiagnostic> Diagnostics,
+        IReadOnlyList<DumpClassEntry>? Classes = null);
 
 }

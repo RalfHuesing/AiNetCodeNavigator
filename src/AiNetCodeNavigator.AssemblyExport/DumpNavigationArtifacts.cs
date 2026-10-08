@@ -21,10 +21,13 @@ internal static class DumpNavigationArtifacts
             rg --files -g '*.cs' | rg -i '<domain-term>|<synonym>'
             rg -l -i -g '*.cs' '<domain-term>|<synonym>' . | Select-Object -First 50
             rg -n -i '<assembly-term>' assemblies.json
+            rg -n -F '<namespace-or-class>' namespace-map.md symbol-map.md
             rg -n '^(RUN |INPUT FAILURE|FAILURE |CLOSURE LIMITATION)' last-run.log
             ```
 
             `assemblies.json` has one row per published assembly. `columns` names each row position; `childRelativePath` is relative to this root. Read matching rows, not the whole catalog. Owner folders derive from safe filename prefixes (`_misc` for undotted names or unsafe owner prefixes), not verified vendors; variant subfolders distinguish duplicate filenames.
+
+            `namespace-map.md` groups class symbols under `## <namespace>` headings; `symbol-map.md` sorts class symbols directly. Each entry maps a stable, fully qualified class name to a C# path relative to this root using `/`. Nested types use `+`, and generic types append a backtick and their own parameter count (for example, ``Outer`1+Inner`2``). Record classes are included; structs, interfaces, enums and delegates are excluded. Duplicate classes across assemblies and partial declarations retain all distinct paths. `<global>` denotes the global namespace. Maps index recognizable syntax even in partial source; they are written only after publication, and a missing map means finalization is unfinished. Check run and child status before assuming completeness.
 
             Owners with more than 64 assembly children can have further grouping folders from safe filename-stem segments. Homogeneous segments may be skipped; grouping continues recursively for larger groups, while singleton segments stay at the current level. Broad groups with no usable split can remain above the soft target, so directory sizes can vary. Group names are packaging hints only, not proof of vendor, product, or domain. Use the catalog path to navigate and directory listings to inspect the hierarchy; there are no per-folder maps.
 

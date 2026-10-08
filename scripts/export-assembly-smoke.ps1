@@ -76,7 +76,7 @@ function Assert-DumpFile([string]$BaseDirectory, [string]$RelativePath) {
     return $fullPath
 }
 
-foreach ($relativePath in @('.ainetcodenavigator-assembly-export', 'README.md', 'assemblies.json', 'last-run.log')) {
+foreach ($relativePath in @('.ainetcodenavigator-assembly-export', 'README.md', 'assemblies.json', 'last-run.log', 'namespace-map.md', 'symbol-map.md')) {
     $null = Assert-DumpFile $dumpDirectory $relativePath
 }
 $runLog = Get-Content -LiteralPath (Join-Path $dumpDirectory 'last-run.log')
@@ -128,6 +128,19 @@ if ($searchableFile.Count -ne 1) { throw 'Expected one listed ProbeRecord.cs fil
 $searchablePath = Assert-DumpFile $childDirectory $searchableFile[0]
 if (-not (Select-String -LiteralPath $searchablePath -Pattern '\bclass\s+ProbeRecord\b' -Quiet)) {
     throw 'ProbeRecord.cs must contain a readable ProbeRecord class declaration.'
+}
+$mappedSource = ($manifest.childRelativePath + '/' + $searchableFile[0]).Replace('\', '/')
+$expectedMapEntry = '- ``SmokeFixture.ProbeRecord`` -> ``' + $mappedSource + '``'
+foreach ($mapName in @('namespace-map.md', 'symbol-map.md')) {
+    $mapPath = Assert-DumpFile $dumpDirectory $mapName
+    $mapLines = @(Get-Content -LiteralPath $mapPath)
+    if (@($mapLines | Where-Object { $_ -ceq $expectedMapEntry }).Count -ne 1) {
+        throw "Expected exactly one ProbeRecord symbol-to-source entry in $mapName."
+    }
+    $null = Assert-DumpFile $dumpDirectory $mappedSource
+    if ($mapName -eq 'namespace-map.md' -and '## SmokeFixture' -cnotin $mapLines) {
+        throw 'Namespace map must group ProbeRecord under its declared namespace.'
+    }
 }
 
 $catalog = Get-Content -LiteralPath (Join-Path $dumpDirectory 'assemblies.json') -Raw | ConvertFrom-Json
