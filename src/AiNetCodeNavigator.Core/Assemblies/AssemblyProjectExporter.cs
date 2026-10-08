@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
@@ -60,19 +61,43 @@ public static class AssemblyProjectExporter
         var projectPath = Path.GetRelativePath(stage, result.ProjectFilePath);
         var sourcePaths = result.Documents.Select(item => Path.GetRelativePath(stage, item.GeneratedPath)).ToArray();
         ValidateArtifacts(stage, projectPath, sourcePaths);
-        using (var reader = XmlReader.Create(result.ProjectFilePath,
-            new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null }))
-        {
-            var project = XDocument.Load(reader);
-            if (project.Root?.Name.LocalName != "Project")
-                throw new InvalidDataException("Generated .csproj has no Project root.");
-        }
+        var repairedProject = !IsValidProjectDocument(result.ProjectFilePath);
+        if (repairedProject) WriteMinimalProject(result.ProjectFilePath, sourcePaths);
 
         var diagnostics = result.Diagnostics.Select(item => new AssemblyExportReferenceDiagnostic(
-            item.Code, item.Message, item.Severity == AssemblyDiagnosticSeverity.Error)).ToArray();
-        var isComplete = result.IsComplete && diagnostics.Length == 0;
+            item.Code, item.Message, item.Severity == AssemblyDiagnosticSeverity.Error)).ToList();
+        if (repairedProject)
+            diagnostics.Add(new("assembly-export-project-repaired",
+                "The generated project file was empty or invalid XML and was replaced with a minimal project; decompiled C# files were retained.",
+                false));
+        var isComplete = result.IsComplete && diagnostics.Count == 0;
         return new(isComplete, projectPath, sourcePaths, contentHash,
             AssemblyDecompilationOptions.CurrentDecompilerVersion, diagnostics);
+    }
+
+    private static bool IsValidProjectDocument(string projectFilePath)
+    {
+        try
+        {
+            using var reader = XmlReader.Create(projectFilePath,
+                new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null });
+            return XDocument.Load(reader).Root?.Name.LocalName == "Project";
+        }
+        catch (XmlException)
+        {
+            return false;
+        }
+    }
+
+    private static void WriteMinimalProject(string projectFilePath, IReadOnlyList<string> sourcePaths)
+    {
+        var project = new XDocument(new XElement("Project",
+            new XElement("ItemGroup", sourcePaths.Select(path => new XElement("Compile",
+                new XAttribute("Include", path.Replace('\\', '/')))))));
+        using (var writer = new StreamWriter(projectFilePath, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+            project.Save(writer);
+        if (!IsValidProjectDocument(projectFilePath))
+            throw new InvalidDataException("Repaired project file is not valid XML.");
     }
 
     /// <summary>Classifies per-assembly failures without hiding cancellation or fatal process errors.</summary>

@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Xml;
+using System.Xml.Linq;
 using AiNetCodeNavigator.Core.Assemblies;
 
 namespace AiNetCodeNavigator.FastTests.Assemblies;
@@ -33,6 +35,43 @@ public sealed class AssemblyProjectExporterTests
         Assert.All(result.Diagnostics, diagnostic => Assert.False(diagnostic.IsError));
         Assert.True(File.Exists(Path.Combine(stage, "Broken.cs")));
         Assert.True(File.Exists(Path.Combine(stage, "Empty.cs")));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("<Project>")]
+    [InlineData("<Other />")]
+    public void ValidateGeneratedOutput_RepairsMalformedProjectAndPreservesSourcesAsPartialOutput(string projectXml)
+    {
+        using var temp = TestTempDirectory.Create("export-malformed-project-");
+        var stage = temp.GetPath("stage");
+        Directory.CreateDirectory(stage);
+        var projectPath = Path.Combine(stage, "Root.csproj");
+        var sourcePath = Path.Combine(stage, "Probe.cs");
+        File.WriteAllText(projectPath, projectXml);
+        File.WriteAllText(sourcePath, "public sealed class Probe { }");
+        var decompilation = new DecompilationResult(
+            [new(sourcePath, "Probe", File.ReadAllText(sourcePath))],
+            [],
+            true,
+            projectPath);
+
+        var result = AssemblyProjectExporter.ValidateGeneratedOutput(stage, decompilation, new string('a', 64));
+
+        Assert.False(result.IsComplete);
+        Assert.Equal(["Probe.cs"], result.SourceRelativePaths);
+        var diagnostic = Assert.Single(result.Diagnostics);
+        Assert.Equal("assembly-export-project-repaired", diagnostic.Code);
+        Assert.False(diagnostic.IsError);
+        Assert.Contains("minimal project", diagnostic.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("public sealed class Probe { }", File.ReadAllText(sourcePath));
+        using var reader = XmlReader.Create(projectPath,
+            new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null });
+        var project = XDocument.Load(reader);
+        Assert.Equal("Project", project.Root?.Name.LocalName);
+        Assert.Empty(project.Root!.Elements("PropertyGroup").Elements("TargetFramework"));
+        Assert.Equal("Probe.cs", Assert.Single(project.Root!.Element("ItemGroup")!.Elements("Compile"))
+            .Attribute("Include")?.Value);
     }
 
     [Fact]

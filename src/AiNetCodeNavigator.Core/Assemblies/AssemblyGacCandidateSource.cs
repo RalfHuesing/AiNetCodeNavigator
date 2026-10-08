@@ -73,14 +73,14 @@ internal sealed class AssemblyGacCandidateSource
         AssemblyReferenceResolver.IdentityMatches(expected, actual)
         && string.Equals(expected.Version, actual.Version, StringComparison.Ordinal);
 
-    private static Machine? ReadArchitecture(string path)
+    internal static Machine? ReadArchitecture(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using var pe = new PEReader(stream);
         return GetArchitecture(pe);
     }
 
-    private static Machine? GetArchitecture(PEReader pe) =>
+    internal static Machine? GetArchitecture(PEReader pe) =>
         pe.PEHeaders.CoffHeader.Machine == Machine.I386
         && pe.PEHeaders.CorHeader is { } cor
         && (cor.Flags & CorFlags.ILOnly) != 0

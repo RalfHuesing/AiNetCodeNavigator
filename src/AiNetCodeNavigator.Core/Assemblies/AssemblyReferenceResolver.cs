@@ -32,6 +32,7 @@ internal sealed class AssemblyReferenceResolver
         new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
     private readonly AssemblyGacCandidateSource gac;
+    private readonly AssemblyFrameworkCandidateSource framework;
     private readonly IReadOnlyList<string> trustedPaths;
     private readonly bool exportClosure;
     private readonly Func<AssemblyReferenceDto, bool>? traverseReference;
@@ -41,9 +42,11 @@ internal sealed class AssemblyReferenceResolver
     internal AssemblyReferenceResolver(AssemblyGacCandidateSource? gac = null,
         IReadOnlyList<string>? trustedPaths = null, bool exportClosure = false,
         Func<AssemblyReferenceDto, bool>? traverseReference = null,
-        int maxDepth = MaxReferenceDepth, int maxNodes = MaxReferenceNodes)
+        int maxDepth = MaxReferenceDepth, int maxNodes = MaxReferenceNodes,
+        AssemblyFrameworkCandidateSource? framework = null)
     {
         this.gac = gac ?? new AssemblyGacCandidateSource();
+        this.framework = framework ?? new AssemblyFrameworkCandidateSource();
         this.trustedPaths = trustedPaths ?? GetTrustedPlatformAssemblyPaths();
         this.exportClosure = exportClosure;
         this.traverseReference = traverseReference;
@@ -68,7 +71,8 @@ internal sealed class AssemblyReferenceResolver
             var metadataResult = CreateMetadataReferences(graph.Paths, diagnostics);
             var references = graph.References.Select(reference => NormalizeReference(reference, metadataResult.SuccessfulPaths)).ToList();
             return new AssemblyReferenceResolution(metadata.Identity, references, metadataResult.References, diagnostics,
-                !diagnostics.Any(diagnostic => diagnostic.Code is BoundaryDiagnosticCode or "assembly-gac-candidate-failed")
+                !diagnostics.Any(diagnostic => diagnostic.Code is BoundaryDiagnosticCode or "assembly-gac-candidate-failed"
+                    or "assembly-framework-candidate-failed")
                 && !references.Any(reference => reference.ResolutionState is "ambiguous" or "invalid")
                 && graph.Paths.All(metadataResult.SuccessfulPaths.Contains), exportClosure);
         }
@@ -97,7 +101,8 @@ internal sealed class AssemblyReferenceResolver
         var node = graph.Nodes[path];
         foreach (var reference in node.Metadata.References)
         {
-            var resolution = FindReferencePath(reference, node.Path, trustedPaths, diagnostics);
+            var resolution = FindReferencePath(reference, node.Path, trustedPaths, diagnostics,
+                node.Metadata.UsesLegacyFramework);
             var candidate = CreateCandidate(node, reference, resolution, graph, diagnostics, out var shouldTraverse);
             if (!graph.TryAdd(candidate)) continue;
             if (candidate.ResolutionState is not "resolved" || candidate.ResolvedPath is null) continue;
@@ -216,18 +221,31 @@ internal sealed class AssemblyReferenceResolver
         AssemblyReferenceDto reference,
         string referringPath,
         IReadOnlyList<string> trustedPlatformAssemblies,
-        ICollection<AssemblySessionDiagnostic> diagnostics)
+        ICollection<AssemblySessionDiagnostic> diagnostics,
+        bool usesLegacyFramework)
     {
         var directory = Path.GetDirectoryName(referringPath);
         var candidates = EnumerateCandidatePaths(reference.Name, directory, trustedPlatformAssemblies, diagnostics);
         var mismatches = new List<string>();
+        var frameworkChecked = false;
         foreach (var candidate in candidates)
         {
+            var adjacent = string.Equals(Path.GetDirectoryName(candidate), directory, StringComparison.OrdinalIgnoreCase);
+            if (!adjacent && usesLegacyFramework && !frameworkChecked)
+            {
+                frameworkChecked = true;
+                if (framework.Find(reference, referringPath, diagnostics) is { } frameworkPath)
+                    return new(frameworkPath, "resolved", null, "framework");
+            }
             if (!TryReadIdentity(candidate, out var identity, diagnostics)) continue;
             if (IdentityMatches(reference, identity)) return new(candidate, "resolved", null,
-                string.Equals(Path.GetDirectoryName(candidate), directory, StringComparison.OrdinalIgnoreCase) ? "adjacent" : "runtime");
+                adjacent ? "adjacent" : "runtime");
             mismatches.Add($"{candidate} ({identity.Version}, {identity.Culture})");
         }
+
+        if (usesLegacyFramework && !frameworkChecked
+            && framework.Find(reference, referringPath, diagnostics) is { } installedFrameworkPath)
+            return new(installedFrameworkPath, "resolved", null, "framework");
 
         var gacCandidates = gac.Find(reference, referringPath, diagnostics);
         if (gacCandidates.Count == 1) return new(gacCandidates[0], "resolved", null, "gac");
@@ -369,7 +387,32 @@ internal sealed class AssemblyReferenceResolver
             .OrderBy(reference => reference.Name, StringComparer.Ordinal)
             .ThenBy(reference => reference.Version, StringComparer.Ordinal)
             .ToList();
-        return new AssemblyMetadata(identity, references);
+        return new AssemblyMetadata(identity, references, ReadTargetFramework(reader));
+    }
+
+    private static string? ReadTargetFramework(MetadataReader reader)
+    {
+        foreach (var handle in reader.GetAssemblyDefinition().GetCustomAttributes())
+        {
+            var attribute = reader.GetCustomAttribute(handle);
+            if (attribute.Constructor.Kind != HandleKind.MemberReference) continue;
+            var constructor = reader.GetMemberReference((MemberReferenceHandle)attribute.Constructor);
+            if (constructor.Parent.Kind != HandleKind.TypeReference) continue;
+            var type = reader.GetTypeReference((TypeReferenceHandle)constructor.Parent);
+            if (reader.GetString(type.Namespace) != "System.Runtime.Versioning"
+                || reader.GetString(type.Name) != "TargetFrameworkAttribute") continue;
+            try
+            {
+                var value = reader.GetBlobReader(attribute.Value);
+                return value.RemainingBytes >= sizeof(ushort) && value.ReadUInt16() == 1 ? value.ReadSerializedString() : null;
+            }
+            catch (BadImageFormatException)
+            {
+                // Framework detection is optional; malformed attribute data must not discard readable references.
+                return null;
+            }
+        }
+        return null;
     }
 
     internal static AssemblyIdentityDto ReadIdentity(MetadataReader reader)
@@ -426,7 +469,16 @@ internal sealed class AssemblyReferenceResolver
             ? paths.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
             : [];
 
-    private sealed record AssemblyMetadata(AssemblyIdentityDto Identity, IReadOnlyList<AssemblyReferenceDto> References);
+    private sealed record AssemblyMetadata(AssemblyIdentityDto Identity, IReadOnlyList<AssemblyReferenceDto> References,
+        string? TargetFramework)
+    {
+        internal bool UsesLegacyFramework => TargetFramework is not null
+            ? TargetFramework.StartsWith(".NETFramework,", StringComparison.OrdinalIgnoreCase)
+            : References.Any(reference => reference.Name.Equals(CoreLibraryName, StringComparison.OrdinalIgnoreCase))
+                && !References.Any(reference => reference.Name.Equals("System.Private.CoreLib", StringComparison.OrdinalIgnoreCase)
+                    || reference.Name.Equals("System.Runtime", StringComparison.OrdinalIgnoreCase)
+                    && Version.TryParse(reference.Version, out var version) && version.Major >= 5);
+    }
 
     private sealed record ReferenceNode(
         string Path,
