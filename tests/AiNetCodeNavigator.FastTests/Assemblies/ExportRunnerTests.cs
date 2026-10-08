@@ -152,8 +152,8 @@ public sealed class ExportRunnerTests
         var blocked = AssemblyTestHelper.EmitAssembly(temp, "Blocked", "public class Blocked { }");
         var usable = AssemblyTestHelper.EmitAssembly(temp, "Usable", "public class Usable { }");
         var outputDirectory = temp.GetPath("dump");
-        var missingPattern = Path.Combine(temp.GetPath("missing-source"), "missing*.dll");
-        var plan = ExportPlanner.Create(new(outputDirectory, [blocked, usable, missingPattern]));
+        var missingSource = Path.Combine(temp.GetPath("missing-source"), "Missing.dll");
+        var plan = ExportPlanner.Create(new(outputDirectory, [blocked, usable, missingSource]));
         new ExportDumpOwnership(plan).ResetRoot();
         await File.WriteAllTextAsync(Path.Combine(outputDirectory, "Blocked.dll"), "old content");
         plan = ExportPlanner.Create(plan.Arguments);
@@ -172,7 +172,7 @@ public sealed class ExportRunnerTests
         Assert.True(File.Exists(Path.Combine(outputDirectory, "_misc", "Usable.dll", "export-manifest.json")));
         Assert.False(File.Exists(Path.Combine(outputDirectory, "last-run.json")));
         Assert.True(File.Exists(Path.Combine(outputDirectory, "_misc", "Blocked.dll", "export-manifest.json")));
-        Assert.Contains("missing*.dll", errors.ToString(), StringComparison.Ordinal);
+        Assert.Contains(missingSource, errors.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]

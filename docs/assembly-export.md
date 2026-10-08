@@ -1,12 +1,30 @@
 # Assembly export CLI
 
-`AiNetCodeNavigator.AssemblyExport.exe` is a separate offline command. Give it a dedicated output directory, a source directory, and optional quoted filename patterns. It searches source directories recursively:
+`AiNetCodeNavigator.AssemblyExport.exe` is a separate offline command. Use named options to select sources and a dedicated output directory:
 
 ```powershell
-AiNetCodeNavigator.AssemblyExport.exe "C:\asm-dump" "C:\Programme" "foo*.exe" "*bar*.dll"
+AiNetCodeNavigator.AssemblyExport.exe --output "C:\asm-dump" --source "C:\Programme" --include "foo*.exe" --include "*bar*.dll" --exclude "DevExpress*.dll"
 ```
 
-The example exports managed files matching either pattern at any depth below `C:\Programme`. A source directory without patterns selects all managed `.dll` and `.exe` files below it. Multiple source paths can be passed in one invocation. A path-qualified pattern such as `C:\Vendor\Tool?.exe` searches recursively below its parent. `*` and `?` work in the final filename segment; directory wildcards and `**` are unsupported. Native files found by a directory search are skipped. Each directory or pattern must match at least one managed file, and an explicit file must be managed. `--help` prints usage.
+| Option | Contract |
+| --- | --- |
+| `--output <directory>` | Required exactly once; dedicated disposable output dump. |
+| `--source <directory-or-file>` | Required, repeatable; literal directories searched recursively or explicit managed DLL/EXE files. |
+| `--include <filename-pattern>` | Repeatable; global OR selection across all source directories. Omitted selects all managed DLLs and EXEs. Does not restrict explicitly named files or dependency exports. |
+| `--exclude <filename-pattern>` | Repeatable; excludes matching filenames from all export selection, including explicit files and dependencies. Always wins. |
+| `--dependencies all\|none` | Default `all`; follows non-system references. `none` exports only selected roots. |
+| `--dry-run` | Prints planned exports, exclusions, filtered references and input/closure issues without creating, locking, resetting or writing the output dump. |
+| `--help` / `-h` | Prints usage without exporting. |
+
+Option order does not affect selection. Patterns match the complete filename including its extension, case-insensitively, using `*` and `?`. Paths, directory wildcards and `**` are unsupported in include/exclude patterns. Quote patterns to pass them literally. Native files found by directory searches are skipped. Unmatched exclusions are allowed. If no assembly remains selected, the command reports failure before touching an existing dump.
+
+To export only your selected application files, suppress dependency exports:
+
+```powershell
+AiNetCodeNavigator.AssemblyExport.exe --output "C:\asm-dump" --source "C:\Programme\MyApplication" --include "MyCompany*.dll" --include "MyApplication.exe" --dependencies none
+```
+
+Add `--dry-run` to inspect the selection before exporting. The inspection resolves references and reads assembly metadata; it does not decompile or publish source artifacts.
 
 The local deployment and Windows release archive place the CLI beside the MCP server executable. Run the CLI directly; MCP client process entries and `hostsettings.json` configure only the server. The exporter never executes analyzed assemblies.
 
@@ -14,7 +32,9 @@ The local deployment and Windows release archive place the CLI beside the MCP se
 
 The planner expands the named source inputs, then follows resolved non-system assembly references with a global queue. It processes each canonical assembly path once. References may resolve to adjacent files, runtime assemblies, or installed .NET Framework GAC assemblies; modern .NET has no GAC. It does not search unrelated machine directories. Reference identity, including version, determines a GAC match; a newer unrelated GAC version is not substituted. Cycles are deduplicated, and an incomplete traversal at depth 128 or 4096 assemblies is reported.
 
-Automatic selection excludes the simple names `mscorlib`, `netstandard`, `System`, `Microsoft`, `WindowsBase`, `PresentationCore`, `PresentationFramework`, `Accessibility`, `UIAutomationClient`, `UIAutomationTypes`, and `UIAutomationProvider`, and names beginning `System.`, `Microsoft.`, or `Windows.` (case-insensitive). An explicitly named assembly remains selected. GAC or runtime origin alone does not exclude a third-party assembly. Missing or ambiguous dependencies are recorded as limitations; independent assemblies continue.
+Automatic dependency selection excludes the simple names `mscorlib`, `netstandard`, `System`, `Microsoft`, `WindowsBase`, `PresentationCore`, `PresentationFramework`, `Accessibility`, `UIAutomationClient`, `UIAutomationTypes`, and `UIAutomationProvider`, and names beginning `System.`, `Microsoft.`, or `Windows.` (case-insensitive). A selected root remains selected despite these automatic rules, unless a user exclusion matches its filename. GAC or runtime origin alone does not exclude a third-party assembly. Missing or ambiguous dependencies are recorded as limitations; independent assemblies continue.
+
+User exclusions also apply to resolved dependency filenames. Excluded dependencies are not added to the export queue, and their own references are not traversed for export. `--dependencies none` stops dependency export traversal altogether. Both policies preserve direct resolved references for decompilation; dependency detail files retain the original reference metadata and export filtering reasons (`exclude:<pattern>` or `dependencies:none`). A dependency selected independently as a root can still be exported with `none`, but a user exclusion always prevents its export.
 
 For recursively discovered local files with the same filename, the highest assembly version is selected. An explicitly named file or an older version proven by a reference is also retained. Byte-identical aliases with the same assembly identity are exported once. Equal-version files with different bytes are distinct variants. Output is grouped into an owner directory using the filename stem segment before the first dot, or `_misc` when the stem has no dot or its owner prefix is unsafe. Within an owner, groups with more than 64 assembly children are selectively split by further safe filename-stem segments. Homogeneous segments may be skipped, and singleton segment groups stay at the current level; larger groups can be split recursively while they remain above the soft target. A broad group with no further usable split can remain above the target. This is a soft grouping target and does not create numbered buckets. Group names are packaging hints derived from filenames, not verified vendor or product classifications. When multiple variants remain, they are grouped beneath `<owner>/<group-segments>/<filename>/<origin>-<identity-and-content-hash>`, with `local`, `gac32`, `gac64`, or `gacmsil` origin. A unique filename has a direct child beneath its owner or selected group path.
 
@@ -69,6 +89,6 @@ The generated root `README.md` gives an agent a short navigation procedure, incl
 
 The maps contain only successfully published children, including recognizable declarations in partial C# source. They are finalized before the catalog leaves `running`; a missing map or unfinished run is not an exhaustive index. A map write failure prevents a success summary. Check run state, child completion state and relevant diagnostics before relying on completeness. Syntax indexing does not prove that reconstructed projects compile or that symbols bind successfully.
 
-For a repeatable local inspection, run `pwsh -File ./scripts/export-assembly-smoke.ps1`. It builds the solution, creates a small managed probe DLL, exports it to `temp/assembly-export-smoke-dump/`, and checks the navigation artifacts, both class maps and their source links, and generated C# tree. This separate, disposable test dump does not replace an existing `temp/asm-dump/`.
+For a repeatable local inspection, run `pwsh -File ./scripts/export-assembly-smoke.ps1`. It builds the solution, creates a small managed probe DLL and an excluded alias, exports the selected probe to `temp/assembly-export-smoke-dump/`, and checks the navigation artifacts, both class maps and their source links, and generated C# tree. It also checks named include/exclude selection and verifies that a dry-run leaves the existing dump's file hashes unchanged. This separate, disposable test dump does not replace an existing `temp/asm-dump/`.
 
-A run with no failed inputs or exports exits `0`, even if some published assemblies are `partial`; inspect the catalog's `partial` count and the corresponding manifests. Recoverable input or assembly failures return `1` after other work is attempted. Invalid arguments or global ownership/preflight failures return `2`. Missing dependencies are visible limitations and do not by themselves make the exit status nonzero.
+A run with no failed inputs or exports exits `0`, even if some published assemblies are `partial`; inspect the catalog's `partial` count and the corresponding manifests. Recoverable input or assembly failures return `1` after other work is attempted. Invalid arguments, empty final selection or global ownership/preflight failures return `2`. A dry-run returns `2` when the plan contains issues or has no selected assemblies, otherwise `0`. Missing dependencies are visible limitations and do not by themselves make the normal export's exit status nonzero.

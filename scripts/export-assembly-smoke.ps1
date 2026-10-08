@@ -57,10 +57,12 @@ if (-not (Test-Path -LiteralPath $assembly -PathType Leaf)) {
     throw "Failed to create managed probe assembly: $assembly"
 }
 $probeAssemblyName = [Reflection.AssemblyName]::GetAssemblyName($assembly).Name
+$excludedProbe = Join-Path $probeDirectory 'DevExpressSmokeProbe.dll'
+Copy-Item -LiteralPath $assembly -Destination $excludedProbe -Force
 
 $dumpDirectory = Join-Path $repoRoot 'temp/assembly-export-smoke-dump'
 Write-Host "[INFO] Exporting managed probe to $dumpDirectory"
-& $exporter $dumpDirectory $assembly
+& $exporter --output $dumpDirectory --source $probeDirectory --include '*Probe.dll' --exclude 'devexpress*.DLL' --dependencies none
 if ($LASTEXITCODE -ne 0) { throw "Assembly export failed with exit code $LASTEXITCODE. See temp/assembly-export-smoke-dump/last-run.log." }
 
 function Assert-DumpFile([string]$BaseDirectory, [string]$RelativePath) {
@@ -162,6 +164,23 @@ foreach ($field in @('name', 'version', 'culture', 'publicKeyToken', 'childRelat
 
 Write-Host "[PASS] Navigation artifacts agree; $($sourceFiles.Count) C# files, assembly state=$($manifest.completionState)."
 Write-Host "[PASS] Targeted declaration search: $($searchableFile[0]) -> class ProbeRecord"
+
+$dumpSnapshot = @(Get-ChildItem -LiteralPath $dumpDirectory -File -Recurse | Sort-Object FullName | ForEach-Object {
+    $_.FullName + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+})
+Write-Host '[INFO] Checking dry-run selection and exclusions without changing the dump'
+$preview = @(& $exporter --output $dumpDirectory --source $probeDirectory --include '*Probe.dll' --exclude 'devexpress*.DLL' --dry-run)
+if ($LASTEXITCODE -ne 0) { throw "Dry-run failed with exit code $LASTEXITCODE." }
+$previewText = $preview -join "`n"
+if ($previewText -notmatch 'Selected.*AssemblyExportSmokeProbe.dll' -or
+    $previewText -notmatch 'Excluded.*DevExpressSmokeProbe.dll.*exclude:devexpress\*.DLL') {
+    throw "Dry-run did not identify the selected and excluded probe assemblies: $previewText"
+}
+$afterPreview = @(Get-ChildItem -LiteralPath $dumpDirectory -File -Recurse | Sort-Object FullName | ForEach-Object {
+    $_.FullName + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+})
+if (@(Compare-Object $dumpSnapshot $afterPreview).Count -ne 0) { throw 'Dry-run modified the existing dump.' }
+Write-Host '[PASS] Named selection, case-insensitive exclusions, and dry-run dump preservation'
 if ($diagnostics.Count -gt 0) {
     Write-Host "[NOTE] Partial output: $($diagnostics.Count) recorded limitations; read diagnostics.json before relying on source completeness."
     $diagnostics | Select-Object -First 3 | ForEach-Object {

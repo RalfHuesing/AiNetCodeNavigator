@@ -2,30 +2,44 @@ namespace AiNetCodeNavigator.AssemblyExport;
 
 internal static class Program
 {
-    internal static async Task<int> Main(string[] args)
+    internal static Task<int> Main(string[] args) => ExportCommandLine.InvokeAsync(args, RunAsync, Console.Out, Console.Error);
+
+    private static async Task<int> RunAsync(ExportArguments parsed)
     {
-        if (args.Length == 1 && args[0] is "--help" or "-h")
-        {
-            Console.Out.WriteLine(ExportCommandLine.Usage);
-            return 0;
-        }
-
-        if (!ExportCommandLine.TryParse(args, out var parsed, out var error))
-        {
-            Console.Error.WriteLine(error);
-            Console.Error.WriteLine(ExportCommandLine.Usage);
-            return 2;
-        }
-
         ExportPlan plan;
         try
         {
-            plan = ExportPlanner.Create(parsed!);
+            plan = ExportPlanner.Create(parsed);
         }
         catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException
                                          or BadImageFormatException or InvalidOperationException)
         {
             Console.Error.WriteLine($"Export preflight failed: {exception.Message}");
+            return 2;
+        }
+
+        if (parsed.DryRun)
+        {
+            Console.Out.WriteLine($"Dry run: {plan.Assemblies.Count} assemblies selected; output: {plan.OutputDirectory}");
+            foreach (var item in plan.Assemblies)
+            {
+                Console.Out.WriteLine($"Selected ({(item.IsExplicit ? "source" : "dependency")}): {item.SourcePath}");
+                foreach (var reference in item.FilteredReferences)
+                    Console.Out.WriteLine($"Filtered reference: {reference.Reference.Name} ({reference.Rule})");
+            }
+            foreach (var exclusion in plan.Exclusions)
+                Console.Out.WriteLine($"Excluded: {exclusion.SourcePath} ({exclusion.Rule})");
+            foreach (var issue in plan.Issues)
+                Console.Error.WriteLine($"Plan issue: {issue.Input}: {issue.Error}");
+            if (plan.Assemblies.Count == 0)
+                Console.Error.WriteLine("No managed assemblies remain selected.");
+            return plan.Assemblies.Count == 0 || plan.Issues.Count > 0 ? 2 : 0;
+        }
+
+        if (plan.Assemblies.Count == 0)
+        {
+            Console.Error.WriteLine("No managed assemblies remain selected. The existing dump was not replaced.");
+            foreach (var issue in plan.Issues) Console.Error.WriteLine($"Plan issue: {issue.Input}: {issue.Error}");
             return 2;
         }
 

@@ -15,9 +15,13 @@ internal sealed record PlannedAssembly(string SourcePath, string ChildPath, Asse
     internal string ChildRelativePath { get; init; } = "";
 }
 internal sealed record ExportPlanIssue(string Input, string? SourcePath, string ChildRelativePath, string Error, bool BlocksAssembly = true);
+internal sealed record ExcludedExportAssembly(string SourcePath, string Rule);
 internal sealed record ExportPlan(ExportArguments Arguments, string OutputDirectory,
     IReadOnlyList<string> ExplicitPaths, IReadOnlyList<PlannedAssembly> Assemblies,
-    IReadOnlyList<ExportPlanIssue> Issues);
+    IReadOnlyList<ExportPlanIssue> Issues)
+{
+    internal IReadOnlyList<ExcludedExportAssembly> Exclusions { get; init; } = [];
+}
 
 internal static class AutomaticExportFilter
 {
@@ -47,7 +51,8 @@ internal static class ExportPlanner
         var output = Path.TrimEndingDirectorySeparator(Path.GetFullPath(arguments.OutputDirectory));
         ValidateSourceOutputOverlap(arguments.Sources, output);
         var fileInfo = new Dictionary<string, AssemblyFileInfo>(StringComparer.OrdinalIgnoreCase);
-        var expanded = ExpandDetailed(arguments.Sources, fileInfo);
+        var exclusions = new Dictionary<string, ExcludedExportAssembly>(StringComparer.OrdinalIgnoreCase);
+        var expanded = ExpandDetailed(arguments, fileInfo, exclusions);
         var explicitPaths = expanded.Paths;
         var issues = expanded.Issues.ToList();
         foreach (var path in explicitPaths)
@@ -116,9 +121,16 @@ internal static class ExportPlanner
                 issues.Add(new(source, source, Path.GetFileName(source), exception.Message));
                 continue;
             }
-            foreach (var reference in nodes[source].DirectClosure.References.Where(reference => reference.Resolved && reference.ResolvedPath is not null
-                         && AutomaticExportFilter.Match(reference.Name) is null).OrderBy(reference => reference.ResolvedPath, StringComparer.OrdinalIgnoreCase))
-                queue.Enqueue((reference.ResolvedPath!, queued.Depth + 1));
+            foreach (var reference in nodes[source].DirectClosure.References
+                         .Where(reference => reference.Resolved && reference.ResolvedPath is not null)
+                         .OrderBy(reference => reference.ResolvedPath, StringComparer.OrdinalIgnoreCase))
+            {
+                var excluded = MatchExclusion(reference, arguments.Excludes);
+                if (excluded is not null)
+                    RecordExclusion(reference.ResolvedPath!, excluded, exclusions);
+                else if (arguments.Dependencies == ExportDependencyMode.All && AutomaticExportFilter.Match(reference.Name) is null)
+                    queue.Enqueue((reference.ResolvedPath!, queued.Depth + 1));
+            }
         }
 
         foreach (var source in blockedPaths)
@@ -142,7 +154,9 @@ internal static class ExportPlanner
             if (!closure.IsComplete)
                 issues.Add(new(node.SourcePath, node.SourcePath, Path.Combine(GetOwnerDirectory(node.SourcePath), Path.GetFileName(node.SourcePath)),
                     $"Incomplete reference closure: {string.Join("; ", closure.Diagnostics.Select(item => item.Message))}", BlocksAssembly: false));
-            var filtered = references.Select(reference => (reference, rule: AutomaticExportFilter.Match(reference.Name)))
+            var filtered = references.Select(reference => (reference, rule: MatchExclusion(reference, arguments.Excludes)
+                ?? AutomaticExportFilter.Match(reference.Name)
+                ?? (arguments.Dependencies == ExportDependencyMode.None ? "dependencies:none" : null)))
                 .Where(item => item.rule is not null).Select(item => new FilteredExportReference(item.reference, item.rule!)).ToArray();
             assemblies.Add(new(node.SourcePath, "", node.Identity, selectedExplicit.Contains(node.SourcePath), closure, filtered)
                 { ContentHash = node.ContentHash });
@@ -208,109 +222,109 @@ internal static class ExportPlanner
                 issues[index] = issues[index] with { ChildRelativePath = relativePath };
         if (normalizedAssemblies.Select(item => item.ChildPath).Distinct(StringComparer.OrdinalIgnoreCase).Count() != normalizedAssemblies.Length)
             throw new InvalidOperationException("Assembly export planning produced colliding child paths.");
-        var plan = new ExportPlan(arguments, output, explicitPaths, normalizedAssemblies, issues);
+        if (normalizedAssemblies.Length == 0)
+            issues.Add(new("selection", null, "", "No managed assemblies remain in the export selection."));
+        var plan = new ExportPlan(arguments, output, explicitPaths, normalizedAssemblies, issues)
+        {
+            Exclusions = exclusions.Values.OrderBy(item => item.SourcePath, StringComparer.OrdinalIgnoreCase).ToArray(),
+        };
         var owner = new ExportDumpOwnership(plan);
         owner.ValidateRootPreflight();
         return plan;
     }
 
-    internal static IReadOnlyList<string> Expand(IReadOnlyList<string> patterns)
+    internal static IReadOnlyList<string> Expand(IReadOnlyList<string> sources) =>
+        Expand(new ExportArguments("unused", sources));
+
+    internal static IReadOnlyList<string> Expand(ExportArguments arguments)
     {
-        var expanded = ExpandDetailed(patterns, new Dictionary<string, AssemblyFileInfo>(StringComparer.OrdinalIgnoreCase), continueOnErrors: false);
+        var expanded = ExpandDetailed(arguments, new Dictionary<string, AssemblyFileInfo>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, ExcludedExportAssembly>(StringComparer.OrdinalIgnoreCase), continueOnErrors: false);
         if (expanded.Issues.Count > 0) throw new ArgumentException(expanded.Issues[0].Error);
         return expanded.Paths;
     }
 
     private static (IReadOnlyList<string> Paths, IReadOnlySet<string> RecursivePaths, IReadOnlySet<string> DirectPaths, IReadOnlyList<ExportPlanIssue> Issues) ExpandDetailed(
-        IReadOnlyList<string> patterns, IDictionary<string, AssemblyFileInfo> fileInfo, bool continueOnErrors = true)
+        ExportArguments arguments, IDictionary<string, AssemblyFileInfo> fileInfo,
+        IDictionary<string, ExcludedExportAssembly> exclusions, bool continueOnErrors = true)
     {
+        ValidateFilenamePatterns(arguments.Includes);
+        ValidateFilenamePatterns(arguments.Excludes);
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var recursivePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var directPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var issues = new List<ExportPlanIssue>();
-        for (var index = 0; index < patterns.Count; index++)
+        foreach (var source in arguments.Sources)
         {
-            var pattern = patterns[index];
-            var relatedPatterns = new List<string>();
-            if (IsExistingDirectory(pattern))
-            {
-                while (index + 1 < patterns.Count && IsBareFilenamePattern(patterns[index + 1]))
-                    relatedPatterns.Add(patterns[++index]);
-            }
-            var sourcesForInput = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             try
             {
-            var full = Path.GetFullPath(pattern);
-            var recursiveSelection = false;
-            IReadOnlyList<string> matches;
-            if (Directory.Exists(full))
-            {
-                recursiveSelection = true;
-                var filenamePatterns = new List<string>();
-                foreach (var filenamePattern in relatedPatterns)
+                if (source.IndexOfAny(['*', '?']) >= 0)
+                    throw new ArgumentException($"Source must be an exact file or directory; use --include for filename patterns: {source}");
+                var full = Path.GetFullPath(source);
+                var recursiveSelection = Directory.Exists(full);
+                IReadOnlyList<string> matches;
+                if (recursiveSelection)
                 {
-                    if (filenamePattern.Contains("**", StringComparison.Ordinal))
-                        throw new ArgumentException($"Only final filename segment wildcards * and ? are supported: {filenamePattern}");
-                    filenamePatterns.Add(filenamePattern);
-                }
-                Action<string, string>? reportSearchIssue = continueOnErrors
-                    ? (path, message) => issues.Add(new(path, null, path, message))
-                    : null;
-                matches = filenamePatterns.Count == 0
-                    ? FindManagedFiles(full, ["*"], fileInfo, reportSearchIssue)
-                    : FindManagedFiles(full, filenamePatterns, fileInfo, reportSearchIssue);
-                foreach (var filenamePattern in filenamePatterns)
-                    if (!matches.Any(match => FileSystemName.MatchesSimpleExpression(filenamePattern, Path.GetFileName(match), ignoreCase: true)))
-                        issues.Add(new(filenamePattern, null, filenamePattern, $"Source pattern has no managed DLL or EXE matches: {filenamePattern}"));
-            }
-            else
-            {
-                var directory = Path.GetDirectoryName(full)!;
-                var filePattern = Path.GetFileName(full);
-                if (directory.IndexOfAny(['*', '?']) >= 0 || filePattern.Contains("**", StringComparison.Ordinal))
-                    throw new ArgumentException($"Only final filename segment wildcards * and ? are supported: {pattern}");
-                if (filePattern.IndexOfAny(['*', '?']) >= 0)
-                {
-                    recursiveSelection = true;
                     Action<string, string>? reportSearchIssue = continueOnErrors
                         ? (path, message) => issues.Add(new(path, null, path, message))
                         : null;
-                    matches = Directory.Exists(directory)
-                        ? FindManagedFiles(directory, [filePattern], fileInfo, reportSearchIssue)
-                        : [];
+                    matches = FindManagedFiles(full, arguments.Includes.Count == 0 ? ["*"] : arguments.Includes,
+                        arguments.Excludes, fileInfo, exclusions, reportSearchIssue);
                 }
                 else if (File.Exists(full))
                 {
+                    var excluded = MatchExclusion(full, arguments.Excludes);
+                    if (excluded is not null)
+                    {
+                        RecordExclusion(full, excluded, exclusions);
+                        continue;
+                    }
                     ExportDumpOwnership.RejectReparseAncestors(full);
                     _ = GetFileInfo(full, fileInfo);
                     matches = [full];
                 }
-                else matches = [];
-            }
-            if (matches.Count == 0 && relatedPatterns.Count == 0)
-                throw new ArgumentException($"Source path or pattern has no managed DLL or EXE matches: {pattern}");
-            foreach (var match in matches)
-            {
-                sourcesForInput.Add(match);
-                paths.Add(match);
-                if (recursiveSelection) recursivePaths.Add(Path.GetFullPath(match));
-                else directPaths.Add(Path.GetFullPath(match));
-            }
+                else
+                    throw new ArgumentException($"Source file or directory does not exist: {source}");
+                foreach (var match in matches)
+                {
+                    paths.Add(match);
+                    if (recursiveSelection) recursivePaths.Add(match);
+                    else directPaths.Add(match);
+                }
             }
             catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException
                                              or BadImageFormatException or InvalidOperationException)
             {
                 if (!continueOnErrors) throw;
-                issues.Add(new(pattern, null, pattern, exception.Message));
-            }
-            foreach (var relatedPattern in relatedPatterns)
-            {
-                if (issues.Any(issue => issue.Input.Equals(relatedPattern, StringComparison.OrdinalIgnoreCase))) continue;
-                if (!sourcesForInput.Any(path => FileSystemName.MatchesSimpleExpression(relatedPattern, Path.GetFileName(path), ignoreCase: true)))
-                    issues.Add(new(relatedPattern, null, relatedPattern, $"Source pattern has no managed DLL or EXE matches: {relatedPattern}"));
+                issues.Add(new(source, null, source, exception.Message));
             }
         }
         return (paths.Order(StringComparer.OrdinalIgnoreCase).ToArray(), recursivePaths, directPaths, issues);
+    }
+
+    private static void ValidateFilenamePatterns(IReadOnlyList<string> patterns)
+    {
+        foreach (var pattern in patterns)
+            if (!ExportFilenamePattern.IsValid(pattern))
+                throw new ArgumentException($"Only filename patterns with * and ? are supported: {pattern}");
+    }
+
+    private static string? MatchExclusion(string path, IReadOnlyList<string> patterns)
+    {
+        var filename = Path.GetFileName(path);
+        var pattern = patterns.FirstOrDefault(value => FileSystemName.MatchesSimpleExpression(value, filename, ignoreCase: true));
+        return pattern is null ? null : "exclude:" + pattern;
+    }
+
+    private static string? MatchExclusion(AssemblyReferenceDto reference, IReadOnlyList<string> patterns) =>
+        reference.ResolvedPath is { } path
+            ? MatchExclusion(path, patterns)
+            : null;
+
+    private static void RecordExclusion(string path, string rule, IDictionary<string, ExcludedExportAssembly> exclusions)
+    {
+        var full = Path.GetFullPath(path);
+        exclusions.TryAdd(full, new(full, rule));
     }
 
     internal const string MiscOwnerDirectory = "_misc";
@@ -452,18 +466,9 @@ internal static class ExportPlanner
         return origin + "-" + Convert.ToHexStringLower(SHA256.HashData(hashInput));
     }
 
-    private static bool IsBareFilenamePattern(string pattern) =>
-        pattern.IndexOfAny(['*', '?']) >= 0 && string.IsNullOrEmpty(Path.GetDirectoryName(pattern));
-
-    private static bool IsExistingDirectory(string path)
-    {
-        try { return Directory.Exists(Path.GetFullPath(path)); }
-        catch (Exception exception) when (exception is ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException)
-        { return false; }
-    }
-
     private static IReadOnlyList<string> FindManagedFiles(string root, IReadOnlyList<string> filePatterns,
-        IDictionary<string, AssemblyFileInfo> fileInfo,
+        IReadOnlyList<string> excludes, IDictionary<string, AssemblyFileInfo> fileInfo,
+        IDictionary<string, ExcludedExportAssembly> exclusions,
         Action<string, string>? reportIssue = null)
     {
         var matches = new List<string>();
@@ -508,6 +513,12 @@ internal static class ExportPlanner
                     continue;
                 }
                 if (!IsSupportedExtension(entry)) continue;
+                var excluded = MatchExclusion(entry, excludes);
+                if (excluded is not null)
+                {
+                    RecordExclusion(entry, excluded, exclusions);
+                    continue;
+                }
                 var name = Path.GetFileName(entry);
                 var matchingPatterns = new List<int>();
                 for (var patternIndex = 0; patternIndex < filePatterns.Count; patternIndex++)
@@ -567,27 +578,20 @@ internal static class ExportPlanner
     private static string IdentityHashKey(AssemblyIdentityDto identity, string hash) =>
         string.Join("|", identity.Name, identity.Version, identity.Culture, identity.PublicKeyToken, hash);
 
-    private static void ValidateSourceOutputOverlap(IReadOnlyList<string> patterns, string output)
+    private static void ValidateSourceOutputOverlap(IReadOnlyList<string> sources, string output)
     {
-        for (var index = 0; index < patterns.Count; index++)
+        foreach (var source in sources)
         {
-            var full = Path.GetFullPath(patterns[index]);
+            if (source.IndexOfAny(['*', '?']) >= 0)
+                throw new ArgumentException($"Source must be an exact file or directory; use --include for filename patterns: {source}");
+            var full = Path.GetFullPath(source);
             if (Directory.Exists(full))
             {
                 if (ExportDumpOwnership.IsWithin(output, full) || ExportDumpOwnership.IsWithin(full, output))
                     throw new InvalidOperationException($"Source directory overlaps the output dump: {full}");
-                while (index + 1 < patterns.Count && IsBareFilenamePattern(patterns[index + 1])) index++;
                 continue;
             }
-
-            var directory = Path.GetDirectoryName(full)!;
-            var filename = Path.GetFileName(full);
-            if (filename.IndexOfAny(['*', '?']) >= 0)
-            {
-                if (ExportDumpOwnership.IsWithin(output, directory) || ExportDumpOwnership.IsWithin(directory, output))
-                    throw new InvalidOperationException($"Source search directory overlaps the output dump: {directory}");
-            }
-            else if (ExportDumpOwnership.IsWithin(full, output))
+            if (ExportDumpOwnership.IsWithin(full, output))
             {
                 throw new InvalidOperationException($"Source file is inside the output dump: {full}");
             }

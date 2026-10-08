@@ -10,10 +10,10 @@ The included `hostsettings.json` is used only when selected with `--config`; pla
 
 ## Offline assembly export
 
-The local deployment script publishes both `AiNetCodeNavigator.exe` and `AiNetCodeNavigator.AssemblyExport.exe` with their dependencies directly to `<deployment-directory>\`. In the release archive, the same files are at the root. Invoke this executable directly with an output directory, source directory, and quoted filename patterns. Matching managed DLL/EXE files are found recursively:
+The local deployment script publishes both `AiNetCodeNavigator.exe` and `AiNetCodeNavigator.AssemblyExport.exe` with their dependencies directly to `<deployment-directory>\`. In the release archive, the same files are at the root. Invoke the exporter directly with named options:
 
 ```powershell
-& "C:\Tools\AiNetCodeNavigator\AiNetCodeNavigator.AssemblyExport.exe" "C:\asm-dump" "C:\Programme" "foo*.exe" "*bar*.dll"
+& "C:\Tools\AiNetCodeNavigator\AiNetCodeNavigator.AssemblyExport.exe" --output "C:\asm-dump" --source "C:\Programme" --include "foo*.exe" --include "*bar*.dll" --exclude "DevExpress*.dll"
 ```
 
 The exporter has no MCP process configuration and does not read `hostsettings.json`. It writes the dump only to the explicit, marked output directory. Read [Assembly export CLI](../assembly-export.md) for glob limits, dependency handling, cleanup ownership, output structure, and how to check run completeness.

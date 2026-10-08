@@ -101,7 +101,7 @@ pwsh -File ./scripts/deploy.ps1 -OutputDir $deployCheck -SkipTests -Clean
 
 - Builds the solution (`AiNetCodeNavigator.slnx`), runs tests, and publishes both `src/AiNetCodeNavigator/` and `src/AiNetCodeNavigator.AssemblyExport/` directly to the output root using `dotnet publish`.
 - The default destination directory `<RepoRoot>/deploy` is ignored in `.gitignore`.
-- Verifies both executable files after publishing. `hostsettings.json` and the printed ready-to-copy process snippets apply only to the MCP server; the exporter is run directly with its positional arguments. `-Clean` removes all existing contents of the selected deployment directory before publishing.
+- Verifies both executable files after publishing. `hostsettings.json` and the printed ready-to-copy process snippets apply only to the MCP server; the exporter is run directly with its [named options](../assembly-export.md). `-Clean` removes all existing contents of the selected deployment directory before publishing.
 - Console output is streamed directly to `temp/deploy.log`.
 
 The release workflow publishes the same two-project layout into the self-contained Windows x64 ZIP and checks for both executables. It also runs the exporter's `--help` command before creating the archive. To verify the protocol boundary locally, use the existing MCP transport integration coverage; its complete child-process flows are categorized `E2EIntegration` and remain excluded from official routine test scripts.

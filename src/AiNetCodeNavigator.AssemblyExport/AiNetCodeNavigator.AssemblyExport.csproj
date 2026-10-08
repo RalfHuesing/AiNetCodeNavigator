@@ -4,6 +4,7 @@
     <Version>1.0.11</Version>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
     <ProjectReference Include="..\AiNetCodeNavigator.Core\AiNetCodeNavigator.Core.csproj" />
   </ItemGroup>
   <ItemGroup>

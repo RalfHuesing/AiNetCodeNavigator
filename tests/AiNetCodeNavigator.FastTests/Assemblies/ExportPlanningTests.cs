@@ -12,13 +12,13 @@ namespace AiNetCodeNavigator.FastTests.Assemblies;
 public sealed class ExportPlanningTests
 {
     [Fact]
-    public void Expand_SortsDeduplicatesAndExpandsMultipleFinalSegmentPatterns()
+    public void Expand_SortsDeduplicatesExactSourcesAndRejectsLegacyPatterns()
     {
         using var temp = TestTempDirectory.Create("export-input-");
         var second = Emit(temp.GetPath("B.dll"), "B");
         var first = Emit(temp.GetPath("A.dll"), "A");
         var other = Emit(temp.GetPath("nested/C.dll"), "C");
-        Assert.Equal([first, second, other], ExportPlanner.Expand([temp.GetPath("?.dll"), temp.GetPath("nested/*.dll"), first]));
+        Assert.Equal([first, second, other], ExportPlanner.Expand([second, first, other, first]));
         Assert.Throws<ArgumentException>(() => ExportPlanner.Expand([temp.GetPath("*/A.dll")]));
         Assert.Throws<ArgumentException>(() => ExportPlanner.Expand([temp.GetPath("**.dll")]));
         Assert.Throws<ArgumentException>(() => ExportPlanner.Expand([temp.GetPath("Absent*.dll")]));
@@ -42,13 +42,13 @@ public sealed class ExportPlanningTests
         Assert.Equal(new[] { rootDll, nestedDll, deepExe }.Order(StringComparer.OrdinalIgnoreCase),
             ExportPlanner.Expand([sourceDirectory]));
         Assert.Equal(new[] { rootDll, nestedDll }.Order(StringComparer.OrdinalIgnoreCase),
-            ExportPlanner.Expand([Path.Combine(sourceDirectory, "*.dll")]));
-        Assert.Equal([deepExe], ExportPlanner.Expand([Path.Combine(sourceDirectory, "*.exe")]));
-        Assert.Throws<ArgumentException>(() => ExportPlanner.Expand([Path.Combine(sourceDirectory, "native*.dll")]));
+            ExportPlanner.Expand(new ExportArguments(temp.GetPath("dump"), [sourceDirectory]) { Includes = ["*.dll"] }));
+        Assert.Equal([deepExe], ExportPlanner.Expand(new ExportArguments(temp.GetPath("dump"), [sourceDirectory]) { Includes = ["*.exe"] }));
+        Assert.Empty(ExportPlanner.Expand(new ExportArguments(temp.GetPath("dump"), [sourceDirectory]) { Includes = ["native*.dll"] }));
     }
 
     [Fact]
-    public void Expand_AppliesMultipleBareFilenamePatternsToPrecedingDirectoryRecursively()
+    public void Expand_AppliesGlobalOrIncludesAcrossDirectoriesAndKeepsExplicitFiles()
     {
         using var temp = TestTempDirectory.Create("export-filtered-directory-");
         var sources = temp.GetPath("sources");
@@ -57,10 +57,70 @@ public sealed class ExportPlanningTests
         Emit(Path.Combine(sources, "unmatched.exe"), "UnmatchedExe");
         Emit(Path.Combine(sources, "nested", "unmatched.dll"), "UnmatchedDll");
         File.WriteAllText(Path.Combine(sources, "nativebar.dll"), "native");
+        var secondSource = temp.GetPath("second");
+        var secondDll = Emit(Path.Combine(secondSource, "nested", "mybarOther.dll"), "BarOther");
+        var explicitFile = Emit(temp.GetPath("Explicit.dll"), "Explicit");
 
-        Assert.Equal(new[] { fooExe, barDll }.Order(StringComparer.OrdinalIgnoreCase),
-            ExportPlanner.Expand([sources, "foo*.exe", "*bar*.dll"]));
-        Assert.Throws<ArgumentException>(() => ExportPlanner.Expand([sources, "absent*.exe"]));
+        Assert.Equal(new[] { fooExe, barDll, secondDll, explicitFile }.Order(StringComparer.OrdinalIgnoreCase),
+            ExportPlanner.Expand(new ExportArguments(temp.GetPath("dump"), [sources, secondSource, explicitFile])
+            { Includes = ["FOO?.exe", "foo*.exe", "*BAR*.dll", "Absent*.dll"] }));
+        Assert.Empty(ExportPlanner.Expand(new ExportArguments(temp.GetPath("dump"), [sources]) { Includes = ["absent*.exe"] }));
+    }
+
+    [Fact]
+    public void Expand_ExcludesDirectoryFilesAndExplicitFilesCaseInsensitively()
+    {
+        using var temp = TestTempDirectory.Create("export-excluded-sources-");
+        var sources = temp.GetPath("sources");
+        var selected = Emit(Path.Combine(sources, "nested", "App.exe"), "App");
+        var excluded = Emit(Path.Combine(sources, "deep", "DevExpressA.dll"), "DevExpressA");
+        var arguments = new ExportArguments(temp.GetPath("dump"), [sources, excluded])
+        { Excludes = ["devexpress?.DLL", "Absent*.dll"] };
+
+        Assert.Equal([selected], ExportPlanner.Expand(arguments));
+    }
+
+    [Fact]
+    public void Plan_ExclusionWinsForExplicitDirectoryAndTransitiveDependencies()
+    {
+        using var temp = TestTempDirectory.Create("export-exclusions-");
+        var sources = temp.GetPath("sources");
+        var leaf = Emit(Path.Combine(sources, "Vendor.Leaf.dll"), "Vendor.Leaf");
+        var excluded = Emit(Path.Combine(sources, "DevExpressA.dll"), "DevExpressA", ["Vendor.Leaf"]);
+        var root = Emit(Path.Combine(sources, "App.dll"), "App", ["DevExpressA"]);
+        var arguments = new ExportArguments(temp.GetPath("dump"), [sources, excluded])
+        { Includes = ["App.dll"], Excludes = ["devexpress?.DLL", "NoMatch*.dll"] };
+
+        var plan = ExportPlanner.Create(arguments);
+
+        Assert.Equal(root, Assert.Single(plan.Assemblies).SourcePath);
+        var exclusion = Assert.Single(plan.Exclusions);
+        Assert.Equal(excluded, exclusion.SourcePath);
+        Assert.Equal("exclude:devexpress?.DLL", exclusion.Rule);
+        var assembly = Assert.Single(plan.Assemblies);
+        Assert.Contains(assembly.FilteredReferences, edge => edge.Reference.ResolvedPath == excluded
+            && edge.Rule == "exclude:devexpress?.DLL");
+        Assert.Contains(assembly.DecompilationReferences, edge => edge.ResolvedPath == excluded);
+        Assert.DoesNotContain(plan.Assemblies, item => item.SourcePath == leaf);
+        Assert.False(Directory.Exists(arguments.OutputDirectory));
+    }
+
+    [Fact]
+    public void Plan_DependencyModeNoneRetainsResolutionAndExplicitDependencyRoots()
+    {
+        using var temp = TestTempDirectory.Create("export-no-dependencies-");
+        var dependency = Emit(temp.GetPath("Vendor.dll"), "Vendor");
+        var root = Emit(temp.GetPath("App.dll"), "App", ["Vendor"]);
+        var arguments = new ExportArguments(temp.GetPath("dump"), [root]) { Dependencies = ExportDependencyMode.None };
+
+        var plan = ExportPlanner.Create(arguments);
+
+        var assembly = Assert.Single(plan.Assemblies);
+        Assert.Equal(root, assembly.SourcePath);
+        Assert.Contains(assembly.DecompilationReferences, edge => edge.ResolvedPath == dependency);
+        Assert.Contains(assembly.FilteredReferences, edge => edge.Reference.ResolvedPath == dependency && edge.Rule == "dependencies:none");
+        var explicitPlan = ExportPlanner.Create(arguments with { Sources = [root, dependency] });
+        Assert.Equal(2, explicitPlan.Assemblies.Count);
     }
 
     [Fact]
@@ -332,7 +392,7 @@ public sealed class ExportPlanningTests
             return new(new(identity.Name!, identity.Version!.ToString(), "neutral", ""), references, [], true);
         }
 
-        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [sources, "*.dll"]), Resolve);
+        var plan = ExportPlanner.Create(new(temp.GetPath("dump"), [sources]) { Includes = ["*.dll"] }, Resolve);
 
         Assert.Contains(plan.Assemblies, item => item.SourcePath == root && item.IsExplicit);
         Assert.Contains(plan.Assemblies, item => item.SourcePath == newer && item.IsExplicit);

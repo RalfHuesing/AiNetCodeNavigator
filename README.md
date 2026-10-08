@@ -34,10 +34,10 @@ pwsh -File ./scripts/deploy.ps1 -SkipTests
 
 This builds the solution and publishes both executables (`AiNetCodeNavigator.exe` and `AiNetCodeNavigator.AssemblyExport.exe`) with their dependencies directly to `deploy/`, skipping the test suite. Keep each executable with its published dependencies. These local deployments are framework-dependent and require the .NET 10 runtime. See [setup requirements](docs/setup/README.md).
 
-To create a source dump, run the exporter with an output directory, a source directory, and quoted filename patterns. It searches the source directory recursively and selects files matching any pattern:
+To create a source dump, use named options for the output, sources and filename filters:
 
 ```powershell
-& .\deploy\AiNetCodeNavigator.AssemblyExport.exe "C:\asm-dump" "C:\Programme" "foo*.exe" "*bar*.dll"
+& .\deploy\AiNetCodeNavigator.AssemblyExport.exe --output "C:\asm-dump" --source "C:\Programme" --include "foo*.exe" --include "*bar*.dll" --exclude "DevExpress*.dll"
 ```
 
 The output root is disposable. A later run deletes and rebuilds it only when its exact ownership marker is present. Agents can start with the generated `README.md` and compact `assemblies.json` catalog, then check `last-run.log` and the selected child's `export-manifest.json`. See the [assembly export guide](docs/assembly-export.md) for filtering, dependency closure, cleanup, and completeness details.
