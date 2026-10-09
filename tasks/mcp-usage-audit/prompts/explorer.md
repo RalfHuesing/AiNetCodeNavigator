@@ -4,6 +4,8 @@ Assignment inputs: target alias, question IDs, baseline/replay/holdout mode, sta
 
 Read the task charter/protocol and current MCP tool schemas and navigation rules. Resolve external paths and identifiers only from ignored local data. Do not read ground-truth answers or prior solution traces for fresh or holdout questions. Do not edit product code or external targets.
 
+Use transport-free exploration exclusively. Do not launch live MCP clients, JSON-RPC/stdio probes, traffic capture, or broad test suites. Record transport-only questions as excluded; answer handler-level questions through the runner. Repeated timing runs are needed only for a material performance claim.
+
 Answer the assigned questions through adaptive MCP exploration, using actual production handler output via the documented runner. Temporary generic scenario source must contain no external names or embedded paths. Choose calls from the current schema; inspect outputs between decisions. Count hidden polling and outer-page attempts. Follow domain pages/body windows explicitly when necessary. Record incomplete scope and unsupported runtime conclusions. Log source/search fallbacks separately.
 
 Write run metadata and per-question evidence using the task templates in the assigned ignored directory. Record exact requests, attempts, response observations, final answer with evidence, cost measurements, usability scores, and uncertainty. Preserve replay material locally and remove temporary scenarios after use. Do not claim correctness solely from your own interpretation; return the answer for independent review.

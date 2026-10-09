@@ -4,6 +4,8 @@ Status: prepared; no audit or product implementation has started.
 
 This is a task-specific orchestration package, not an invocation of the optional `.agents/agent-workflow/` steps. Read [the charter](charter.md), [protocol](protocol.md), and [roadmap](roadmap.md) before execution. Repository rules remain binding.
 
+User-directed scope: transport-free exploration only; no JSON-RPC/stdio/client testing or traffic capture. Verification uses risk-based filtered tests, with no automatic full-suite gate, and one necessary final export smoke check. See the task-specific exception in [the verification protocol](protocol.md#task-specific-test-scope).
+
 ## Start and resume
 
 Give the executing agent this prompt:
@@ -36,7 +38,6 @@ The registry is machine-local and intentionally absent from Git. If missing, rec
 
 - [Manual exploration](../../docs/development/mcp-exploration.md) and its source under `tools/AiNetCodeNavigator.Exploration/`.
 - [Tool contracts](../../docs/tools/README.md), [response budgets](../../docs/mcp-response-budgets.md), and [continuations](../../docs/mcp-long-running-calls.md).
-- [Traffic capture](../../docs/mcp-traffic-capture.md): separate live-transport measurements, when needed.
 - [Assembly export](../../docs/assembly-export.md) and [verification gates](../../docs/development/build-and-tests.md).
 
 These links describe current behavior. This task describes future work and acceptance criteria; it is not proof of implementation.

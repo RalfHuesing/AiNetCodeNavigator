@@ -6,6 +6,8 @@ Improve the usefulness, correctness, efficiency, and agent usability of read-onl
 
 Once execution is started, the agent may redesign, consolidate, remove, or extend navigation tools and their outputs. Tool count is not a success metric. Changes require observed evidence, a neutral reproduction where feasible, and cross-target validation. A useful tool may remain unchanged. Do not invent a backlog merely to demonstrate activity.
 
+Use transport-free exploration only. JSON-RPC/stdio/client testing and traffic capture are excluded. Apply the user's task-specific minimal test policy in [the protocol](protocol.md#task-specific-test-scope): necessary filtered behavior checks and export protection, with no automatic full-suite completion gate. This overrides the general blanket completion-test requirement for this campaign, not the product invariants.
+
 External repositories are read-only evaluation inputs, not binding product specifications. Inspect only the provided targets and relevant dependencies. Do not edit, commit, clean, restore packages into, or build external repositories as an implicit audit step. Source loading performs MSBuild design-time evaluation and is not a sandbox: inspect relevant build configuration before loading; if it requires unapproved writes or execution, record a blocker and seek a specific decision. Record pre-existing external working-tree state and inspect it again after use without reverting user work.
 
 ## Invariants
@@ -36,5 +38,5 @@ Do not count inaccessible or partially loaded targets as successful coverage. Fr
 - Highest-priority correctness and safety findings are resolved and independently checked. Lower-priority findings are accepted, rejected with reasons, or explicitly deferred in the decision ledger.
 - Accepted changes preserve or improve independently verified answers; paired measurements show the intended benefit without concealing regressions. No fabricated percentage target or speed claim.
 - Replay and fresh holdout tasks confirm usefulness across targets. Failures and unsupported questions remain visible.
-- Required code gates and export checks pass; documentation and navigation instructions match the final tools; temporary scenarios are removed.
+- Necessary risk-selected behavior checks and the final export safeguard pass; documentation and navigation instructions match the final tools; temporary scenarios are removed. Excluded transport checks and full suites are not completion blockers and must not be reported as passed.
 - A sanitized final report gives evidence, limitations, tool decisions, remaining work, and measured before/after results. Do not declare completion while a required gate is blocked.
