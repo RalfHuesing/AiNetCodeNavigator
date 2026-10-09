@@ -8,6 +8,8 @@ For baseline/holdout review, compare the submitted answer against independent ev
 
 For slice review, check root cause, neutral regression, complete consumer updates, observable improvement, and invariant preservation. Review privacy semantically as well as by literal-name checks. Verify that passing tests were actually run and that before/after comparisons use compatible inputs and measurements.
 
+Explicitly review scope and complexity against the charter's bounded first round. Reject speculative abstractions, independent cleanup, new infrastructure/dependencies, or an audit platform disguised as a navigation improvement. Check that the smallest owning change suffices and that benefit justifies maintenance and agent-facing complexity. Do not expand acceptance to every newly discovered pre-existing defect. Return independent ideas to the deferred ledger; introduced regressions still require correction or rejection of the candidate.
+
 For final review, check every charter completion condition, all target coverage, fresh holdouts, current docs, scenario cleanup, necessary filtered-check evidence, and static export smoke/manifests. Apply protocol.md's user-directed test scope: no transport testing, traffic capture, or mandatory full-suite completion gate. Challenge test selections that do not cover a concrete changed risk, and do not request broad suites merely for reassurance. Explicitly report blocked in-scope checks and intentionally unrun suites. No approval based solely on an implementer's summary or process exit code.
 
 Return a sanitized pass/rework/blocked judgment, actionable finding IDs with evidence keys, and precise acceptance conditions. Store any sensitive explanation only in the assigned ignored directory.

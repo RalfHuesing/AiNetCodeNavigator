@@ -10,7 +10,7 @@ Run the permanent `ExploreAllTools` calibration through `scripts/explore.ps1`, a
 
 ## 2. Question design before implementation
 
-Create at least six applicable questions per source target: four baseline/replay questions and two untouched holdouts. Across the campaign cover the families below, plus at least three managed-assembly questions. Assign neutral IDs Q001 onward. Choose real examples during local discovery; keep actual symbols, paths, query text, and expected answers local. Record exclusions with reasons instead of forcing nonsensical questions.
+Use a fixed initial sample of six applicable questions per source target: four baseline/replay questions and two untouched holdouts, plus three managed-assembly questions across the campaign. This is a representative sample, not an exhaustive repository audit. Across the campaign cover the families below. Assign neutral IDs Q001 onward. Choose real examples during local discovery; keep actual symbols, paths, query text, and expected answers local. Record exclusions with reasons instead of forcing nonsensical questions. Add probes only to resolve a selected finding or an identified coverage gap; do not automatically grow the question set on every discovery.
 
 | Family | Expected evidence |
 | --- | --- |
@@ -55,6 +55,8 @@ Freeze query, starting knowledge, target snapshot, budgets, agent settings, and 
 Use `templates/finding.md` locally. Classify cause as environment/loading, navigation engine, schema/tool selection, output, recovery, performance, or agent misuse. Prioritize false answers, unsafe boundaries, and lost coverage before cosmetic cost reduction. A candidate needs evidence, expected benefit, alternatives (including no new tool), acceptance criteria, affected consumers, and verification scope. Seek recurrence on another target; a single severe correctness bug may justify action with a neutral reproduction.
 
 Choose a small coherent implementation slice after baseline review, not after every inconvenient call. Add executable roadmap children before assigning work. Verify a failing regression before fixing a deterministic defect. Update owning code, schemas, consumers, tests, docs, and usage rules together. Do not preserve obsolete tools by default or remove them without checking callers. Keep a sanitized tool decision in `results.md`.
+
+Apply the charter's bounded-first-round limits: at most three attempted candidates, at most one new public tool, no platform/dependency expansion, and no automatic next round. Each candidate must identify the smallest owning change and what it deliberately leaves out. Review both navigation benefit and added maintenance/usage complexity. Reject a change whose benefit cannot justify its complexity; fewer calls or bytes alone do not compensate for harder tool selection, lost detail, or ambiguous results. Holdouts assess transfer once; a failed holdout may trigger a bounded correction but then becomes a known regression case, not fresh independent evidence. Do not manufacture an endless sequence of replacement holdouts.
 
 ## 6. Verification, privacy, and completion
 

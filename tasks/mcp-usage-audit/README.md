@@ -6,6 +6,8 @@ This is a task-specific orchestration package, not an invocation of the optional
 
 User-directed scope: transport-free exploration only; no JSON-RPC/stdio/client testing or traffic capture. Verification uses risk-based filtered tests, with no automatic full-suite gate, and one necessary final export smoke check. See the task-specific exception in [the verification protocol](protocol.md#task-specific-test-scope).
 
+The first round is bounded: at most three attempted improvements, at most one new public tool, and no platform rewrite or new runtime dependencies. Use the existing architecture and audit runner. Further ideas are deferred; another round needs a new user instruction. See [scope and stopping rules](charter.md#bounded-first-round).
+
 ## Start and resume
 
 Give the executing agent this prompt:
