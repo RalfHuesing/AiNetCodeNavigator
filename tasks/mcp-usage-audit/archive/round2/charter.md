@@ -4,7 +4,7 @@
 
 Find practical ways for agents to answer C# navigation questions more accurately, clearly, and efficiently with the existing read-only Navigator. Use real questions on the locally registered R01–R04 targets and a fixed managed-assembly snapshot where useful. A scout's difficulty is a lead, not proof of a product defect. The orchestrator may implement a small, well-supported improvement without a separate approval request and must report what changed.
 
-Earlier rounds are archived under [round 1](archive/round1/results.md) and [round 2](archive/round2/results.md). The active cycle asks whether an agent can reach a concrete declaration and implementation from a scoped overview within a modest output budget. It does not turn an incomplete earlier agent attempt into a product defect or a preimplementation holdout.
+The first bounded round is complete with partial acceptance; its [results](archive/round1/results.md), charter, protocol, roadmap, and prompts remain under [archive/round1](archive/round1/roadmap.md). This is a new, bounded exploration cycle, not a retroactive repair of the first round's late holdout freeze.
 
 ## Non-negotiable boundaries
 
