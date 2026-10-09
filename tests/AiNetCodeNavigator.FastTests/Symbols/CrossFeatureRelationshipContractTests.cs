@@ -304,6 +304,8 @@ public sealed class CrossFeatureRelationshipContractTests
         Assert.True(local.Value!.Found);
         Assert.Equal("Second", local.Value.ProjectName);
         Assert.Equal("source", local.Value.AssemblyOrigin);
+        Assert.Null(local.Value.MetadataSearchScope);
+        Assert.Null(local.Value.DeclaredReferenceCoverage);
         Assert.All(local.Value.SourceLocations, location => Assert.Contains("Second", location.FilePath, StringComparison.Ordinal));
 
         var first = fixture.Solution.Projects.Single(project => project.Name == "First");
@@ -322,6 +324,8 @@ public sealed class CrossFeatureRelationshipContractTests
         Assert.True(metadata.IsSuccess);
         Assert.True(metadata.Value!.Found);
         Assert.Equal("reference", metadata.Value.AssemblyOrigin);
+        Assert.Equal("loadedReferences", metadata.Value.MetadataSearchScope);
+        Assert.Equal("unknown", metadata.Value.DeclaredReferenceCoverage);
         Assert.False(string.IsNullOrWhiteSpace(metadata.Value.OutputAssembly));
         Assert.Contains("System.Private.CoreLib", metadata.Value.SearchedAssemblies);
     }
@@ -342,6 +346,8 @@ public sealed class CrossFeatureRelationshipContractTests
         Assert.True(result.Value!.Found);
         Assert.True(result.Value.IsAmbiguous);
         Assert.Equal("ambiguous", result.Value.AssemblyOrigin);
+        Assert.Equal("loadedReferences", result.Value.MetadataSearchScope);
+        Assert.Equal("unknown", result.Value.DeclaredReferenceCoverage);
         Assert.NotNull(result.Value.CandidatePaths);
         Assert.Contains(Path.GetFullPath(firstPath), result.Value.CandidatePaths!);
         Assert.Contains(Path.GetFullPath(secondPath), result.Value.CandidatePaths!);

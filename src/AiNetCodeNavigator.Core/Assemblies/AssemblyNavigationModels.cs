@@ -108,4 +108,10 @@ public sealed record SourceTypeOriginPayload(
     string Namespace,
     IReadOnlyList<string> SearchedAssemblies,
     bool IsAmbiguous = false,
-    IReadOnlyList<string>? CandidatePaths = null);
+    IReadOnlyList<string>? CandidatePaths = null)
+{
+    // Source declaration ownership is proven separately. Metadata lookup only sees
+    // references retained by the loaded workspace, not every declared reference.
+    public string? MetadataSearchScope => AssemblyOrigin == "source" ? null : "loadedReferences";
+    public string? DeclaredReferenceCoverage => AssemblyOrigin == "source" ? null : "unknown";
+}

@@ -505,7 +505,7 @@ public sealed partial class RelationshipTools(NavigatorHostRuntime runtime)
     }
 
     [McpServerTool(Name = "resolve_type_origin", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
-    [System.ComponentModel.Description("Resolve a type name or symbol identifier to its source or metadata assembly origin.")]
+    [System.ComponentModel.Description("Resolve a type name or symbol identifier to its source or metadata assembly origin. Source metadata lookup searches loaded references; declared reference coverage remains unknown.")]
     public async Task<CallToolResult> ResolveTypeOrigin([Required, System.ComponentModel.Description("Absolute path to an existing source solution or managed assembly target.")] string targetPath, [System.ComponentModel.Description("Symbol identifier for the type, including a stable src:/asm: reference; specify this or typeName.")] string? symbolIdentifier = null,
         [System.ComponentModel.Description("Type name or stable src:/asm: reference; exactly one of this or symbolIdentifier is required.")] string? typeName = null, [Range(512, 65536), System.ComponentModel.Description("Maximum response text size in UTF-8 bytes (512–65536; default 16384).") ] int maxResponseBytes = 16384,
         [Range(1, int.MaxValue), System.ComponentModel.Description("Optional positive maximum response token count; uses cl100k_base.")] int? maxResponseTokens = null, [System.ComponentModel.Description("Opaque token returned for background work; repeat the same target and query to poll the operation.")] string? operationToken = null,
@@ -555,11 +555,18 @@ public sealed partial class RelationshipTools(NavigatorHostRuntime runtime)
                     var result = await SourceTypeOriginScanner.ResolveAsync(solution, target.CanonicalPath,
                         resolved.Error is null ? resolved.Symbol : null,
                         resolved.Error is null ? null : identifier, ct).ConfigureAwait(false);
-                    return result.IsSuccess
-                        ? source.WithMetadata(NavigationToolSupport.Success(result.Value!),
-                            $"resolveTypeOrigin(input={identifier.Trim()})")
-                        : NavigationToolSupport.Failure(result.Error!.Value, maxResponseBytes, maxResponseTokens,
+                    if (!result.IsSuccess)
+                        return NavigationToolSupport.Failure(result.Error!.Value, maxResponseBytes, maxResponseTokens,
                             symbolIdentifier is null ? "$.typeName" : "$.symbolIdentifier");
+                    var payload = result.Value!;
+                    var metadataSearch = payload.MetadataSearchScope is not null;
+                    return source.WithMetadata(NavigationToolSupport.Success(payload, metadataSearch,
+                            "Metadata origin lookup searches loaded references only; declared reference coverage is unknown. "
+                            + "Restore unavailable references and retry. A returned proven owner remains usable; absence and uniqueness describe loaded candidates only."),
+                        metadataSearch
+                            ? $"resolveTypeOrigin(input={identifier.Trim()};metadataSearchScope={payload.MetadataSearchScope})"
+                            : $"resolveTypeOrigin(input={identifier.Trim()})",
+                        metadataSearch ? ["declaredReferenceCoverageUnknown"] : null);
                 }, maxResponseBytes, maxResponseTokens, ct);
             }, null, cancellationToken);
 
