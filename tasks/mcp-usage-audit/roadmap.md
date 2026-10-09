@@ -1,9 +1,9 @@
 # Roadmap
 
-Preparation is complete. Execution has not started. Resume at the first unchecked item; check items only with linked sanitized evidence in `results.md` and local raw evidence retained.
+The first round is active. Resume at the first unchecked item; check items only with linked sanitized evidence in `results.md` and local raw evidence retained.
 
 - [x] Prepare charter, protocol, prompts, blank evidence templates, and ignored target registry.
-- [ ] **A — Preflight and calibration.** Verify all alias targets, prerequisites, external dirty states, ignore boundaries, current catalog, and transport-free runner behavior. Record load limitations and run identities. Acceptance: usable targets and explicit blockers; no assumed framework/LOC verification. No baseline test suite or export smoke required.
+- [x] **A — Preflight and calibration.** Verify all alias targets, prerequisites, external dirty states, ignore boundaries, current catalog, and transport-free runner behavior. Record load limitations and run identities. Acceptance: usable targets and explicit blockers; no assumed framework/LOC verification. No baseline test suite or export smoke required. See A-001 in `results.md`.
 - [ ] **B — Freeze questions and independent ground truth.** Fixed initial sample: six source questions per target, including two held-out questions, and three assembly questions across the campaign. Assign a reviewer to ground truth and seal holdouts. Acceptance: applicable families, independent evidence, budgets and measurement plan recorded locally.
 - [ ] **C — Baseline usage audit.** Run adaptive explorations on R01–R04, inspect all current tools, score outputs, count recovery attempts/fallbacks, and classify findings. Acceptance: actual saved outputs and per-question judgments; transport boundary explicit; temporary scenarios cleaned up.
 - [ ] **D — Select evidence-backed changes.** Rank findings and freeze at most three candidates within the charter's bounded first round; zero is valid. Reject unsupported ideas, defer independent work, record contract decisions, and append bounded executable implementation children here. Acceptance: each child has finding IDs, owner, smallest necessary scope, neutral reproduction, acceptance criteria, verification commands, and cross-target replay selection. At most one new public tool; no architecture expansion. Do not refill rejected candidates or preselect a new tool catalog.
@@ -32,10 +32,10 @@ Copy under E after triage:
 
 ## Resume state
 
-- Last completed stage: preparation only.
-- Active assignment: none.
-- Next action after execution is requested: A.
-- Required pending user decision: none for preparation.
-- Evidence location: local registry prepared; no run evidence yet.
+- Last completed stage: A — preflight and calibration (see `results.md`, run A-001).
+- Active assignment: B — independent question design and ground truth.
+- Next action: freeze the source and assembly question set with sealed holdouts before baseline judgments.
+- Required pending user decision: none for question design; R03's missing references remain a coverage limitation to assess during loading.
+- Evidence location: ignored `temp/external-repos/mcp-usage-audit/round1/` and the calibration raw run referenced in `results.md`.
 
 On interruption update this section with neutral IDs, active owned processes, completed gates, pending checks, local handoff location, and the exact next action. Never mark an interrupted or unrun gate as passed.

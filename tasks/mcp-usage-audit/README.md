@@ -1,6 +1,6 @@
 # MCP usage audit and navigation improvement
 
-Status: prepared; no audit or product implementation has started.
+Status: first audit round active; preflight and calibration complete. No product implementation has started.
 
 This is a task-specific orchestration package, not an invocation of the optional `.agents/agent-workflow/` steps. Read [the charter](charter.md), [protocol](protocol.md), and [roadmap](roadmap.md) before execution. Repository rules remain binding.
 
