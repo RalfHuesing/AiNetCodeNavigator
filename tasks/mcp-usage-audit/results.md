@@ -8,7 +8,7 @@ The [first-round report](archive/round1/results.md) remains the complete histori
 
 | ID | Stage | Alias | Evidence key | Observed result / limit | Decision |
 | --- | --- | --- | --- | --- | --- |
-| P-2 | Preflight | R01–R04 | `round2/preflight.local.json` | All registered source targets exist and their original worktrees are clean. Explorer listing/build succeeds. Prior R03 original reference and framework limits remain until independently rechecked. | R01 and R04 scouts assigned; no code candidate yet. |
+| P-2 | Preflight | R01–R04 | `round2/preflight.local.json` | All registered source targets exist and their original worktrees were clean at preflight. Explorer listing/build succeeds; R01/R04 build configuration was checked before loading. Prior R03 original reference and framework limits remain until independently rechecked. | R01 and R04 scouts assigned with serialized Explorer access; no code candidate yet. |
 
 Evidence keys are relative to ignored `temp/external-repos/mcp-usage-audit/`. Raw target paths, symbols, questions, answers, and response traces remain local. Product findings must be independently checked before entering the decision ledger.
 
