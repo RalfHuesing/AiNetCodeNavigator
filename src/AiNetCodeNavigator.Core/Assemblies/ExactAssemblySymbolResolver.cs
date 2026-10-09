@@ -117,6 +117,22 @@ public static class ExactAssemblySymbolResolver
             .Distinct(SymbolEqualityComparer.Default)
             .ToArray();
 
+        // A partial decompiled compilation can produce a declaration ID whose parameter
+        // types Roslyn cannot resolve back. Match the exact generated ID within this
+        // owner instead; never infer a signature or select an ambiguous declaration.
+        if (symbols.Length == 0)
+        {
+            symbols = AssemblyAnalysisSymbolTraversal.GetAllTypes(ownerAssembly.GlobalNamespace)
+                .SelectMany(type => type.GetMembers().Prepend(type))
+                .Where(symbol => !symbol.IsImplicitlyDeclared
+                    && symbol is not IMethodSymbol { MethodKind: MethodKind.LocalFunction }
+                    && string.Equals(DocumentationCommentId.CreateDeclarationId(symbol), reference.DeclarationId, StringComparison.Ordinal))
+                .Select(Normalize)
+                .Distinct(SymbolEqualityComparer.Default)
+                .Take(2)
+                .ToArray();
+        }
+
         return symbols.Length switch
         {
             1 => Result<ISymbol>.Success(symbols[0]),

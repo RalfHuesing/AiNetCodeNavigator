@@ -3,12 +3,14 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using AiNetCodeNavigator.Core.Assemblies;
 using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Core.Workspace;
 using AiNetCodeNavigator.TestKit;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 
 namespace AiNetCodeNavigator.FastTests.Assemblies;
@@ -16,6 +18,87 @@ namespace AiNetCodeNavigator.FastTests.Assemblies;
 [Trait("Category", "Component")]
 public sealed class ExactAssemblySymbolResolverTests
 {
+    [Fact]
+    public async Task DegradedManagedMemberReferenceResolvesItsExactOverloadAndBody()
+    {
+        using var directory = TestTempDirectory.Create("assembly-degraded-member-");
+        var dependency = AssemblyTestHelper.EmitAssembly(directory, "MemberDependency",
+            "namespace Neutral; public sealed class Input { }");
+        var path = AssemblyTestHelper.EmitAssembly(directory, "MemberOwner", """
+            namespace Neutral;
+            public sealed class Api
+            {
+                public string Choose(Input? value) => "reference overload";
+                public string Choose(int value) => "integer overload";
+            }
+            """, dependency);
+        var fingerprint = AssemblyFingerprintCalculator.Create(path);
+        var options = AssemblyDecompilationOptions.Default;
+        var references = new AssemblyReferenceResolver().Resolve(path);
+        var decompilation = await new AssemblyDecompilationAdapter().DecompileAsync(
+            new DecompilationRequest(path, fingerprint,
+                AssemblyFingerprintCalculator.CreateCacheKey(fingerprint, options), options, CancellationToken.None),
+            references);
+        Assert.NotEmpty(decompilation.Documents);
+        var request = new AssemblyWorkspaceRequest(path, fingerprint, decompilation.Documents,
+            references.MetadataReferences.Where(reference => reference is not PortableExecutableReference portable
+                || !string.Equals(portable.FilePath, dependency, StringComparison.OrdinalIgnoreCase)).ToArray(),
+            AssemblySessionStatus.Partial, decompilation.ProjectFilePath);
+        using var snapshot = await new AssemblyRoslynWorkspaceFactory().CreateAsync(
+            request, "MemberOwner", fingerprint.Sha256, CancellationToken.None);
+        var type = Assert.IsAssignableFrom<INamedTypeSymbol>(snapshot.Compilation.Assembly.GetTypeByMetadataName("Neutral.Api"));
+        var method = Assert.Single(type.GetMembers("Choose").OfType<IMethodSymbol>()
+            .Where(member => member.Parameters[0].Type.SpecialType != SpecialType.System_Int32));
+        var declarationId = DocumentationCommentId.CreateDeclarationId(method);
+        Assert.NotNull(declarationId);
+        Assert.Empty(DocumentationCommentId.GetSymbolsForDeclarationId(declarationId, snapshot.Compilation));
+
+        var created = ExactAssemblySymbolResolver.CreateReference("MemberOwner", snapshot.Compilation.Assembly,
+            snapshot.Compilation, method);
+        Assert.True(created.IsSuccess, created.Error?.Message);
+        var resolved = ExactAssemblySymbolResolver.Resolve(snapshot.Compilation.Assembly, snapshot.Compilation, created.Value!);
+        Assert.True(resolved.IsSuccess, resolved.Error?.Message);
+        Assert.True(SymbolEqualityComparer.Default.Equals(method, resolved.Value));
+        var body = SourceSymbolBodyResolver.Resolve(resolved.Value!, 100);
+        Assert.Contains("reference overload", body.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("integer overload", body.Body, StringComparison.Ordinal);
+        Assert.Equal(NavigationErrorCodes.TargetMismatch, ExactAssemblySymbolResolver.Resolve(
+            snapshot.Compilation.Assembly, snapshot.Compilation,
+            created.Value! with { SimpleName = "DifferentOwner" }).Error?.Code);
+        Assert.Equal(NavigationErrorCodes.SymbolNotFound, ExactAssemblySymbolResolver.Resolve(
+            snapshot.Compilation.Assembly, snapshot.Compilation,
+            new StableSymbolReference.Assembly("MemberOwner", "M:Neutral.Api.Removed")).Error?.Code);
+    }
+
+    [Fact]
+    public void DegradedMemberReferenceRejectsCollidingDeclarationIds()
+    {
+        // Duplicate declarations are possible in an incomplete decompiled compilation.
+        var compilation = CSharpCompilation.Create("CollisionOwner",
+            [CSharpSyntaxTree.ParseText("""
+                namespace Neutral;
+                public class Api
+                {
+                    public void Choose(Missing value) { }
+                    public void Choose(Missing value) { }
+                }
+                """)]);
+        var type = Assert.IsAssignableFrom<INamedTypeSymbol>(compilation.Assembly.GetTypeByMetadataName("Neutral.Api"));
+        var methods = type.GetMembers("Choose");
+        Assert.Equal(2, methods.Length);
+        var declarationId = DocumentationCommentId.CreateDeclarationId(methods[0]);
+        Assert.NotNull(declarationId);
+        Assert.Equal(declarationId, DocumentationCommentId.CreateDeclarationId(methods[1]));
+        Assert.Empty(DocumentationCommentId.GetSymbolsForDeclarationId(declarationId, compilation));
+        var reference = new StableSymbolReference.Assembly("CollisionOwner", declarationId);
+        var result = ExactAssemblySymbolResolver.Resolve(compilation.Assembly, compilation, reference);
+        Assert.False(result.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.AmbiguousSymbol, result.Error?.Code);
+        var created = ExactAssemblySymbolResolver.CreateReference("CollisionOwner", compilation.Assembly, compilation, methods[0]);
+        Assert.False(created.IsSuccess);
+        Assert.Equal(NavigationErrorCodes.AmbiguousSymbol, created.Error?.Code);
+    }
+
     [Fact]
     public async Task SameSimpleNameInDifferentTargetsResolvesOnlyInsideSelectedLeasedScope()
     {

@@ -22,6 +22,48 @@ namespace AiNetCodeNavigator.IntegrationTests.Mcp;
 public sealed class AssemblyToolsContractTests
 {
     [Fact]
+    public async Task PartialAssemblyMemberHandoffsSelectExactBodiesAndKeepAnalysisLimits()
+    {
+        using var dependencies = TestTempDirectory.Create("assembly-member-dependency-");
+        using var fixture = TestTempDirectory.Create("assembly-member-handoff-");
+        var dependency = AssemblyTestHelper.EmitAssembly(dependencies, "HandoffDependency",
+            "namespace Neutral; public sealed class Input { }");
+        var path = AssemblyTestHelper.EmitAssembly(fixture, "HandoffOwner", """
+            namespace Neutral;
+            public sealed class Api
+            {
+                public string Choose(Input? value) => "reference overload";
+                public string Choose(int value) => "integer overload";
+            }
+            """, dependency);
+        // The dependency is deliberately outside the owner's probing directory.
+        Assert.False(File.Exists(fixture.GetPath("HandoffDependency.dll")));
+        using var host = Host.CreateApplicationBuilder(Array.Empty<string>()).Build();
+        await using var runtime = new NavigatorHostRuntime(host.Services.GetRequiredService<IHostApplicationLifetime>());
+        var inspected = await new AssemblyTools(runtime).InspectAssembly(path, typeName: "Api",
+            exactTypeName: true, includeMembers: true, memberName: "Choose", maxResponseBytes: 65536, maxResponseTokens: 4096);
+        AssertSuccessWithinBudget(inspected, 65536, 4096);
+        using var payload = System.Text.Json.JsonDocument.Parse(BodyOf(TextOf(inspected)));
+        Assert.Equal("partial", payload.RootElement.GetProperty("completeness").GetString());
+        var members = Assert.Single(payload.RootElement.GetProperty("types").EnumerateArray())
+            .GetProperty("members").EnumerateArray().ToArray();
+        Assert.Equal(2, members.Length);
+        foreach (var member in members)
+        {
+            Assert.True(member.GetProperty("handoff").GetBoolean());
+            Assert.Equal(path, member.GetProperty("ownerTargetPath").GetString());
+            var handoff = member.GetProperty("handoffId").GetString()!;
+            var body = await new SymbolTools(runtime).GetSymbolBody(path, [handoff], maxResponseBytes: 65536, maxResponseTokens: 4096);
+            AssertSuccessWithinBudget(body, 65536, 4096);
+            var expected = member.GetProperty("signature").GetString()!.Contains("int value", StringComparison.Ordinal)
+                ? "integer overload" : "reference overload";
+            Assert.Contains(expected, TextOf(body), StringComparison.Ordinal);
+            Assert.DoesNotContain(expected == "integer overload" ? "reference overload" : "integer overload",
+                TextOf(body), StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public async Task TypeOriginPartialReferenceSearchKeepsProvenOwnerAndExplicitRecovery()
     {
         using var temp = TestTempDirectory.Create("assembly-origin-public-missing-");
