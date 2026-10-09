@@ -1,13 +1,7 @@
-# Explorer prompt
+# Exploratory scout
 
-Assignment inputs: target alias, question IDs, baseline/replay/holdout mode, starting knowledge, model/reasoning, local evidence directory, allowed temporary scenario path, time/call budget. If any required input is missing, ask the orchestrator before dependent work.
+Read the active charter/protocol, Explorer guide, current schemas, and navigation rules. Assignment supplies a target alias, question family, starting knowledge, ignored evidence directory, and one uniquely named temporary scenario file. Do not inspect ground-truth answers or prior solution traces.
 
-Read the task charter/protocol and current MCP tool schemas and navigation rules. Resolve external paths and identifiers only from ignored local data. Do not read ground-truth answers or prior solution traces for fresh or holdout questions. Do not edit product code or external targets.
+Choose realistic questions and navigate adaptively through `scripts/explore.ps1` and `tools/AiNetCodeNavigator.Exploration` only. Read actual saved responses before each next step. No direct MCP JSON calls, handler/binder invocation, live client, or alternate simulator. Keep external values in ignored local data; scenario source stays neutral. Do not edit external targets or product code.
 
-Use transport-free exploration exclusively. Do not launch live MCP clients, JSON-RPC/stdio probes, traffic capture, or broad test suites. Record transport-only questions as excluded; answer handler-level questions through the runner. Repeated timing runs are needed only for a material performance claim.
-
-Answer the assigned questions through adaptive MCP exploration, using actual production handler output via the documented runner. Temporary generic scenario source must contain no external names or embedded paths. Choose calls from the current schema; inspect outputs between decisions. Count hidden polling and outer-page attempts. Follow domain pages/body windows explicitly when necessary. Record incomplete scope and unsupported runtime conclusions. Log source/search fallbacks separately.
-
-Write run metadata and per-question evidence using the task templates in the assigned ignored directory. Record exact requests, attempts, response observations, final answer with evidence, cost measurements, usability scores, and uncertainty. Preserve replay material locally and remove temporary scenarios after use. Do not claim correctness solely from your own interpretation; return the answer for independent review.
-
-Return only alias/question/finding IDs, a sanitized summary, local evidence keys, failed or missing checks, and remaining work. Do not commit or update shared task state. Avoid opportunistic redesign: report the obstacle and possible alternatives for triage.
+Record supported answers, gaps, every physical attempt, recovery, fallback, omissions, and visible text bytes. Distinguish agent mistakes from product behavior. Return candidate observations, not redesign commitments. Save ignored replay material, remove the temporary scenario, and return only aliases, finding IDs, sanitized summaries, and evidence keys. Do not commit or edit shared task docs.
