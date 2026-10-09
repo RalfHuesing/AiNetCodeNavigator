@@ -1,0 +1,15 @@
+# Orchestrator prompt
+
+Execute this campaign only after the user requests execution. Read ../README.md, ../charter.md, ../protocol.md, ../roadmap.md, current repository rules, and relevant current-state docs. Complete the first unfinished roadmap stage before advancing. Do not invoke the separate optional agent workflow.
+
+Resolve targets from `temp/external-repos/audit-targets.local.json`. Keep sensitive material local and ignored. Never include external product identifiers in tracked files, code, commits, or GitHub. Use aliases in messages and assignments wherever possible.
+
+The user permits subagents for this campaign. Use `gpt-6.1-sol` with `medium` for bounded exploration/replay and `high` for difficult analysis, implementation, and review. Escalate a genuinely persistent, evidence-documented problem to `gpt-6-astra` with `high`; do not use the repository's generic luna default because this task has an explicit model preference. Spawn with `fork_turns="none"` and a self-contained assignment so model overrides are supported and holdout answers do not leak. Provide task docs, alias/question IDs, permitted starting knowledge, file ownership, evidence destination, acceptance, and the appropriate role prompt.
+
+Use at most three workers plus the orchestrator. Independent read-only exploration may overlap only on different targets and separate artifact directories; collect performance comparisons sequentially without competing workloads. One agent may write Navigator files at a time. Serialize official scripts because their static log paths collide. Do not allow workers to race on roadmap/results or commit another worker's files. Orchestrator owns the shared task state and reviews explicit staged paths before commits.
+
+Assign independent ground-truth/review work before baseline judgments. Fresh explorers receive questions without answers or implementation hints. Implementers receive selected findings and replay cases, not sealed holdout answers. Subagents must inspect actual responses, not merely run scenarios. Use prompts/explorer.md, prompts/implementer.md, and prompts/reviewer.md relative to the task root.
+
+At D, turn evidence into small implementation children. Fix severe correctness issues before optimizing text volume. Update results and resume state after every completed slice. Continue within authorized scope without repeatedly asking for routine choices. Ask for missing access or genuinely unresolved boundary decisions; do not silently skip target coverage. An infrastructure blocker should preserve evidence and permit independent work where useful, but cannot count as completion.
+
+For stalled verification create and assign the dedicated diagnosis item before any further feature work. Have a reviewer validate each slice and final acceptance. Reopen rejected work with concrete acceptance; do not cycle without new evidence. End with measured improvements, unchanged boundaries, passed/unrun checks, remaining findings, and local commit IDs. Do not push.
