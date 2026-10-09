@@ -12,7 +12,7 @@ The user authorized this cycle on 2026-10-09. The [first-round roadmap](archive/
 ## Current state
 
 - Baseline Navigator revision: `7dd26a41853d193823e55670a156893b7913a2d7`.
-- Active stage: B. R01 has the Explorer slot; R04 waits for release.
+- Active stage: B. R01 exploration and independent review are complete with one incomplete agent answer and no proven product defect. R04 has the Explorer slot; an A01 follow-up is in preparation.
 - Selected candidates: none.
 - Product writer: orchestrator only.
 - Raw evidence root: ignored `temp/external-repos/mcp-usage-audit/round2/`.

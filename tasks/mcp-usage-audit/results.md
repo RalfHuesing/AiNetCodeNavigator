@@ -9,6 +9,7 @@ The [first-round report](archive/round1/results.md) remains the complete histori
 | ID | Stage | Alias | Evidence key | Observed result / limit | Decision |
 | --- | --- | --- | --- | --- | --- |
 | P-2 | Preflight | R01–R04 | `round2/preflight.local.json` | All registered source targets exist and their original worktrees were clean at preflight. Explorer listing/build succeeds; R01/R04 build configuration was checked before loading. Prior R03 original reference and framework limits remain until independently rechecked. | R01 and R04 scouts assigned with serialized Explorer access; no code candidate yet. |
+| X-R01-2 | Exploration and independent review | R01 | `round2/scout-r01/`, `round2/review-r01/review.local.md` | Two questions, 9 logical calls, 43 physical attempts, 53,954 visible UTF-8 bytes. The cross-project handoff was supported. The contract question was incomplete because the scout omitted follow-up reads for contract members and helper behavior, although the output was readable. Namespace-depth recovery was actionable. A mislabeled local clean-state field was corrected; current target revision and clean state match. | Agent follow-up miss, not a proven product defect; no candidate selected from R01. |
 
 Evidence keys are relative to ignored `temp/external-repos/mcp-usage-audit/`. Raw target paths, symbols, questions, answers, and response traces remain local. Product findings must be independently checked before entering the decision ledger.
 
