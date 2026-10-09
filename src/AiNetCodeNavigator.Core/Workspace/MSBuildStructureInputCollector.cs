@@ -50,12 +50,13 @@ internal static class MSBuildStructureInputCollector
             var frameworks = project.GetPropertyValue("TargetFrameworks");
             if (string.IsNullOrWhiteSpace(frameworks))
                 frameworks = project.GetPropertyValue("TargetFramework");
-            configuredTargetFrameworks[NormalizeProjectPath(projectPath)] = new ConfiguredTargetFrameworks(true,
-                frameworks.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Order(StringComparer.OrdinalIgnoreCase)
-                    .ThenBy(value => value, StringComparer.Ordinal)
-                    .ToArray());
+            var configuredFrameworks = frameworks.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .ThenBy(value => value, StringComparer.Ordinal)
+                .ToArray();
+            configuredTargetFrameworks[NormalizeProjectPath(projectPath)] =
+                new ConfiguredTargetFrameworks(configuredFrameworks.Length > 0, configuredFrameworks);
             var importedProjectFiles = project.Imports
                 .Select(import => import.ImportedProject)
                 .ToArray();
