@@ -1,6 +1,6 @@
 # Roadmap
 
-The first round has reached final review. Check items only with linked sanitized evidence in `results.md` and local raw evidence retained. B remains unchecked because its missed preimplementation freeze cannot be repaired retroactively; finish G's review and report partial acceptance rather than restarting the bounded round.
+The bounded first round has ended with partial acceptance. Check items only with linked sanitized evidence in `results.md` and local raw evidence retained. B remains unchecked because its missed preimplementation freeze cannot be repaired retroactively. G's independent review is complete, but its full acceptance criteria remain unmet; no automatic next round follows.
 
 - [x] Prepare charter, protocol, prompts, blank evidence templates, and ignored target registry.
 - [x] **A — Preflight and calibration.** Verify all alias targets, prerequisites, external dirty states, ignore boundaries, current catalog, and transport-free runner behavior. Record load limitations and run identities. Acceptance: usable targets and explicit blockers; no assumed framework/LOC verification. No baseline test suite or export smoke required. See A-001 in `results.md`.
@@ -9,7 +9,7 @@ The first round has reached final review. Check items only with linked sanitized
 - [x] **D — Select evidence-backed changes.** Two candidates are frozen below: E1 source metadata-origin completeness, then E2 exact assembly member handoff. No new public tool. See D-001 and the decision ledger in `results.md`; do not replace a rejected candidate.
 - [x] **E — Implement and verify selected slices.** E1 and E2 each have a neutral failing regression, focused implementation, official build and filtered checks, independent review, and a local commit. No verification stall or correction-after-review occurred. See E-001/E-002 in `results.md`.
 - [x] **F — Paired replay and fresh transfer questions.** All baseline questions were replayed on identified snapshots and eight fresh explorer questions were independently reviewed. Six holdouts were sealed before implementation; R01 Q005/Q006 are late-frozen transfer probes. Benefits are bounded to E1 completeness visibility and E2 direct member handoff; no speed claim. See F-001–F-009 in `results.md`. The historical B gate remains open.
-- [ ] **G — Final acceptance.** Independent review of boundaries, privacy, tool coherence, docs, risk-selected test evidence, remaining coverage gaps, final export safeguard/manifests, scenario cleanup, and external working-tree changes. No full-suite or transport gate. Reuse still-valid checks under the protocol. Acceptance: completion criteria in the charter met and sanitized final report committed. Otherwise retain open in-scope blockers and report partial status.
+- [ ] **G — Final acceptance.** Independent review of boundaries, privacy, tool coherence, docs, risk-selected test evidence, remaining coverage gaps, final export safeguard/manifests, scenario cleanup, and external working-tree changes is complete (G-001). E1/E2 and safeguards passed in scope. Full charter acceptance remains open because B's timely R01 freeze is missing and serious semantic coverage limits remain. No full-suite or transport gate applies. Final result is partial acceptance, not a pending review.
 
 ### Frozen E children
 
@@ -37,10 +37,10 @@ Copy under E after triage:
 
 ## Resume state
 
-- Last completed execution stage: F — paired replay and transfer questions independently reviewed; historical B freeze remains unmet for R01.
-- Active assignment: G — final boundary, privacy, verification and acceptance review.
-- Next action: independently inspect the consolidated report, changed contracts/tests, final export manifests, scenario cleanup and external state; record partial acceptance where required.
-- Required pending user decision: none. R03 uses an isolated local evaluation copy with supplied references; unknown framework contexts and partial assembly relationships remain explicit limits.
+- Last completed review: G — independent boundary, privacy, verification and export review, with partial overall acceptance (G-001).
+- Active assignment: none; the bounded first round is closed. Historical B and full G acceptance remain unchecked.
+- Next action: no automatic next round. Any further remediation or a new preimplementation holdout campaign requires a new user instruction.
+- Required pending user decision: none for this round. R03's isolated evaluation copy has supplied references; unknown framework contexts and partial assembly relationships remain explicit limits.
 - Evidence location: ignored `temp/external-repos/mcp-usage-audit/round1/` and the calibration raw run referenced in `results.md`.
 
 On interruption update this section with neutral IDs, active owned processes, completed gates, pending checks, local handoff location, and the exact next action. Never mark an interrupted or unrun gate as passed.
