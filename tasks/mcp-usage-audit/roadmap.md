@@ -5,7 +5,7 @@ The first round is active. Resume at the first unchecked item; check items only 
 - [x] Prepare charter, protocol, prompts, blank evidence templates, and ignored target registry.
 - [x] **A — Preflight and calibration.** Verify all alias targets, prerequisites, external dirty states, ignore boundaries, current catalog, and transport-free runner behavior. Record load limitations and run identities. Acceptance: usable targets and explicit blockers; no assumed framework/LOC verification. No baseline test suite or export smoke required. See A-001 in `results.md`.
 - [x] **B — Freeze questions and independent ground truth.** Fixed initial sample: six source questions per target, including two held-out questions, and three assembly questions across the campaign. Assign a reviewer to ground truth and seal holdouts. Acceptance: applicable families, independent evidence, budgets and measurement plan recorded locally. See B-001 in `results.md`.
-- [ ] **C — Baseline usage audit.** Run adaptive explorations on R01–R04, inspect all current tools, score outputs, count recovery attempts/fallbacks, and classify findings. Acceptance: actual saved outputs and per-question judgments; transport boundary explicit; temporary scenarios cleaned up.
+- [x] **C — Baseline usage audit.** Run adaptive explorations on R01–R04, inspect all current tools, score outputs, count recovery attempts/fallbacks, and classify findings. Acceptance: actual saved outputs and per-question judgments; transport boundary explicit; temporary scenarios cleaned up. See C-001–C-006 and the findings table in `results.md`.
 - [ ] **D — Select evidence-backed changes.** Rank findings and freeze at most three candidates within the charter's bounded first round; zero is valid. Reject unsupported ideas, defer independent work, record contract decisions, and append bounded executable implementation children here. Acceptance: each child has finding IDs, owner, smallest necessary scope, neutral reproduction, acceptance criteria, verification commands, and cross-target replay selection. At most one new public tool; no architecture expansion. Do not refill rejected candidates or preselect a new tool catalog.
 - [ ] **E — Implement and verify selected slices.** Execute the children sequentially with one writer. Each child includes failing regression where feasible, implementation, affected docs/consumers, appropriate official gates, independent review, and a verified local commit. Parent remains open until all children pass. Insert stall diagnosis before the next feature slice whenever required.
 - [ ] **F — Paired replay and fresh holdouts.** Re-run frozen baseline tasks and use a fresh explorer for holdouts; compare per-question correctness, cost, output, and usability across all targets. Acceptance: benefits supported by comparable measurements; regressions resolved or changes rejected; no hidden fallback or partial load.
@@ -32,10 +32,10 @@ Copy under E after triage:
 
 ## Resume state
 
-- Last completed stage: B — fixed questions and independent ground truth (see `results.md`, run B-001).
-- Active assignment: C — baseline usage audit, beginning with fresh explorer handoffs.
-- Next action: run adaptive transport-free baseline questions against R01–R04 and the selected managed assembly; inspect every response and preserve raw attempts.
-- Required pending user decision: none for baseline exploration; R03's missing references remain a coverage limitation to assess during loading.
+- Last completed stage: C — baseline usage audit (see `results.md`, runs C-001–C-006).
+- Active assignment: D — rank findings and freeze at most three candidates.
+- Next action: inspect owning code, consumers, neutral reproductions and verification risk; freeze only evidence-backed improvements.
+- Required pending user decision: none. R03 uses an isolated local evaluation copy with supplied references; unknown framework contexts and partial assembly relationships remain explicit limits.
 - Evidence location: ignored `temp/external-repos/mcp-usage-audit/round1/` and the calibration raw run referenced in `results.md`.
 
 On interruption update this section with neutral IDs, active owned processes, completed gates, pending checks, local handoff location, and the exact next action. Never mark an interrupted or unrun gate as passed.
