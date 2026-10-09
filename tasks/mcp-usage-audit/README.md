@@ -1,6 +1,6 @@
 # MCP usage audit and navigation improvement
 
-Status: first audit round active; baseline complete and improvement triage pending. No product implementation has started.
+Status: first audit round assessed; two product fixes are committed. Final acceptance is partial because the R01 preimplementation holdout freeze was incomplete and semantic loading limits remain.
 
 This is a task-specific orchestration package, not an invocation of the optional `.agents/agent-workflow/` steps. Read [the charter](charter.md), [protocol](protocol.md), and [roadmap](roadmap.md) before execution. Repository rules remain binding.
 

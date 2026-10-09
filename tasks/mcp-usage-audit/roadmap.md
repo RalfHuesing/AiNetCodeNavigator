@@ -1,14 +1,14 @@
 # Roadmap
 
-The first round is active. Resume at the first unchecked item; check items only with linked sanitized evidence in `results.md` and local raw evidence retained.
+The first round has reached final review. Check items only with linked sanitized evidence in `results.md` and local raw evidence retained. B remains unchecked because its missed preimplementation freeze cannot be repaired retroactively; finish G's review and report partial acceptance rather than restarting the bounded round.
 
 - [x] Prepare charter, protocol, prompts, blank evidence templates, and ignored target registry.
 - [x] **A — Preflight and calibration.** Verify all alias targets, prerequisites, external dirty states, ignore boundaries, current catalog, and transport-free runner behavior. Record load limitations and run identities. Acceptance: usable targets and explicit blockers; no assumed framework/LOC verification. No baseline test suite or export smoke required. See A-001 in `results.md`.
-- [x] **B — Freeze questions and independent ground truth.** Fixed initial sample: six source questions per target, including two held-out questions, and three assembly questions across the campaign. Assign a reviewer to ground truth and seal holdouts. Acceptance: applicable families, independent evidence, budgets and measurement plan recorded locally. See B-001 in `results.md`.
+- [ ] **B — Freeze questions and independent ground truth.** IDs, budgets and baseline questions were allocated before implementation, but actual R01 Q005/Q006 definitions and answer-free handoff were absent. They were independently sealed only after E1/E2 and before their fresh explorer; this cannot retroactively meet the preimplementation freeze. R02–R04 holdouts and all baseline questions were frozen as intended. See B-001 correction and F-007 in `results.md`. This historical gate remains open.
 - [x] **C — Baseline usage audit.** Run adaptive explorations on R01–R04, inspect all current tools, score outputs, count recovery attempts/fallbacks, and classify findings. Acceptance: actual saved outputs and per-question judgments; transport boundary explicit; temporary scenarios cleaned up. See C-001–C-006 and the findings table in `results.md`.
 - [x] **D — Select evidence-backed changes.** Two candidates are frozen below: E1 source metadata-origin completeness, then E2 exact assembly member handoff. No new public tool. See D-001 and the decision ledger in `results.md`; do not replace a rejected candidate.
 - [x] **E — Implement and verify selected slices.** E1 and E2 each have a neutral failing regression, focused implementation, official build and filtered checks, independent review, and a local commit. No verification stall or correction-after-review occurred. See E-001/E-002 in `results.md`.
-- [ ] **F — Paired replay and fresh holdouts.** Re-run frozen baseline tasks and use a fresh explorer for holdouts; compare per-question correctness, cost, output, and usability across all targets. Acceptance: benefits supported by comparable measurements; regressions resolved or changes rejected; no hidden fallback or partial load.
+- [x] **F — Paired replay and fresh transfer questions.** All baseline questions were replayed on identified snapshots and eight fresh explorer questions were independently reviewed. Six holdouts were sealed before implementation; R01 Q005/Q006 are late-frozen transfer probes. Benefits are bounded to E1 completeness visibility and E2 direct member handoff; no speed claim. See F-001–F-009 in `results.md`. The historical B gate remains open.
 - [ ] **G — Final acceptance.** Independent review of boundaries, privacy, tool coherence, docs, risk-selected test evidence, remaining coverage gaps, final export safeguard/manifests, scenario cleanup, and external working-tree changes. No full-suite or transport gate. Reuse still-valid checks under the protocol. Acceptance: completion criteria in the charter met and sanitized final report committed. Otherwise retain open in-scope blockers and report partial status.
 
 ### Frozen E children
@@ -37,9 +37,9 @@ Copy under E after triage:
 
 ## Resume state
 
-- Last completed stage: E — E1 and E2 independently reviewed and committed (`3b9b4ec`, `0dbc071`).
-- Active assignment: F — paired replay and fresh holdouts.
-- Next action: rebuild fresh Explorer processes at final product revision, replay frozen questions on distinct target snapshots, then run sealed holdouts without answer exposure.
+- Last completed execution stage: F — paired replay and transfer questions independently reviewed; historical B freeze remains unmet for R01.
+- Active assignment: G — final boundary, privacy, verification and acceptance review.
+- Next action: independently inspect the consolidated report, changed contracts/tests, final export manifests, scenario cleanup and external state; record partial acceptance where required.
 - Required pending user decision: none. R03 uses an isolated local evaluation copy with supplied references; unknown framework contexts and partial assembly relationships remain explicit limits.
 - Evidence location: ignored `temp/external-repos/mcp-usage-audit/round1/` and the calibration raw run referenced in `results.md`.
 
