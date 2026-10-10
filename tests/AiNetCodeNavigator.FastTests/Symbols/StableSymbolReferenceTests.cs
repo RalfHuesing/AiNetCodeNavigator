@@ -642,8 +642,14 @@ public sealed class StableSymbolReferenceTests
         Assert.True(SymbolEqualityComparer.Default.Equals(generatedSymbol, resolved.Value));
     }
 
-    [Fact]
-    public async Task FindSymbolScanner_KindAllIncludesGeneratedTypesButNotNamespaceDeclarations()
+    [Theory]
+    [InlineData("Generated.*")]
+    [InlineData("Generated.?*")]
+    [InlineData("Generated.^NamespaceType$")]
+    [InlineData("*")]
+    [InlineData("**")]
+    [InlineData("?*")]
+    public async Task FindSymbolScanner_KindAllIncludesGeneratedTypesButNotNamespaceDeclarations(string pattern)
     {
         using var workspace = TestWorkspaceBuilder.CreateSolution(
             @"C:\VirtualRepo\GeneratedFind.slnx",
@@ -658,7 +664,8 @@ public sealed class StableSymbolReferenceTests
         Assert.Contains("namespace Generated;", (await generatedDocument.GetTextAsync()).ToString(), StringComparison.Ordinal);
 
         var result = await FindSymbolScanner.FindMatchesWithDetailsAsync(
-            new FindSymbolScanRequest(solution, "Generated.*", Kind: SymbolKindFilter.All, IncludeGenerated: true));
+            new FindSymbolScanRequest(solution, pattern, Kind: SymbolKindFilter.All, IncludeGenerated: true)
+            { NamespaceFilter = "Generated" });
 
         Assert.Null(result.Error);
         var entry = Assert.Single(result.Entries);

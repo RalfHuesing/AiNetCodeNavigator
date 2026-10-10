@@ -46,6 +46,7 @@ public static class FindSymbolScanner
         }
 
         var nameFilter = SymbolNameMatcher.CreateDeclarationNameFilter(request.NamePattern);
+        var symbolFilter = SymbolNameMatcher.CreateSymbolFilter(request.NamePattern);
         var symbols = await SymbolFinder.FindSourceDeclarationsAsync(
             request.Solution,
             nameFilter,
@@ -53,12 +54,12 @@ public static class FindSymbolScanner
             ct).ConfigureAwait(false);
         var generatedDocumentOwners = await ExactSourceSymbolResolver.GetSourceGeneratedDocumentOwnersAsync(request.Solution, ct)
             .ConfigureAwait(false);
-        var generatedDeclarations = await GetGeneratedDeclarationsAsync(generatedDocumentOwners, request.NamePattern, ct)
+        var generatedDeclarations = await GetGeneratedDeclarationsAsync(generatedDocumentOwners, symbolFilter, ct)
             .ConfigureAwait(false);
 
         var nameMatches = symbols.Concat(generatedDeclarations).Distinct(SymbolEqualityComparer.Default)
             .Where(symbol => HasCSharpSourceLocation(request.Solution, symbol, generatedDocumentOwners))
-            .Where(symbol => SymbolNameMatcher.MatchesSymbol(symbol, request.NamePattern))
+            .Where(symbolFilter)
             .ToList();
 
         var filtered = FilterByKind(nameMatches, request.Kind)
@@ -268,7 +269,7 @@ public static class FindSymbolScanner
 
     private static async Task<IReadOnlyList<ISymbol>> GetGeneratedDeclarationsAsync(
         IReadOnlyDictionary<SyntaxTree, SourceGeneratedDocument> generatedDocumentOwners,
-        string namePattern,
+        Func<ISymbol, bool> symbolFilter,
         CancellationToken cancellationToken)
     {
         var results = new List<ISymbol>();
@@ -296,7 +297,7 @@ public static class FindSymbolScanner
         {
             if (symbol is not null
                 && symbol is not INamespaceSymbol
-                && SymbolNameMatcher.MatchesSymbol(symbol, namePattern)
+                && symbolFilter(symbol)
                 && !results.Contains(symbol, SymbolEqualityComparer.Default))
                 results.Add(symbol);
         }

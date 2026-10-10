@@ -46,26 +46,37 @@ public static class SymbolNameMatcher
         return CreatePredicateForSimplePattern(clean);
     }
 
-    public static bool MatchesSymbol(ISymbol symbol, string pattern)
+    public static bool MatchesSymbol(ISymbol symbol, string pattern) =>
+        CreateSymbolFilter(pattern)(symbol);
+
+    /// <summary>
+    /// Prepares name matching once for reuse across a search's candidate symbols.
+    /// </summary>
+    public static Func<ISymbol, bool> CreateSymbolFilter(string pattern)
     {
         var clean = CleanPattern(pattern);
         if (clean.Contains('.'))
         {
-            var display = symbol.ToDisplayString();
-            if (display.Contains(clean, StringComparison.OrdinalIgnoreCase)) return true;
-
             var parts = clean.Split('.', StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length > 0)
             {
-                var lastPart = parts[^1];
-                if (!MatchesSimplePattern(symbol.Name, lastPart)) return false;
-
+                var lastFilter = CreatePredicateForSimplePattern(parts[^1]);
                 var containerPrefix = string.Join(".", parts.Take(parts.Length - 1));
-                return display.Contains(containerPrefix, StringComparison.OrdinalIgnoreCase);
+                return symbol =>
+                {
+                    var display = symbol.ToDisplayString();
+                    return display.Contains(clean, StringComparison.OrdinalIgnoreCase)
+                        || lastFilter(symbol.Name) && display.Contains(containerPrefix, StringComparison.OrdinalIgnoreCase);
+                };
             }
+
+            var simpleFilter = CreatePredicateForSimplePattern(clean);
+            return symbol => symbol.ToDisplayString().Contains(clean, StringComparison.OrdinalIgnoreCase)
+                || simpleFilter(symbol.Name);
         }
 
-        return MatchesSimplePattern(symbol.Name, clean);
+        var nameFilter = CreatePredicateForSimplePattern(clean);
+        return symbol => nameFilter(symbol.Name);
     }
 
     public static async Task<IReadOnlyList<string>> FindSimilarSymbolNamesAsync(
@@ -132,6 +143,4 @@ public static class SymbolNameMatcher
         return name => name.Contains(pattern, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool MatchesSimplePattern(string name, string pattern) =>
-        CreatePredicateForSimplePattern(pattern)(name);
 }

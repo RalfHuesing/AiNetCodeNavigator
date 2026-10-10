@@ -19,6 +19,9 @@ namespace AiNetCodeNavigator.FastTests.Symbols;
 public sealed class FindSymbolScannerTests
 {
     [Theory]
+    [InlineData("*", "method", "Greet1,Greet1,Greet1,Greet12,PrefixGreet1,Welcome,Welcome")]
+    [InlineData("**", "method", "Greet1,Greet1,Greet1,Greet12,PrefixGreet1,Welcome,Welcome")]
+    [InlineData("?*", "method", "Greet1,Greet1,Greet1,Greet12,PrefixGreet1,Welcome,Welcome")]
     [InlineData("gReEt", "method", "Greet1,Greet1,Greet1,Greet12,PrefixGreet1")]
     [InlineData("*gReEt*", "method", "Greet1,Greet1,Greet1,Greet12,PrefixGreet1")]
     [InlineData("Greet*", "method", "Greet1,Greet1,Greet1,Greet12")]
@@ -28,8 +31,10 @@ public sealed class FindSymbolScannerTests
     [InlineData("^[", "method", "")]
     [InlineData("  `Greet1()`  ", "method", "Greet1,Greet1,Greet1,Greet12,PrefixGreet1")]
     [InlineData("'Greeter<T>'", "class", "Greeter,Greeter,GreeterDecoy")]
+    [InlineData("^Gr.*$", "class", "")]
     [InlineData("Matching.Greeter", "class", "Greeter,GreeterDecoy")]
     [InlineData("Matching.Greeter.Greet?", "method", "Greet1")]
+    [InlineData("Matching.Greeter.^greet[0-9]+$", "method", "Greet1,Greet12")]
     [InlineData("`Matching.Greeter.Greet1()`", "method", "Greet1,Greet12,PrefixGreet1")]
     public async Task FindMatchesWithDetailsAsync_CharacterizesSimpleAndQualifiedMatching(
         string pattern, string kind, string expectedNames)
@@ -65,6 +70,7 @@ public sealed class FindSymbolScannerTests
         if (expected.Length > 0)
         {
             Assert.True(SymbolNameMatcher.MatchesSymbol(candidate, pattern));
+            Assert.True(SymbolNameMatcher.CreateSymbolFilter(pattern)(candidate));
             Assert.True(SymbolNameMatcher.CreateDeclarationNameFilter(pattern)(candidate.Name));
         }
         if (pattern.Contains('.', StringComparison.Ordinal) && kind == "method")
@@ -73,6 +79,7 @@ public sealed class FindSymbolScannerTests
             var decoy = compilation.GetTypeByMetadataName("Matching.Other")!.GetMembers("Greet1").Single();
             Assert.True(SymbolNameMatcher.CreateDeclarationNameFilter(pattern)(decoy.Name));
             Assert.False(SymbolNameMatcher.MatchesSymbol(decoy, pattern));
+            Assert.False(SymbolNameMatcher.CreateSymbolFilter(pattern)(decoy));
         }
     }
 
