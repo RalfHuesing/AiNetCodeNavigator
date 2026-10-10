@@ -1,74 +1,144 @@
 # MCP Tools
 
-The server registers 12 read-only navigation tools. Their SDK method definitions are the authority for wire names, descriptions, defaults, and validation; this page explains how to choose and use them. Targets are absolute paths: source tools require an existing `.sln` or `.slnx`, and assembly tools require a managed `.dll` or `.exe`. Assembly navigation uses the selected binary's decompiled source and supported owner references; it never executes analyzed binaries. `browse_target` with `view=scope` is source-only.
+Use these tools through a connected MCP client. They are read-only navigation operations, not command-line subcommands. Targets are absolute existing `.sln` / `.slnx` paths for source or managed `.dll` / `.exe` paths for assemblies. Assembly navigation reads decompiled code and supported owner references; it never executes analyzed binaries.
 
-The exposed SDK descriptions explain [symbol matching](../navigation/find-symbol.md), [direct references and bounded caller traversal](../navigation/find-references-and-implementations.md), and [dependency roots, projections and analysis scope](../navigation/dependency-graph.md). Output pages deliver known results without expanding analysis bounds.
+This page is available offline with `AiNetCodeNavigator.exe --doc tools`. Read `--doc setup` to connect the server and `--doc overview` for installation and product boundaries. Server documentation uses stderr; save it with `2> navigator-tools.md` if useful. Repository links below are optional deeper reading.
 
-This page is also available offline from `AiNetCodeNavigator.exe --doc tools`. The executable writes documentation to stderr; for a long reference, consider saving it with `2> navigator-tools.md` and searching the file. Use `--doc setup` for client process configuration and `--doc overview` for the product introduction. Examples below are MCP tool requests sent by a client, rather than executable command-line arguments. Relative links reference optional deeper contracts in the source repository; the request rules and tool table below can be used offline.
+## First steps through your client
+
+1. Configure the installed server as a local stdio process using `--doc setup`, then connect your MCP client.
+2. Ask the client to discover the server's tools. MCP `tools/list` is the actual source for exposed names, descriptions, and `inputSchema` in the installed build. Read parameter descriptions alongside schema defaults and bounds: nullable parameters can advertise `default: null` while their description explains the effective default; conditional options and analysis limits may be described rather than encoded as schema constraints. Follow discovery pagination if the client reports it. Client prefixes and server labels may differ from the tool names shown here.
+3. Select the owning target and a narrow question. Use the discovered schema when preparing arguments; omit optional settings until needed.
+4. Send a `tools/call` through the client and inspect its text content, errors, scope, and omissions. Copy returned references and owner paths into follow-up calls.
+
+The examples below show MCP requests after the client's connection and initialization. A client may expose an equivalent tool UI instead of raw JSON-RPC. Do not paste these JSON requests into executable arguments.
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}
+```
+
+## Choose a tool
+
+This is a navigation guide, not a second input-schema catalog. Use `tools/list` and its parameter descriptions for wire arguments, defaults, validation, and per-tool budgets.
+
+| Question | Tool and practical behavior |
+|---|---|
+| Where is a declaration? | `find_symbol`: source or assembly. Patterns use case-insensitive substring matching, anchored `*` / `?` wildcards, or automatically detected regex; dot-separated patterns match qualified type/member names. Use `pattern` or `namePatterns`, not both. Narrow by kind, namespace, signature, or exact source project. `scopeType` selects `all`, `production`, or `tests`; assembly scope classifies owners. Extension-only discovery finds declared extension methods, without proving expression applicability. |
+| What is its implementation? | `get_symbol_body`: source or decompiled declaration bodies, including batches. `symbolIdentifiers` accepts returned references. Body windows use one-based declaration-relative lines, not physical file lines. Inspect each item's success or failure. |
+| What declarations are in this file? | `get_file_skeleton`: outlines without bodies or executable initializers. Accepts indexed source paths or references identifying declaration files; assembly files belong to the selected binary's decompiled source. |
+| What is indexed or in this namespace? | `browse_target`: select exactly one `view`, `scope` or `namespaces`. Scope is source-only and reports loaded projects/documents, frameworks, and exclusions. Namespace browsing supports source and assembly; it is not a physical-file inventory. |
+| Who calls it, or what does it call? | `get_call_tree`: incoming, outgoing, or both; bounded static traversal with ASCII or Mermaid output. Graph/fanout limits report truncation rather than a result-list cursor. |
+| Where is it used? | `find_references`: direct or bounded transitive uses. Optional summary reports discovered reference-site totals. Paging and analysis coverage are separate. |
+| What inherits or implements it? | `get_type_relations`: explicitly select `relation=hierarchy` or `implementations`. Contract/override roots and named type roots differ; follow unsupported-root recovery. |
+| What depends on this type or file? | `dependency_graph`: select a file or symbol root and type, file, namespace, or source-only project view. Member roots select the owning type. |
+| Where does this type come from? | `resolve_type_origin`: source project or metadata/framework/NuGet assembly; ambiguity can return candidates instead of one owner. |
+| Which context do I need? | `get_context`: explicitly select `sections` from `body`, `members`, `uses`, `tests`. Assembly supports the first three only. Tests are static source candidates with an independent scope; they do not prove coverage. Section failures can preserve useful partial results. |
+| What public API does this binary expose? | `inspect_assembly`: compact type overview; opt into `includeMembers=true` for member declarations. Keep each returned `handoffId` with its `ownerTargetPath`. |
+| Where is text in a binary? | `search_assembly`: literal decompiled-text search by default; `isRegex=true` explicitly enables regex. Declaration/kind/file filters narrow the query. A file analysis limit differs from result pagination. |
+
+## Source walkthrough: find and read a method
+
+Assume your application has a solution at `C:\work\App\App.slnx` and a method named `LoadOrders`. Substitute your real target and search term.
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"find_symbol","arguments":{"targetPath":"C:\\work\\App\\App.slnx","pattern":"LoadOrders","kind":"method","maxResults":10}}}
+```
+
+The following is an **illustrative excerpt of JSON inside the response's text content**, with omitted fields and explicit placeholders; it is not captured output. Matching declarations are under `results[].entries[]`:
+
+```json
+{
+  "results": [
+    {
+      "pattern": "LoadOrders",
+      "entries": [
+        {
+          "name": "<returned declaration name>",
+          "signature": "<returned signature>",
+          "projectName": "<returned project name>",
+          "filePath": "<returned source path>",
+          "handoffId": "<returned src: reference>"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Resolve multiple matches by signature, project, and file; do not select the first name match blindly. Replace the placeholder below with the exact selected `handoffId`. Keep the same solution target:
+
+```json
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_symbol_body","arguments":{"targetPath":"C:\\work\\App\\App.slnx","symbolIdentifiers":["<returned src: reference>"],"startLine":1,"maxBodyLines":40}}}
+```
+
+Read the returned body and each item's status. If it offers another body window, finish any outer response pages first, then use the returned reference and next declaration-relative `startLine`, omitting `endLine`. For direct uses of the same selected method:
+
+```json
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"find_references","arguments":{"targetPath":"C:\\work\\App\\App.slnx","symbolIdentifier":"<returned src: reference>","depth":1,"maxResults":10}}}
+```
+
+When the physical file and line are already known, an external bounded file read can answer a source-text question without symbol discovery. Source references remain usable across body edits or server restart when the owner path and declaration ID still select one declaration. Rediscover after renames, signature changes, or project moves.
+
+## Assembly walkthrough: inspect and read a type
+
+Select your managed binary, for example `C:\work\App\bin\App.Library.dll`. Begin with a small public type page:
+
+```json
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"inspect_assembly","arguments":{"targetPath":"C:\\work\\App\\bin\\App.Library.dll","maxResults":10}}}
+```
+
+The following is an **illustrative excerpt of JSON inside text content**, with omitted fields and placeholders; it is not captured output:
+
+```json
+{
+  "types": [
+    {
+      "name": "<returned type name>",
+      "signature": "<returned type signature>",
+      "handoffId": "<returned asm: reference>",
+      "ownerTargetPath": "<returned absolute owner path>"
+    }
+  ]
+}
+```
+
+After recovering all pages needed to choose the type, copy its exact `handoffId` and `ownerTargetPath` into the follow-up. They are a pair; the owner may differ from your initial target. Read the selected decompiled declaration:
+
+```json
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"get_symbol_body","arguments":{"targetPath":"<returned absolute owner path>","symbolIdentifiers":["<returned asm: reference>"],"maxBodyLines":40}}}
+```
+
+For a member list rather than a whole declaration body, use the same pair:
+
+```json
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"get_context","arguments":{"targetPath":"<returned absolute owner path>","symbolIdentifier":"<returned asm: reference>","sections":["members"],"maxResults":10}}}
+```
+
+Use returned member references for subsequent body or relationship queries. Never construct an `asm:` reference from a type's display name. If a result has no handoff reference, use its reported recovery or refine discovery. Native binaries are unsupported. Decompiled text and static relationships are evidence about the selected binary snapshot, not proof of runtime behavior.
 
 ## Shared request and response behavior
 
-Unless a tool row says otherwise, `maxResponseBytes` is a hard UTF-8 text limit from 512 through 65,536 bytes and `maxResponseTokens` is an optional positive hard limit counted with `cl100k_base`. Each tool has its own documented byte default. Budgets constrain successful output and recoverable errors; the server does not silently raise them. If a result cannot fit, retry the same request at the exact `minimumResponseBytes` and `minimumResponseTokens` pair in `RESPONSE_BUDGET_TOO_SMALL`; the offered byte minimum is at least the public 512-byte floor. Do not change the query between attempts. A token limit too small to encode even the recovery envelope returns sanitized `InvalidParams`.
+Keep the tool, target, query options, and page size unchanged during polling and paging. Treat all tokens as opaque. A successful response normally omits affirmative status and complete-analysis defaults; inspect actual item/section status, omissions, and truncation before claiming completeness or absence. Responses can contain JSON in text content, body text, or recovery text; do not assume every text block is standalone JSON, especially when outer paging splits it.
 
-Navigation calls that can load a target accept `operationToken`. When a response says `operation=running`, repeat the same tool and query with that token to poll. The host waits at most 15 seconds per response window; cancellation of a poll only stops that wait, while cancellation of the first request cancels its owned work. Budgets and tokens do not change the operation's query identity. Do not combine an operation token with an outer-page token.
+| Returned control | What to do next |
+|---|---|
+| `Status: operation=running` and `operationToken=...` | Running is not an analysis result. Wait at least `retryAfterMilliseconds`, then repeat the same tool, target, and query with the returned `operationToken`. Retain an active `resultCursor`; omit `continuationToken`. Inspect progress rather than repeatedly starting new work. |
+| `continuationToken=...` in the response preamble | Read the next stored outer text page: repeat the same query with `continuationToken`, omitting `operationToken` and `resultCursor`. Collect all outer pages before using result-list cursors or body windows. |
+| `resultCursor` in the result | After all outer pages, repeat the same query with this cursor and no other token. This pages known results in the same snapshot. If that call returns running, poll with its `operationToken` and retain this cursor. A `get_context` cursor continues one section but requires the original full `sections`, options, and page size. |
+| `RESPONSE_BUDGET_TOO_SMALL` | Follow the reported `minimumResponseBytes` / `minimumResponseTokens` and recovery instructions. Repeat the unchanged query with the supported budget increase; preserve active tokens as directed. |
+| Expired/invalid token or `STALE_SNAPSHOT` | Follow `nextAction`. Start a fresh query against the current target when required, then use only its new tokens and results. Do not combine body windows or result pages from different snapshots. |
+| `TARGET_MISMATCH` or ambiguous/missing symbol | Use the reported owner target for an unchanged reference; resolve ambiguity using returned candidates. Rediscover renamed, removed, or changed declarations. |
 
-Text too large for one response window is stored as immutable response pages. Follow the `continuationToken` shown in the response preamble by repeating the same query with that token alone; do not include `operationToken` or `resultCursor` on an outer-page request. These outer pages are independent of any domain cursor included in the result. After reconstructing all outer pages, continue a known result list with its opaque `resultCursor`, without `continuationToken`. If that domain continuation returns `operation=running`, poll it with the returned `operationToken` and same `resultCursor`. The result cursor is tied to the analyzed owner/reference snapshot and result section. Concrete `omissions` report analysis gaps independently of result cursors; a page can have no reported analysis gaps while advertising another domain page. Successful responses omit affirmative status and complete-analysis defaults; see [MCP Tool Results](../mcp-tool-results.md) for the compact output contract. Graph and bounded analysis tools without a result cursor report their remaining coverage through domain truncation and a next action.
-
-Symbol producers return stable source (`src:<project-path>|<declaration-id>`) or assembly (`asm:<simple-name>|<declaration-id>`) references when an exact declaration round-trip is available. The existing handoff fields carry these strings. Pass a reference unchanged to its consumer with the exact returned owner target for assembly results; do not parse it or substitute a display name. Source references remain usable after edits or runtime restart when the same owner path and Roslyn declaration ID still select exactly one declaration. The canonical wire grammar, strict input handling, and recovery codes are defined in [Shared Symbol Resolution](../navigation/symbol-resolution.md). If a tool reports truncation, follow its `nextAction` or repeat the same query with the indicated domain limit changed. `get_symbol_body` and `get_context` body windows use one-based declaration-relative line positions.
-
-## Navigation tools
-
-| Tool | Purpose and targets | Wire arguments and notable behavior |
-|---|---|---|
-| `find_symbol` | Find source/assembly declarations and actual extension methods. | `targetPath`; exactly one of `pattern` or `namePatterns` (1–10), unless `extensionOnly=true` enumeration omits both; optional `kind` (extension-only: omitted or method); source `project` exact name or returned canonical path; `namespaceFilter` ignore-case namespace substring; `signatureFilter` case-sensitive returned-signature substring; `receiverType` requires extension-only and matches declared aliases/qualified suffixes; `scopeType=all`, `includeGenerated=false`; `maxResults=50` combined page size (1–1000); assembly `includeReferences=false`, `includeDiagnostics=false`; operation, outer-page, result cursors; bytes default 16,384. Actual owners and stable references remain available; no assignability/expression applicability claim. |
-| `get_symbol_body` | Read source or decompiled declarations in target order. | `targetPath`, required non-empty `symbolIdentifiers`; optional `maxBodyLines=80` per identifier (1–1000), one-based declaration-relative `startLine=1`, inclusive `endLine`; operation/page tokens; bytes default 32,768. Names, documentation IDs, source locations, and stable references are accepted. Each item reports resolution status and its own next body window or error recovery. A mixed batch retains successful bodies and per-item failure details; an all-failed batch remains an MCP error while preserving each item reason. Reference errors distinguish `INVALID_SYMBOL_REFERENCE`, `TARGET_MISMATCH`, `SYMBOL_NOT_FOUND`, `AMBIGUOUS_SYMBOL`, `UNSUPPORTED_IDENTIFIER`, and `WORKSPACE_DIAGNOSTIC`. Follow a body window with its reference and next declaration-relative `startLine`, omit `endLine`, and read outer pages first. |
-| `get_file_skeleton` | Show declaration outlines without bodies or executable initializers. | `targetPath`, required `filePaths` (indexed relative/absolute source paths, or stable references identifying declaration files); operation/page tokens; bytes default 24,576. Source references resolve to every declaring regular/generated document, including partial declarations; the tool has no scope/generated filter. Physical paths retain their existing solution-relative base. Assembly paths refer only to the selected binary's decompiled source. Multi-variable declarations get separate references when available. |
-| `browse_target` | Browse exactly one loaded-scope or namespace view. | Required `targetPath` and `view=scope|namespaces`. Scope is source-only, with `maxResults=100` (1–128); projects report canonical `projectPath`, loaded context, configured/unanalysed frameworks and exclusions. Namespace view supports source and assembly targets: optional exact `project` name/path, `namespacePrefix`, `depth=1` (1–3), `includeTypes=true`, `kind=all` (class, interface, record, struct, enum, delegate), `includeGenerated=false`, `maxResults=50` (1–200). Namespace options are invalid in scope, even explicit defaults. Each view preserves all filtered inventory through `resultCursor`; cursors bind the view and original nullable options. Namespace totals explicitly distinguish project type counts from selected-prefix namespace counts and depth. Operation/outer/result tokens; bytes default 16,384. |
-| `get_call_tree` | Trace incoming, outgoing, or combined calls in source or assembly owners. | `targetPath`, required `symbolIdentifier`; `direction=incoming` (`outgoing`, `both`); `depth=2` (1–5); `topN=10` (1–250); `format=ascii` (`mermaid`); `includeBcl=false`; source `scopeType=all`, `includeGenerated=false`; `includeReferences=false`; assembly `includeDiagnostics=false`; operation/page tokens; bytes default 32,768. Graph node, edge, and fanout caps produce truthful domain truncation, not a cursor. |
-| `find_references` | Find direct/transitive uses with location, dispatch, provenance, and owner. | `targetPath`, required `symbolIdentifier`; `depth=1` (1–3); `maxResults=50` (positive page size); source `scopeType=all`, `includeGenerated=false`; `includeReferences=false` for supported assembly owner closure; `includeSummary=false` (known reference-site totals and owner-qualified identities; see [Reference summary](../navigation/reference-summary.md)); operation, outer-page, and result cursors; bytes default 16,384. Depth, node, and owner-closure limits describe analysis coverage separately from pages. |
-| `get_type_relations` | Show bases/interfaces/derived types or contract implementations/overrides. | `targetPath`, required `symbolIdentifier` and `relation=hierarchy|implementations`; positive `maxResults=50`; `scopeType=all`, `includeGenerated=false`; operation/outer-page/result cursors; bytes default 16,384. Hierarchy requires a named class/interface/struct. Implementations supports classes/interfaces, interface methods/properties/events and abstract/virtual/override methods/properties/events; unsupported seeds fail explicitly. Source metadata roots accept qualified types/exact T:/M:/P:/E: IDs with source-first fallback and optional proven `metadataOwnerPath`; see [relationships](../navigation/relationship-contracts.md#explicit-relation-selection). Assembly traversal remains within the existing owner source; no new closure option. |
-| `dependency_graph` | Project dependencies of a file or owning type into one selected type, file, namespace, or source-only project-reference list. | `targetPath`; exactly one of `filePath` or optional `symbolIdentifier`; `level=type` (`type`, `file`, `namespace`, `project`; project is source-only); member roots select the owning type; representative edge locations retain exact project identities; `direction=both` (`incoming`, `outgoing`); `depth=1` (1–3); `maxResults=50` (1–500); source `scopeType=all`, `includeGenerated=false` (both must be omitted for project view); operation/page tokens; bytes default 24,576. Project-qualified identities preserve same-named types in different projects. |
-| `resolve_type_origin` | Resolve a type to its source declaration or metadata/framework/NuGet assembly. | `targetPath`; exactly one non-empty `symbolIdentifier` or `typeName`; operation/page tokens; bytes default 16,384. Output preserves source project or DLL identity and can report ambiguous candidates. Source metadata answers report loaded-reference scope and unknown declared coverage; see [origin coverage](../navigation/resolve-type-origin.md). |
-| `get_context` | Read only explicitly selected body, direct members, direct uses, or static test candidates from one shared Source or Assembly analysis. | `targetPath`, required `symbolIdentifier`, required non-empty duplicate-free `sections` (`body`, `members`, `uses`, `tests`); optional `memberNameFilter`, `memberKindFilter`, `memberSortBy=lines|kind|name` and source-only `memberScope=all|production|tests` require members; `usageScope` applies only to source uses, `includeGenerated` applies to Source analysis, `includeReferences` applies to Assembly uses; `maxResults=10` list page size (1–100); `maxBodyLines=80` (1–1000), optional one-based declaration-relative `startLine`; operation, outer-page, and one-section `resultCursor`; bytes default 24,576. Assembly cannot request tests. Tests use an independent all-source scope; source-only `testHelperDepth=1` (0-2) requires tests and limits intermediate bound helper calls. Section errors retain already analyzed sections and mark them partial. |
-| `inspect_assembly` | Inspect a compact public type overview, with optional member details. | Assembly `targetPath`; optional `namespace`, `typeName`, `memberName`; `publicOnly=true`, `exactTypeName=false`, `includeMembers=false`; optional `memberName`/`memberNames` require true; `maxResults=100` (zero normalizes to 100; max 1000, page size); `includeReferences=false`; `includeDiagnostics=false`; `maxResponseBytes=24,576` (zero also selects 24,576); `maxResponseTokens`; operation, outer-page, and domain continuation. Type signatures, visibility, namespace, owners/references and limitations remain in the overview. Explicit member detail returns all filtered known members; the cursor also pages types and requested reference entries. Entries expose their owner target and assembly reference. |
-| `search_assembly` | Search decompiled source text and declarations, returning stable references for type and method declarations. | Assembly `targetPath`; required non-empty `pattern`; `isRegex=false` (literal by default; true explicitly enables regex); `caseSensitive=false`, `declarationOnly=false`; optional `kind` (`method`, `type`, `property`) and `fileFilter`; `contextLines=0` (0–5); `maxResults=50` (zero also 50, max 1000, page size); `maxFiles=0` (no matching-file limit, positive values capped at 2000); `includeDiagnostics=false`; bytes default 24,576 (zero also default); tokens and the shared operation/outer/domain paging values. `maxFiles` is a separate analysis bound from result pages. |
-
-## Practical patterns
-
-Start source navigation from a declaration, retain its returned stable reference, then read only the needed context. When the physical source path and physical line are already known, read a bounded line range from that file directly without loading the solution or discovering the symbol first. For example, this reads physical lines 120–159:
-
-```powershell
-Get-Content -LiteralPath 'C:\work\App\Services\OrderService.cs' | Select-Object -Skip 119 -First 40
-```
-
-For a known declaration identifier or stable reference, `get_symbol_body` reads a bounded window whose `startLine` is relative to that declaration, not the physical file. Follow a returned next body window with its reference. Select only the context sections that answer the question; static test candidates are independent of usage scope and are available for source solutions:
+For example, polling the initial source search adds one argument to that same request:
 
 ```json
-{"name":"find_symbol","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","pattern":"StableSymbolReference"}}
-{"name":"get_context","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","symbolIdentifier":"src:src/AiNetCodeNavigator.Core/AiNetCodeNavigator.Core.csproj|T:AiNetCodeNavigator.Core.Symbols.StableSymbolReference","sections":["body","uses"]}}
-{"name":"get_context","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","symbolIdentifier":"src:src/AiNetCodeNavigator.Core/AiNetCodeNavigator.Core.csproj|T:AiNetCodeNavigator.Core.Symbols.StableSymbolReference","sections":["tests"]}}
-{"name":"get_symbol_body","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","symbolIdentifiers":["T:AiNetCodeNavigator.Core.Symbols.StableSymbolReference"],"startLine":1,"maxBodyLines":40}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"find_symbol","arguments":{"targetPath":"C:\\work\\App\\App.slnx","pattern":"LoadOrders","kind":"method","maxResults":10,"operationToken":"<returned operationToken>"}}}
 ```
 
-For assemblies, start with a focused `inspect_assembly` or `search_assembly` query. Each result reference belongs to its reported `targetPath`; pass both unchanged to the next call. Use `get_context` for a selected body, members, or direct uses, and `find_references`, `get_type_relations` with `relation=implementations`, or `get_call_tree` when that individual relationship answer is clearer. On an owner mismatch, retry with the same reference against the reported owner target. A reference identifies a declaration in the supplied binary by metadata simple name and declaration ID; cross-owner analysis still validates its leased generation and provenance. If the declaration was renamed, removed or changed, repeat discovery; do not substitute its display name without evidence.
+For outer paging replace that `operationToken` argument with `continuationToken`; for result-list paging replace it with `resultCursor`. Use only the combination required by the preceding response.
 
-List tools return opaque `resultCursor` values when known results continue beyond a page. To read an outer response page, repeat the same query with `continuationToken` alone, without `operationToken` or `resultCursor`. Reconstruct all outer pages first; then continue the known result list with `resultCursor` and no `continuationToken`. Poll a domain continuation with `operationToken` only if it returned `operation=running`, retaining that `resultCursor`. A `get_context` cursor continues exactly one section but is bound to the original full `sections` selection, options, and page size: preserve them all for that continuation. Use another section's cursor from the original response, or start a fresh query for that section.
+`maxResponseBytes` bounds UTF-8 response text; `maxResponseTokens` optionally bounds text using `cl100k_base`. Discover per-tool defaults and supported values through `tools/list`. Budgets constrain delivery; they do not enlarge graph depth, scanned scope, or other analysis limits. Domain truncation without a cursor requires following `nextAction` or starting a new query with a supported analysis limit changed. Restoring missing owner/reference evidence can also be required.
 
-Find a declaration and follow its stable reference to the body:
+Navigation tools do not edit analyzed source or binaries. Use external tools for edits, builds, and tests. Source loading uses MSBuild design-time evaluation and is not a sandbox for custom build targets. The server's stdout is reserved for MCP transport.
 
-```json
-{"name":"find_symbol","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","pattern":"StableSymbolReference"}}
-{"name":"get_symbol_body","arguments":{"targetPath":"C:\\work\\AiNetCodeNavigator\\AiNetCodeNavigator.slnx","symbolIdentifiers":["src:src/AiNetCodeNavigator.Core/AiNetCodeNavigator.Core.csproj|T:AiNetCodeNavigator.Core.Symbols.StableSymbolReference"],"startLine":1,"maxBodyLines":80}}
-```
-
-For `RESPONSE_BUDGET_TOO_SMALL`, repeat the identical arguments and target with the exact byte/token minima from the error. For an outer text page, repeat the query with the response preamble's `continuationToken` alone. Do not include `operationToken` or `resultCursor` on that request. Do not change filters while recovering a stored operation or page.
-
-Inspect a large assembly with a small domain page, first consuming any outer pages for that response and then passing the opaque `resultCursor` back with unchanged filters. `continuationToken` is reserved for outer text pages; clients do not inspect cursor formats:
-
-```json
-{"name":"inspect_assembly","arguments":{"targetPath":"C:\\work\\bin\\Product.dll","maxResults":20}}
-```
-
-`inspect_assembly` returns type references and, with `includeMembers=true`, member references. Pass a type reference with its `ownerTargetPath` to `get_file_skeleton` for its declaration-file outline or `get_context` with `sections=[members]` for its members; pass a type or member reference with its owner target to `get_symbol_body` for decompiled source. For physical source files and assets, use external file search. `browse_target` with `view=scope` reports which solution documents participate in C# navigation.
-
-Use `browse_target` with `view=scope` on the solution path to see which C# projects/documents participate before choosing a source query. To change host logging, edit the startup settings file and restart the MCP process.
+Optional repository details: [symbol resolution](../navigation/symbol-resolution.md), [response budgets](../mcp-response-budgets.md), [long-running calls](../mcp-long-running-calls.md), [tool result formatting](../mcp-tool-results.md), and [navigation context](../navigation/get-context.md).

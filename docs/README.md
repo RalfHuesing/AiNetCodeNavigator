@@ -4,7 +4,16 @@ The binding product references are these current-state pages and local Navigator
 
 Installed executables provide selected canonical pages offline through `--doc topics` and `--doc <topic>`. The [setup guide](setup/README.md#embedded-command-line-documentation) describes server discovery; the [assembly export guide](assembly-export.md) describes exporter discovery. The embedded selection covers product orientation, setup, tool usage, and export operation.
 
-## Development
+## Installed-product usage
+
+- `AiNetCodeNavigator.exe --doc overview`: product orientation and installed-server quick start (canonical [README](../README.md)).
+- `AiNetCodeNavigator.exe --doc setup`: installation, MCP client process configuration, and optional host settings (canonical [Setup](setup/README.md)).
+- `AiNetCodeNavigator.exe --doc tools`: tool discovery, source/assembly walkthroughs, and response recovery (canonical [MCP Tools](tools/README.md)).
+- `AiNetCodeNavigator.AssemblyExport.exe --doc guide`: offline assembly export (canonical [Assembly export CLI](assembly-export.md)).
+
+The installed MCP client's `tools/list` supplies actual tool names, descriptions, and input schemas; read schema defaults and bounds together with parameter descriptions for effective defaults and semantic limits. The usage guide explains navigation choices rather than duplicating those schemas. Repository links below are optional deeper contracts for readers with a checkout.
+
+## Development and host contracts
 
 - [Build and Tests](development/build-and-tests.md): Solution structure, PowerShell scripts, and static log files in `temp/`.
 - [Manual MCP Exploration](development/mcp-exploration.md): On-demand C# scenarios, real local tool output, and inspection artifacts under `temp/exploration/`.
@@ -14,9 +23,6 @@ Installed executables provide selected canonical pages offline through `--doc to
 - [MCP Long-Running Calls and Continuations](mcp-long-running-calls.md): Operation token lifecycle, polling, immutable text snapshots, continuation tokens, and their limits.
 - [MCP Host](mcp-host.md): Stdio lifecycle, the navigation tool catalog, and startup host settings.
 - [MCP Traffic Capture](mcp-traffic-capture.md): Optional raw tool-call frames, session summaries, measurements, and storage limits.
-- [MCP Tools](tools/README.md): The 12 navigation tools, targets, wire arguments, defaults, paging, recovery, and usage examples.
-- [Setup](setup/README.md): Windows executable, stdio process configuration, host settings, and current Claude Desktop, Cursor, and Antigravity setup references.
-- [Assembly export CLI](assembly-export.md): Explicit DLL selection, dependency closure, marked dump ownership, generated project layout, and run-completeness reports.
 - [MCP Navigation Registration Status](navigation/mcp-registration-status.md): Current transport-free handler contracts and the boundary around retained end-to-end tests.
 
 ## Navigation

@@ -132,6 +132,16 @@ The full solution script runs test projects sequentially (`-m:1`) so Integration
 
 For agent handling of slow or stalled tests, follow the [verification rule](../../.agents/rules/04-verification.mdc#slow-or-stalled-tests). Its five-minute threshold triggers separate diagnosis by the agent; it is not an automatic timeout enforced by the test scripts.
 
+### Assembly export smoke test
+
+From a source checkout, run:
+
+```powershell
+pwsh -File ./scripts/export-assembly-smoke.ps1
+```
+
+It builds the solution, creates a small managed probe DLL and an excluded alias, exports the selected probe to `temp/assembly-export-smoke-dump/`, and checks the navigation artifacts, both class maps and their source links, and generated C# tree. It also checks named include/exclude selection and verifies that a dry-run leaves the existing dump's file hashes unchanged. This separate, disposable test dump does not replace an existing `temp/asm-dump/`. For package usage without a checkout, see the [assembly export guide](../assembly-export.md).
+
 ### E2E and extended integration tests
 
 `scripts/test-integration.ps1` and `scripts/test.ps1` exclude `Category=ExtendedIntegration` by default; `-IncludeExtended` removes only that exclusion. All ordinary script invocations exclude `Category=E2EIntegration`. `scripts/test-fast.ps1 -ReviewReportsOnly` remains available to select `AiNetCodeNavigator.FastTests.Reporting.RepositoryAuditReportTests.Review_PublishesRepositoryReportsWithoutBaseline` directly. Supplied filters are parenthesized and AND-combined with exclusions, so an OR filter cannot bypass them. `-ReviewReportsOnly` cannot be combined with `-Filter`. Use the scripts' `-Filter` parameter rather than passing `--filter` through additional arguments. Direct `dotnet test` calls do not apply the scripts' exclusions.
