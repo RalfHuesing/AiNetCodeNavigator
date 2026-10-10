@@ -4,14 +4,26 @@ The binding product references are these current-state pages and local Navigator
 
 Installed executables provide selected canonical pages offline through `--doc topics` and `--doc <topic>`. The [setup guide](setup/README.md#embedded-command-line-documentation) describes server discovery; the [assembly export guide](assembly-export.md) describes exporter discovery. The embedded selection covers product orientation, setup, tool usage, and export operation.
 
-## Installed-product usage
+## Embedded documentation map and maintenance
 
-- `AiNetCodeNavigator.exe --doc overview`: product orientation and installed-server quick start (canonical [README](../README.md)).
-- `AiNetCodeNavigator.exe --doc setup`: installation, MCP client process configuration, and optional host settings (canonical [Setup](setup/README.md)).
-- `AiNetCodeNavigator.exe --doc tools`: tool discovery, source/assembly walkthroughs, and response recovery (canonical [MCP Tools](tools/README.md)).
-- `AiNetCodeNavigator.AssemblyExport.exe --doc guide`: offline assembly export (canonical [Assembly export CLI](assembly-export.md)).
+These are the complete canonical Markdown sources available through `--doc`:
 
-The installed MCP client's `tools/list` supplies actual tool names, descriptions, and input schemas; read schema defaults and bounds together with parameter descriptions for effective defaults and semantic limits. The usage guide explains navigation choices rather than duplicating those schemas. Repository links below are optional deeper contracts for readers with a checkout.
+| Canonical source | Executable and topic | Purpose | Output stream |
+|---|---|---|---|
+| [README.md](../README.md) | `AiNetCodeNavigator.exe --doc overview` | Product orientation and installed-server quick start | stderr |
+| [docs/setup/README.md](setup/README.md) | `AiNetCodeNavigator.exe --doc setup` | Installation, MCP client process configuration, and optional host settings | stderr |
+| [docs/tools/README.md](tools/README.md) | `AiNetCodeNavigator.exe --doc tools` | Tool discovery, source/assembly walkthroughs, and response recovery | stderr |
+| [docs/assembly-export.md](assembly-export.md) | `AiNetCodeNavigator.AssemblyExport.exe --doc guide` | Offline assembly export | stdout |
+
+The server and exporter projects embed these same files as `EmbeddedResource` items at build time. There is no second CLI text copy to maintain. All other `docs/` pages, including this index, are repository-only references and are not available through `--doc`.
+
+When changing documentation:
+
+1. Use the map above to identify whether the page is embedded or repository-only, and edit its canonical source. If the embedded selection changes, update the project resource entries, CLI topic handling, and this map together.
+2. Keep embedded pages readable for users without a repository checkout. Include essential usage instructions in the page itself; repository-relative links may provide optional detail, but essential usage must not depend on following them.
+3. After building or publishing a changed embedded page, run `--doc topics` and the affected `--doc <topic>` with the corresponding built or published executable and inspect the emitted text. Capture server documentation from stderr (`2>`); capture exporter documentation from stdout (`>`). Confirm the edited content is present and readable.
+
+The installed MCP client's `tools/list` is the authority for current tool names, descriptions, and input schemas; read schema defaults and bounds together with parameter descriptions for effective defaults and semantic limits. The embedded usage guide explains navigation choices rather than duplicating those schemas. Repository links below are optional deeper contracts for readers with a checkout.
 
 ## Development and host contracts
 

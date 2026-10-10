@@ -23,4 +23,6 @@ This repository contains product specifications, a read-only MCP server for agen
 
 Read the relevant specification and rules before changing files. Ask when a decision is missing or sources conflict.
 
+Before changing documentation, consult the [embedded documentation map and maintenance workflow](docs/README.md#embedded-documentation-map-and-maintenance). It identifies the canonical pages embedded in each executable through `--doc` and the repository-only references; follow its maintenance and verification steps without creating separate CLI text copies.
+
 When a task needs readable source for selected managed DLLs or EXEs, use the deployed or built `AiNetCodeNavigator.AssemblyExport.exe` described in the assembly export guide. Use named `--output`, repeatable `--source`, and optional `--include`/`--exclude` filename patterns; see the guide for selection, dependency and dry-run contracts. The marked dump is fully replaced on every export run. Check the dump's `last-run.log` and per-assembly manifest before treating generated files as current or complete. Use MCP navigation for targeted queries; its tools remain read-only and stdout remains reserved for JSON-RPC.
