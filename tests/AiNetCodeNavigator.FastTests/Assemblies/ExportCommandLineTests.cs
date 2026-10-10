@@ -70,6 +70,8 @@ public sealed class ExportCommandLineTests
         Assert.Contains("--output", output.ToString());
         Assert.Contains("--exclude", output.ToString());
         Assert.Contains("--dependencies", output.ToString());
+        Assert.Contains("--doc", output.ToString());
+        Assert.Contains("saving it to a file", output.ToString());
         Assert.Empty(errors.ToString());
     }
 
@@ -79,6 +81,68 @@ public sealed class ExportCommandLineTests
         Assert.False(ExportCommandLine.TryParse(["--help"], out var parsed, out var error));
         Assert.Null(parsed);
         Assert.NotNull(error);
+    }
+
+    [Theory]
+    [InlineData("topics", "Embedded documentation topics:")]
+    [InlineData("guide", "# Assembly export CLI")]
+    public async Task InvokeAsync_DocumentationIsAvailableWithoutExportArguments(string topic, string expected)
+    {
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+        var called = false;
+        var exitCode = await ExportCommandLine.InvokeAsync(["--doc", topic],
+            _ => { called = true; return Task.FromResult(0); }, output, errors);
+        Assert.Equal(0, exitCode);
+        Assert.False(called);
+        Assert.Contains(expected, output.ToString());
+        Assert.Empty(errors.ToString());
+        Assert.Contains("saving it to a file", output.ToString());
+        if (topic == "guide") Assert.Contains("The output directory is **disposable**", output.ToString());
+    }
+
+    [Theory]
+    [InlineData("--doc", "guide")]
+    [InlineData("--doc", "topics", "--output", "dump", "--source", "input")]
+    public void TryParse_DocumentationDoesNotProduceExportArguments(params string[] args)
+    {
+        Assert.False(ExportCommandLine.TryParse(args, out var parsed, out var error));
+        Assert.Null(parsed);
+        Assert.NotNull(error);
+    }
+
+    [Theory]
+    [InlineData("--doc")]
+    [InlineData("--doc", "unknown")]
+    [InlineData("--doc", "")]
+    [InlineData("--doc", "guide", "--bogus")]
+    [InlineData("--doc", "guide", "--source")]
+    [InlineData("--doc", "guide", "--dependencies", "invalid")]
+    [InlineData("--doc", "guide", "--output", "a", "--output", "b")]
+    public async Task InvokeAsync_InvalidDocumentationReturnsUsageErrorWithoutExport(params string[] args)
+    {
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+        var called = false;
+        var exitCode = await ExportCommandLine.InvokeAsync(args,
+            _ => { called = true; return Task.FromResult(0); }, output, errors);
+        Assert.Equal(2, exitCode);
+        Assert.False(called);
+        Assert.NotEmpty(errors.ToString());
+    }
+
+    [Fact]
+    public async Task InvokeAsync_DocumentationRejectsExportArgumentsWithoutRunningExport()
+    {
+        using var output = new StringWriter();
+        using var errors = new StringWriter();
+        var called = false;
+        var exitCode = await ExportCommandLine.InvokeAsync(["--output", "dump", "--source", "input", "--doc", "guide"],
+            _ => { called = true; return Task.FromResult(0); }, output, errors);
+        Assert.Equal(2, exitCode);
+        Assert.False(called);
+        Assert.Empty(output.ToString());
+        Assert.Contains("--doc cannot be combined with export options", errors.ToString());
     }
 
     [Fact]

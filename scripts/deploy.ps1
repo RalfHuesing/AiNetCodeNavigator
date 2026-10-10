@@ -232,6 +232,6 @@ Configuration for Antigravity IDE (.agents/mcp_config.json or ~/.gemini/config/m
 }
 "@ -ForegroundColor Gray
 
-Write-Host "`nRun the offline exporter separately with:`n  `"$exportExePath`" <output-directory> <source-dll-or-pattern> [<source-dll-or-pattern> ...]" -ForegroundColor Yellow
+Write-Host "`nExplore the offline exporter with:`n  & `"$exportExePath`" --help`n  & `"$exportExePath`" --doc topics`nRun an export with (replace the example paths):`n  & `"$exportExePath`" --output `"C:\asm-dump`" --source `"C:\path\to\Assembly.dll`"`nRepeat --source to add more source files or directories." -ForegroundColor Yellow
 
 exit 0

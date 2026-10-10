@@ -4,6 +4,19 @@ AiNetCodeNavigator includes a read-only MCP server for **C# source code and comp
 
 The MCP server runs locally over stdio. Source navigation uses Roslyn; assembly navigation and export use the ILSpy decompiler (`ICSharpCode.Decompiler`). Navigation targets are existing `.sln` / `.slnx` solutions or managed `.dll` / `.exe` files. The offline exporter writes only to its explicitly selected, marked dump directory.
 
+## Discover an installed executable
+
+Run `--help` to identify either executable, then `--doc topics` to list its embedded documentation. The server offers `overview`, `setup`, and `tools`; the exporter offers `guide`. Read a topic with `--doc <topic>`. These commands exit after printing and need no MCP client, configuration file, or export arguments.
+
+The embedded pages are the same canonical Markdown maintained in this repository. They work offline; relative links refer to optional further reading in the repository, rather than files beside the executable. Long topics may be easier to inspect after saving the output to a file. For the server, redirect **stderr**; for the exporter, redirect **stdout**:
+
+```powershell
+& "C:\Tools\AiNetCodeNavigator\AiNetCodeNavigator.exe" --doc tools 2> navigator-tools.md
+& "C:\Tools\AiNetCodeNavigator\AiNetCodeNavigator.AssemblyExport.exe" --doc guide > assembly-export-guide.md
+```
+
+Start with the server's `overview`, then `setup` for the MCP process configuration and `tools` for navigation requests. Start with the exporter's `guide` before selecting an output dump. Documentation describes the executable's built version; online repository pages may describe a newer version. Build commands and development links in this overview apply to a source checkout.
+
 ## What you can do
 
 | Task | Tools |

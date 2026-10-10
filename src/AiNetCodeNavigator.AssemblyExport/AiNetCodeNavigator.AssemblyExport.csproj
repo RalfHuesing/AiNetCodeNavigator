@@ -9,5 +9,6 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="AiNetCodeNavigator.FastTests" />
+    <EmbeddedResource Include="..\..\docs\assembly-export.md" LogicalName="AiNetCodeNavigator.AssemblyExport.Documentation.export.md" />
   </ItemGroup>
 </Project>

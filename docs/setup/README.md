@@ -2,6 +2,18 @@
 
 AiNetCodeNavigator provides a local MCP server that uses standard input/output (stdio) and a separate offline assembly export command. Build both with the .NET 10 SDK version in [`global.json`](../../global.json) (10.0.203 with latest-feature roll-forward). Framework-dependent local deployments require the .NET 10 runtime on the host. Use `pwsh -File ./scripts/build.ps1` to build the solution and `pwsh -File ./scripts/deploy.ps1` to publish both executables to a testable directory.
 
+## Embedded command-line documentation
+
+An installed `AiNetCodeNavigator.exe` can explain itself before a client starts the MCP transport. Run `--help` for the command summary, `--version` for the build, or `--doc topics` for the embedded topic index. `--doc overview` prints the product README, `--doc setup` prints this setup guide, and `--doc tools` prints the full MCP tool reference. No settings file or target is needed for these discovery commands; they exit after printing.
+
+Server help, version, documentation, and argument errors are written to stderr so stdout remains available exclusively for MCP JSON-RPC. Large topics can be saved for selective reading:
+
+```powershell
+& "C:\Tools\AiNetCodeNavigator\AiNetCodeNavigator.exe" --doc tools 2> navigator-tools.md
+```
+
+Saving the output is optional; agents can choose to read it directly. Each page is embedded from its canonical repository Markdown at build time, so no separate documentation folder or internet connection is needed. Relative links reference optional further reading in the source repository, rather than installed files. The separate export executable provides its own `--doc topics` and `--doc guide`; see the assembly export guide for its output stream and options. Build commands in this guide apply to a source checkout.
+
 ## Windows release package
 
 The [release workflow](../../.github/workflows/release.yml) publishes both executables in a self-contained Windows x64 package, `AiNetCodeNavigator-win-x64.zip`, including the .NET runtime, `hostsettings.json`, README, and license. Both the MCP server and the exporter executables and their shared dependencies are located at the archive root. Check [GitHub Releases](https://github.com/RalfHuesing/AiNetCodeNavigator/releases) for published packages. Extract the entire archive and keep the executables with their dependencies. Source-solution loading uses installed MSBuild/.NET SDK tooling appropriate to the target solution, even with a self-contained server package.

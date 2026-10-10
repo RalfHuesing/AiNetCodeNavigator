@@ -1,6 +1,6 @@
 # Assembly export CLI
 
-`AiNetCodeNavigator.AssemblyExport.exe` is a separate offline command. Use named options to select sources and a dedicated output directory:
+`AiNetCodeNavigator.AssemblyExport.exe` is a separate offline command that decompiles selected managed .NET DLLs and EXEs into searchable C# project trees. It never executes analyzed assemblies. Use named options to select sources and a dedicated output directory:
 
 ```powershell
 AiNetCodeNavigator.AssemblyExport.exe --output "C:\asm-dump" --source "C:\Programme" --include "foo*.exe" --include "*bar*.dll" --exclude "DevExpress*.dll"
@@ -15,6 +15,17 @@ AiNetCodeNavigator.AssemblyExport.exe --output "C:\asm-dump" --source "C:\Progra
 | `--dependencies all\|none` | Default `all`; follows non-system references. `none` exports only selected roots. |
 | `--dry-run` | Prints planned exports, exclusions, filtered references and input/closure issues without creating, locking, resetting or writing the output dump. |
 | `--help` / `-h` | Prints usage without exporting. |
+| `--version` | Prints the executable build version without exporting. |
+| `--doc topics` | Lists embedded documentation topics without exporting. |
+| `--doc guide` | Prints this complete guide without exporting. |
+
+Help, version, and documentation discovery need no `--output` or `--source` arguments. Run `--doc` separately from export options; combining them is an argument error with exit code `2`. The exporter writes help, version, and documentation to stdout and argument errors to stderr. This guide is embedded from the same canonical Markdown maintained in the repository and works offline. For a long guide, consider saving it to a file before reading or searching selected sections:
+
+```powershell
+& "C:\Tools\AiNetCodeNavigator\AiNetCodeNavigator.AssemblyExport.exe" --doc guide > assembly-export-guide.md
+```
+
+Saving is optional. Documentation describes the executable's built version; relative links reference optional further reading in the source repository. Repository scripts mentioned below apply to a source checkout.
 
 Option order does not affect selection. Patterns match the complete filename including its extension, case-insensitively, using `*` and `?`. Paths, directory wildcards and `**` are unsupported in include/exclude patterns. Quote patterns to pass them literally. Native files found by directory searches are skipped. Unmatched exclusions are allowed. If no assembly remains selected, the command reports failure before touching an existing dump.
 
@@ -26,7 +37,7 @@ AiNetCodeNavigator.AssemblyExport.exe --output "C:\asm-dump" --source "C:\Progra
 
 Add `--dry-run` to inspect the selection before exporting. The inspection resolves references and reads assembly metadata; it does not decompile or publish source artifacts.
 
-The local deployment and Windows release archive place the CLI beside the MCP server executable. Run the CLI directly; MCP client process entries and `hostsettings.json` configure only the server. The exporter never executes analyzed assemblies.
+The local deployment and Windows release archive place the CLI beside the MCP server executable. Run the CLI directly; MCP client process entries and `hostsettings.json` configure only the server.
 
 ## Selection and dependencies
 
