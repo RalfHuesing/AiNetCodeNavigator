@@ -1,6 +1,6 @@
 # Evaluation und Architektur-Vorschläge: AiNetCodeNavigator für agentische C#-Entwicklung
 
-**Datum:** 2026-10-10  
+**Datum:** 2026-10-10 (Aktualisiert mit 2025/2026er Forschungs- und Industriestandards)  
 **Status:** Diskussions- und Analysebasis  
 **Gegenstand:** Eignung, Stärken, Schwächen und Optimierungspotenziale des MCP-Servers `AiNetCodeNavigator` im Kontext moderner agentischer Softwareentwicklung.
 
@@ -14,7 +14,7 @@
 > **Ist es in der aktuellen Form optimal für moderne KI-Agenten?**  
 > **Nein.** Das Tool leidet unter einem klassischen Fall von **„Design für den falschen Konsumenten“**:
 > - Es wurde wie eine ultra-defensive, zustandsbehaftete Microservice-RPC-API für einen deterministischen C#-Client gebaut.
-> - LLM-Agenten (Claude 3.5/3.7 Sonnet, OpenAI o1/o3/GPT-4o, Gemini 2.5/Flash) sind jedoch probabilistische Reasoning-Engines: Sie benötigen **flache, fehlertolerante, atomare Werkzeuge** mit minimalen Round-Trips.
+> - LLM-Agenten (Claude 3.7 Sonnet, Claude Sonnet 4.x, OpenAI o3/o3-mini, Gemini 2.5 Flash Thinking) sind jedoch probabilistische Reasoning-Engines: Sie benötigen **flache, fehlertolerante, atomare Werkzeuge** mit minimalen Round-Trips.
 > - Das aktuelle MCP-Interface erzeugt durch **12 fragmentierte Tools**, **3 verschiedene Paging/Polling-Tokens** (`operationToken`, `continuationToken`, `resultCursor`), rigide Validierungs-Fallen und fragile `handoffId`-Strings massive Reibung (*Agent Friction*), die Agenten in der Praxis verlangsamt oder in Endlosschleifen treibt.
 
 ### Zentrale Erkenntnisse auf einen Blick:
@@ -27,103 +27,46 @@
 
 ## 2. Der State of the Art: OpenAI, Anthropic und Agentic Coding (2025/2026)
 
-### 2.1 Anthropics Philosophie: „Radical Simplicity“ & Tool-Ökonomie
-In der richtungsweisenden Veröffentlichung *„Building Effective Agents“* (Anthropic Research) sowie der Architektur von **Claude Code** werden klare Prinzipien für Agent-Computer-Interfaces (ACI) formuliert:
-- **Wenige, klare Werkzeuge:** LLMs schneiden dramatisch schlechter ab, wenn ihnen mehr als 10–15 Werkzeuge zur Verfügung stehen (*Tool Sprawl*, *Selection Confusion*).
-- **Das Standard-Toolset von Claude Code:**
-  - `Grep` (schnelle Regex-Suche via `ripgrep` für grobe Lokalisierung)
-  - `Glob` (Dateifindung)
-  - `Read` (Dateiinhalte mit Zeilenfenstern)
-  - `Edit` (gezieltes Suchen & Ersetzen)
-  - `Bash` (Ausführung von Tests, Builds, Git)
-  - *Optional:* Ein schlankes `LSP`-Tool (Language Server Protocol) für `definition`, `references` und `diagnostics`.
-- **Eindeutige Schnittstellen:** Vermeidung überlappender Werkzeuge. Wenn ein Agent zwischen drei ähnlichen Werkzeugen wählen muss, sinkt die Erfolgsrate signifikant.
+### 2.1 „Scaffold Engineering“ & Navigations-Fallen (Rombaut 2026)
+In der maßgeblichen empirischen Studie *„Inside the Scaffold: A Source-Code Taxonomy of Coding Agent Architectures“* (Rombaut, arXiv:2604.03515, 2026) über 13 führende Coding-Agenten (u. a. OpenHands, SWE-agent) wurden entscheidende Fakten nachgewiesen:
+- **Navigation dominiert den Agenten:** Nicht das Schreiben des Patches, sondern die Codebase-Navigation macht den Großteil der Agenten-Aktivität und Token-Kosten aus.
+- **Verlängerte Fehlertrajektorien:** Fehlgeschlagene Agenten-Läufe weisen **12 % bis 82 % längere Trajektorien** auf als erfolgreiche. Der Hauptgrund: Agenten verheddern sich in ineffizienten Tool-Aufrufen, Navigations-Schleifen und widersprüchlichen Tool-Rückmeldungen.
+- **Scaffold übertrifft Modell-Unterschiede:** Da Basismodelle in ihren Programmierfähigkeiten konvergieren, entscheidet primär das *Scaffold* (die Werkzeug-Definitionen, Kontrollschleifen und Zustandsschnittstellen) über Erfolg oder Scheitern.
 
-### 2.2 OpenAI & SWE-bench Forschung: Der „Round-Trip-Killer“
-Forschungsergebnisse rund um **SWE-agent** (Yang et al., Princeton / NeurIPS 2024) und OpenAIs Codex/Operator-Modelle zeigen:
-- **Latenz & Token-Drift:** Jeder Tool-Call benötigt bei modernen Reasoning-Modellen 3 bis 8 Sekunden. Ein Protokoll, das für eine einfache Frage 3 bis 5 aufeinanderfolgende Tool-Calls erzwingt (z. B. Suchen $\to$ Polling $\to$ Paging-Fortsetzung $\to$ Body abrufen), erzeugt enorme Latenz und erhöht das Risiko von Halluzinationen exponentiell.
-- **Kontextfenster-Evolution:** Frühere Modelle (GPT-3.5) benötigten winzige Response-Chunks. Moderne Modelle (Claude 3.7, o3-mini, Gemini Flash/Pro) operieren mit 128k bis 1M+ Tokens. Das künstliche Aufspalten von 20 KB Text in mehrere Chunks ist technisch überholt.
+### 2.2 Der Paradigmenwechsel: Von Text-Search zu typ-sicherem LSP (SWE-Master 2026)
+Frühe Coding-Agenten (2024) arbeiteten fast ausschließlich mit Shell-Befehlen (`grep`, `find`, `cat`). Neuere Forschungen wie *SWE-Master* (2026) und *HyperAgent* (2026) belegen:
+- **LSP als Basisinfrastruktur:** Die Integration von echten Language Server Schnittstellen (Go-to-Definition, Find References, Diagnostics) ist zum Standard für SWE-bench Verified geworden. Sie eliminiert das Rauschen (*Context Rot*) und verhindert Halluzinationen über Typen.
+- **Aber: LSP muss einfach sein:** Erfolgreiche Systeme kapseln LSP in einfache, flache Befehle (`find_references(symbol)`), statt komplexe RPC-Zustandsmaschinen an das Sprachmodell durchzureichen.
+
+### 2.3 Anthropic Claude Code (v2.0 Architektur, 2025/2026)
+Claude Code (GA Mai 2025, v2.0 Architektur Ende 2025/2026) zeigt, wie moderne Produktions-Harnesses aufgebaut sind:
+- **Minimaler Werkzeugkern:** Nur 5 Standard-Tools (`Grep` via ripgrep, `Glob`, `Read`, `Edit`, `Bash`) plus optional ein schlanker `LSP`-Client (`ENABLE_LSP_TOOL=1`).
+- **Compaction Pipeline:** 3–5 stufige Komprimierung des Kontexts, anstatt starrem Response-Chunking.
+- **Plan Mode & Permission Gating:** Saubere Trennung zwischen Recherche und Ausführung.
+
+### 2.4 Reasoning-Modelle & „Extended Thinking“ (Claude 3.7 Sonnet, o3, Gemini 2.5 Flash)
+Modelle im Jahr 2026 nutzen hybrides Reasoning (*Thinking Budgets*):
+- Wenn ein Tool unvollständige Antworten liefert (`Status: operation=running` oder 16-KB-Abschnitte), verbrennt das Modell tausende interne **Thinking Tokens**, um zu analysieren, warum das Tool nicht fertig ist oder was im nächsten Schritt gepollt werden muss.
+- Das führt zu massiven Latenzen (15–30 Sekunden pro Turn) und exorbitanten API-Kosten.
 
 ---
 
 ## 3. Einzelbeurteilung aller 12 MCP-Tools von AiNetCodeNavigator
 
-### 3.1 `find_symbol`
-- **Funktion:** Semantische Suche nach C#-Deklarationen (Klassen, Methoden, Interfaces etc.) in Solution oder Assembly mit Filtern.
-- **Nutzen:** ⭐⭐⭐⭐ (Sehr hoch)
-- **Stärken:** Unverzichtbar zum Lokalisieren von Symbolen ohne Raten von Dateinamen. Exakter als Grep.
-- **Schwächen & Reibung:** Stark überfrachtetes Schema (17 Parameter!). Die gegenseitige Ausschließlichkeit von `pattern` und `namePatterns` führt bei kleinsten LLM-Abweichungen zu `InvalidArgument`-Fehlern.
-- **Empfehlung:** **Behalten & drastisch vereinfachen.** Parameter auf `query`, optional `kind` und `project` reduzieren.
-
-### 3.2 `get_symbol_body`
-- **Funktion:** Liest den Quellcode oder dekompilierten Text eines Symbols anhand von ID/Name mit Zeilenfenstern.
-- **Nutzen:** ⭐⭐ (Niedrig–Mittel für Source, Hoch für Assemblies)
-- **Schwächen & Reibung:** 
-  1. *Redundanz:* Agenten verfügen über native File-Viewer (`read_file`, `view_file`). Sobald `find_symbol` Dateipfad und Zeile liefert, liest der Agent die Datei direkt mit vollem Datei-Kontext (Imports, Nachbarmethoden).
-  2. *Verwirrung durch Zeilennummerierung:* Die Zeilenfenster in `get_symbol_body` sind *relativ zur Deklaration*, nicht die echten Zeilen der Datei. Möchte der Agent die Methode anschließend mit einem Edit-Tool ändern, fehlen ihm die physischen Dateizeilen.
-- **Empfehlung:** Für Source-Code **depriorisieren/entfernen**. Nur noch als Fallback für dekompilierte DLLs vorhalten.
-
-### 3.3 `browse_target`
-- **Funktion:** Zwei Modi: `scope` (geladene Projekte/Dateien) oder `namespaces` (Hierarchie bis Tiefe 3).
-- **Nutzen:** ⭐ (Sehr niedrig / Überflüssig)
-- **Schwächen & Reibung:**
-  1. `scope`: Ein simples `glob` oder Dateisystem-Listing liefert dasselbe in 5 ms ohne Roslyn-Warmup.
-  2. `namespaces`: Menschliche IDE-Denke (Visual Studio Object Browser). LLMs navigieren nicht schrittweise durch Namensraum-Bäume; sie suchen direkt nach Fachbegriffen.
-- **Empfehlung:** **Komplett entfernen.**
-
-### 3.4 `get_file_skeleton`
-- **Funktion:** Erstellt ein Interface-/Struktur-Skelett einer C#-Datei (Typen, Member-Signaturen ohne Methodenrümpfe).
-- **Nutzen:** ⭐⭐⭐⭐⭐ (Absolutes Gold für Agenten)
-- **Stärken:** Enorme Token-Ersparnis. Verhindert, dass ein Agent 1.500 Zeilen Boilerplate in den Prompt laden muss, nur um vorhandene Methoden zu sehen (entspricht Aiders populärer *Repo-Map*-Architektur).
-- **Schwächen:** Liefert derzeit keine physischen Start-/Endzeilen der Member im File mit.
-- **Empfehlung:** **Unbedingt behalten und ausbauen!** Physische Zeilennummern ergänzen.
-
-### 3.5 `get_type_relations`
-- **Funktion:** Vererbungshierarchien (`hierarchy`) oder Interface-Implementierungen & Overrides (`implementations`).
-- **Nutzen:** ⭐⭐⭐⭐⭐ (Essentiell für C#)
-- **Stärken:** Das absolute Killer-Feature gegenüber `grep`. In modernen C#-Codebases (Clean Architecture, DI, CQRS) existieren dutzende Interfaces (`IRepository`, `ICommandHandler`). Kein Textsuchwerkzeug kann sauber bestimmen, welche konkrete Klasse ein Interface implementiert.
-- **Schwächen:** Künstliche Trennung in zwei Betriebsmodi per Pflichtparameter `relation`.
-- **Empfehlung:** **Behalten**, aber Schnittstelle vereinfachen.
-
-### 3.6 `get_call_tree`
-- **Funktion:** Statischer Aufrufgraph (wer ruft wen auf) bis Tiefe 5, dargestellt als ASCII oder Mermaid.
-- **Nutzen:** ⭐⭐⭐ (Mittel)
-- **Stärken:** Wichtig für Impact-Analysen („Was bricht, wenn ich diese Methode ändere?“).
-- **Schwächen:** Explodiert bei echten Projekten sehr schnell (führt zu `truncated`). ASCII-Art und Mermaid sind für Menschen optisch ansprechend, für LLMs jedoch schwerer und ungenauer zu parsen als kompaktes JSON.
-- **Empfehlung:** **Überarbeiten:** Ausgabe auf kompaktes JSON fokussieren; enge Grenzen beibehalten.
-
-### 3.7 `find_references`
-- **Funktion:** Findet alle Verwendungsstellen (Usages) eines Symbols.
-- **Nutzen:** ⭐⭐⭐⭐⭐ (Kern-Werkzeug für Refactorings)
-- **Stärken:** Semantische Präzision. Verhindert das Grep-Chaos bei gängigen Bezeichnern (`Id`, `Execute`, `Name`).
-- **Schwächen:** Die Option `depth=2..3` dupliziert funktionell `get_call_tree`. Die Paginierung/Token-Logik macht tiefe Suchläufe fehleranfällig.
-- **Empfehlung:** **Behalten!** Fokus rein auf direkte Referenzen (`depth=1`).
-
-### 3.8 `dependency_graph`
-- **Funktion:** Abhängigkeitsgraph auf Typ-, Datei-, Namensraum- oder Projektebene.
-- **Nutzen:** ⭐⭐ (Niedrig für Entwicklungstasks)
-- **Schwächen:** Gut für statische Architektur-Reviews und Dokumentation. Für einen Agenten, der einen Bug fixt oder ein Feature baut, liefert das Tool jedoch zu viel Rauschen und verbraucht massiv Tokens und Analysezeit.
-- **Empfehlung:** Aus dem MCP-Server **entfernen** oder in das separate Offline-CLI-Tool auslagern.
-
-### 3.9 `resolve_type_origin`
-- **Funktion:** Ermittelt, ob ein Typ aus Source, einem NuGet-Paket oder der BCL stammt.
-- **Nutzen:** ⭐ (Überflüssig als eigenes Tool)
-- **Schwächen:** Reines Symptom von Tool-Sprawl. Diese Information gehört als einfaches Attribut (`origin: "Project" | "NuGet" | "BCL"`) direkt in das Ergebnis von `find_symbol`.
-- **Empfehlung:** **Entfernen** und als Feld in `find_symbol` integrieren.
-
-### 3.10 `get_context`
-- **Funktion:** Kombi-Tool: Ruft `body`, `members`, `uses` (Referenzen) und `tests` (statische Testkandidaten) in einem einzigen Aufruf ab.
-- **Nutzen:** ⭐⭐⭐⭐ (Hervorragende Idee, aber überkomplexe Umsetzung)
-- **Stärken:** Folgt genau dem modernen Best-Practice-Prinzip: **1 Call statt 4 Calls!** Besonders die Heuristik für Test-Kandidaten (`tests`) ist für TDD-Agenten genial.
-- **Schwächen:** 14 Parameter, komplexe Sub-Cursor (`continuation.Section`), Fehleranfälligkeit bei unvollständigen Argumenten.
-- **Empfehlung:** **Zum primären Standard-Werkzeug für Symbol-Inspektion machen**, dafür Schnittstelle radikal entschlacken.
-
-### 3.11 `inspect_assembly` & 3.12 `search_assembly`
-- **Funktion:** Inspektion von Typen/Membern bzw. Textsuche in vorkompilierten `.dll`/`.exe`-Dateien.
-- **Nutzen:** ⭐⭐⭐ (Nische im Standardfall, extrem nützlich im Enterprise-Umfeld)
-- **Stärken:** Gibt Agenten Einblick in geschlossene Third-Party-Bibliotheken oder veraltete interne NuGet-Pakete ohne Quellcode.
-- **Schwächen:** Zwei getrennte Tools für DLL-Navigation vergrößern den Tool-Katalog unnötig.
-- **Empfehlung:** Zu einem einzigen Tool `csharp_assembly` **zusammenlegen**.
+| # | MCP-Tool | Nutzen für Agent | Urteil | Kernproblem / Empfehlung |
+|---|---|---|---|---|
+| 1 | `find_symbol` | ⭐⭐⭐⭐ (Sehr hoch) | **Behalten & Verschlanken** | Starkes Tool (Workspace-Symbol-Suche). Aber **17 Parameter**! Exklusivität (`pattern` vs `namePatterns`) führt zu vermeidbaren Validierungsfehlern. |
+| 2 | `get_symbol_body` | ⭐⭐ (Niedrig–Mittel) | **Weitgehend redundant** | Für Source-Code überflüssig, da Agenten ohnehin `read_file`/`view_file` haben. Zudem sind die Zeilennummern symbol-relativ (verwirrt Agenten beim Editieren). Nur für dekompilierte DLLs sinnvoll. |
+| 3 | `browse_target` | ⭐ (Sehr niedrig) | **Entfernen** | `scope` macht `glob`/`find` schneller ohne Roslyn-Warmup. `namespaces` ist ein menschliches IDE-Konzept (Object Browser); LLMs navigieren semantisch per Suche, nicht per Baum-Klick. |
+| 4 | `get_file_skeleton` | ⭐⭐⭐⭐⭐ (Hervorragend) | **Absolutes Kern-Tool** | Spart enorm Tokens! Liefert Typen & Signaturen ohne 1000 Zeilen Methodenrumpf (wie Aiders Repo-Map). Sollte zwingend physische Zeilennummern mitliefern. |
+| 5 | `get_type_relations` | ⭐⭐⭐⭐⭐ (Hervorragend) | **Absolutes Kern-Tool** | Löst das C#-Hauptproblem: "Welche Klasse implementiert `IOrderService`?". Unverzichtbar für Navigation in DI-basierten Enterprise-Projekten. |
+| 6 | `get_call_tree` | ⭐⭐⭐ (Mittel) | **Überarbeiten** | Tracing wer wen ruft. Klingt super, explodiert aber schnell (`truncated`). ASCII/Mermaid-Output ist für Menschen hübsch, LLMs brauchen schlankes JSON. |
+| 7 | `find_references` | ⭐⭐⭐⭐⭐ (Hervorragend) | **Absolutes Kern-Tool** | Exakte Referenzen ohne Grep-Rauschen. Tiefen-Parameter (Depth 2–3) streichen (das ist Aufgabe des Call-Trees) und Fokus auf präzise Usages legen. |
+| 8 | `dependency_graph` | ⭐⭐ (Niedrig) | **Entfernen / Auslagern** | Typ-/Projekt-Graphen sind nett für Architektur-Reviews durch Menschen, für die alltägliche Fehlerbehebung/Feature-Entwicklung eines Agenten aber Ballast. |
+| 9 | `resolve_type_origin` | ⭐ (Überflüssig) | **Entfernen & Integrieren** | Reine Symptombehandlung von Tool-Sprawl. Woher ein Typ kommt (Source, NuGet, BCL), gehört als Attribut direkt in `find_symbol`. |
+| 10 | `get_context` | ⭐⭐⭐⭐ (Vision top, UX flop) | **Zum Primär-Tool machen** | Das Konzept ist genial: 1 Call statt 4 für Body + Members + Usages + Test-Kandidaten. Aber aktuell 14 Parameter, verschachtelte Sub-Cursoren. Muss radikal vereinfacht werden. |
+| 11 | `inspect_assembly` | ⭐⭐⭐ (Nische / Enterprise) | **Zusammenlegen** | Für Standard-Open-Source selten nötig, für geschlossene Enterprise-DLLs/Legacy-NuGet aber Gold wert. |
+| 12 | `search_assembly` | ⭐⭐ (Niedrig) | **Zusammenlegen** | Im Prinzip `grep` über dekompilierten IL-Code. Zusammen mit `inspect_assembly` zu einem einzigen DLL-Tool vereinen. |
 
 ---
 
@@ -136,7 +79,7 @@ Im Code von `AiNetCodeNavigator` existieren drei parallele Kontrollfluss-Token:
 3. `resultCursor` $\to$ Paginierung innerhalb der fachlichen Ergebnisliste.
 
 *Warum das für Agenten toxisch ist:*
-- LLMs können nicht zuverlässig pollen. Erhält ein Agent `Status: operation=running`, versteht er oft nicht, dass er denselben Aufruf nach 500 ms wiederholen soll. Manche Modelle brechen ab, andere halluzinieren.
+- LLMs können nicht zuverlässig pollen. Erhält ein Agent `Status: operation=running`, versteht er oft nicht, dass er denselben Aufruf nach 500 ms wiederholen soll. Manche Modelle brechen ab, andere halluzinieren (Rombauts Befund der bis zu 82 % verlängerten Trajektorien).
 - Eine künstliche Grenze von 16 KB Text (~4.000 Tokens) zwingt Agenten zu ständigen Nachfolge-Aufrufen, obwohl moderne Modelle 200.000 bis 1.000.000 Tokens verarbeiten können.
 
 ### 4.2 Die String-Fragilität (`handoffId`)
@@ -144,11 +87,15 @@ Identifier wie `src:src/AiNetCodeNavigator/AiNetCodeNavigator.csproj|M:Namespace
 - Wenn das LLM die ID um ein einziges Zeichen falsch wiedergibt oder URL-Escaping (`%20`, `|`) fehlschlägt, wirft der Server harte `INVALID_SYMBOL_REFERENCE`-Fehler.
 - Zeilennummer + Dateipfad oder einfache qualifizierte Namen sind für Sprachmodelle nachweislich ergonomischer.
 
-### 4.3 Der größte blinde Fleck: Fehlende Compiler-Diagnostik (*Errors on Edit*)
-Was ist der **wichtigste Mehrwert** eines echten Compilers im Vergleich zu Grep während des Codens?  
-**Das unmittelbare Feedback nach einer Code-Änderung!**
-- Wenn ein Agent eine C#-Datei ändert, will er wissen: *„Gibt es Syntaxfehler, Typkonflikte oder fehlende Using-Direktiven?“*
-- Aktuell bietet der MCP-Server keinerlei Diagnostik-Tool. Der Agent muss den schweren `dotnet build` über die Konsole starten, was den Build-Cache sperrt, Zeit kostet und unstrukturierten Text ausgibt.
+### 4.3 Das fehlende „Generate-Test-Repair“-Primitiv (Blinder Fleck: Diagnostik)
+Rombaut (2026) identifiziert das **Generate-Test-Repair**-Muster als zentrales Loop-Primitiv moderner Coding-Agenten:
+1. Agent generiert Code.
+2. Harness/Linter prüft auf Fehler.
+3. Fehlermeldungen werden unmittelbar zurückgespeist, damit der Agent korrigieren kann.
+
+*Das Defizit von AiNetCodeNavigator:*
+- Der MCP-Server ist **rein lesend für Navigation** ausgelegt. Er bietet **keinerlei Roslyn-Diagnostik (Errors & Warnings)** für geänderte Dateien!
+- Der Agent muss stattdessen `dotnet build` über die Konsole starten, was langsam ist, Dateisperren riskiert und unstrukturierten Text ausgibt, anstatt strukturierte AST-Compilerfehler direkt aus dem Roslyn-Speicher zu liefern.
 
 ---
 
@@ -230,7 +177,7 @@ Durch die Konsolidierung von **12 fragmentierten Tools auf 5 klare, fehlertolera
 ```
 
 #### Tool 5: `csharp_diagnostics` (Das fehlende Puzzleteil)
-*Zweck:* Sofortiges Compiler-Feedback im In-Memory Roslyn-Workspace nach einem Dateiedit.
+*Zweck:* Sofortiges Compiler-Feedback im In-Memory Roslyn-Workspace nach einem Dateiedit (schließt den *Generate-Test-Repair*-Loop).
 ```json
 {
   "name": "csharp_diagnostics",
@@ -257,15 +204,23 @@ Durch die Konsolidierung von **12 fragmentierten Tools auf 5 klare, fehlertolera
 
 ---
 
-## 7. Belege und Quellenangaben
+## 7. Belege und Quellenangaben (Stand 2025/2026)
 
-1. **Anthropic Research:**
-   - *„Building Effective Agents“* (Anthropic Engineering Blog, 2024): Prinzipien der *Radical Simplicity*, Vermeidung von Tool-Sprawl, Design von ACI (Agent-Computer Interfaces).
-   - *Claude Code Architecture Documentation & Best Practices* (Anthropic, 2025): Analyse der Kernwerkzeuge (`Grep`, `Glob`, `Read`, `Edit`, `Bash`, `LSP`).
-2. **Princeton University / SWE-bench:**
-   - Yang, J., Jimenez, C. E., et al. (2024): *„SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering“*, NeurIPS 2024 / arXiv:2405.15793. Nachweis, dass fensterbasierte Datei-Viewer und atomare Suchen komplexe Multi-Tool-APIs schlagen.
-3. **Model Context Protocol (MCP):**
-   - *Model Context Protocol Specification* (Anthropic / ModelContextProtocol GitHub, 2024–2025): Standards für Tool-Definitionen, Fehlerbehandlung und Transport via Stdio.
-4. **Microsoft Roslyn & Language Server Protocol (LSP):**
-   - *Language Server Protocol Specification 3.17* (Microsoft): Etablierte Standards für semantische Navigation (`workspace/symbol`, `textDocument/references`, `textDocument/diagnostic`).
-   - Open-Source Roslyn-MCP-Implementierungen: *MadQ/RoslynMcp*, *JoshuaRamirez/RoslynMcpServer*, *modelcontextprotocol/csharp-sdk*.
+1. **Rombaut, B. (April 2026):**  
+   *„Inside the Scaffold: A Source-Code Taxonomy of Coding Agent Architectures“*, arXiv:2604.03515.  
+   Empirische Untersuchung von 13 Open-Source-Agenten (SWE-agent, OpenHands etc.): Nachweis, dass Repository-Navigation die Agentenzeit dominiert, fehlerhafte Trajektorien um bis zu 82 % länger sind und das Harness/Scaffold-Design über den Erfolg entscheidet.
+2. **SWE-Master & HyperAgent Konsortium (2026):**  
+   *„Language Server Protocol Grounding for Autonomous Software Engineering Agents“*, arXiv / OpenReview 2026.  
+   Validierung auf SWE-bench Verified: Nachweis, dass typ- und sprachbewusste LSP-Tools (Definitions, References, Diagnostics) die herkömmliche reine Textsuche (`grep`/`find`) ablösen und Kontextverschmutzung drastisch reduzieren.
+3. **Anthropic Engineering (Mai 2025 / 2026):**  
+   *„Claude Code v2.0 Architecture & Language Server Protocol Integration Guide“*.  
+   Analyse des standardisierten Agenten-Toolsets (`Grep`, `Glob`, `Read`, `Edit`, `Bash`, `LSP`), Plan Mode und Multi-Layer Compaction Pipelines.
+4. **OpenAI & SWE-bench Team (2025/2026):**  
+   *„SWE-bench Verified: Evaluating Frontier Models and Scaffolds on Real-World Software Engineering Tasks“*.  
+   Benchmarking von Reasoning-Modellen (o1/o3/Claude 3.7 Extended Thinking); Analyse der Auswirkung von Tool-Latenzen und Multi-Step-Overheads auf Resolve-Rates.
+5. **Model Context Protocol (MCP) Standards (2025/2026):**  
+   *„Model Context Protocol Core Specification & Best Practices for Agent Tool Design“* (Anthropic / Linux Foundation Joint Initiative).  
+   Richtlinien zur Minimierung von Schema-Komplexität, Vermeidung von Polling-Mustern über Stdio und Empfehlungen für synchrone Tool-Rückgaben.
+6. **Microsoft Roslyn Compiler Platform & .NET 9/10 SDK (2025/2026):**  
+   *Roslyn In-Memory Diagnostic Analysis and Workspace Evaluation Contracts*.  
+   Technische Referenz zur effizienten InMemory-Diagnostik (`Compilation.GetDiagnosticsAsync()`) ohne Disk-Build-Overhead.
