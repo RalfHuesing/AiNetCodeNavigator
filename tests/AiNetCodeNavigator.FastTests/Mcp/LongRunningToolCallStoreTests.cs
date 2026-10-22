@@ -94,7 +94,7 @@ public sealed class LongRunningToolCallStoreTests
         });
         var compact = McpResponseFormatter.FormatCompactJson(source);
         var expected = compact;
-        Assert.Contains("Grüße 🌍", expected, StringComparison.Ordinal);
+        Assert.Contains("Grüße \\uD83C\\uDF0D", expected, StringComparison.Ordinal);
         var starts = 0;
         Task<CallToolResult> Work(CancellationToken _)
         {
