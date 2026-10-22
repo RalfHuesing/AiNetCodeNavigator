@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using AiNetCodeNavigator.Core.Models;
 using AiNetCodeNavigator.Mcp;
@@ -33,7 +34,7 @@ public sealed class LongRunningToolCallStoreTests
     }
 
     [Fact]
-    public async Task RegisteredDomainCursorKeepsCompactJsonPropertyBoundaries()
+    public async Task RegisteredDomainCursorProducesMinifiedJson()
     {
         await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
         var metadata = new NavigationAnalysisMetadata(
@@ -56,9 +57,8 @@ public sealed class LongRunningToolCallStoreTests
         using var parsed = JsonDocument.Parse(body);
 
         Assert.False(result.IsError ?? false, text);
-        Assert.Contains("\n\"types\":[\n", body, StringComparison.Ordinal);
-        Assert.Contains("\n\"resultCursor\":", body, StringComparison.Ordinal);
-        Assert.DoesNotContain("\n  \"types\": [", body, StringComparison.Ordinal);
+        Assert.DoesNotContain('\n', body);
+        Assert.DoesNotContain('\r', body);
         var cursor = parsed.RootElement.GetProperty("types")[0].GetProperty("resultCursor").GetString();
         Assert.NotNull(cursor);
         Assert.Equal(39, cursor.Length);
@@ -68,6 +68,119 @@ public sealed class LongRunningToolCallStoreTests
         Assert.DoesNotContain("analysisCompleteness=", text, StringComparison.Ordinal);
         Assert.DoesNotContain("resultContinuation=", text, StringComparison.Ordinal);
         Assert.Equal("Widget", parsed.RootElement.GetProperty("types")[0].GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task JsonContinuationPagesPreserveStructureStringsAndBudgets()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
+        var payload = new
+        {
+            symbol = new { name = "Widget.Render", signature = "public string Render()" },
+            groups = Enumerable.Range(0, 18).Select(group => new
+            {
+                name = $"Group{group:D2}",
+                entries = Enumerable.Range(0, 2).Select(entry => new
+                {
+                    name = $"Member{group:D2}_{entry:D2}",
+                    text = $"value,{entry} with quote \"quoted\", braces {{x}}, line\nfeed, and Grüße 🌍",
+                }).ToArray(),
+            }).ToArray(),
+        };
+        var source = JsonSerializer.Serialize(payload, new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        });
+        var compact = McpResponseFormatter.FormatCompactJson(source);
+        var expected = compact;
+        Assert.Contains("Grüße 🌍", expected, StringComparison.Ordinal);
+        var starts = 0;
+        Task<CallToolResult> Work(CancellationToken _)
+        {
+            Interlocked.Increment(ref starts);
+            return Task.FromResult(new CallToolResult { Content = [new TextContentBlock { Text = compact }] });
+        }
+
+        var current = await store.RunAsync(Request("get_context", "target", "symbol=Widget.Render", Work,
+            maxResponseBytes: 512, maxResponseTokens: 180));
+        var concatenated = new StringBuilder();
+        var pages = 0;
+        while (pages < 100)
+        {
+            var text = TextOf(current);
+            Assert.False(current.IsError ?? false, text);
+            Assert.True(Encoding.UTF8.GetByteCount(text) <= 512);
+            Assert.True(McpResponseFormatter.CountTokens(text) <= 180);
+            var body = BodyOf(current);
+            Assert.DoesNotContain('\n', body);
+            concatenated.Append(body);
+            pages++;
+            Assert.False(IsInsideJsonString(expected, concatenated.Length),
+                "A JSON continuation boundary must not split a property name or string value.");
+
+            var continuation = TryTokenOf(current, "continuationToken");
+            if (continuation is null) break;
+            current = await store.RunAsync(Request("get_context", "target", "symbol=Widget.Render", Work,
+                continuationToken: continuation, maxResponseBytes: 512, maxResponseTokens: 180));
+        }
+
+        Assert.InRange(pages, 2, 100);
+        Assert.Equal(expected, concatenated.ToString());
+        using var reconstructed = JsonDocument.Parse(concatenated.ToString());
+        var firstText = reconstructed.RootElement.GetProperty("groups")[0].GetProperty("entries")[0].GetProperty("text").GetString();
+        Assert.Equal("value,0 with quote \"quoted\", braces {x}, line\nfeed, and Grüße 🌍", firstText);
+        Assert.Equal(1, starts);
+    }
+
+    [Fact]
+    public async Task OversizedJsonStringOffersExecutableBudgetRetry()
+    {
+        await using var store = new LongRunningToolCallStore(TimeSpan.FromSeconds(1));
+        var source = McpResponseFormatter.FormatCompactJson(
+            JsonSerializer.Serialize(new { description = string.Concat(Enumerable.Repeat("🌍", 700)) }));
+        Assert.Contains("\\u", source, StringComparison.Ordinal);
+        var starts = 0;
+        Task<CallToolResult> Work(CancellationToken _)
+        {
+            Interlocked.Increment(ref starts);
+            return Task.FromResult(new CallToolResult { Content = [new TextContentBlock { Text = source }] });
+        }
+
+        var concatenated = new StringBuilder();
+        var current = await store.RunAsync(Request("get_context", "target", "symbol=Large", Work, maxResponseBytes: 512));
+        string? retryContinuation = null;
+        CallToolResult? failure = null;
+        for (var page = 0; page < 5; page++)
+        {
+            if (current.IsError == true)
+            {
+                failure = current;
+                break;
+            }
+
+            Assert.False(current.IsError ?? false, TextOf(current));
+            Assert.True(Encoding.UTF8.GetByteCount(TextOf(current)) <= 512);
+            concatenated.Append(BodyOf(current));
+            retryContinuation = TryTokenOf(current, "continuationToken");
+            if (retryContinuation is null) break;
+            current = await store.RunAsync(Request("get_context", "target", "symbol=Large", Work,
+                continuationToken: retryContinuation, maxResponseBytes: 512));
+        }
+
+        Assert.NotNull(failure);
+        Assert.NotNull(retryContinuation);
+        Assert.Contains("RESPONSE_BUDGET_TOO_SMALL", TextOf(failure!), StringComparison.Ordinal);
+        var retryBytes = IntField(failure!, "minimumResponseBytes");
+        var retryTokens = IntField(failure!, "minimumResponseTokens");
+        Assert.InRange(retryBytes, 513, McpResponseBudgetLimits.MaximumBytes);
+        var retry = await store.RunAsync(Request("get_context", "target", "symbol=Large", Work,
+            continuationToken: retryContinuation, maxResponseBytes: retryBytes, maxResponseTokens: retryTokens));
+
+        Assert.False(retry.IsError ?? false, TextOf(retry));
+        concatenated.Append(BodyOf(retry));
+        Assert.Equal(source, concatenated.ToString());
+        Assert.Equal(1, starts);
     }
 
     [Fact]
@@ -1269,6 +1382,30 @@ public sealed class LongRunningToolCallStoreTests
         await Task.Delay(500);
         Assert.False(cancelled.Task.IsCompleted);
         await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(1));
+    }
+
+    private static bool IsInsideJsonString(string json, int boundary)
+    {
+        var insideString = false;
+        var escaped = false;
+        for (var index = 0; index < boundary; index++)
+        {
+            var character = json[index];
+            if (!insideString)
+            {
+                if (character == '"') insideString = true;
+                continue;
+            }
+
+            if (escaped)
+                escaped = false;
+            else if (character == '\\')
+                escaped = true;
+            else if (character == '"')
+                insideString = false;
+        }
+
+        return insideString;
     }
 
     private static LongRunningToolCallRequest Request(

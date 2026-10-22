@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using AiNetCodeNavigator.Core.Symbols;
 using AiNetCodeNavigator.Mcp;
 using AiNetCodeNavigator.Mcp.Tools;
@@ -409,34 +408,65 @@ public sealed class SourceToolsContractTests
             Assert.StartsWith("M:", docCommentId, StringComparison.Ordinal);
         });
 
-        var baseline = JsonNode.Parse(projectedJson)!.AsObject();
-        foreach (var entry in baseline["results"]!.AsArray()
-            .SelectMany(patternResult => patternResult!["entries"]!.AsArray()))
-        {
-            entry!["locations"] = new JsonArray(new JsonObject
-            {
-                ["filePath"] = entry["filePath"]!.DeepClone(),
-                ["line"] = entry["line"]!.DeepClone(),
-                ["endLine"] = entry["endLine"]!.DeepClone(),
-                ["projectName"] = entry["projectName"]!.DeepClone(),
-            });
-        }
-
-        var baselineJson = baseline.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        Assert.DoesNotContain('\n', projectedJson);
+        Assert.DoesNotContain('\r', projectedJson);
         var payloadOffset = visibleText.IndexOf(projectedJson, StringComparison.Ordinal);
         Assert.True(payloadOffset >= 0, "The visible response should contain the JSON payload after its shared header.");
-        var baselineHeader = visibleText[..payloadOffset];
-        var baselineText = baselineHeader + baselineJson;
-        var baselineTokens = TokenCount(baselineText);
-        var projectedTokens = TokenCount(visibleText);
-        var tokensSaved = baselineTokens - projectedTokens;
-        var baselineBytes = Encoding.UTF8.GetByteCount(baselineText);
-        var projectedBytes = Encoding.UTF8.GetByteCount(visibleText);
+        var sharedHeader = visibleText[..payloadOffset];
+        var oldFormattedPayload = FormatWithPropertyAndItemNewlines(projectedDocument.RootElement);
+        var oldFormattedText = sharedHeader + oldFormattedPayload;
+        var oldFormattedTokens = TokenCount(oldFormattedText);
+        var compactTokens = TokenCount(visibleText);
+        var formattingTokensSaved = oldFormattedTokens - compactTokens;
+        var oldFormattedBytes = Encoding.UTF8.GetByteCount(oldFormattedText);
+        var compactBytes = Encoding.UTF8.GetByteCount(visibleText);
+        var formattingNewlines = oldFormattedPayload.Count(character => character == '\n');
 
-        _output.WriteLine($"50 generic one-location find_symbol results: reconstructed prior pretty-JSON/negative-header baseline={baselineTokens} cl100k_base tokens/{baselineBytes} UTF-8 bytes; projected compact response={projectedTokens} tokens/{projectedBytes} bytes; saved={tokensSaved} tokens ({tokensSaved * 100.0 / baselineTokens:F1}%).");
-        Assert.Contains("\n\"results\":[\n", projectedJson, StringComparison.Ordinal);
-        Assert.DoesNotContain("\"results\": [", projectedJson, StringComparison.Ordinal);
-        Assert.True(tokensSaved > 0, "Omitting duplicated singleton locations should reduce visible token count.");
+        _output.WriteLine($"50 generic one-location find_symbol results: identical JSON payload with prior property/item newlines={oldFormattedTokens} cl100k_base tokens/{oldFormattedBytes} UTF-8 bytes/{formattingNewlines} newlines; compact response={compactTokens} tokens/{compactBytes} bytes; formatting saved={formattingTokensSaved} tokens.");
+        Assert.True(formattingTokensSaved > 0, "Removing property/item newlines from the same JSON payload should reduce visible cl100k_base token count.");
+
+        static string FormatWithPropertyAndItemNewlines(JsonElement element)
+        {
+            var output = new StringBuilder();
+            Append(element, output);
+            return output.ToString();
+
+            static void Append(JsonElement value, StringBuilder builder)
+            {
+                switch (value.ValueKind)
+                {
+                    case JsonValueKind.Object:
+                        builder.Append('{');
+                        var firstProperty = true;
+                        foreach (var property in value.EnumerateObject())
+                        {
+                            if (!firstProperty) builder.Append(',');
+                            builder.Append('\n').Append(JsonSerializer.Serialize(property.Name)).Append(':');
+                            Append(property.Value, builder);
+                            firstProperty = false;
+                        }
+                        if (!firstProperty) builder.Append('\n');
+                        builder.Append('}');
+                        break;
+                    case JsonValueKind.Array:
+                        builder.Append('[');
+                        var firstItem = true;
+                        foreach (var item in value.EnumerateArray())
+                        {
+                            if (!firstItem) builder.Append(',');
+                            builder.Append('\n');
+                            Append(item, builder);
+                            firstItem = false;
+                        }
+                        if (!firstItem) builder.Append('\n');
+                        builder.Append(']');
+                        break;
+                    default:
+                        builder.Append(value.GetRawText());
+                        break;
+                }
+            }
+        }
     }
 
     [Fact]

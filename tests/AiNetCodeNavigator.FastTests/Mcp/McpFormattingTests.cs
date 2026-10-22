@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using AiNetCodeNavigator.Mcp.Formatting;
 
 namespace AiNetCodeNavigator.FastTests.Mcp;
@@ -27,6 +28,43 @@ public sealed class McpFormattingTests
         Assert.Equal(budget, result.Utf8Bytes);
         Assert.False(result.IsTruncated);
         Assert.Null(result.ErrorCode);
+    }
+
+    [Fact]
+    public void FormatCompactJson_MinifiesNestedSymbolPayloadAndReducesTokens()
+    {
+        var payload = new
+        {
+            symbol = new
+            {
+                name = "Render",
+                qualifiedName = "Example.Views.Widget.Render",
+                signature = "public async Task<Result> Render(CancellationToken cancellationToken)",
+                containingType = new { name = "Widget", namespaceName = "Example.Views", kind = "class" },
+                location = new { filePath = "src/Example/Widget.cs", line = 42, column = 9 },
+            },
+            members = Enumerable.Range(0, 8).Select(index => new
+            {
+                name = $"Member{index:D2}",
+                signature = $"public string Member{index:D2} {{ get; init; }}",
+                documentation = "Keeps commas, braces {like this}, quotes \"and Unicode Grüße 🌍\".",
+            }).ToArray(),
+        };
+        var pretty = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
+
+        var compact = McpResponseFormatter.FormatCompactJson(pretty);
+
+        using var parsed = JsonDocument.Parse(compact);
+        Assert.Equal("Render", parsed.RootElement.GetProperty("symbol").GetProperty("name").GetString());
+        Assert.Equal(8, parsed.RootElement.GetProperty("members").GetArrayLength());
+        Assert.DoesNotContain('\n', compact);
+        Assert.DoesNotContain('\r', compact);
+        var offsetInsideString = compact.IndexOf("Render", StringComparison.Ordinal) + 2;
+        Assert.Throws<ArgumentOutOfRangeException>(() => McpResponseFormatter.Format(compact, 512, startOffset: offsetInsideString));
+        var prettyTokens = McpResponseFormatter.CountTokens(pretty);
+        var compactTokens = McpResponseFormatter.CountTokens(compact);
+        Assert.True(compactTokens < prettyTokens,
+            $"Expected compact JSON to save tokens; pretty={prettyTokens}, compact={compactTokens}, saved={prettyTokens - compactTokens}.");
     }
 
     [Fact]

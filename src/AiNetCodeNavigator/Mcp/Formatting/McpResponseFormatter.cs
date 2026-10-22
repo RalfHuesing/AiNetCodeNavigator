@@ -32,11 +32,10 @@ internal static class McpResponseFormatter
                 foreach (var property in element.EnumerateObject())
                 {
                     if (!firstProperty) output.Append(',');
-                    output.Append('\n').Append(JsonSerializer.Serialize(property.Name)).Append(':');
+                    output.Append(JsonSerializer.Serialize(property.Name)).Append(':');
                     WriteCompactJson(property.Value, output);
                     firstProperty = false;
                 }
-                if (!firstProperty) output.Append('\n');
                 output.Append('}');
                 break;
             case JsonValueKind.Array:
@@ -45,11 +44,9 @@ internal static class McpResponseFormatter
                 foreach (var item in element.EnumerateArray())
                 {
                     if (!firstItem) output.Append(',');
-                    output.Append('\n');
                     WriteCompactJson(item, output);
                     firstItem = false;
                 }
-                if (!firstItem) output.Append('\n');
                 output.Append(']');
                 break;
             default:
@@ -87,7 +84,8 @@ internal static class McpResponseFormatter
 
         ValidateUnicode(text);
         ValidateUnicode(responsePrefix);
-        ValidateOffset(text, startOffset);
+        var boundaries = GetUnitBoundaries(text);
+        ValidateOffset(text, startOffset, boundaries);
 
         var remaining = text[startOffset..];
         if (Fits(responsePrefix + remaining, maxResponseBytes, maxResponseTokens))
@@ -96,16 +94,9 @@ internal static class McpResponseFormatter
         }
 
         var best = (Text: (string?)null, Offset: 0, OmittedBytes: 0, Hint: (string?)null);
-        var position = startOffset;
-        while (position < text.Length)
+        foreach (var nextOffset in boundaries)
         {
-            var newline = text.IndexOf('\n', position);
-            if (newline < 0)
-            {
-                break;
-            }
-
-            var nextOffset = newline + 1;
+            if (nextOffset <= startOffset) continue;
             if (nextOffset >= text.Length)
             {
                 break;
@@ -119,14 +110,11 @@ internal static class McpResponseFormatter
             {
                 best = (candidate, nextOffset, omittedBytes, hint);
             }
-
-            position = nextOffset;
         }
 
         if (best.Text is null)
         {
-            var firstBoundary = text.IndexOf('\n', startOffset);
-            var firstEnd = firstBoundary < 0 ? text.Length : firstBoundary + 1;
+            var firstEnd = boundaries.FirstOrDefault(boundary => boundary > startOffset, text.Length);
             var firstUnit = text[startOffset..firstEnd];
             var omittedBytes = Encoding.UTF8.GetByteCount(text[firstEnd..]);
             var minimumText = responsePrefix + (omittedBytes == 0
@@ -204,12 +192,69 @@ internal static class McpResponseFormatter
     private static string CreateContinuationHint(int nextOffset, int omittedBytes) =>
         $"[Truncated; continue at UTF-16 offset {nextOffset}; {omittedBytes} UTF-8 bytes omitted.]";
 
-    private static void ValidateOffset(string text, int startOffset)
+    private static List<int> GetUnitBoundaries(string text)
     {
-        if (startOffset < 0 || startOffset > text.Length
-            || (startOffset > 0 && startOffset < text.Length
-                && (text[startOffset - 1] != '\n'
-                    || char.IsLowSurrogate(text[startOffset]) && char.IsHighSurrogate(text[startOffset - 1]))))
+        var jsonBoundaries = GetJsonUnitBoundaries(text);
+        if (jsonBoundaries is not null) return jsonBoundaries;
+
+        var boundaries = new List<int> { 0 };
+        for (var index = 0; index < text.Length; index++)
+        {
+            if (text[index] == '\n') boundaries.Add(index + 1);
+        }
+        if (boundaries[^1] != text.Length) boundaries.Add(text.Length);
+        return boundaries;
+    }
+
+    private static List<int>? GetJsonUnitBoundaries(string text)
+    {
+        var trimmed = text.AsSpan().TrimStart();
+        if (trimmed.IsEmpty || trimmed[0] is not ('{' or '[')) return null;
+
+        var utf8 = Encoding.UTF8.GetBytes(text);
+        var reader = new Utf8JsonReader(utf8);
+        var boundaries = new List<int> { 0 };
+        var previousToken = JsonTokenType.None;
+        var previousByteOffset = 0;
+        var characterOffset = 0;
+        try
+        {
+            while (reader.Read())
+            {
+                // Properties retain their complete primitive value. Container openings
+                // stay with the property name, and empty containers remain atomic.
+                var startsUnit = reader.TokenType switch
+                {
+                    JsonTokenType.PropertyName => true,
+                    JsonTokenType.EndObject or JsonTokenType.EndArray =>
+                        previousToken is not (JsonTokenType.StartObject or JsonTokenType.StartArray),
+                    _ => previousToken != JsonTokenType.PropertyName,
+                };
+                var byteOffset = checked((int)reader.TokenStartIndex);
+                if (startsUnit && byteOffset > previousByteOffset)
+                {
+                    // Token starts cannot bisect UTF-8 scalars or JSON escape sequences.
+                    // Map incrementally so indexing a Unicode payload remains linear.
+                    characterOffset += Encoding.UTF8.GetCharCount(utf8.AsSpan(previousByteOffset, byteOffset - previousByteOffset));
+                    boundaries.Add(characterOffset);
+                    previousByteOffset = byteOffset;
+                }
+                previousToken = reader.TokenType;
+            }
+        }
+        catch (JsonException)
+        {
+            // Malformed JSON and ordinary text keep the newline-delimited contract.
+            return null;
+        }
+
+        if (boundaries[^1] != text.Length) boundaries.Add(text.Length);
+        return boundaries;
+    }
+
+    private static void ValidateOffset(string text, int startOffset, List<int> boundaries)
+    {
+        if (startOffset < 0 || startOffset > text.Length || boundaries.BinarySearch(startOffset) < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(startOffset));
         }
